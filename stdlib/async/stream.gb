@@ -1,0 +1,63 @@
+module async.stream;
+
+import async;
+import csv;
+import json;
+import xml;
+import yaml;
+
+## Streams JSON values from a source through a handler asynchronously.
+export func jsonStream(any source, any handler): Task<int> {
+    return async.run(func(): int {
+        return json.stream(source, handler);
+    });
+}
+
+## Creates a JSON streaming reader asynchronously.
+export func jsonReader(any source): Task<any> {
+    return async.run(func(): any {
+        return json.reader(source);
+    });
+}
+
+## Streams YAML values from a source through a handler asynchronously.
+export func yamlStream(any source, any handler): Task<int> {
+    return async.run(func(): int {
+        return yaml.stream(source, handler);
+    });
+}
+
+## Creates a YAML streaming reader asynchronously.
+export func yamlReader(any source): Task<any> {
+    return async.run(func(): any {
+        return yaml.reader(source);
+    });
+}
+
+## Streams XML values from a source through a handler asynchronously.
+export func xmlStream(any source, any handler): Task<int> {
+    return async.run(func(): int {
+        return xml.stream(source, handler);
+    });
+}
+
+## Creates an XML streaming reader asynchronously.
+export func xmlReader(any source): Task<any> {
+    return async.run(func(): any {
+        return xml.reader(source);
+    });
+}
+
+## Streams CSV rows from a source through a handler asynchronously.
+export func csvStream(any source, any handler): Task<int> {
+    return async.run(func(): int {
+        return csv.stream(source, handler);
+    });
+}
+
+## Creates a CSV streaming reader asynchronously.
+export func csvReader(any source): Task<any> {
+    return async.run(func(): any {
+        return csv.reader(source);
+    });
+}

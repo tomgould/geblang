@@ -1,0 +1,18 @@
+/**
+ * @title JSON Config Loader
+ * @summary Loads JSON configuration with validation-friendly typed access.
+ * @category Data Processing
+ * @description Use this pattern when a script needs defaults but should still accept structured configuration from a file or environment-specific source.
+ */
+import io;
+import json;
+
+let raw = "{\"service\":\"billing\",\"port\":8080,\"debug\":false}";
+let config = json.parse(raw);
+
+string service = config["service"];
+int port = config["port"];
+bool debug = config["debug"];
+
+io.println(service + " listening on " + (port as string));
+io.println("debug: " + (debug as string));

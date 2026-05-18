@@ -1,0 +1,17 @@
+/**
+ * @title Defer
+ * @summary Demonstrates defer in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+defer io.println("top first");
+defer io.println("top second");
+
+func f(): int {
+    defer io.println("f first");
+    defer io.println("f second");
+    return 3;
+}
+
+io.println(f());

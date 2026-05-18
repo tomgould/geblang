@@ -1,0 +1,120 @@
+module pathlib;
+
+import io;
+import path as natpath;
+
+## Immutable-style path value with method chaining over native path functions.
+export class Path {
+    string raw;
+
+    func Path(string raw) {
+        this.raw = natpath.clean(raw);
+    }
+
+    ## Returns the last element of the path.
+    func base(): string {
+        return natpath.base(this.raw);
+    }
+
+    ## Returns all but the last element as a Path.
+    func dir(): Path {
+        return Path(natpath.dir(this.raw));
+    }
+
+    ## Returns the file name extension including the dot.
+    func ext(): string {
+        return natpath.ext(this.raw);
+    }
+
+    ## Returns the base name without extension.
+    func stem(): string {
+        let b = natpath.base(this.raw);
+        let e = natpath.ext(b);
+        if (e.length() == 0) {
+            return b;
+        }
+        return b.substring(0, b.length() - e.length());
+    }
+
+    ## Returns the path with the extension replaced by newExt.
+    func withExt(string newExt): Path {
+        let b = natpath.base(this.raw);
+        let d = natpath.dir(this.raw);
+        let e = natpath.ext(b);
+        let stem = b;
+        if (e.length() > 0) {
+            stem = b.substring(0, b.length() - e.length());
+        }
+        if (newExt.length() > 0 && !newExt.startsWith(".")) {
+            newExt = "." + newExt;
+        }
+        return Path(natpath.join(d, stem + newExt));
+    }
+
+    ## Joins additional segments to this path and returns a new Path.
+    func join(string ...parts): Path {
+        list<string> all = [this.raw];
+        for (p in parts) {
+            all.push(p);
+        }
+        return Path(natpath.join(...all));
+    }
+
+    ## Returns the absolute version of this path.
+    func abs(): Path {
+        return Path(natpath.abs(this.raw));
+    }
+
+    ## Returns the parent directory as a Path.
+    func parent(): Path {
+        return Path(natpath.dir(this.raw));
+    }
+
+    ## Returns the path as a plain string.
+    func toString(): string {
+        return this.raw;
+    }
+
+    ## Returns true when the path exists on the filesystem.
+    func exists(): bool {
+        return io.exists(this.raw);
+    }
+
+    ## Returns true when the path is an existing directory.
+    func isDir(): bool {
+        if (!io.exists(this.raw)) {
+            return false;
+        }
+        let info = io.stat(this.raw);
+        return info["isDir"] as bool;
+    }
+
+    ## Returns true when the path is an existing regular file.
+    func isFile(): bool {
+        if (!io.exists(this.raw)) {
+            return false;
+        }
+        let info = io.stat(this.raw);
+        return !(info["isDir"] as bool);
+    }
+
+    ## Returns glob matches relative to this path as a list of Path values.
+    func glob(string pattern): list<Path> {
+        let matches = natpath.glob(natpath.join(this.raw, pattern));
+        list<Path> result = [];
+        for (m in matches) {
+            result.push(Path(m));
+        }
+        return result;
+    }
+}
+
+## Creates a Path from a string.
+export func of(string raw): Path {
+    return Path(raw);
+}
+
+## Joins path segments into a Path.
+export func join(string ...parts): Path {
+    return Path(natpath.join(...parts));
+}

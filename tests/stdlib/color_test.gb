@@ -1,0 +1,35 @@
+/**
+ * @title cli.color test
+ * @summary ANSI color wrappers respect NO_COLOR.
+ */
+import test;
+import cli.color as color;
+import sys;
+
+class ColorTest extends test.Test {
+    @test
+    func wrapsWithAnsiCodes(): void {
+        # Ensure NO_COLOR is unset for this test.
+        sys.setenv("NO_COLOR", "");
+        let s = color.red("hi");
+        # The wrapped string is longer than the input.
+        this.assertTrue(s.length() > 2);
+        # Reset code is present at the end.
+        this.assertTrue(s.endsWith("[0m"));
+    }
+
+    @test
+    func noColorEnvDisablesWrapping(): void {
+        sys.setenv("NO_COLOR", "1");
+        let s = color.red("hi");
+        this.assertEquals("hi", s);
+    }
+
+    @test
+    func nestedWrapsAreIdempotentForContent(): void {
+        sys.setenv("NO_COLOR", "");
+        let s = color.bold(color.green("hi"));
+        # Content is preserved verbatim, wrapped twice.
+        this.assertTrue(s.contains("hi"));
+    }
+}

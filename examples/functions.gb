@@ -1,0 +1,55 @@
+/**
+ * @title Functions
+ * @summary Demonstrates functions in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+func fib(int n): int {
+    if (n < 2) {
+        return n;
+    }
+
+    return fib(n - 1) + fib(n - 2);
+}
+
+func add(int a, int b = 10): int {
+    return a + b;
+}
+
+func describe(string value): string {
+    return "string: " + value;
+}
+
+func describe(int value): string {
+    return "int: " + (value as string);
+}
+
+func describe(decimal value): string {
+    return "decimal: " + (value.format(2));
+}
+
+
+func makeCounter(): func {
+    int n = 0;
+
+    return func(): int {
+        n++;
+        return n;
+    };
+}
+
+let counter = makeCounter();
+let x = 5;
+let int y = 10;
+string foo = "Hello, World!";
+
+io.println(fib(8));
+io.println(add(5));
+io.println(describe("Geblang"));
+io.println(describe(42f as decimal));
+io.println(describe(101));
+io.println(counter());
+io.println(foo);
+io.println(x);
+io.println(y);

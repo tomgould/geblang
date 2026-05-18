@@ -1,0 +1,46 @@
+/**
+ * @title Service
+ * @summary Demonstrates service in a runnable Geblang example.
+ * @category Expense Tracker
+ */
+module expense.tracker.service;
+
+import expense.tracker.domain as domain;
+import schema;
+
+export class ExpenseService {
+    any repo;
+
+    func ExpenseService(any repo) {
+        this.repo = repo;
+    }
+
+    func record(dict<string, any> input): dict<string, any> {
+        let validation = schema.validate(input, {
+            "type": "object",
+            "required": ["category", "description", "cents"],
+            "properties": {
+                "category": {"type": "string"},
+                "description": {"type": "string"},
+                "cents": {"type": "int"}
+            }
+        });
+        if (!validation["valid"]) {
+            return {"ok": false, "errors": validation["errors"]};
+        }
+        if ((input["cents"] as int) <= 0) {
+            return {"ok": false, "errors": ["cents must be greater than zero"]};
+        }
+        let expense = domain.Expense(
+            input["category"] as string,
+            input["description"] as string,
+            input["cents"] as int
+        );
+        this.repo.add(expense);
+        return {"ok": true, "expense": expense};
+    }
+}
+
+export func newService(any repo): ExpenseService {
+    return ExpenseService(repo);
+}

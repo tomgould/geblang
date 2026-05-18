@@ -1,0 +1,56 @@
+/**
+ * @title Reified generics runtime test
+ * @summary Runtime type assertions enforce declared element types for
+ * list<T>, set<T>, dict<K,V> on assignment and method calls.
+ */
+import test;
+
+class ReifiedRuntimeTest extends test.Test {
+    @test
+    func listElementTypeOnConstruction(): void {
+        # Assigning a valid list<int> succeeds.
+        list<int> xs = [1, 2, 3];
+        this.assertEquals(3, xs.length());
+    }
+
+    @test
+    func listRejectsWrongElement(): void {
+        let threw = false;
+        try {
+            list<int> bad = [1, "two", 3];
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func dictRejectsMismatchedValue(): void {
+        let threw = false;
+        try {
+            dict<string, int> bad = {"a": "not an int"};
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func nullableGenericAcceptsNull(): void {
+        ?list<int> xs = null;
+        this.assertNull(xs);
+        xs = [1, 2, 3];
+        this.assertEquals(3, xs.length());
+    }
+
+    @test
+    func nestedGenericMismatchRejected(): void {
+        let threw = false;
+        try {
+            list<list<int>> bad = [[1, 2], [3, "four"]];
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+}

@@ -1,0 +1,28 @@
+/**
+ * @title Parallel File Reads
+ * @summary Starts asynchronous file work, does other work, then awaits the results.
+ * @category Async
+ * @description This example shows the important async pattern: creating tasks first, continuing with useful work, and awaiting only when the results are needed.
+ */
+import async.io as aio;
+import collections;
+import io;
+
+let firstPath = io.tempFile("geb-first-*.txt");
+let secondPath = io.tempFile("geb-second-*.txt");
+
+await aio.writeText(firstPath, "alpha");
+await aio.writeText(secondPath, "beta");
+
+let firstTask = aio.readText(firstPath);
+let secondTask = aio.readText(secondPath);
+
+for (i in collections.range(1, 4, 1)) {
+    io.println("working " + (i as string));
+}
+
+io.println(await firstTask);
+io.println(await secondTask);
+
+io.remove(firstPath);
+io.remove(secondPath);

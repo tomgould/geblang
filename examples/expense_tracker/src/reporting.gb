@@ -1,0 +1,34 @@
+/**
+ * @title Reporting
+ * @summary Demonstrates reporting in a runnable Geblang example.
+ * @category Expense Tracker
+ */
+module expense.tracker.reporting;
+
+export func categoryTotals(list<any> expenses): dict<string, any> {
+    dict<string, any> totals = {};
+    for (item in expenses) {
+        if (!totals.hasKey(item.category)) {
+            totals[item.category] = 0;
+        }
+        totals[item.category] = (totals[item.category] as int) + item.cents;
+    }
+    return totals;
+}
+
+export func summary(list<any> expenses, dict<string, any> settings): dict<string, any> {
+    int total = 0;
+    for (item in expenses) {
+        total = total + item.cents;
+    }
+    int budget = settings["monthlyBudgetCents"] as int;
+    int percent = (total * 100) // budget;
+    return {
+        "count": expenses.length(),
+        "totalCents": total,
+        "budgetCents": budget,
+        "percent": percent,
+        "overWarning": percent >= (settings["warningRatio"] as int),
+        "byCategory": categoryTotals(expenses)
+    };
+}

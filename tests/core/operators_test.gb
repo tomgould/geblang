@@ -1,0 +1,61 @@
+/**
+ * @title Operators test
+ * @summary Arithmetic, comparison, logical, bitwise, and string operators.
+ */
+import test;
+
+class OperatorsTest extends test.Test {
+    @test
+    func arithmetic(): void {
+        this.assertEquals(7, 3 + 4);
+        this.assertEquals(-1, 3 - 4);
+        this.assertEquals(12, 3 * 4);
+        this.assertEquals(2, 8 // 3);
+        this.assertEquals(2, 8 % 3);
+        this.assertEquals(8, 2 ** 3);
+    }
+
+    @test
+    func comparisons(): void {
+        this.assertTrue(1 < 2);
+        this.assertTrue(2 <= 2);
+        this.assertTrue(3 > 2);
+        this.assertTrue(3 >= 3);
+        this.assertTrue(1 == 1);
+        this.assertTrue(1 != 2);
+    }
+
+    @test
+    func logical(): void {
+        this.assertTrue(true && true);
+        this.assertFalse(true && false);
+        this.assertTrue(false || true);
+        this.assertFalse(false || false);
+        this.assertTrue(!false);
+    }
+
+    @test
+    func bitwise(): void {
+        this.assertEquals(5, 1 | 4);
+        this.assertEquals(0, 1 & 4);
+        this.assertEquals(5, 1 ^ 4);
+        this.assertEquals(4, 1 << 2);
+        this.assertEquals(2, 8 >> 2);
+    }
+
+    @test
+    func stringConcat(): void {
+        this.assertEquals("hello world", "hello " + "world");
+        let acc = "";
+        for (int i = 0; i < 3; i++) {
+            acc = acc + "ab";
+        }
+        this.assertEquals("ababab", acc);
+    }
+
+    @test
+    func mixedNumeric(): void {
+        # int and decimal mix promotes to decimal
+        this.assertEquals(5.5, 2 + 3.5);
+    }
+}

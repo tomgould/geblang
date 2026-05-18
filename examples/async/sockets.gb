@@ -1,0 +1,24 @@
+/**
+ * @title Sockets
+ * @summary Demonstrates sockets in a runnable Geblang example.
+ * @category Async
+ */
+import async;
+import io;
+import net;
+
+let listener = net.listenTcp("127.0.0.1:0");
+let addr = net.localAddr(listener);
+
+let server = async.run(func(): string {
+    let conn = net.accept(listener);
+    net.write(conn, "pong");
+    net.close(conn);
+    return "served";
+});
+
+let client = net.connectTcp(addr);
+io.println(net.read(client, 16).toString());
+net.close(client);
+io.println(await server);
+net.close(listener);

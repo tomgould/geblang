@@ -1,0 +1,155 @@
+module web.auth;
+
+import crypt;
+import secrets;
+import web.http as http;
+
+## Saves a user dictionary in the supplied session store and returns the updated response.
+export func login(any sessionStore, dict<string, any> response, dict<string, any> user, dict<string, any> options): dict<string, any> {
+    return sessionStore.save(response, {"user": user}, options);
+}
+
+## Clears the current user session through the supplied session store.
+export func logout(any sessionStore, dict<string, any> response, dict<string, any> request): dict<string, any> {
+    return sessionStore.clear(response, request);
+}
+
+## Loads the current user dictionary from the supplied session store.
+export func currentUser(any sessionStore, dict<string, any> request): dict<string, any> {
+    let data = sessionStore.load(request);
+    if (!data.hasKey("user") || !(data["user"] instanceof dict)) {
+        return {};
+    }
+    return data["user"] as dict<string, any>;
+}
+
+## Returns true when the request has an authenticated user in the supplied session store.
+export func isAuthenticated(any sessionStore, dict<string, any> request): bool {
+    let data = sessionStore.load(request);
+    return data.hasKey("user") && data["user"] instanceof dict;
+}
+
+## Returns true when a user dictionary contains a role or roles list entry.
+export func userHasRole(dict<string, any> user, string role): bool {
+    if (user.hasKey("role") && (user["role"] as string) == role) {
+        return true;
+    }
+    if (user.hasKey("roles") && user["roles"] instanceof list) {
+        for (item in user["roles"] as list<any>) {
+            if ((item as string) == role) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+## Returns true when a user dictionary contains a permission or permissions list entry.
+export func userHasPermission(dict<string, any> user, string permission): bool {
+    if (user.hasKey("permission") && (user["permission"] as string) == permission) {
+        return true;
+    }
+    if (user.hasKey("permissions") && user["permissions"] instanceof list) {
+        for (item in user["permissions"] as list<any>) {
+            if ((item as string) == permission) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+func authJsonError(int status, string message): dict<string, any> {
+    return http.jsonError(message, status);
+}
+
+export class AuthGuard {
+    any sessionStore;
+    string mode;
+    string value;
+
+    func AuthGuard(any sessionStore, string mode, string value) {
+        this.sessionStore = sessionStore;
+        this.mode = mode;
+        this.value = value;
+    }
+
+    func __invoke(dict<string, any> request): any {
+        let user = currentUser(this.sessionStore, request);
+        if (user.isEmpty()) {
+            if (this.mode == "login") {
+                return http.redirect(this.value);
+            }
+            return authJsonError(401, "unauthorized");
+        }
+        if (this.mode == "auth" || this.mode == "login") {
+            return null;
+        }
+        if (this.mode == "role" && !userHasRole(user, this.value)) {
+            return authJsonError(403, "forbidden");
+        }
+        if (this.mode == "permission" && !userHasPermission(user, this.value)) {
+            return authJsonError(403, "forbidden");
+        }
+        return null;
+    }
+}
+
+## Returns middleware that requires any authenticated user.
+export func requireAuth(any sessionStore): callable {
+    return AuthGuard(sessionStore, "auth", "");
+}
+
+## Returns middleware that redirects anonymous users to the supplied login path.
+export func requireLogin(any sessionStore, string loginPath): callable {
+    return AuthGuard(sessionStore, "login", loginPath);
+}
+
+## Returns middleware that requires an authenticated user with the supplied role.
+export func requireRole(any sessionStore, string role): callable {
+    return AuthGuard(sessionStore, "role", role);
+}
+
+## Returns middleware that requires an authenticated user with the supplied permission.
+export func requirePermission(any sessionStore, string permission): callable {
+    return AuthGuard(sessionStore, "permission", permission);
+}
+
+## Creates a signed CSRF token payload.
+export func csrfToken(string secret): string {
+    return crypt.jwtSign({"csrf": secrets.randomHex(32)}, secret);
+}
+
+## Writes a CSRF token cookie to a response.
+export func withCsrf(dict<string, any> response, string secret, dict<string, any> options): dict<string, any> {
+    return http.withCookieOptions(response, "geb_csrf", crypt.jwtSign({"csrf": secrets.randomHex(32)}, secret), options);
+}
+
+## Clears the CSRF cookie.
+export func clearCsrf(dict<string, any> response): dict<string, any> {
+    return http.deleteCookie(response, "geb_csrf");
+}
+
+## Verifies a CSRF cookie against a submitted header or form token.
+export func verifyCsrf(dict<string, any> request, string secret): bool {
+    let req = http.requestObject(request);
+    let token = req.cookie("geb_csrf");
+    if (token.isEmpty()) {
+        return false;
+    }
+    let verified = crypt.jwtVerify(token, secret);
+    if (verified == null || !(verified instanceof dict)) {
+        return false;
+    }
+    string submitted = req.header("X-CSRF-Token");
+    if (submitted.isEmpty()) {
+        submitted = req.header("x-csrf-token");
+    }
+    if (submitted.isEmpty()) {
+        submitted = req.formValue("_csrf");
+    }
+    if (submitted.isEmpty()) {
+        return false;
+    }
+    return secrets.constantTimeEqual(token, submitted);
+}

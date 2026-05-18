@@ -1,0 +1,50 @@
+/**
+ * @title Database Objects
+ * @summary Demonstrates database objects in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import db;
+
+let conn = db.Connection({
+    "driver": "sqlite",
+    "path": "/tmp/geblang-db-objects.sqlite"
+});
+defer conn.close();
+
+conn.exec("drop table if exists users");
+conn.exec("create table users (id integer primary key, name text, email text)");
+conn.exec(
+    "insert into users (name, email) values (:name, :email)",
+    {"name": "Ada", "email": "ada@example.com"}
+);
+
+let rows = conn.query(
+    "select id, name from users where email = :email",
+    {"email": "ada@example.com"}
+);
+defer rows.close();
+while (rows.next()) {
+    let row = rows.row();
+    io.println(row["name"]);
+}
+
+let tx = conn.begin();
+tx.exec(
+    "insert into users (name, email) values (?, ?)",
+    ["Grace", "grace@example.com"]
+);
+let txRows = tx.query("select name from users where email = :email", {"email": "grace@example.com"});
+let txList = txRows.all();
+txRows.close();
+io.println(txList[0]["name"]);
+tx.commit();
+
+let stmt = conn.prepare("select name from users where email = :email");
+let preparedRows = stmt.query({"email": "ada@example.com"});
+defer preparedRows.close();
+io.println(preparedRows.first()["name"]);
+stmt.close();
+
+let stats = conn.stats();
+io.println(stats.hasKey("openConnections") as string);

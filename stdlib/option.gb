@@ -1,0 +1,64 @@
+module option;
+
+## A value that is either present (some = true) or absent (some = false).
+export class Option<T> {
+    bool some;
+    T value;
+
+    func Option(bool some, T value) {
+        this.some = some;
+        this.value = value;
+    }
+
+    ## Returns true when a value is present.
+    func isSome(): bool {
+        return this.some;
+    }
+
+    ## Returns true when no value is present.
+    func isNone(): bool {
+        return !this.some;
+    }
+
+    ## Returns the wrapped value, or throws if absent.
+    func unwrap(): T {
+        if (!this.some) {
+            throw ValueError("Option.unwrap called on None");
+        }
+        return this.value;
+    }
+
+    ## Returns the wrapped value, or fallback if absent.
+    func unwrapOr(T fallback): T {
+        if (!this.some) {
+            return fallback;
+        }
+        return this.value;
+    }
+
+    ## Returns the value or null.
+    func orNull(): T {
+        if (!this.some) {
+            return null as T;
+        }
+        return this.value;
+    }
+}
+
+## Returns an Option containing value.
+export func some<T>(T value): Option<T> {
+    return Option(true, value);
+}
+
+## Returns an empty Option.
+export func none<T>(): Option<T> {
+    return Option(false, null);
+}
+
+## Returns some(value) when value is not null, otherwise none().
+export func ofNullable<T>(T value): Option<T> {
+    if (value == null) {
+        return none();
+    }
+    return some(value);
+}

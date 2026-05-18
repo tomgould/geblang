@@ -1,0 +1,44 @@
+/**
+ * @title Interpolation
+ * @summary Demonstrates interpolation in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+# Basic variable interpolation
+let name = "world";
+io.println("Hello, ${name}!");
+
+# Expression interpolation
+let a = 3;
+let b = 4;
+io.println("${a} + ${b} = ${a + b}");
+io.println("${a} * ${b} = ${a * b}");
+
+# Non-string values are automatically converted
+let count = 7;
+let enabled = true;
+io.println("count: ${count}");
+io.println("enabled: ${enabled}");
+
+# Interpolation inside a function
+func greet(string who, int age): string {
+    return "Hello, ${who}! You are ${age} years old.";
+}
+io.println(greet("Alice", 30));
+
+# Nested expressions
+let items = ["apple", "banana", "cherry"];
+io.println("First item: ${items[0]}");
+io.println("Last item: ${items[items.length() - 1]}");
+
+# Double-quoted strings inside ${}
+io.println("Greeting: ${"hello"}");
+io.println("Dict access: ${{"key": "value"}["key"]}");
+
+# Subscript with a string key
+let scores = {"Alice": 95, "Bob": 87};
+io.println("Alice scored: ${scores["Alice"]}");
+
+# } or { inside nested string literals does not break interpolation
+io.println("Braces: ${"has}and{both"}");

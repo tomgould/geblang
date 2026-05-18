@@ -1,0 +1,209 @@
+/**
+ * @title Source Web Router
+ * @summary Demonstrates source web router in a runnable Geblang example.
+ * @category General
+ */
+import db;
+import io;
+import web;
+import web.auth as auth;
+import web.cache as cache;
+import web.forms as forms;
+import web.http as http;
+import web.middleware as middleware;
+import web.router as router;
+import web.session as session;
+import web.sse as sse;
+import web.testing as webtest;
+import web.validation as validation;
+
+let app = router.newRouter();
+
+router.use(app, func(dict<string, any> request, dict<string, any> response): dict<string, any> {
+    return web.withHeader(response, "X-App", "Geblang");
+});
+router.use(app, middleware.securityHeaders());
+router.use(app, middleware.requestId());
+
+let api = router.group(app, "/api");
+
+router.get(api, "/users/:id", func(dict<string, any> request): dict<string, any> {
+    return {
+        "status": 200,
+        "body": "user " + request["params"]["id"]
+    };
+});
+
+router.post(api, "/users", func(dict<string, any> request): string {
+    let result = forms.validate(request, validation.object({
+        "name": validation.stringField()
+    }, ["name"]));
+    if (!forms.isValid(result)) {
+        return "invalid " + forms.firstFieldError(result, "name");
+    }
+    let data = forms.data(result);
+    return "created " + (data["name"] as string);
+});
+
+router.put(api, "/users/:id", func(dict<string, any> request): dict<string, any> {
+    let ctx = http.context(request);
+    return http.jsonStatus({"updated": ctx.param("id")}, 202);
+});
+
+router.delete(api, "/users/:id", func(dict<string, any> request): dict<string, any> {
+    return http.noContent();
+});
+
+router.get(api, "/page", func(dict<string, any> request): dict<string, any> {
+    let ctx = http.context(request);
+    return ctx.render("<h1>{{.title}}</h1>", {"title": "Geblang"});
+});
+
+router.get(api, "/events", func(dict<string, any> request): dict<string, any> {
+    return sse.response([
+        sse.comment("ready"),
+        sse.event("user", "{\"id\":42}", {"id": "u42"}),
+        sse.retry(5000)
+    ]);
+});
+
+router.get(api, "/inspect/:id", func(dict<string, any> request): dict<string, any> {
+    let req = http.requestObject(request);
+    return http.responseObject(200, req.paramDefault("id", "none") + " " + req.header("x-mode")).header("X-Param", req.param("id")).toDict();
+});
+
+class UsersController {
+    @middleware
+    func mark(dict<string, any> request, dict<string, any> response): dict<string, any> {
+        return web.withHeader(response, "X-Controller", "Users");
+    }
+
+    @route("GET", "/decorated/:id")
+    func show(dict<string, any> request): dict<string, any> {
+        let ctx = http.context(request);
+        return http.withCookieOptions(ctx.text("decorated " + ctx.param("id") + " " + ctx.cookie("theme") + " " + ctx.queryParam("debug")), "seen", "yes", {"path": "/", "httpOnly": true, "sameSite": "Lax"});
+    }
+}
+
+router.mount(api, UsersController());
+
+let client = webtest.client(app);
+let foundRequest = http.request("GET", "/api/users/42");
+foundRequest["headers"] = {"X-Request-ID": "req-1"};
+let found = router.handle(app, foundRequest);
+let created = client.post("/api/users", "name=Ada");
+let invalid = client.post("/api/users", "");
+let updated = router.handle(app, http.requestWithBody("PUT", "/api/users/42", {"name": "Ada"}));
+let deleted = router.handle(app, http.request("DELETE", "/api/users/42"));
+let page = client.get("/api/page");
+let events = client.get("/api/events");
+let inspectRequest = http.request("GET", "/api/inspect/abc");
+inspectRequest["headers"] = {"X-Mode": "fast"};
+let inspected = router.handle(app, inspectRequest);
+let decoratedRequest = http.request("GET", "/api/decorated/7?debug=true");
+decoratedRequest["headers"] = {"Cookie": "theme=dark"};
+let decorated = router.handle(app, decoratedRequest);
+let sessionResponse = session.withSession(http.text("session"), {"user": "Ada"}, "secret", {"path": "/", "httpOnly": true});
+let sessionRequest = http.request("GET", "/api/session");
+sessionRequest["headers"] = {"Cookie": sessionResponse["headers"]["Set-Cookie"]};
+let sessionData = session.session(sessionRequest, "secret");
+
+let fileSessions = session.fileSessionStore(io.tempDir("geb-sessions"), 3600);
+let fileSessionResponse = fileSessions.save(http.text("file"), {"user": "File"}, {"httpOnly": true});
+let fileSessionRequest = http.request("GET", "/api/session");
+fileSessionRequest["headers"] = {"Cookie": fileSessionResponse["headers"]["Set-Cookie"]};
+let fileSessionData = fileSessions.load(fileSessionRequest);
+let clearedSession = fileSessions.clear(http.text("cleared"), fileSessionRequest);
+let fileCache = cache.fileCacheStore(io.tempDir("geb-cache"), 3600);
+fileCache.set("answer", {"value": 42});
+let fileCached = fileCache.get("answer") as dict<string, any>;
+let fileCacheHadAnswer = fileCache.has("answer");
+fileCache.delete("answer");
+let fileCacheDeleted = !fileCache.has("answer");
+let loginResponse = auth.login(fileSessions, http.text("login"), {"name": "Ada", "roles": ["admin"], "permissions": ["users.edit"]}, {"httpOnly": true});
+let loginRequest = http.request("GET", "/api/me");
+loginRequest["headers"] = {"Cookie": loginResponse["headers"]["Set-Cookie"]};
+let loginUser = auth.currentUser(fileSessions, loginRequest);
+let flashResponse = session.withFlash(fileSessions, http.text("flash"), loginRequest, "success", "Profile saved", {"httpOnly": true});
+let flashRequest = http.request("GET", "/api/me");
+flashRequest["headers"] = {"Cookie": flashResponse["headers"]["Set-Cookie"]};
+let flashMessages = session.flashes(fileSessions, flashRequest);
+let clearFlashResponse = session.clearFlashes(fileSessions, http.text("clear"), flashRequest, {"httpOnly": true});
+let clearFlashRequest = http.request("GET", "/api/me");
+clearFlashRequest["headers"] = {"Cookie": clearFlashResponse["headers"]["Set-Cookie"]};
+
+let authApp = router.newRouter();
+router.before(authApp, auth.requireRole(fileSessions, "admin"));
+router.get(authApp, "/admin", func(dict<string, any> request): string {
+    return "admin ok";
+});
+let authMissing = router.handle(authApp, http.request("GET", "/admin"));
+let authAllowedRequest = http.request("GET", "/admin");
+authAllowedRequest["headers"] = {"Cookie": loginResponse["headers"]["Set-Cookie"]};
+let authAllowed = router.handle(authApp, authAllowedRequest);
+
+let conn = db.open("sqlite", "/tmp/geblang-router-sessions.sqlite");
+db.exec(conn, "drop table if exists geb_sessions");
+db.exec(conn, "drop table if exists geb_cache");
+let databaseSessions = session.databaseSessionStore(conn, "geb_sessions", 3600).install();
+let databaseSessionResponse = databaseSessions.save(http.text("db"), {"user": "Database"}, {"httpOnly": true});
+let databaseSessionRequest = http.request("GET", "/api/session");
+databaseSessionRequest["headers"] = {"Cookie": databaseSessionResponse["headers"]["Set-Cookie"]};
+let databaseSessionData = databaseSessions.load(databaseSessionRequest);
+databaseSessions.clear(http.text("cleared"), databaseSessionRequest);
+let databaseCache = cache.databaseCacheStore(conn, "geb_cache", 3600).install();
+databaseCache.set("answer", {"value": 84});
+let databaseCached = databaseCache.get("answer") as dict<string, any>;
+let databaseCacheHadAnswer = databaseCache.has("answer");
+databaseCache.delete("answer");
+let databaseCacheDeleted = !databaseCache.has("answer");
+db.close(conn);
+
+let csrfResponse = auth.withCsrf(http.text("csrf"), "secret", {"path": "/", "sameSite": "Strict"});
+let csrfToken = csrfResponse["headers"]["Set-Cookie"].split(";")[0].split("=")[1];
+let csrfRequest = http.requestWithBody("POST", "/api/users", "_csrf=" + csrfToken);
+csrfRequest["headers"] = {"Cookie": csrfResponse["headers"]["Set-Cookie"]};
+let missing = router.handle(app, http.request("GET", "/missing"));
+
+io.println(found["status"]);
+io.println(found["body"]);
+io.println(found["headers"]["X-App"]);
+io.println(found["headers"]["X-Frame-Options"]);
+io.println(found["headers"]["X-Request-ID"]);
+io.println(created["body"]);
+io.println(invalid["body"].contains("$.name"));
+io.println(created["headers"]["X-App"]);
+io.println(updated["status"]);
+io.println(updated["headers"]["Content-Type"]);
+io.println(deleted["status"]);
+io.println(page["body"]);
+io.println(page["headers"]["Content-Type"]);
+io.println(events["headers"]["Content-Type"]);
+io.println(events["body"].contains("event: user"));
+io.println(events["body"].contains("retry: 5000"));
+io.println(http.body(inspected));
+io.println(http.header(inspected, "x-param"));
+io.println(decorated["body"]);
+io.println(decorated["headers"]["X-App"]);
+io.println(decorated["headers"]["X-Controller"]);
+io.println(decorated["headers"]["Set-Cookie"]);
+io.println(sessionData["user"]);
+io.println(clearedSession["headers"]["Set-Cookie"].contains("Max-Age=0"));
+io.println(fileSessionData["user"]);
+io.println(loginUser["name"]);
+io.println(auth.isAuthenticated(fileSessions, loginRequest));
+io.println(auth.userHasPermission(loginUser, "users.edit"));
+io.println(flashMessages[0]["category"]);
+io.println(flashMessages[0]["message"]);
+io.println(session.flashes(fileSessions, clearFlashRequest).length());
+io.println(authMissing["status"]);
+io.println(authAllowed["body"]);
+io.println(databaseSessionData["user"]);
+io.println(fileCached["value"]);
+io.println(fileCacheHadAnswer);
+io.println(fileCacheDeleted);
+io.println(databaseCached["value"]);
+io.println(databaseCacheHadAnswer);
+io.println(databaseCacheDeleted);
+io.println(auth.verifyCsrf(csrfRequest, "secret"));
+io.println(missing["status"]);

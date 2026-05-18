@@ -1,0 +1,55 @@
+/**
+ * @title Context managers
+ * @summary `with (...) { ... }` calls `__enter__()` on entry and
+ *          `__exit__()` on exit. Unrelated to destructors -
+ *          end-of-lifetime cleanup lives in `~ClassName()`.
+ * @category Classes
+ */
+import io;
+
+class Transaction {
+    string label;
+
+    func Transaction(string label) { this.label = label; }
+
+    func __enter__(): Transaction {
+        io.println("begin " + this.label);
+        return this;
+    }
+
+    func __exit__(): void {
+        io.println("commit " + this.label);
+    }
+}
+
+with (tx = Transaction("write")) {
+    io.println("inside " + tx.label);
+}
+/* Output:
+ *   begin write
+ *   inside write
+ *   commit write
+ */
+
+/* `__exit__()` runs on every exit path - normal completion,
+ * exception, return, break, and continue. */
+class Span {
+    string name;
+    func Span(string n) { this.name = n; }
+    func __enter__(): Span { return this; }
+    func __exit__(): void { io.println("end " + this.name); }
+}
+
+for (i in [1, 2, 3]) {
+    with (s = Span("iter-" + (i as string))) {
+        if (i == 2) {
+            break;
+        }
+        io.println("body " + s.name);
+    }
+}
+/* Output:
+ *   body iter-1
+ *   end iter-1
+ *   end iter-2
+ */

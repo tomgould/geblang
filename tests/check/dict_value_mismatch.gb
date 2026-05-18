@@ -1,0 +1,5 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag value-type mismatch in dict<K,V> literal.
+ */
+dict<string, int> d = {"a": "not an int"};

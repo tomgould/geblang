@@ -1,0 +1,22 @@
+/**
+ * @title Process Module
+ * @summary Demonstrates process module in a runnable Geblang example.
+ * @category General
+ */
+import process;
+import io;
+
+let r = process.run("printf", ["hello from process module"]);
+io.println(r.isOk());
+io.println(r.code());
+io.println(r.stdout());
+
+let shell_result = process.shell("echo greetings from shell");
+io.print(shell_result.stdout());
+
+let proc = process.start("cat", []);
+proc.write("piped input\n");
+proc.closeStdin();
+io.print(proc.readStdout());
+let code = proc.wait();
+io.println(code);

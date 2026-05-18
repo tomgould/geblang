@@ -1,0 +1,15 @@
+/**
+ * @title Bytecode Loop
+ * @summary Demonstrates bytecode loop in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+int x = 1;
+
+while (x < 4) {
+    io.println(x);
+    x = x + 1;
+}
+
+io.println("done");

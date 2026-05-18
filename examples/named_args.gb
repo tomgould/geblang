@@ -1,0 +1,29 @@
+/**
+ * @title Named Args
+ * @summary Demonstrates named args in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+func connect(string host, int port = 80, bool tls = true): string {
+    return host + ":" + (port as string) + ":" + (tls as string);
+}
+
+class Client {
+    string host;
+    int port;
+
+    func Client(string host, int port = 80) {
+        this.host = host;
+        this.port = port;
+    }
+
+    func url(string scheme = "https"): string {
+        return scheme + "://" + this.host + ":" + (this.port as string);
+    }
+}
+
+io.println(connect("example.test", tls: false));
+io.println(connect(port: 443, host: "example.test"));
+Client c = Client(port: 8080, host: "localhost");
+io.println(c.url(scheme: "http"));

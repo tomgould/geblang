@@ -1,0 +1,117 @@
+module web.sse;
+
+import http;
+import web.http as wh;
+
+func appendDataLines(string frame, string data): string {
+    for (line in data.split("\n")) {
+        frame = frame + "data: " + (line as string) + "\n";
+    }
+    return frame;
+}
+
+## Formats a raw SSE comment frame.
+export func comment(string text): string {
+    return ": " + text + "\n\n";
+}
+
+## Formats an SSE retry frame in milliseconds.
+export func retry(int milliseconds): string {
+    return "retry: " + (milliseconds as string) + "\n\n";
+}
+
+## Formats a data-only SSE message.
+export func data(string body): string {
+    return appendDataLines("", body) + "\n";
+}
+
+## Formats an SSE message with event, id, retry, and data fields.
+export func event(string name, string body, dict<string, any> options): string {
+    string frame = "";
+    if (options.hasKey("id")) {
+        frame = frame + "id: " + (options["id"] as string) + "\n";
+    }
+    if (!name.isEmpty()) {
+        frame = frame + "event: " + name + "\n";
+    }
+    if (options.hasKey("retry")) {
+        frame = frame + "retry: " + (options["retry"] as int) + "\n";
+    }
+    frame = appendDataLines(frame, body);
+    return frame + "\n";
+}
+
+## Formats a named SSE event without extra options.
+export func named(string name, string body): string {
+    return event(name, body, {});
+}
+
+## Joins a list of SSE frame strings.
+export func stream(list<any> frames): string {
+    string body = "";
+    for (frame in frames) {
+        body = body + (frame as string);
+    }
+    return body;
+}
+
+## Adds SSE headers to a response dictionary.
+export func withHeaders(dict<string, any> response): dict<string, any> {
+    response = wh.withHeader(response, "Content-Type", "text/event-stream; charset=utf-8");
+    response = wh.withHeader(response, "Cache-Control", "no-cache");
+    response = wh.withHeader(response, "Connection", "keep-alive");
+    return response;
+}
+
+## Creates an SSE response from a preformatted body.
+export func responseText(string body): dict<string, any> {
+    return withHeaders(wh.response(200, body));
+}
+
+## Creates an SSE response from a list of frame strings.
+export func response(list<any> frames): dict<string, any> {
+    return responseText(stream(frames));
+}
+
+## Source-level wrapper around a native HTTP stream handle for live SSE responses.
+export class EventStream {
+    any handle;
+
+    func EventStream(any handle) {
+        this.handle = handle;
+    }
+
+    func write(string frame): void {
+        http.streamWrite(this.handle, frame);
+    }
+
+    func flush(): void {
+        http.streamFlush(this.handle);
+    }
+
+    func close(): void {
+        http.streamClose(this.handle);
+    }
+}
+
+## Creates a streaming SSE response. The handler receives an SSE EventStream.
+export func streaming(any handler): dict<string, any> {
+    return withHeaders(http.stream(func(any handle): void {
+        handler(EventStream(handle));
+    }));
+}
+
+## Writes a formatted SSE frame to a live SSE stream.
+export func write(EventStream stream, string frame): void {
+    stream.write(frame);
+}
+
+## Flushes a live SSE stream.
+export func flush(EventStream stream): void {
+    stream.flush();
+}
+
+## Closes a live SSE stream.
+export func close(EventStream stream): void {
+    stream.close();
+}

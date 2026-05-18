@@ -1,0 +1,100 @@
+/**
+ * @title functools stdlib test
+ * @summary pipe / compose / partial / memoize from the functools module.
+ */
+import test;
+import functools;
+
+func double(int n): int {
+    return n * 2;
+}
+
+func inc(int n): int {
+    return n + 1;
+}
+
+func square(int n): int {
+    return n * n;
+}
+
+class FunctoolsTest extends test.Test {
+    @test
+    func pipeLeftToRight(): void {
+        let f = functools.pipe([inc, double, square]);
+        # (1 + 1) * 2 = 4, 4 * 4 = 16
+        this.assertEquals(16, f(1));
+    }
+
+    @test
+    func pipeIdentityForEmpty(): void {
+        let f = functools.pipe([]);
+        this.assertEquals(42, f(42));
+    }
+
+    @test
+    func composeRightToLeft(): void {
+        let f = functools.compose([square, double, inc]);
+        # inc(1) = 2, double(2) = 4, square(4) = 16
+        this.assertEquals(16, f(1));
+    }
+
+    @test
+    func composeIdentityForEmpty(): void {
+        let f = functools.compose([]);
+        this.assertEquals("hi", f("hi"));
+    }
+
+    @test
+    func partialPrependsBoundArgs(): void {
+        let add = func(int a, int b): int { return a + b; };
+        let add10 = functools.partial(add, 10);
+        this.assertEquals(13, add10(3));
+    }
+
+    @test
+    func partialWithMultipleBoundArgs(): void {
+        let join3 = func(string a, string b, string c): string {
+            return a + b + c;
+        };
+        let prefix = functools.partial(join3, "[", "info]");
+        this.assertEquals("[info]hello", prefix("hello"));
+    }
+
+    @test
+    func memoizeCachesResults(): void {
+        int callCount = 0;
+        let slow = func(int n): int {
+            callCount = callCount + 1;
+            return n * n;
+        };
+        let fast = functools.memoize(slow);
+        this.assertEquals(25, fast(5));
+        this.assertEquals(25, fast(5));
+        this.assertEquals(25, fast(5));
+        this.assertEquals(1, callCount);
+        this.assertEquals(36, fast(6));
+        this.assertEquals(2, callCount);
+    }
+
+    @test
+    func memoizeLruEvictsOldest(): void {
+        int callCount = 0;
+        let fn = func(int n): int {
+            callCount = callCount + 1;
+            return n;
+        };
+        let m = functools.memoize(fn, 2);
+        m(1);
+        m(2);
+        # cache is now [1, 2]
+        m(3);
+        # cache evicts 1, becomes [2, 3]
+        this.assertEquals(3, callCount);
+        # 2 and 3 should be hits, 1 should miss again
+        m(2);
+        m(3);
+        this.assertEquals(3, callCount);
+        m(1);
+        this.assertEquals(4, callCount);
+    }
+}

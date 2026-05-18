@@ -1,0 +1,28 @@
+/**
+ * @title Regex
+ * @summary Demonstrates regex in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import re;
+
+let text = "Ada:123 Linus:456 Grace:789";
+
+io.println(re.find("[0-9]+", text));
+
+let numbers = re.findAll("[0-9]+", text);
+io.println(numbers.length() as string);
+io.println(numbers.get(0));
+io.println(numbers.get(1));
+io.println(numbers.get(2));
+
+let person = re.match("(?P<name>[A-Za-z]+):([0-9]+)", text);
+io.println(person["text"]);              # Ada:123 (whole match)
+io.println(person["named"]["name"]);     # Ada
+io.println(person["groups"][2]);         # 123 (numeric group 2)
+
+# re.matchAll iterates every non-overlapping match.
+let pairs = re.matchAll("(?P<name>[A-Za-z]+):(?P<id>[0-9]+)", text);
+for (pair in pairs) {
+    io.println(pair["named"]["name"] + " -> " + pair["named"]["id"]);
+}

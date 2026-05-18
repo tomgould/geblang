@@ -1,0 +1,6 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag pushing wrong type into list<T>.
+ */
+list<int> xs = [];
+xs.push("hello");

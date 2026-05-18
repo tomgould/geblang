@@ -1,0 +1,19 @@
+import io;
+import sys;
+
+let args = sys.args();
+int n = args.length() > 0 ? args[0].toInt() : 5000;
+let values = [];
+
+for (int i = 0; i < n; i++) {
+    values = values.push(i);
+}
+
+int total = 0;
+for (value in values) {
+    if (value % 5 == 0) {
+        total = total + value;
+    }
+}
+
+io.println(total);

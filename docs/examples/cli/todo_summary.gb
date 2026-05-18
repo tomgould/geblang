@@ -1,0 +1,36 @@
+/**
+ * @title Todo Summary CLI
+ * @summary Builds a small command-line report from in-memory task data.
+ * @category CLI Tools
+ * @description This example shows the shape of a practical script: structured data, small helper functions, and clear console output.
+ */
+import io;
+
+func statusLabel(bool done): string {
+    if (done) {
+        return "done";
+    }
+    return "open";
+}
+
+let tasks = [
+    {"title": "Write API handler", "done": true},
+    {"title": "Add integration test", "done": false},
+    {"title": "Update deployment notes", "done": false}
+];
+
+int open = 0;
+int done = 0;
+
+for (task in tasks) {
+    if (task["done"]) {
+        done++;
+    } else {
+        open++;
+    }
+    io.println("- [" + statusLabel(task["done"]) + "] " + task["title"]);
+}
+
+io.println("");
+io.println("done: " + (done as string));
+io.println("open: " + (open as string));

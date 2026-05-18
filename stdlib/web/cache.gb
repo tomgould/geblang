@@ -1,0 +1,174 @@
+module web.cache;
+
+import crypt;
+import datetime;
+import db;
+import io;
+import json;
+
+func cacheExpired(dict<string, any> payload): bool {
+    if (!payload.hasKey("expiresAt")) {
+        return false;
+    }
+    return (payload["expiresAt"] as int) <= datetime.nowUnix();
+}
+
+func cachePayload(any value, int ttl): string {
+    return json.stringify({"value": value, "expiresAt": datetime.nowUnix() + ttl});
+}
+
+func cacheValueFromPayload(string value): any {
+    let payload = json.parse(value) as dict<string, any>;
+    if (cacheExpired(payload)) {
+        return null;
+    }
+    if (!payload.hasKey("value")) {
+        return null;
+    }
+    return payload["value"];
+}
+
+## Cache store backed by Redis keys with JSON payloads and TTL expiry.
+export class RedisCacheStore {
+    any client;
+    string prefix;
+    int ttl;
+
+    func RedisCacheStore(any client, string prefix, int ttl) {
+        this.client = client;
+        this.prefix = prefix;
+        this.ttl = ttl;
+    }
+
+    func key(string name): string {
+        return this.prefix + name;
+    }
+
+    func get(string name): any {
+        let value = this.client.get(this.key(name));
+        if (value == null) {
+            return null;
+        }
+        return cacheValueFromPayload(value as string);
+    }
+
+    func set(string name, any value): bool {
+        string key = this.key(name);
+        this.client.set(key, cachePayload(value, this.ttl));
+        this.client.expire(key, this.ttl);
+        return true;
+    }
+
+    func delete(string name): bool {
+        return this.client.del(this.key(name)) > 0;
+    }
+
+    func has(string name): bool {
+        return this.get(name) != null;
+    }
+}
+
+## Creates a Redis-backed cache store.
+export func redisCacheStore(any client, string prefix, int ttl): RedisCacheStore {
+    return RedisCacheStore(client, prefix, ttl);
+}
+
+## Cache store backed by JSON files in a directory.
+export class FileCacheStore {
+    string directory;
+    int ttl;
+
+    func FileCacheStore(string directory, int ttl) {
+        this.directory = directory;
+        this.ttl = ttl;
+        io.mkdir(directory, 493);
+    }
+
+    func path(string name): string {
+        return this.directory + "/" + crypt.sha256(name) + ".json";
+    }
+
+    func get(string name): any {
+        string path = this.path(name);
+        if (!io.exists(path)) {
+            return null;
+        }
+        let value = cacheValueFromPayload(io.readText(path));
+        if (value == null) {
+            io.remove(path);
+        }
+        return value;
+    }
+
+    func set(string name, any value): bool {
+        io.writeText(this.path(name), cachePayload(value, this.ttl));
+        return true;
+    }
+
+    func delete(string name): bool {
+        string path = this.path(name);
+        bool existed = io.exists(path);
+        io.remove(path);
+        return existed;
+    }
+
+    func has(string name): bool {
+        return this.get(name) != null;
+    }
+}
+
+## Creates a file-backed cache store.
+export func fileCacheStore(string directory, int ttl): FileCacheStore {
+    return FileCacheStore(directory, ttl);
+}
+
+## Cache store backed by a database table with cache_key, data, and expiry columns.
+export class DatabaseCacheStore {
+    any conn;
+    string table;
+    int ttl;
+
+    func DatabaseCacheStore(any conn, string table, int ttl) {
+        this.conn = conn;
+        this.table = table;
+        this.ttl = ttl;
+    }
+
+    func install(): DatabaseCacheStore {
+        db.exec(this.conn, "create table if not exists " + this.table + " (cache_key text primary key, data text not null, expires_at integer not null)");
+        return this;
+    }
+
+    func get(string name): any {
+        let rows = db.query(this.conn, "select data, expires_at from " + this.table + " where cache_key = ?", name);
+        if (rows.length() == 0) {
+            return null;
+        }
+        let row = rows[0] as dict<string, any>;
+        if ((row["expires_at"] as int) <= datetime.nowUnix()) {
+            db.exec(this.conn, "delete from " + this.table + " where cache_key = ?", name);
+            return null;
+        }
+        return json.parse(row["data"] as string);
+    }
+
+    func set(string name, any value): bool {
+        db.exec(this.conn, "delete from " + this.table + " where cache_key = ?", name);
+        db.exec(this.conn, "insert into " + this.table + " (cache_key, data, expires_at) values (?, ?, ?)", name, json.stringify(value), datetime.nowUnix() + this.ttl);
+        return true;
+    }
+
+    func delete(string name): bool {
+        let result = db.exec(this.conn, "delete from " + this.table + " where cache_key = ?", name);
+        return (result["rowsAffected"] as int) > 0;
+    }
+
+    func has(string name): bool {
+        return this.get(name) != null;
+    }
+}
+
+## Creates a database-backed cache store; call install() to create its table.
+export func databaseCacheStore(any conn, string table, int ttl): DatabaseCacheStore {
+    return DatabaseCacheStore(conn, table, ttl);
+}

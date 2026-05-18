@@ -1,0 +1,26 @@
+/**
+ * @title Datetime Classes
+ * @summary Demonstrates datetime classes in a runnable Geblang example.
+ * @category General
+ */
+import datetime;
+import io;
+
+let start = datetime.Instant("1970-01-01T00:00:00Z");
+let elapsed = datetime.Duration(90061);
+let later = start.add(elapsed);
+
+io.println(start.unix() as string);
+io.println(later.toString());
+io.println(later.format("2006-01-02"));
+
+let parts = start.diff(later).toDict();
+io.println(parts["days"] as string);
+io.println(parts["hours"] as string);
+io.println(parts["minutes"] as string);
+io.println(parts["seconds"] as string);
+
+let utc = datetime.Zone("UTC");
+io.println(utc.name());
+io.println(later.toLocal(utc));
+io.println(utc.offsetAt(later) as string);

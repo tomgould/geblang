@@ -1,0 +1,98 @@
+/**
+ * @title Generics Constraints
+ * @summary Demonstrates generics constraints in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+# Generic interfaces with type parameters
+interface Sortable {
+    func compareTo(any other): int;
+}
+
+interface Serializable {
+    func serialize(): string;
+}
+
+# A class implementing a sortable interface
+class Score implements Sortable {
+    int value;
+
+    func Score(int v) {
+        this.value = v;
+    }
+
+    func compareTo(any other): int {
+        Score o = other;
+        if (this.value < o.value) { return -1; }
+        if (this.value > o.value) { return 1; }
+        return 0;
+    }
+}
+
+# Generic function with implements constraint
+func larger<T implements Sortable>(T a, T b): T {
+    if (a.compareTo(b) >= 0) {
+        return a;
+    }
+    return b;
+}
+
+Score s1 = Score(10);
+Score s2 = Score(20);
+let bigger = larger(s1, s2);
+io.println(bigger.value);
+
+# Union constraint: accepts either interface
+interface Swimmer {
+    func swim(): string;
+}
+
+interface Runner {
+    func run(): string;
+}
+
+class Duck implements Swimmer {
+    func swim(): string { return "quack+splash"; }
+}
+
+class Rabbit implements Runner {
+    func run(): string { return "hop"; }
+}
+
+func exercise<T implements Swimmer | Runner>(T animal): void {
+    io.println("exercising");
+}
+
+Duck duck = Duck();
+Rabbit rabbit = Rabbit();
+exercise(duck);
+exercise(rabbit);
+
+# Intersection constraint: must implement both
+interface Named {
+    func name(): string;
+}
+
+class Pet implements Named, Serializable {
+    string petName;
+
+    func Pet(string n) {
+        this.petName = n;
+    }
+
+    func name(): string {
+        return this.petName;
+    }
+
+    func serialize(): string {
+        return "Pet(" + this.petName + ")";
+    }
+}
+
+func register<T implements Named & Serializable>(T item): string {
+    return item.serialize();
+}
+
+Pet p = Pet("Buddy");
+io.println(register(p));

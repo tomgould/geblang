@@ -1,0 +1,51 @@
+module cli.color;
+
+import sys;
+
+## ANSI terminal styling helpers. Each wrapper prepends the matching escape
+## sequence and appends a reset, returning the styled string. When the
+## `NO_COLOR` environment variable is set the wrappers return their input
+## unchanged so the same code works on plain terminals and in CI logs.
+##
+## To disable color output programmatically, set the env var explicitly:
+## `sys.setenv("NO_COLOR", "1");`. To re-enable, set it to an empty
+## string is not enough - the wrappers only treat an absent variable as
+## "color on". Honour the convention at https://no-color.org/.
+
+func _wrap(string code, string s): string {
+    let no = sys.getenv("NO_COLOR");
+    if (no != null && no != "") {
+        return s;
+    }
+    return "\u{1b}[" + code + "m" + s + "\u{1b}[0m";
+}
+
+## Returns true when color output is currently enabled (NO_COLOR unset
+## or empty).
+export func isEnabled(): bool {
+    let no = sys.getenv("NO_COLOR");
+    return no == null || no == "";
+}
+
+export func bold(string s):    string { return _wrap("1", s); }
+export func dim(string s):     string { return _wrap("2", s); }
+export func italic(string s):  string { return _wrap("3", s); }
+export func underline(string s): string { return _wrap("4", s); }
+
+export func black(string s):   string { return _wrap("30", s); }
+export func red(string s):     string { return _wrap("31", s); }
+export func green(string s):   string { return _wrap("32", s); }
+export func yellow(string s):  string { return _wrap("33", s); }
+export func blue(string s):    string { return _wrap("34", s); }
+export func magenta(string s): string { return _wrap("35", s); }
+export func cyan(string s):    string { return _wrap("36", s); }
+export func white(string s):   string { return _wrap("37", s); }
+
+export func bgBlack(string s):   string { return _wrap("40", s); }
+export func bgRed(string s):     string { return _wrap("41", s); }
+export func bgGreen(string s):   string { return _wrap("42", s); }
+export func bgYellow(string s):  string { return _wrap("43", s); }
+export func bgBlue(string s):    string { return _wrap("44", s); }
+export func bgMagenta(string s): string { return _wrap("45", s); }
+export func bgCyan(string s):    string { return _wrap("46", s); }
+export func bgWhite(string s):   string { return _wrap("47", s); }

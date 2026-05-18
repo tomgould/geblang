@@ -1,0 +1,48 @@
+/**
+ * @title Decorators Class
+ * @summary Demonstrates decorators class in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import reflect;
+
+# Class decorator: framework service registration
+dict<string, any> services = {};
+
+func service(any cls, string name): any {
+    services[name] = cls;
+    return cls;
+}
+
+# Method decorator: log calls
+func logged(any next): any {
+    return func(): any {
+        io.println("[log] calling method");
+        return next();
+    };
+}
+
+@service("greeter")
+class Greeter {
+    string name;
+
+    func Greeter(string name) {
+        this.name = name;
+    }
+
+    @logged
+    func hello(): string {
+        return "Hello, " + this.name + "!";
+    }
+}
+
+# Class decorator metadata is preserved
+io.println(reflect.decorators(Greeter)[0]["name"]);
+io.println(reflect.decorators(Greeter)[0]["args"][0]);
+
+# Decorator side effect: class registered in services
+io.println(services.hasKey("greeter"));
+
+# Class is fully functional
+let g = Greeter("Ada");
+io.println(g.hello());

@@ -1,0 +1,99 @@
+/**
+ * @title random stdlib test
+ * @summary Deterministic PRNG module: seed, next, intRange, float, bool,
+ * choice, shuffle, Generator.
+ */
+import test;
+import random;
+
+class RandomTest extends test.Test {
+    @test
+    func seedDeterminism(): void {
+        random.seed(42);
+        let a1 = random.intRange(0, 1000000);
+        let a2 = random.intRange(0, 1000000);
+        random.seed(42);
+        let b1 = random.intRange(0, 1000000);
+        let b2 = random.intRange(0, 1000000);
+        this.assertEquals(a1, b1);
+        this.assertEquals(a2, b2);
+    }
+
+    @test
+    func intRangeBounds(): void {
+        random.seed(7);
+        for (int i = 0; i < 100; i++) {
+            let n = random.intRange(0, 10);
+            this.assertTrue(n >= 0);
+            this.assertTrue(n < 10);
+        }
+    }
+
+    @test
+    func floatBounds(): void {
+        random.seed(11);
+        for (int i = 0; i < 100; i++) {
+            let f = random.float();
+            this.assertTrue(f >= 0.0f);
+            this.assertTrue(f < 1.0f);
+        }
+    }
+
+    @test
+    func boolMix(): void {
+        random.seed(3);
+        int trues = 0;
+        int falses = 0;
+        for (int i = 0; i < 1000; i++) {
+            if (random.bool()) {
+                trues = trues + 1;
+            } else {
+                falses = falses + 1;
+            }
+        }
+        # Both buckets should be non-empty in 1000 tosses.
+        this.assertTrue(trues > 0);
+        this.assertTrue(falses > 0);
+    }
+
+    @test
+    func choicePicksFromList(): void {
+        let xs = [10, 20, 30];
+        random.seed(5);
+        for (int i = 0; i < 50; i++) {
+            let pick = random.choice(xs);
+            this.assertContains(xs, pick);
+        }
+    }
+
+    @test
+    func shuffleSamePermutation(): void {
+        let xs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        random.seed(13);
+        let a = random.shuffle(xs);
+        random.seed(13);
+        let b = random.shuffle(xs);
+        this.assertEquals(a, b);
+        this.assertEquals(xs.length(), a.length());
+    }
+
+    @test
+    func generatorIsolation(): void {
+        # Two generators with the same seed produce the same stream.
+        let g1 = random.Generator(99);
+        let g2 = random.Generator(99);
+        for (int i = 0; i < 20; i++) {
+            this.assertEquals(random.intRange(g1, 0, 1000), random.intRange(g2, 0, 1000));
+        }
+        # Different seeds diverge.
+        let h1 = random.Generator(99);
+        let h2 = random.Generator(100);
+        let any_differ = false;
+        for (int i = 0; i < 20; i++) {
+            if (random.intRange(h1, 0, 1000) != random.intRange(h2, 0, 1000)) {
+                any_differ = true;
+            }
+        }
+        this.assertTrue(any_differ);
+    }
+}

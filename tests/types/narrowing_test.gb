@@ -1,0 +1,61 @@
+/**
+ * @title Type narrowing test
+ * @summary Flow-sensitive null narrowing, instanceof narrowing, while narrowing.
+ */
+import test;
+
+class Animal {
+    string name;
+    func Animal(string name) { this.name = name; }
+}
+
+class Dog extends Animal {
+    func Dog(string name) { parent(name); }
+    func bark(): string { return "woof"; }
+}
+
+class NarrowingTest extends test.Test {
+    @test
+    func nullNarrowingAfterIf(): void {
+        ?string maybe = "hello";
+        if (maybe != null) {
+            this.assertEquals(5, maybe.length());
+        }
+    }
+
+    @test
+    func guardPatternNarrowing(): void {
+        ?string maybe = "world";
+        if (maybe == null) {
+            this.fail("expected non-null");
+            return;
+        }
+        # narrowed for the remainder of the block
+        this.assertEquals(5, maybe.length());
+    }
+
+    @test
+    func instanceofNarrowing(): void {
+        Animal a = Dog("Rex");
+        if (a instanceof Dog) {
+            this.assertEquals("woof", a.bark());
+        } else {
+            this.fail("expected Dog");
+        }
+    }
+
+    @test
+    func whileLoopNarrowing(): void {
+        ?int n = 5;
+        int sum = 0;
+        while (n != null) {
+            sum = sum + n;
+            if (n == 1) {
+                n = null;
+            } else {
+                n = n - 1;
+            }
+        }
+        this.assertEquals(15, sum);
+    }
+}

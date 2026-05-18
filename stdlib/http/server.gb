@@ -1,0 +1,141 @@
+module http.server;
+
+import encoding;
+import http;
+import io;
+import path;
+import sys;
+import url;
+
+func contentType(string filePath): string {
+    string ext = path.ext(filePath).lower();
+    if (ext == ".html" || ext == ".htm") {
+        return "text/html; charset=utf-8";
+    }
+    if (ext == ".css") {
+        return "text/css; charset=utf-8";
+    }
+    if (ext == ".js" || ext == ".mjs") {
+        return "text/javascript; charset=utf-8";
+    }
+    if (ext == ".json") {
+        return "application/json; charset=utf-8";
+    }
+    if (ext == ".txt" || ext == ".md") {
+        return "text/plain; charset=utf-8";
+    }
+    if (ext == ".svg") {
+        return "image/svg+xml";
+    }
+    if (ext == ".png") {
+        return "image/png";
+    }
+    if (ext == ".jpg" || ext == ".jpeg") {
+        return "image/jpeg";
+    }
+    if (ext == ".gif") {
+        return "image/gif";
+    }
+    if (ext == ".wasm") {
+        return "application/wasm";
+    }
+    return "application/octet-stream";
+}
+
+func requestPath(dict<string, any> request): string {
+    string raw = request["path"] as string;
+    if (raw.contains("?")) {
+        let parts = raw.split("?");
+        raw = parts[0] as string;
+    }
+    if (raw.startsWith("/")) {
+        raw = raw[1..];
+    }
+    if (raw.isEmpty()) {
+        return ".";
+    }
+    string cleaned = path.clean(url.decode(raw));
+    if (cleaned == ".") {
+        return ".";
+    }
+    if (cleaned.startsWith("/") || cleaned == ".." || cleaned.startsWith("../")) {
+        return "";
+    }
+    return cleaned;
+}
+
+func textResponse(int status, string body): dict<string, any> {
+    return {
+        "status": status,
+        "headers": {"Content-Type": "text/plain; charset=utf-8"},
+        "body": body
+    };
+}
+
+func htmlResponse(string body): dict<string, any> {
+    return {
+        "status": 200,
+        "headers": {"Content-Type": "text/html; charset=utf-8"},
+        "body": body
+    };
+}
+
+func fileResponse(string filePath): dict<string, any> {
+    return {
+        "status": 200,
+        "headers": {"Content-Type": contentType(filePath)},
+        "body": io.readBytes(filePath)
+    };
+}
+
+func directoryListing(string requestPath, string directory): dict<string, any> {
+    string prefix = requestPath;
+    if (prefix.isEmpty() || prefix == ".") {
+        prefix = "/";
+    }
+    if (!prefix.endsWith("/")) {
+        prefix = prefix + "/";
+    }
+    string body = "<!doctype html><meta charset=\"utf-8\"><title>Directory listing</title><h1>Directory listing</h1><ul>";
+    for (name in io.listDir(directory)) {
+        string item = name as string;
+        string href = prefix + item;
+        body = body + "<li><a href=\"" + encoding.htmlEscape(href) + "\">" + encoding.htmlEscape(item) + "</a></li>";
+    }
+    return htmlResponse(body + "</ul>");
+}
+
+export func handle(dict<string, any> request): dict<string, any> {
+    string relative = requestPath(request);
+    if (relative.isEmpty()) {
+        return textResponse(403, "forbidden\n");
+    }
+    string target = path.join(sys.cwd(), relative);
+    if (!io.exists(target)) {
+        return textResponse(404, "not found\n");
+    }
+    let info = io.stat(target);
+    if (info["isDir"] as bool) {
+        string index = path.join(target, "index.html");
+        if (io.exists(index)) {
+            return fileResponse(index);
+        }
+        return directoryListing(relative, target);
+    }
+    return fileResponse(target);
+}
+
+export func main(list<string> args): int {
+    string port = "8000";
+    if (args.length() > 0) {
+        if ((args[0] as string) == "--help") {
+            io.println("usage: geblang -m http.server [port]");
+            return 0;
+        }
+        port = args[0] as string;
+    }
+    string address = "127.0.0.1:" + port;
+    io.println("Serving " + sys.cwd() + " on http://" + address);
+    http.serve(address, handle);
+    return 0;
+}

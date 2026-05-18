@@ -1,0 +1,48 @@
+/**
+ * @title Strings stdlib test
+ * @summary String methods: split, join, replace, contains, length, etc.
+ */
+import test;
+
+class StringsTest extends test.Test {
+    @test
+    func split(): void {
+        let parts = "a,b,c".split(",");
+        this.assertEquals(["a", "b", "c"], parts);
+    }
+
+    @test
+    func listJoin(): void {
+        # join() is on lists, taking the separator.
+        let parts = ["a", "b", "c"];
+        this.assertEquals("a-b-c", parts.join("-"));
+    }
+
+    @test
+    func replace(): void {
+        this.assertEquals("foo BAR baz BAR", "foo bar baz bar".replace("bar", "BAR"));
+    }
+
+    @test
+    func caseConversion(): void {
+        this.assertEquals("HELLO", "hello".upper());
+        this.assertEquals("hello", "Hello".lower());
+    }
+
+    @test
+    func trim(): void {
+        this.assertEquals("hello", "  hello  ".trim());
+    }
+
+    @test
+    func containsAndPrefixSuffix(): void {
+        this.assertTrue("hello world".contains("world"));
+        this.assertTrue("hello world".startsWith("hello"));
+        this.assertTrue("hello world".endsWith("world"));
+    }
+
+    @test
+    func substring(): void {
+        this.assertEquals("ello", "hello".substring(1, 5));
+    }
+}

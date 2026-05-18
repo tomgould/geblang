@@ -1,0 +1,44 @@
+/**
+ * @title Mysql Db
+ * @summary Demonstrates mysql db in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import sys;
+import db;
+
+let dsn = sys.getenv("GEBLANG_MYSQL_DSN");
+if (dsn == null) {
+    io.println("skip: set GEBLANG_MYSQL_DSN to run the MySQL/MariaDB database example");
+    sys.exit(0);
+}
+
+let conn = db.Connection("mysql", dsn as string);
+defer conn.close();
+
+conn.exec(
+    "create table if not exists geblang_example_users (name varchar(100), email varchar(255) primary key)"
+);
+
+conn.exec(
+    "delete from geblang_example_users where email = :email",
+    {"email": "ada@example.com"}
+);
+
+conn.exec(
+    "insert into geblang_example_users (name, email) values (:name, :email)",
+    {"name": "Ada", "email": "ada@example.com"}
+);
+
+let rows = conn.query(
+    "select name from geblang_example_users where email = :email",
+    {"email": "ada@example.com"}
+);
+defer rows.close();
+io.println(rows.first()["name"]);
+
+let stmt = conn.prepare("select email from geblang_example_users where name = :name");
+let prepared = stmt.query({"name": "Ada"});
+defer prepared.close();
+io.println(prepared.first()["email"]);
+stmt.close();

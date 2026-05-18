@@ -1,0 +1,118 @@
+module web.middleware;
+
+import log;
+import secrets;
+import web.http as http;
+
+export class CorsMiddleware {
+    string origin;
+    string methods;
+    string headers;
+    bool credentials;
+
+    func CorsMiddleware(string origin, string methods, string headers, bool credentials) {
+        this.origin = origin;
+        this.methods = methods;
+        this.headers = headers;
+        this.credentials = credentials;
+    }
+
+    func __invoke(dict<string, any> request, dict<string, any> response): dict<string, any> {
+        response = http.withHeader(response, "Access-Control-Allow-Origin", this.origin);
+        response = http.withHeader(response, "Access-Control-Allow-Methods", this.methods);
+        response = http.withHeader(response, "Access-Control-Allow-Headers", this.headers);
+        if (this.credentials) {
+            response = http.withHeader(response, "Access-Control-Allow-Credentials", "true");
+        }
+        return response;
+    }
+}
+
+export class SecurityHeadersMiddleware {
+    dict<string, any> headers;
+
+    func SecurityHeadersMiddleware(dict<string, any> headers) {
+        this.headers = headers;
+    }
+
+    func __invoke(dict<string, any> request, dict<string, any> response): dict<string, any> {
+        for (name, value in this.headers.items()) {
+            response = http.withHeader(response, name as string, value as string);
+        }
+        return response;
+    }
+}
+
+export class RequestIdMiddleware {
+    string headerName;
+
+    func RequestIdMiddleware(string headerName) {
+        this.headerName = headerName;
+    }
+
+    func __invoke(dict<string, any> request, dict<string, any> response): dict<string, any> {
+        let req = http.requestObject(request);
+        string id = req.header(this.headerName);
+        if (id.isEmpty()) {
+            id = secrets.randomHex(16);
+        }
+        return http.withHeader(response, this.headerName, id);
+    }
+}
+
+export class AccessLogMiddleware {
+    any logger;
+
+    func AccessLogMiddleware(any logger) {
+        this.logger = logger;
+    }
+
+    func __invoke(dict<string, any> request, dict<string, any> response): dict<string, any> {
+        let req = http.requestObject(request);
+        log.info(this.logger, "http request", {
+            "method": req.method(),
+            "path": req.path(),
+            "status": http.statusCode(response)
+        });
+        return response;
+    }
+}
+
+## Adds CORS response headers.
+export func cors(string origin, string methods, string headers): callable {
+    return CorsMiddleware(origin, methods, headers, false);
+}
+
+## Adds CORS response headers and allows credentials.
+export func corsCredentials(string origin, string methods, string headers): callable {
+    return CorsMiddleware(origin, methods, headers, true);
+}
+
+## Adds a conservative set of browser security response headers.
+export func securityHeaders(): callable {
+    return SecurityHeadersMiddleware({
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "strict-origin-when-cross-origin"
+    });
+}
+
+## Adds custom response headers.
+export func headers(dict<string, any> values): callable {
+    return SecurityHeadersMiddleware(values);
+}
+
+## Adds or propagates an X-Request-ID response header.
+export func requestId(): callable {
+    return RequestIdMiddleware("X-Request-ID");
+}
+
+## Adds or propagates a response header for the supplied request ID header name.
+export func requestIdHeader(string name): callable {
+    return RequestIdMiddleware(name);
+}
+
+## Logs method, path, and status after a response is produced.
+export func accessLog(any logger): callable {
+    return AccessLogMiddleware(logger);
+}

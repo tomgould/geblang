@@ -1,0 +1,20 @@
+/**
+ * @title Process
+ * @summary Demonstrates process in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import sys;
+
+let result = sys.run("printf", "hello from process");
+
+io.println(result["code"]);
+io.println(result["stdout"]);
+io.println(result["stderr"] == "");
+
+let shell = sys.shell("printf shell");
+io.println(shell["stdout"]);
+
+let proc = sys.start("printf", "started");
+io.println(sys.processReadStdout(proc));
+io.println(sys.processWait(proc));

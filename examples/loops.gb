@@ -1,0 +1,37 @@
+/**
+ * @title Loops
+ * @summary Demonstrates loops in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+int total = 0;
+
+for (int i = 0; i < 4; i++) {
+    total = total + i;
+}
+io.println(total);
+
+total = 0;
+for (i in 1..5 by 2) {
+    total = total + i;
+}
+io.println(total);
+
+let nums = [2, 4, 6];
+total = 0;
+for (n in nums) {
+    total = total + n;
+}
+io.println(total);
+
+for (int i = 0; i < nums.length(); i++) {
+    io.println("${i}: ${nums[i]}");
+}
+
+let data = {"a": 2, "b": 3};
+total = 0;
+for (key, value in data.items()) {
+    total = total + value;
+}
+io.println(total);

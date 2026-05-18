@@ -1,0 +1,48 @@
+/**
+ * @title async.rate debounce test
+ * @summary rate.debounce delays invocation until quiet window elapses.
+ */
+import test;
+import async;
+import async.rate as rate;
+import time;
+
+class DebounceTest extends test.Test {
+    @test
+    func onlyLastCallFiresAfterQuietWindow(): void {
+        int calls = 0;
+        any lastValue = null;
+        let work = func(int x): int {
+            calls = calls + 1;
+            lastValue = x;
+            return x;
+        };
+        let debounced = rate.debounce(work, 30);
+
+        # Fire three calls in quick succession; only the last should run.
+        let t1 = debounced(1);
+        let t2 = debounced(2);
+        let t3 = debounced(3);
+        # First two tasks will resolve to null (superseded).
+        async.await(t1);
+        async.await(t2);
+        async.await(t3);
+        this.assertEquals(1, calls);
+        this.assertEquals(3, lastValue);
+    }
+
+    @test
+    func separateCallsAfterQuietRunIndependently(): void {
+        int calls = 0;
+        let work = func(int x): int {
+            calls = calls + 1;
+            return x;
+        };
+        let debounced = rate.debounce(work, 20);
+
+        async.await(debounced(1));
+        time.sleep(30);
+        async.await(debounced(2));
+        this.assertEquals(2, calls);
+    }
+}

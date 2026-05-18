@@ -1,0 +1,12 @@
+/**
+ * @title Source Stdlib
+ * @summary Demonstrates source stdlib in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import testing.assertions as assertions;
+
+io.println(assertions.contains("Geblang", "lang"));
+io.println(assertions.startsWith("Geblang", "Geb"));
+io.println(assertions.endsWith("Geblang", "lang"));
+io.println(assertions.isBlank("   "));

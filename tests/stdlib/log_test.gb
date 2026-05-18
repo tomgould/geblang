@@ -1,0 +1,36 @@
+/**
+ * @title Logger shorthand test
+ * @summary `log.info("msg")` form uses a default stderr logger; the
+ * `(logger, msg, fields)` form continues to work.
+ */
+import test;
+import log;
+
+class LogTest extends test.Test {
+    @test
+    func shorthandWritesToStderr(): void {
+        # We can't easily intercept stderr from inside a test, but we can
+        # at least verify the calls don't error out.
+        log.info("info message");
+        log.warn("warn message");
+        log.error("error message");
+        log.debug("debug message");
+        this.assertTrue(true);
+    }
+
+    @test
+    func shorthandWithFields(): void {
+        log.error("with fields", {"code": 500, "ctx": "test"});
+        log.info("with int field", {"count": 42});
+        this.assertTrue(true);
+    }
+
+    @test
+    func longFormStillWorks(): void {
+        let stream = log.stdout();
+        log.info(stream, "via handle");
+        log.warn(stream, "via handle warning", {"k": "v"});
+        log.close(stream);
+        this.assertTrue(true);
+    }
+}

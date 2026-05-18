@@ -1,0 +1,16 @@
+/**
+ * @title Network
+ * @summary Demonstrates network in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import net;
+
+let addr = net.joinHostPort("127.0.0.1", "8080");
+let parts = net.splitHostPort(addr);
+let hosts = net.lookupHost("localhost");
+
+io.println(addr);
+io.println(parts["host"]);
+io.println(parts["port"]);
+io.println(hosts.length() > 0);

@@ -1,0 +1,171 @@
+module time.scheduler;
+
+import async;
+
+## A one-shot timer that runs `fn` once after `ms` milliseconds.
+##
+## The callback runs on an async task. The timer can be cancelled before
+## it fires with `timer.cancel()`. After the timer fires (or is
+## cancelled), `timer.done` is `true`.
+##
+## ```gb
+## import time.scheduler as sched;
+## import io;
+##
+## let t = sched.Timer(500, func(): void {
+##     io.println("fired");
+## });
+## # ... do other work ...
+## await t.wait();
+## ```
+export class Timer {
+    int ms;
+    func cb;
+    Task task;
+    bool fired;
+
+    func Timer(int ms, func cb) {
+        this.ms = ms;
+        this.cb = cb;
+        this.fired = false;
+        this.task = async.run(func(): any {
+            async.await(async.sleep(this.ms));
+            if (!this.task.cancelled) {
+                this.fired = true;
+                let fn = this.cb;
+                fn();
+            }
+            return null;
+        });
+    }
+
+    ## Cancels the timer. If it has not yet fired, the callback will not run.
+    func cancel(): void {
+        this.task.cancel();
+    }
+
+    ## Returns a Task that resolves once the timer fires or is cancelled.
+    func wait(): Task<any> {
+        return this.task;
+    }
+
+    ## True once the callback has run (false if cancelled before firing).
+    func didFire(): bool {
+        return this.fired;
+    }
+}
+
+## A repeating ticker that runs `fn` every `ms` milliseconds.
+##
+## The first invocation happens after the first `ms`-millisecond delay
+## (not immediately). The ticker runs until `ticker.stop()` is called.
+## After stopping, `ticker.ticks()` reports how many times `fn` ran.
+##
+## ```gb
+## import time.scheduler as sched;
+## import io;
+##
+## let ticker = sched.Ticker(100, func(): void {
+##     io.println("tick");
+## });
+## await async.sleep(350);
+## ticker.stop();
+## io.println("fired " + (ticker.ticks() as string) + " times");
+## ```
+export class Ticker {
+    int ms;
+    func cb;
+    Task task;
+    int count;
+    bool stopped;
+
+    func Ticker(int ms, func cb) {
+        this.ms = ms;
+        this.cb = cb;
+        this.count = 0;
+        this.stopped = false;
+        this.task = async.run(func(): any {
+            while (!this.stopped) {
+                async.await(async.sleep(this.ms));
+                if (this.stopped || this.task.cancelled) {
+                    break;
+                }
+                this.count = this.count + 1;
+                let fn = this.cb;
+                fn();
+            }
+            return null;
+        });
+    }
+
+    ## Stops the ticker. Any in-flight tick completes; no further ticks fire.
+    func stop(): void {
+        this.stopped = true;
+        this.task.cancel();
+    }
+
+    ## How many times the callback has run so far.
+    func ticks(): int {
+        return this.count;
+    }
+
+    ## Returns a Task that resolves once the ticker is stopped.
+    func wait(): Task<any> {
+        return this.task;
+    }
+}
+
+## Convenience: like `Ticker(ms, fn)` but also runs `fn` once
+## immediately, before starting the interval timer.
+##
+## Use this for poll-on-startup-then-keep-polling patterns where you do
+## not want to wait an entire interval for the first run.
+##
+## ```gb
+## let poll = sched.Interval(60000, func(): void {
+##     refreshConfig();
+## });
+## # ...
+## poll.stop();
+## ```
+export class Interval {
+    Ticker inner;
+
+    func Interval(int ms, func cb) {
+        let first = cb;
+        first();
+        this.inner = Ticker(ms, cb);
+    }
+
+    func stop(): void {
+        this.inner.stop();
+    }
+
+    func ticks(): int {
+        return this.inner.ticks();
+    }
+
+    func wait(): Task<any> {
+        return this.inner.wait();
+    }
+}
+
+## Helper: run `fn` once after `ms` milliseconds. Returns the Timer so
+## the caller can cancel if needed.
+##
+## ```gb
+## let t = sched.setTimeout(1000, func(): void { io.println("hi"); });
+## ```
+export func setTimeout(int ms, func fn): Timer {
+    return Timer(ms, fn);
+}
+
+## Helper: run `fn` every `ms` milliseconds. Returns the Ticker so the
+## caller can stop it.
+##
+## ```gb
+## let t = sched.setInterval(1000, func(): void { tick(); });
+## ```
+export func setInterval(int ms, func fn): Ticker {
+    return Ticker(ms, fn);
+}

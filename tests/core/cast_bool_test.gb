@@ -1,0 +1,46 @@
+/**
+ * @title Numeric cast-to-bool test
+ * @summary `n as bool` is true for non-zero, false for zero. Handles int,
+ * float, decimal, string ("true"/"false"), and null.
+ */
+import test;
+
+class CastBoolTest extends test.Test {
+    @test
+    func intToBool(): void {
+        this.assertTrue(1 as bool);
+        this.assertTrue(42 as bool);
+        this.assertTrue(-7 as bool);
+        this.assertFalse(0 as bool);
+    }
+
+    @test
+    func floatToBool(): void {
+        this.assertTrue(3.14f as bool);
+        this.assertTrue(-1.5f as bool);
+        this.assertFalse(0.0f as bool);
+    }
+
+    @test
+    func decimalToBool(): void {
+        this.assertTrue(3.14 as bool);
+        this.assertFalse(0.0 as bool);
+    }
+
+    @test
+    func stringToBool(): void {
+        this.assertTrue("true" as bool);
+        this.assertFalse("false" as bool);
+    }
+
+    @test
+    func nullToBool(): void {
+        this.assertFalse(null as bool);
+    }
+
+    @test
+    func boolIdentity(): void {
+        this.assertTrue(true as bool);
+        this.assertFalse(false as bool);
+    }
+}

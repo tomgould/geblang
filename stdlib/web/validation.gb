@@ -1,0 +1,85 @@
+module web.validation;
+
+import schema;
+import web.http as http;
+
+## Builds an object schema from property rules and a required-field list.
+export func object(dict<string, any> properties, list<any> required): dict<string, any> {
+    return {"type": "object", "properties": properties, "required": required};
+}
+
+## Builds a string field schema.
+export func stringField(): dict<string, any> {
+    return {"type": "string"};
+}
+
+## Builds an integer field schema.
+export func intField(): dict<string, any> {
+    return {"type": "int"};
+}
+
+## Builds a numeric field schema accepting int, decimal, or float.
+export func numberField(): dict<string, any> {
+    return {"type": "number"};
+}
+
+## Builds a boolean field schema.
+export func boolField(): dict<string, any> {
+    return {"type": "bool"};
+}
+
+## Builds an array/list field schema.
+export func arrayOf(dict<string, any> itemSchema): dict<string, any> {
+    return {"type": "array", "items": itemSchema};
+}
+
+## Builds a field schema constrained to a fixed list of values.
+export func enumOf(list<any> values): dict<string, any> {
+    return {"enum": values};
+}
+
+func result(dict<string, any> data, dict<string, any> validation): dict<string, any> {
+    return {"valid": validation["valid"], "errors": validation["errors"], "data": data};
+}
+
+## Validates an arbitrary dictionary and includes the input data in the result.
+export func validate(dict<string, any> data, dict<string, any> rules): dict<string, any> {
+    return result(data, schema.validate(data, rules));
+}
+
+## Validates a request JSON body and includes parsed data in the result.
+export func json(dict<string, any> request, dict<string, any> rules): dict<string, any> {
+    let data = http.requestObject(request).jsonBody();
+    return validate(data, rules);
+}
+
+## Validates a request form body and includes parsed data in the result.
+export func form(dict<string, any> request, dict<string, any> rules): dict<string, any> {
+    let data = http.requestObject(request).form();
+    return validate(data, rules);
+}
+
+## Returns true when a validation result is valid.
+export func isValid(dict<string, any> validation): bool {
+    return validation["valid"] as bool;
+}
+
+## Returns validation errors from a validation result.
+export func errors(dict<string, any> validation): list<any> {
+    return validation["errors"] as list<any>;
+}
+
+## Returns validated data from a validation result.
+export func data(dict<string, any> validation): dict<string, any> {
+    return validation["data"] as dict<string, any>;
+}
+
+## Builds a JSON validation error response with an explicit status.
+export func errorResponseStatus(dict<string, any> validation, int status): dict<string, any> {
+    return http.jsonStatus({"error": "validation failed", "errors": errors(validation)}, status);
+}
+
+## Builds a JSON validation error response, defaulting to HTTP 422.
+export func errorResponse(dict<string, any> validation): dict<string, any> {
+    return errorResponseStatus(validation, 422);
+}

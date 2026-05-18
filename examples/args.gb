@@ -1,0 +1,14 @@
+/**
+ * @title Args
+ * @summary Demonstrates args in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import sys;
+
+let args = sys.args();
+
+io.println(args.length());
+if (args.length() > 0) {
+    io.println(args[0]);
+}

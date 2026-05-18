@@ -1,0 +1,18 @@
+/**
+ * @title Overloaded Functions
+ * @summary Uses overloads to keep one public function name while accepting different typed inputs.
+ * @category Language
+ * @description This example demonstrates ordinary argument-based overload resolution for two concrete types.
+ */
+import io;
+
+func describe(string value): string {
+    return "string: " + value;
+}
+
+func describe(int value): string {
+    return "int: " + (value as string);
+}
+
+io.println(describe("Geblang"));
+io.println(describe(42));

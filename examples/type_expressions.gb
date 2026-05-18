@@ -1,0 +1,35 @@
+/**
+ * @title Type Expressions
+ * @summary Demonstrates type expressions in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+# typeof(x) returns a Type value that can be compared directly with
+# built-in type names or class names.
+
+io.println(typeof(42) == int);       # true
+io.println(typeof("hi") == string);  # true
+io.println(typeof(true) == bool);    # true
+io.println(typeof(3.14) == decimal); # true
+io.println(int == typeof(42));       # symmetric
+
+# .type is a shorthand for typeof
+io.println(42.type == int);          # true
+io.println("hi".type == string);     # true
+io.println(string.type);             # string
+
+# Works with user-defined classes
+class Animal {}
+class Dog extends Animal {}
+
+Dog d = Dog();
+io.println(typeof(d) == Dog);        # true
+io.println(typeof(d) == Animal);     # false (exact match, use instanceof for hierarchy)
+io.println(d instanceof Animal);     # true
+
+io.println(d.type == Dog);           # true
+io.println(Dog.type);                # Dog
+
+# typeof returns "Type" for Type values themselves
+io.println(typeof(typeof("x")));     # Type

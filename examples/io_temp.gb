@@ -1,0 +1,24 @@
+/**
+ * @title Io Temp
+ * @summary Demonstrates io temp in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+let file = io.tempFile("geb-example-*.txt");
+io.writeText(file, "temporary data");
+io.println(io.readText(file));
+io.remove(file);
+
+let syncFile = io.tempFile("geb-sync-*.txt");
+let handle = io.open(syncFile, "w");
+io.write(handle, "sync data");
+io.flush(handle);
+io.sync(handle);
+io.dataSync(handle);
+io.close(handle);
+io.remove(syncFile);
+
+let dir = io.tempDir("geb-example-*");
+io.println(io.exists(dir));
+io.remove(dir);

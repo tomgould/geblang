@@ -1,0 +1,46 @@
+/**
+ * @title Destructors
+ * @summary `func ~ClassName()` declares an end-of-lifetime cleanup
+ *          method. The runtime invokes it at program exit or via
+ *          an explicit `del x;` statement.
+ * @category Classes
+ */
+import io;
+
+class Greeter {
+    string name;
+
+    func Greeter(string n) {
+        this.name = n;
+        io.println("opened " + n);
+    }
+
+    func ~Greeter() {
+        io.println("closed " + this.name);
+    }
+}
+
+/* The runtime tracks every Greeter instance with a destructor and
+ * fires `~Greeter` for each one when the program exits, in reverse
+ * creation order. */
+let alice = Greeter("alice");
+let bob = Greeter("bob");
+io.println("middle");
+/* Output continues with:
+ *   closed bob
+ *   closed alice
+ */
+
+/* `del x;` invokes the destructor inline and retires the binding.
+ * The semantic analyzer rejects any reference to `x` after this
+ * point; a fresh `let x = ...;` re-introduces the name. */
+let c = Greeter("charlie");
+io.println("before del");
+del c;
+io.println("after del");
+/* Inserts into the output:
+ *   opened charlie
+ *   before del
+ *   closed charlie
+ *   after del
+ */

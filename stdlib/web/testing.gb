@@ -1,0 +1,53 @@
+module web.testing;
+
+import web.http as http;
+import web.router as router;
+
+## Small test client for dispatching request dictionaries through a router.
+export class Client {
+    dict<string, any> app;
+
+    func Client(dict<string, any> app) {
+        this.app = app;
+    }
+
+    func request(string method, string path): dict<string, any> {
+        return router.handle(this.app, http.request(method, path));
+    }
+
+    func requestWithBody(string method, string path, any body): dict<string, any> {
+        return router.handle(this.app, http.requestWithBody(method, path, body));
+    }
+
+    func get(string path): dict<string, any> {
+        return this.request("GET", path);
+    }
+
+    func post(string path, any body): dict<string, any> {
+        return this.requestWithBody("POST", path, body);
+    }
+}
+
+## Creates a test client for a router dictionary.
+export func client(dict<string, any> app): Client {
+    return Client(app);
+}
+
+## Returns true when a response has the expected status code.
+export func hasStatus(dict<string, any> response, int status): bool {
+    return (response["status"] as int) == status;
+}
+
+## Returns true when a response header exactly matches a value.
+export func hasHeader(dict<string, any> response, string name, string value): bool {
+    if (!response.hasKey("headers") || !(response["headers"] instanceof dict)) {
+        return false;
+    }
+    let headers = response["headers"] as dict<string, any>;
+    return headers.hasKey(name) && (headers[name] as string) == value;
+}
+
+## Returns true when a response body exactly matches a value.
+export func hasBody(dict<string, any> response, any body): bool {
+    return response["body"] == body;
+}

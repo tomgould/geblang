@@ -1,0 +1,17 @@
+/**
+ * @title Io Sys
+ * @summary Demonstrates io sys in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import sys;
+
+let path = "/tmp/geblang-example.txt";
+io.writeText(path, "hello");
+
+io.println(io.exists(path));
+io.println(io.readText(path));
+io.println(sys.cwd().length() > 0);
+
+sys.setenv("GEBLANG_EXAMPLE", "ok");
+io.println(sys.getenv("GEBLANG_EXAMPLE"));

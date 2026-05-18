@@ -1,0 +1,82 @@
+module async.net;
+
+import async;
+import net;
+
+## Resolves a host name asynchronously.
+export func lookupHost(string host): Task<any> {
+    return async.run(func(): list<any> {
+        return net.lookupHost(host);
+    });
+}
+
+## Starts a TCP listener asynchronously.
+export func listenTcp(string address): Task<any> {
+    return async.run(func(): any {
+        return net.listenTcp(address);
+    });
+}
+
+## Opens a TCP connection asynchronously.
+export func connectTcp(string address): Task<any> {
+    return async.run(func(): any {
+        return net.connectTcp(address);
+    });
+}
+
+## Accepts the next TCP connection from a listener asynchronously.
+export func accept(any listener): Task<any> {
+    return async.run(func(): any {
+        return net.accept(listener);
+    });
+}
+
+## Reads from a network connection asynchronously.
+export func read(any conn, int size): Task<any> {
+    return async.run(func(): any {
+        return net.read(conn, size);
+    });
+}
+
+## Writes data to a network connection asynchronously.
+export func write(any conn, any data): Task<any> {
+    return async.run(func(): any {
+        return net.write(conn, data);
+    });
+}
+
+## Closes a network listener or connection asynchronously.
+export func close(any handle): Task<any> {
+    return async.run(func(): any {
+        net.close(handle);
+        return null;
+    });
+}
+
+## Starts a UDP listener asynchronously.
+export func listenUdp(string address): Task<any> {
+    return async.run(func(): any {
+        return net.listenUdp(address);
+    });
+}
+
+## Opens a UDP connection asynchronously.
+export func dialUdp(string address): Task<any> {
+    return async.run(func(): any {
+        return net.dialUdp(address);
+    });
+}
+
+## Reads a UDP datagram and sender address asynchronously.
+export func readFrom(any conn, int size): Task<any> {
+    return async.run(func(): any {
+        return net.readFrom(conn, size);
+    });
+}
+
+## Writes a UDP datagram to an address asynchronously.
+export func writeTo(any conn, any data, string address): Task<any> {
+    return async.run(func(): any {
+        return net.writeTo(conn, data, address);
+    });
+}

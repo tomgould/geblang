@@ -1,0 +1,21 @@
+/**
+ * @title Toml
+ * @summary Demonstrates toml in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import toml;
+
+let config = toml.parse("title = \"Geblang\"\n[server]\nport = 8080\n");
+io.println(config["title"]);
+io.println(config["server"]["port"]);
+
+let text = toml.stringify({
+    "title": "Geblang",
+    "server": {
+        "port": 8080,
+        "enabled": true
+    }
+});
+
+io.println(text.contains("[server]"));

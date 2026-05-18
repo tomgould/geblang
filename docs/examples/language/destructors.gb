@@ -1,0 +1,38 @@
+/**
+ * @title Destructors
+ * @summary `func ~ClassName()` declares an end-of-lifetime hook. The
+ *          runtime invokes it at program exit (LIFO sweep) or via
+ *          an explicit `del x;` statement, which retires the
+ *          binding and fires the destructor inline.
+ * @category Language
+ * @description Destructors are independent from `with`-blocks - they
+ *              fire when the object's lifetime ends, not when a
+ *              scope exits. Use `__exit__()` for scoped cleanup.
+ */
+import io;
+
+class Greeter {
+    string name;
+
+    func Greeter(string n) {
+        this.name = n;
+        io.println("opened " + n);
+    }
+
+    func ~Greeter() {
+        io.println("closed " + this.name);
+    }
+}
+
+let alice = Greeter("alice");
+let bob = Greeter("bob");
+io.println("middle");
+
+/* `del` invokes the destructor immediately and removes the binding.
+ * Subsequent references to `charlie` would be a static error. */
+let charlie = Greeter("charlie");
+del charlie;
+io.println("after del");
+
+/* At program exit, `alice` and `bob` are destroyed in reverse
+ * creation order (LIFO): bob first, then alice. */

@@ -1,0 +1,54 @@
+/**
+ * @title Generators test
+ * @summary yield, generator iteration, state preservation, early break.
+ */
+import test;
+
+func upTo(int max): generator<int> {
+    for (let int i = 1; i <= max; i++) {
+        yield i;
+    }
+}
+
+func infiniteNats(): generator<int> {
+    int n = 0;
+    while (true) {
+        yield n;
+        n++;
+    }
+}
+
+class GeneratorsTest extends test.Test {
+    @test
+    func collectAll(): void {
+        let collected = [];
+        for (n in upTo(3)) {
+            collected = collected.push(n);
+        }
+        this.assertEquals([1, 2, 3], collected);
+    }
+
+    @test
+    func earlyBreak(): void {
+        let collected = [];
+        for (n in upTo(10)) {
+            if (n > 3) {
+                break;
+            }
+            collected = collected.push(n);
+        }
+        this.assertEquals([1, 2, 3], collected);
+    }
+
+    @test
+    func infiniteWithBreak(): void {
+        int seen = 0;
+        for (n in infiniteNats()) {
+            seen = seen + 1;
+            if (seen >= 5) {
+                break;
+            }
+        }
+        this.assertEquals(5, seen);
+    }
+}

@@ -1,0 +1,6 @@
+.git
+.geblang-cache
+build
+docs/site
+geblang
+*.gbc

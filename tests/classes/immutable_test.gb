@@ -1,0 +1,52 @@
+/**
+ * @title Immutability test
+ * @summary @immutable decorator, freeze module, const auto-freeze, .copy().
+ */
+import test;
+import freeze;
+
+@immutable
+class Point {
+    int x;
+    int y;
+    func Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+class ImmutableTest extends test.Test {
+    @test
+    func cannotMutateImmutable(): void {
+        let p = Point(1, 2);
+        let threw = false;
+        try {
+            p.x = 99;
+        } catch (ImmutableError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func constCollectionIsFrozen(): void {
+        const xs = [1, 2, 3];
+        this.assertTrue(freeze.isFrozen(xs));
+    }
+
+    @test
+    func copyReturnsMutable(): void {
+        const xs = [1, 2, 3];
+        let copy = xs.copy();
+        this.assertFalse(freeze.isFrozen(copy));
+        copy = copy.push(4);
+        this.assertEquals(4, copy.length());
+    }
+
+    @test
+    func deepFreeze(): void {
+        let nested = [[1, 2], [3, 4]];
+        nested = freeze.deep(nested);
+        this.assertTrue(freeze.isFrozen(nested));
+    }
+}

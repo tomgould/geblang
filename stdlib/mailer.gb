@@ -1,0 +1,226 @@
+module mailer;
+
+import smtp;
+
+## File or in-memory attachment for an email message.
+export class Attachment {
+    string filename;
+    any content;
+    string path;
+    string contentType;
+    bool inline;
+    string contentId;
+
+    func Attachment(string filename, any content) {
+        this.filename = filename;
+        this.content = content;
+        this.path = "";
+        this.contentType = "application/octet-stream";
+        this.inline = false;
+        this.contentId = "";
+    }
+
+    func withContentType(string value): Attachment {
+        this.contentType = value;
+        return this;
+    }
+
+    func asInline(string cid): Attachment {
+        this.inline = true;
+        this.contentId = cid;
+        return this;
+    }
+
+    func toDict(): dict<string, any> {
+        dict<string, any> out = {
+            "filename": this.filename,
+            "contentType": this.contentType,
+            "inline": this.inline,
+            "contentId": this.contentId,
+        };
+        if (!this.path.isEmpty()) {
+            out["path"] = this.path;
+        } else {
+            out["content"] = this.content;
+        }
+        return out;
+    }
+}
+
+## Creates an attachment from a file path. The file is read when the message is sent or rendered.
+export func attachmentFromPath(string path, string contentType): Attachment {
+    let item = Attachment("", "");
+    item.path = path;
+    item.contentType = contentType;
+    return item;
+}
+
+## Email message with text, HTML, headers, and attachments.
+export class Message {
+    string from;
+    list<string> to;
+    list<string> cc;
+    list<string> bcc;
+    string replyTo;
+    string subject;
+    string text;
+    string html;
+    dict<string, any> headers;
+    list<Attachment> attachments;
+
+    func Message(string subject) {
+        this.from = "";
+        this.to = [];
+        this.cc = [];
+        this.bcc = [];
+        this.replyTo = "";
+        this.subject = subject;
+        this.text = "";
+        this.html = "";
+        this.headers = {};
+        this.attachments = [];
+    }
+
+    func fromAddress(string value): Message {
+        this.from = value;
+        return this;
+    }
+
+    func toAddress(string value): Message {
+        this.to = this.to.push(value);
+        return this;
+    }
+
+    func ccAddress(string value): Message {
+        this.cc = this.cc.push(value);
+        return this;
+    }
+
+    func bccAddress(string value): Message {
+        this.bcc = this.bcc.push(value);
+        return this;
+    }
+
+    func withReplyTo(string value): Message {
+        this.replyTo = value;
+        return this;
+    }
+
+    func withText(string value): Message {
+        this.text = value;
+        return this;
+    }
+
+    func withHtml(string value): Message {
+        this.html = value;
+        return this;
+    }
+
+    func withHeader(string name, string value): Message {
+        this.headers[name] = value;
+        return this;
+    }
+
+    func attach(Attachment attachment): Message {
+        this.attachments = this.attachments.push(attachment);
+        return this;
+    }
+
+    func toDict(): dict<string, any> {
+        list<any> files = [];
+        for (attachment in this.attachments) {
+            files = files.push((attachment as Attachment).toDict());
+        }
+        return {
+            "from": this.from,
+            "to": this.to,
+            "cc": this.cc,
+            "bcc": this.bcc,
+            "replyTo": this.replyTo,
+            "subject": this.subject,
+            "text": this.text,
+            "html": this.html,
+            "headers": this.headers,
+            "attachments": files,
+        };
+    }
+
+    func render(): string {
+        return smtp.message(this.toDict());
+    }
+}
+
+## SMTP transport configuration.
+export class SmtpTransport {
+    dict<string, any> config;
+
+    func SmtpTransport(string host, int port, string username, string password) {
+        this.config = {
+            "host": host,
+            "port": port,
+            "username": username,
+            "password": password,
+            "startTLS": true,
+            "tls": false,
+        };
+    }
+
+    func fromAddress(string value): SmtpTransport {
+        this.config["from"] = value;
+        return this;
+    }
+
+    func withStartTLS(bool enabled): SmtpTransport {
+        this.config["startTLS"] = enabled;
+        return this;
+    }
+
+    func withTLS(bool enabled): SmtpTransport {
+        this.config["tls"] = enabled;
+        if (enabled) {
+            this.config["startTLS"] = false;
+        }
+        return this;
+    }
+
+    func withHello(string value): SmtpTransport {
+        this.config["hello"] = value;
+        return this;
+    }
+
+    func allowInsecureTLS(bool enabled): SmtpTransport {
+        this.config["insecureSkipVerify"] = enabled;
+        return this;
+    }
+
+    func toDict(): dict<string, any> {
+        return this.config;
+    }
+}
+
+## Mailer sends messages through a configured SMTP transport.
+export class Mailer {
+    SmtpTransport transport;
+
+    func Mailer(SmtpTransport transport) {
+        this.transport = transport;
+    }
+
+    func send(Message message): dict<string, any> {
+        return smtp.send(this.transport.toDict(), message.toDict()) as dict<string, any>;
+    }
+
+    func render(Message message): string {
+        return smtp.message(message.toDict());
+    }
+}
+
+## Convenience constructor for SMTP transports.
+export func smtpTransport(string host, int port, string username, string password): SmtpTransport {
+    return SmtpTransport(host, port, username, password);
+}
+
+## Convenience constructor for a Mailer using SMTP.
+export func smtpMailer(string host, int port, string username, string password): Mailer {
+    return Mailer(smtpTransport(host, port, username, password));
+}

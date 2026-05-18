@@ -1,0 +1,80 @@
+/**
+ * @title Try/catch test
+ * @summary try/catch/finally, custom error classes, multi-catch.
+ */
+import test;
+
+class AppError extends Error {
+    func AppError(string msg) {
+        parent(msg);
+    }
+}
+
+class SubError extends AppError {
+    func SubError(string msg) {
+        parent(msg);
+    }
+}
+
+func boom(): int {
+    throw AppError("kaboom");
+}
+
+func subBoom(): int {
+    throw SubError("sub kaboom");
+}
+
+class TryCatchTest extends test.Test {
+    @test
+    func catchesCustom(): void {
+        let caught = false;
+        try {
+            boom();
+        } catch (AppError e) {
+            caught = true;
+            this.assertEquals("kaboom", e.message);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func finallyRunsOnError(): void {
+        int order = 0;
+        try {
+            try {
+                boom();
+            } finally {
+                order = 1;
+            }
+        } catch (AppError e) {
+            order = order + 10;
+        }
+        this.assertEquals(11, order);
+    }
+
+    @test
+    func subclassMatch(): void {
+        let caught = false;
+        try {
+            subBoom();
+        } catch (AppError e) {
+            caught = true;
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func rethrow(): void {
+        let rethrown = false;
+        try {
+            try {
+                boom();
+            } catch (AppError e) {
+                throw e;
+            }
+        } catch (Error e) {
+            rethrown = true;
+        }
+        this.assertTrue(rethrown);
+    }
+}

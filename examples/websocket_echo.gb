@@ -1,0 +1,33 @@
+/**
+ * @title Websocket Echo
+ * @summary Demonstrates websocket echo in a runnable Geblang example.
+ * @category General
+ */
+import http;
+import io;
+import web.router as router;
+import web.websocket as ws;
+
+let app = router.newRouter();
+
+router.get(app, "/ws", func(dict<string, any> request): dict<string, any> {
+    return ws.upgrade(func(ws.Connection conn): void {
+        let message = conn.readJson();
+        conn.sendJson({"echo": message["text"]});
+        conn.close();
+    });
+});
+
+let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+    return router.handle(app, request);
+});
+
+let addr = http.serverAddr(server);
+let conn = ws.connect("ws://" + addr + "/ws");
+conn.sendJson({"text": "hello"});
+let reply = conn.readJson();
+io.println(reply["echo"]);
+conn.close();
+
+http.shutdown(server, 1000);
+http.close(server);

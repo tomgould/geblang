@@ -1,0 +1,48 @@
+/**
+ * @title Primitive Methods
+ * @summary Demonstrates primitive methods in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+string text = "  Geblang  ";
+io.println(text.trim());
+io.println(text.trim().lower());
+io.println(text.trim().upper());
+io.println(text.contains("lang"));
+io.println(text.startsWith("  G"));
+io.println(text.endsWith("  "));
+io.println(text.replace(" ", "_", 2));
+io.println("a,b,c".split(",").length());
+io.println("héllo".indexOf("l"));
+
+int n = -7;
+io.println(n.abs());
+io.println(n.isNegative());
+io.println(n.toString());
+
+decimal d = -2.50;
+io.println(d.abs());
+io.println(d.isPositive());
+
+float f = -3.5f;
+io.println(f.abs());
+io.println(f.isInf());
+
+bool ok = true;
+io.println(ok.not());
+io.println(ok.toString());
+
+class KeywordMethods {
+    func bool(): string {
+        return "bool method";
+    }
+
+    func not(): string {
+        return "not method";
+    }
+}
+
+KeywordMethods keywords = KeywordMethods();
+io.println(keywords.bool());
+io.println(keywords.not());

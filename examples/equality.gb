@@ -1,0 +1,41 @@
+/**
+ * @title Equality
+ * @summary Demonstrates equality in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+class Point {
+    int x;
+    int y;
+
+    func Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
+class Tagged {
+    string tag;
+
+    func Tagged(string tag) {
+        this.tag = tag;
+    }
+
+    func __eq(any other): bool {
+        return other instanceof Tagged && this.tag == other.tag;
+    }
+}
+
+Point a = Point(1, 2);
+Point b = Point(1, 2);
+Point c = a;
+Tagged x = Tagged("a");
+Tagged y = Tagged("a");
+Tagged z = Tagged("b");
+
+io.println(a == b);
+io.println(a is b);
+io.println(a is c);
+io.println(x == y);
+io.println(x != z);

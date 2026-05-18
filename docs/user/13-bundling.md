@@ -1,0 +1,374 @@
+# Bundling And Standalone Executables
+
+`geblang build` produces a self-contained binary from a Geblang package. The
+resulting file runs on any machine with the same OS and architecture as the
+machine that built it. No Geblang installation, no stdlib directory, and no
+`geblang.yaml` manifest are required on the target machine.
+
+## How Bundling Works
+
+A Geblang bundle is a standard executable with a zip archive appended to it.
+
+```
+┌──────────────────────────────────────────────────┐
+│  geblang interpreter binary (ELF/Mach-O/PE)      │
+├──────────────────────────────────────────────────┤
+│  zip archive                                      │
+│    BUNDLE.json          manifest                  │
+│    src/app/main.gb      source files              │
+│    src/app/main.gbc     precompiled bytecode      │
+│    stdlib/collections.gb  bundled source stdlib   │
+│    stdlib/collections.gbc                         │
+│    ...                                            │
+├──────────────────────────────────────────────────┤
+│  8-byte zip size (little-endian uint64)           │
+│  4-byte magic: GEBX                               │
+└──────────────────────────────────────────────────┘
+```
+
+At startup the interpreter checks whether a 12-byte trailer is present and
+whether it contains the `GEBX` magic value. If so, it reads the zip, parses
+`BUNDLE.json`, and runs the bundled entry module instead of looking for
+command-line arguments.
+
+The zip archive is a standard zip file and can be inspected with `unzip -l` or
+any zip reader.
+
+## What Gets Bundled
+
+`geblang build` walks the import graph starting from the entry module and
+collects every non-native module it can reach:
+
+- **User source modules** are included under `src/` inside the zip.
+- **Imported package dependencies** declared in `geblang.yaml` are included
+  when they are installed under `vendor/<name>/` and reached by the import
+  graph.
+- **Source-stdlib modules** (Geblang-written standard library files) are
+  included under `stdlib/` inside the zip.
+- **Native modules** - Go-backed modules like `io`, `sys`, `collections`,
+  `http`, `db`, and so on - are part of the interpreter binary itself and are
+  not duplicated in the zip.
+
+Each collected source file is also compiled to bytecode and stored alongside it
+as a `.gbc` file. The precompiled bytecode is loaded directly into the
+interpreter's bytecode cache on first run, so the bundled program starts at
+full speed with no warm-up compilation step.
+
+Only imported modules are bundled. `geblang build` does not copy the entire
+package directory, the entire `vendor/` directory, test files, generated
+artifacts, or arbitrary assets. If a package dependency is declared but no
+module from that package is imported, it is not included in the bundle.
+
+## Package Layout
+
+A bundle is built from a Geblang package. The package needs:
+
+- A `geblang.yaml` manifest that declares the package name and source root.
+- At least one source module that exports a `main(list<string> args)` function
+  to serve as the entry point.
+
+Minimal package layout:
+
+```
+myapp/
+  geblang.yaml
+  src/
+    myapp/
+      main.gb
+```
+
+`geblang.yaml`:
+
+```yaml
+name: myapp
+source: src
+```
+
+`src/myapp/main.gb`:
+
+```gb
+module myapp.main;
+
+import io;
+import sys;
+
+export func main(list<string> args): void {
+    io.println("Hello from a bundled app!");
+}
+```
+
+The entry module name must match a `module` declaration that the package
+resolver can find. In this layout the canonical name is `myapp.main`.
+
+## Running geblang build
+
+```sh
+geblang build --entry <module.name> --out <output-path> [<package-dir>]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `--entry` | yes | Canonical name of the entry module (must export `main`) |
+| `--out` | yes | Path for the output binary |
+| `<package-dir>` | no | Package root directory (default: `.`) |
+
+Build the example package above:
+
+```sh
+geblang build --entry myapp.main --out ./dist/myapp ./myapp
+```
+
+Or from inside the package directory:
+
+```sh
+cd myapp
+geblang build --entry myapp.main --out ../dist/myapp
+```
+
+The output binary is set executable (`chmod 755`). On Unix you can run it
+directly:
+
+```sh
+./dist/myapp
+```
+
+Pass arguments to the bundled program the same way you would any other binary:
+
+```sh
+./dist/myapp --port 8080 --verbose
+```
+
+The argument list is forwarded to the entry module's `main` function via
+`sys.args()`.
+
+## Full Example: A CLI Tool
+
+Package layout:
+
+```
+greet/
+  geblang.yaml
+  src/
+    greet/
+      main.gb
+      formatter.gb
+```
+
+`geblang.yaml`:
+
+```yaml
+name: greet
+source: src
+```
+
+`src/greet/formatter.gb`:
+
+```gb
+module greet.formatter;
+
+export func format(string name): string {
+    return "Hello, " + name + "!";
+}
+```
+
+`src/greet/main.gb`:
+
+```gb
+module greet.main;
+
+import io;
+import sys;
+import greet.formatter as fmt;
+
+export func main(list<string> args): void {
+    if (args.length() == 0) {
+        io.println("Usage: greet <name>");
+        sys.exit(1);
+    }
+    io.println(fmt.format(args[0]));
+}
+```
+
+Build and run:
+
+```sh
+geblang build --entry greet.main --out ./greet-bin ./greet
+./greet-bin Ada
+# Hello, Ada!
+```
+
+Both `greet.main` and `greet.formatter` are discovered automatically by the
+import-graph walk and bundled together.
+
+## Bundling Package Dependencies
+
+Geblang's package installer places git dependencies under `vendor/`. Bundling
+uses the same package resolver as normal execution, so imported dependency
+modules are included automatically once they are installed.
+
+Example application manifest:
+
+```yaml
+name: webapp
+source: src
+dependencies:
+  authlib:
+    git: https://example.com/authlib.git
+    version: main
+```
+
+After running `geblang install`, the dependency is available at:
+
+```
+webapp/
+  geblang.yaml
+  src/
+    main.gb
+  vendor/
+    authlib/
+      geblang.yaml
+      src/
+        authlib/
+          tokens.gb
+```
+
+Application code can import it normally:
+
+```gb
+module webapp.main;
+
+import io;
+import authlib.tokens as tokens;
+
+export func main(list<string> args): void {
+    io.println(tokens.issue("ada"));
+}
+```
+
+Build the application:
+
+```sh
+geblang build --entry webapp.main --out ./webapp-bin ./webapp
+```
+
+The resulting executable contains `webapp.main`, `authlib.tokens`, any other
+non-native modules reached from those imports, and the source stdlib modules
+they need. The target machine does not need `vendor/`, `geblang.yaml`, or a
+separate Geblang installation.
+
+`geblang build` does not fetch missing dependencies. If `geblang.yaml` declares
+a git dependency and `vendor/<name>/` is absent, run `geblang install` before
+building.
+
+## Full Example: A Web Server
+
+```
+webapi/
+  geblang.yaml
+  src/
+    webapi/
+      main.gb
+      routes.gb
+```
+
+`geblang.yaml`:
+
+```yaml
+name: webapi
+source: src
+```
+
+`src/webapi/routes.gb`:
+
+```gb
+module webapi.routes;
+
+import web;
+
+export func register(web.Router router): void {
+    router.get("/", func(web.Request req, web.Response res): void {
+        res.json({"status": "ok"});
+    });
+}
+```
+
+`src/webapi/main.gb`:
+
+```gb
+module webapi.main;
+
+import io;
+import sys;
+import web;
+import webapi.routes as routes;
+
+export func main(list<string> args): void {
+    let port = args.length() > 0 ? args[0] : "8080";
+    let app = web.app();
+    routes.register(app.router());
+    io.println("Listening on :" + port);
+    app.listen(":" + port);
+}
+```
+
+Build a distributable API server:
+
+```sh
+geblang build --entry webapi.main --out ./webapi-server ./webapi
+./webapi-server 9000
+```
+
+## First-Run Extraction
+
+On the first invocation of a bundled binary, the zip is extracted to a
+temporary directory under the system temp path:
+
+```
+/tmp/geblang-<hash>/
+  src/
+    ...
+  stdlib/
+    ...
+```
+
+The directory name includes a SHA-256 hash of the zip contents, so different
+bundle versions use different directories and never collide. On subsequent runs,
+the extracted directory already exists and extraction is skipped - the startup
+overhead is paid only once.
+
+Precompiled bytecode is loaded into the interpreter's bytecode cache at
+extraction time so recompilation is avoided even after the cache directory is
+cleared.
+
+## Inspecting A Bundle
+
+Because the bundle is a valid zip appended to the binary, standard tools work:
+
+```sh
+# List bundled files
+unzip -l ./dist/myapp
+
+# Extract the source files manually
+unzip ./dist/myapp -d ./bundle-contents
+```
+
+`BUNDLE.json` inside the zip records the entry module name, the Geblang version
+the bundle was built with, and the canonical name, zip path, and source hash
+for every bundled module.
+
+## Limitations
+
+- **OS and architecture**: A bundle built on Linux/amd64 runs only on
+  Linux/amd64. Cross-compilation is not yet supported; build on the target
+  platform or use a cross-compilation container.
+- **No hot-reload**: Bundled source is extracted once and cached. Changes to
+  the original source files have no effect on a built bundle.
+- **Import-graph walking**: `geblang build` discovers modules by parsing import
+  statements statically. Dynamic module loading (using string variables as
+  import paths) is not currently traversed. Any module loaded this way must be
+  imported explicitly elsewhere in the package so it is included in the bundle.
+- **Vendored dependencies**: imported modules from installed package
+  dependencies are bundled, but unimported files under `vendor/` are not copied
+  wholesale.
+- **Native extensions**: Go-backed `ext.*` extensions are not bundled. They must
+  be present on the target machine alongside the bundle binary.

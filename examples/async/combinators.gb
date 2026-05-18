@@ -1,0 +1,48 @@
+import async;
+import io;
+
+# async.all - wait for every task; results returned in input order.
+let a = async.run(func(): int {
+    await async.sleep(30);
+    return 1;
+});
+let b = async.run(func(): int {
+    await async.sleep(60);
+    return 2;
+});
+let c = async.run(func(): int {
+    await async.sleep(10);
+    return 3;
+});
+
+let all = await async.all([a, b, c]);
+io.println(all);            # [1, 2, 3]
+
+# async.race - first finisher wins; losers cancelled.
+let fast = async.run(func(): string {
+    await async.sleep(25);
+    return "fast";
+});
+let slow = async.run(func(): string {
+    await async.sleep(200);
+    return "slow";
+});
+io.println(await async.race([fast, slow]));   # fast
+
+# explicit cancellation via task.cancel(); state is observable via task.cancelled
+let job = async.run(func(): int {
+    await async.sleep(1000);
+    return 0;
+});
+job.cancel();
+io.println(job.cancelled);            # true
+
+# async.timeout cancels a task that overruns its deadline and re-throws the
+# timeout as a runtime error when the wrapping task is awaited:
+#
+#   let lazy = async.run(func(): string {
+#       await async.sleep(500);
+#       return "never";
+#   });
+#   await async.timeout(lazy, 50);
+#       -> runtime error: async.timeout: task did not complete within 50ms

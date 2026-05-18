@@ -1,0 +1,16 @@
+/**
+ * @title Serde
+ * @summary Demonstrates serde in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import serde;
+
+let jsonData = serde.parse("json", "{\"name\":\"Ada\"}");
+io.println(jsonData["name"]);
+
+let yamlText = serde.stringify("yaml", {
+    "name": "Geblang",
+    "enabled": true
+});
+io.println(yamlText.contains("enabled: true"));

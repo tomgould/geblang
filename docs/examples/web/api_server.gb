@@ -1,0 +1,27 @@
+/**
+ * @title Minimal API Server
+ * @summary Serves JSON-like dictionaries from the built-in HTTP module.
+ * @category Web Applications
+ * @description This is the smallest useful API shape: a request handler receives a request dictionary and returns a response dictionary.
+ */
+import http;
+import io;
+
+func app(dict<string, any> request): dict<string, any> {
+    if (request["path"] == "/health") {
+        return {
+            "status": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": "{\"ok\":true}"
+        };
+    }
+
+    return {
+        "status": 404,
+        "headers": {"Content-Type": "application/json"},
+        "body": "{\"error\":\"not found\"}"
+    };
+}
+
+io.println("listening on http://127.0.0.1:8080");
+http.serve("127.0.0.1:8080", app);

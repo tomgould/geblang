@@ -1,0 +1,45 @@
+/**
+ * @title Regex test
+ * @summary re module: match, find, replace, split, test.
+ */
+import test;
+import re;
+
+class RegexTest extends test.Test {
+    @test
+    func match(): void {
+        let m = re.match('h(.+)o', "hello");
+        this.assertNotNull(m);
+    }
+
+    @test
+    func find(): void {
+        let result = re.find('\d+', "v1.2.3");
+        this.assertEquals("1", result);
+    }
+
+    @test
+    func findAll(): void {
+        let results = re.findAll('\d+', "v1.2.3");
+        this.assertEquals(["1", "2", "3"], results);
+    }
+
+    @test
+    func replace(): void {
+        # re.replace(pattern, replacement, text)
+        let out = re.replace('\d+', "*", "v1.2.3");
+        this.assertEquals("v*.*.*", out);
+    }
+
+    @test
+    func split(): void {
+        let parts = re.split('[.,]', "a.b,c.d");
+        this.assertEquals(["a", "b", "c", "d"], parts);
+    }
+
+    @test
+    func testMatch(): void {
+        this.assertTrue(re.test('^hello', "hello world"));
+        this.assertFalse(re.test('^world', "hello world"));
+    }
+}

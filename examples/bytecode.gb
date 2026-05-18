@@ -1,0 +1,11 @@
+/**
+ * @title Bytecode
+ * @summary Demonstrates bytecode in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+int x = 2 + 3 * 4;
+
+io.println(x);
+io.println("bytecode");

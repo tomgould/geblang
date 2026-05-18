@@ -1,0 +1,64 @@
+/**
+ * @title Slicing syntax test
+ * @summary Python-style xs[a:b] slicing for lists and strings.
+ */
+import test;
+
+class SlicingTest extends test.Test {
+    @test
+    func listSlicing(): void {
+        let xs = [10, 20, 30, 40, 50];
+        this.assertEquals([20, 30], xs[1:3]);
+        this.assertEquals([10, 20, 30], xs[:3]);
+        this.assertEquals([30, 40, 50], xs[2:]);
+        this.assertEquals([10, 20, 30, 40, 50], xs[:]);
+    }
+
+    @test
+    func stringSlicing(): void {
+        this.assertEquals("ell", "hello"[1:4]);
+        this.assertEquals("hel", "hello"[:3]);
+        this.assertEquals("llo", "hello"[2:]);
+    }
+
+    @test
+    func slicingPreservesOriginal(): void {
+        let xs = [1, 2, 3, 4, 5];
+        let sub = xs[1:3];
+        this.assertEquals([1, 2, 3, 4, 5], xs);
+        this.assertEquals([2, 3], sub);
+    }
+
+    @test
+    func reverseStep(): void {
+        let xs = [10, 20, 30, 40, 50];
+        this.assertEquals([50, 40, 30, 20, 10], xs[::-1]);
+        this.assertEquals("olleh", "hello"[::-1]);
+    }
+
+    @test
+    func positiveStep(): void {
+        let xs = [10, 20, 30, 40, 50];
+        this.assertEquals([10, 30, 50], xs[::2]);
+        this.assertEquals("0369", "0123456789"[::3]);
+    }
+
+    @test
+    func boundedStep(): void {
+        let xs = [10, 20, 30, 40, 50];
+        this.assertEquals([50, 40, 30, 20], xs[4:0:-1]);
+        this.assertEquals([20, 40], xs[1:5:2]);
+    }
+
+    @test
+    func zeroStepIsError(): void {
+        let xs = [1, 2, 3];
+        let threw = false;
+        try {
+            let bad = xs[::0];
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+}

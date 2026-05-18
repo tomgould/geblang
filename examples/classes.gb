@@ -1,0 +1,32 @@
+/**
+ * @title Classes
+ * @summary Demonstrates classes in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+class User {
+    string name;
+    int visits = 0;
+
+    func User(string name) {
+        this.name = name;
+    }
+
+    func visit(): int {
+        this.visits = this.visits + 1;
+        return this.visits;
+    }
+
+    func label(): string {
+        return this.name + ":" + (this.visits as string);
+    }
+}
+
+User u = User("Dave");
+
+io.println(u.name);
+io.println(u.visit());
+io.println(u.VISIT());
+io.println(u.label());
+io.println(u instanceof User);

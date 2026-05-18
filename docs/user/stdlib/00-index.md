@@ -1,0 +1,131 @@
+# Standard Library Overview
+
+Geblang's standard library is intentionally broad enough for everyday work, but
+not designed as a monolithic application framework. It should give you the
+building blocks for CLI tools, scripts, APIs, SSR web apps, background jobs,
+data processing, integration code, and small framework layers without forcing a
+single style of application structure.
+
+The library has two implementation layers:
+
+- Native modules are implemented in Go and are available in normal Geblang
+  builds. These cover host integration, runtime-sensitive behavior, networking,
+  parsing, database drivers, bytecode/VM parity surfaces, and value classes
+  that need native state.
+- Source modules are written in Geblang and distributed under `stdlib/`. These
+  provide higher-level composition, convenience wrappers, framework-style web
+  helpers, and APIs that can evolve in userland.
+
+Both layers are imported the same way. Modules are not injected into the global
+namespace, so programs should import the capabilities they use:
+
+```gb
+import io;
+import json;
+import async.io as aio;
+import web.http as wh;
+import web.router as router;
+```
+
+Most modules use typed values for stable concepts and plain dictionaries or
+lists at dynamic boundaries such as parsed JSON, request metadata, validation
+errors, and driver options. Application code can keep those structures dynamic
+or convert them into typed classes when the shape matters.
+
+## Module Families
+
+Use the pages below as the user-facing reference. Each page explains the main
+modules in that area, important value types, common calls, and executable-style
+examples.
+
+Core runtime and host integration:
+
+- [I/O And Filesystem](io.html): standard streams, text and binary file helpers,
+  file handles, directories, and filesystem operations.
+- [System, Environment, And Processes](sys.html): environment variables,
+  process metadata, permissions, temp files, subprocesses, and shell integration.
+- [Paths](path.html): path manipulation and object-oriented path helpers.
+- [Watch](watch.html): filesystem watching.
+
+Concurrency and streaming:
+
+- [Async](async.html): tasks, `await`, scheduling helpers, and async program
+  structure.
+- [Async I/O](async-io.html): async file, HTTP, stream, socket, and parser
+  helpers for event-loop-style programs.
+
+Data and transformation:
+
+- [Data Formats](data-formats.html): JSON, YAML, TOML, XML, CSV, serde, and
+  stream interfaces.
+- [Collections](collections.html): list, dict, set, range, and higher-level
+  collection algorithms.
+- [Text, Regex, Markdown, And Templates](text.html): strings, regex, markdown
+  rendering/parsing, and template helpers.
+- [Bytes, Encoding, And Compression](bytes.html): bytes, base encodings,
+  checksums, hashes, and compression.
+- [Math, Dates, And UUIDs](math-datetime.html): numeric helpers, time values,
+  durations, zones, and UUID generation/parsing.
+- [Security](security.html): secrets, cryptographic helpers, passwords,
+  certificates, keys, and CSRs.
+
+Application building:
+
+- [CLI](cli.html): command-line arguments, prompts, masked input, terminal
+  output, progress UI, and command helpers.
+- [HTTP, Networking, And WebSockets](http-net.html): HTTP client/server,
+  sockets, networking helpers, WebSocket client/server support, and SSE
+  primitives.
+- [Mailer And SMTP](mailer-smtp.html): mail messages, alternatives,
+  attachments, and SMTP delivery.
+- [Web Modules](web-router.html): request/response wrappers, routing,
+  decorators, middleware, sessions, cache/auth/form helpers, SSE, and web
+  testing support.
+
+Infrastructure and data stores:
+
+- [Data Stores](data-stores.html): overview for persistence, cache,
+  configuration, and schema validation.
+- [Database](data-stores/database.html): PDO-style database wrapper with SQLite,
+  PostgreSQL, and MySQL connection examples.
+- [Redis](data-stores/redis.html): Redis strings, hashes, lists, sets, sorted
+  sets, expiry, counters, and connection handling.
+- [Config](data-stores/config.html): layered configuration loading and dotted
+  path access.
+- [Schema](data-stores/schema.html): validation primitives and schema helpers.
+
+Operations, introspection, and extension:
+
+- [Observability](observability.html): logging, metrics, tracing, profiling,
+  and custom log handlers.
+- [Reflection And Testing](reflect-test.html): runtime metadata, docblocks,
+  decorators, function/class/module reflection, and class-based testing.
+- [Environment and Extensions](env-ext.html): dotenv, external extension
+  processes, extension protocol calls, and binary frame handling.
+- [Utility Modules](utilities.html): miscellaneous result, option, and helper
+  modules that do not fit one larger category.
+
+Generated source API pages are available under the API section of the site. They
+are useful for quick exported-signature lookup, but the module reference pages
+above are the primary documentation because they include behavior notes and
+examples.
+
+## Import And Resolution Notes
+
+Native modules are always available in a normal Geblang binary. Source modules
+resolve from the bundled stdlib, package roots, and `GEBLANG_STDLIB`.
+
+Prefer explicit aliases when a module name would otherwise be noisy or collide
+with local names:
+
+```gb
+import web.http as wh;
+import async.io as aio;
+import testing.assertions as assert;
+```
+
+Top-level code in source modules runs when the module is imported. Stdlib
+modules avoid side effects except where the module is explicitly about host
+integration, such as environment or extension loading. Application modules
+should follow the same rule: export functions/classes for reusable behavior and
+keep executable startup code in scripts or command entry points.

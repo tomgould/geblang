@@ -1,0 +1,111 @@
+module web.websocket;
+
+import json;
+import websocket;
+
+## Source-level wrapper around a native WebSocket connection handle.
+export class Connection {
+    any handle;
+
+    func Connection(any handle) {
+        this.handle = handle;
+    }
+
+    func sendText(string message): void {
+        websocket.sendText(this.handle, message);
+    }
+
+    func readText(): string {
+        return websocket.readText(this.handle);
+    }
+
+    func sendJson(any value): void {
+        websocket.sendText(this.handle, json.stringify(value));
+    }
+
+    func readJson(): dict<string, any> {
+        return json.parse(websocket.readText(this.handle)) as dict<string, any>;
+    }
+
+    func sendBytes(bytes data): void {
+        websocket.sendBytes(this.handle, data);
+    }
+
+    func readBytes(): bytes {
+        return websocket.readBytes(this.handle);
+    }
+
+    func close(): void {
+        websocket.close(this.handle);
+    }
+
+    func echoText(): void {
+        while (true) {
+            websocket.sendText(this.handle, websocket.readText(this.handle));
+        }
+    }
+}
+
+## Creates a WebSocket upgrade response for a connection handler.
+export func upgrade(any handler): dict<string, any> {
+    return websocket.upgrade(func(any handle): void {
+        handler(Connection(handle));
+    });
+}
+
+## Creates a WebSocket upgrade response with extra response headers.
+export func upgradeWithHeaders(any handler, dict<string, any> headers): dict<string, any> {
+    let response = upgrade(handler);
+    response["headers"] = headers;
+    return response;
+}
+
+## Connects to a WebSocket URL.
+export func connect(string url): Connection {
+    return Connection(websocket.connect(url));
+}
+
+## Connects to a WebSocket URL with request headers.
+export func connectWithHeaders(string url, dict<string, any> headers): Connection {
+    return Connection(websocket.connect(url, headers));
+}
+
+## Sends a text message.
+export func sendText(Connection conn, string message): void {
+    conn.sendText(message);
+}
+
+## Reads a text message.
+export func readText(Connection conn): string {
+    return conn.readText();
+}
+
+## Sends a value as JSON text.
+export func sendJson(Connection conn, any value): void {
+    conn.sendJson(value);
+}
+
+## Reads a JSON text message as a dictionary.
+export func readJson(Connection conn): dict<string, any> {
+    return conn.readJson();
+}
+
+## Sends bytes.
+export func sendBytes(Connection conn, bytes data): void {
+    conn.sendBytes(data);
+}
+
+## Reads bytes.
+export func readBytes(Connection conn): bytes {
+    return conn.readBytes();
+}
+
+## Closes a WebSocket connection.
+export func close(Connection conn): void {
+    conn.close();
+}
+
+## Runs a simple text echo loop until the client closes.
+export func echoText(Connection conn): void {
+    conn.echoText();
+}

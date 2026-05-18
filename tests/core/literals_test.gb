@@ -1,0 +1,59 @@
+/**
+ * @title Literals test
+ * @summary Covers every primitive literal and the canonical compound literals.
+ * @category Tests
+ */
+import test;
+
+class LiteralsTest extends test.Test {
+    @test
+    func integers(): void {
+        this.assertEquals(0, 0);
+        this.assertEquals(42, 42);
+        this.assertEquals(-7, -7);
+        this.assertEquals(1000000, 1_000_000);
+        this.assertTrue(typeof(42) == int);
+    }
+
+    @test
+    func floatsAndDecimals(): void {
+        this.assertEquals(3.14f, 3.14f);
+        this.assertTrue(typeof(3.14f) == float);
+        this.assertTrue(typeof(3.14) == decimal);
+        this.assertNotEquals(int, typeof(3.14));
+    }
+
+    @test
+    func strings(): void {
+        this.assertEquals("hello", "hello");
+        this.assertEquals("hi\nworld", "hi\nworld");
+        this.assertEquals(5, "hello".length());
+        this.assertTrue("hello".contains("ell"));
+    }
+
+    @test
+    func booleansAndNull(): void {
+        this.assertTrue(true);
+        this.assertFalse(false);
+        this.assertNull(null);
+        this.assertNotNull(0);
+        this.assertNotNull("");
+    }
+
+    @test
+    func listsAndDicts(): void {
+        let xs = [1, 2, 3];
+        this.assertEquals(3, xs.length());
+        this.assertContains(xs, 2);
+        let d = {"a": 1, "b": 2};
+        this.assertContains(d, "a");
+        this.assertEquals(1, d["a"]);
+    }
+
+    @test
+    func sets(): void {
+        let s = {1, 2, 3};
+        this.assertEquals(3, s.length());
+        this.assertContains(s, 2);
+    }
+}

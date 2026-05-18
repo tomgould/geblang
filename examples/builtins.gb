@@ -1,0 +1,20 @@
+/**
+ * @title Builtins
+ * @summary Demonstrates builtins in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import crypt;
+import datetime;
+
+io.println(crypt.sha256("abc"));
+io.println(crypt.hmacSha256("key", "message"));
+io.println(crypt.base64Encode("hello"));
+io.println(crypt.base64Decode("aGVsbG8="));
+io.println(crypt.randomHex(4).length());
+io.println(datetime.unix(0));
+let parsed = datetime.parse("1970-01-01T00:00:00Z");
+io.println(parsed);
+io.println(datetime.addSeconds(parsed, 60));
+io.println(datetime.format(0, "2006-01-02"));
+io.println(datetime.nowUnix() > 0);

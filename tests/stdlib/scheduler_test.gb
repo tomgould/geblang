@@ -1,0 +1,70 @@
+/**
+ * @title time.scheduler test
+ * @summary Timer, Ticker, and Interval scheduling primitives.
+ */
+import test;
+import async;
+import time.scheduler as sched;
+
+class SchedulerTest extends test.Test {
+    @test
+    func timerFiresAfterDelay(): void {
+        bool fired = false;
+        let t = sched.Timer(20, func(): void { fired = true; });
+        async.await(t.wait());
+        this.assertTrue(fired);
+        this.assertTrue(t.didFire());
+    }
+
+    @test
+    func timerCancelPreventsCallback(): void {
+        bool fired = false;
+        let t = sched.Timer(200, func(): void { fired = true; });
+        t.cancel();
+        # Give it long enough that the callback would have fired had it not been cancelled.
+        async.await(async.sleep(60));
+        this.assertFalse(fired);
+        this.assertFalse(t.didFire());
+    }
+
+    @test
+    func tickerAccumulatesTicks(): void {
+        int n = 0;
+        let ticker = sched.Ticker(20, func(): void { n = n + 1; });
+        async.await(async.sleep(75));
+        ticker.stop();
+        # Sleep gives at least 3 full ticks; allow >=2 for scheduler jitter.
+        this.assertTrue(ticker.ticks() >= 2);
+        this.assertTrue(n >= 2);
+    }
+
+    @test
+    func tickerStopHaltsFurtherFires(): void {
+        int n = 0;
+        let ticker = sched.Ticker(20, func(): void { n = n + 1; });
+        async.await(async.sleep(50));
+        ticker.stop();
+        let recorded = n;
+        async.await(async.sleep(80));
+        # n should not have grown after stop().
+        this.assertEquals(recorded, n);
+    }
+
+    @test
+    func intervalRunsImmediately(): void {
+        int n = 0;
+        let immediate = sched.Interval(50, func(): void { n = n + 1; });
+        # By the time control returns from the constructor, the first call
+        # has already happened.
+        this.assertEquals(1, n);
+        immediate.stop();
+    }
+
+    @test
+    func setTimeoutReturnsCancellableTimer(): void {
+        bool fired = false;
+        let t = sched.setTimeout(20, func(): void { fired = true; });
+        async.await(t.wait());
+        this.assertTrue(fired);
+    }
+}

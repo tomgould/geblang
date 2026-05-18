@@ -1,0 +1,67 @@
+/**
+ * @title Immutability
+ * @summary Demonstrates the freeze module and @immutable class decorator.
+ * @category General
+ */
+import io;
+import freeze;
+
+# freeze.shallow returns a frozen copy of a collection.
+let scores = [95, 87, 72];
+scores = freeze.shallow(scores);
+
+io.println(freeze.isFrozen(scores));  # true
+io.println(freeze.isFrozen(42));      # true — primitives are always frozen
+
+# Mutation of a frozen collection raises ImmutableError.
+try {
+    scores[0] = 100;
+} catch (ImmutableError e) {
+    io.println("blocked: " + e.message);
+}
+
+# .copy() returns an unfrozen shallow copy.
+let mutable = scores.copy();
+mutable[0] = 100;
+io.println(mutable[0]);  # 100
+
+# const declarations auto-freeze collection values.
+const defaults = {"timeout": 30, "retries": 3};
+try {
+    defaults["timeout"] = 60;
+} catch (ImmutableError e) {
+    io.println("blocked: " + e.message);
+}
+
+# freeze.deep freezes nested collections recursively.
+let matrix = freeze.deep([[1, 2], [3, 4]]);
+try {
+    matrix[0][0] = 9;
+} catch (ImmutableError e) {
+    io.println("blocked: " + e.message);
+}
+
+# @immutable class: fields are readable, mutation is blocked.
+@immutable class Point {
+    int x;
+    int y;
+    func Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+    func withX(int x): Point { return Point(x, this.y); }
+    func withY(int y): Point { return Point(this.x, y); }
+}
+
+Point a = Point(1, 2);
+io.println(a.x);  # 1
+
+Point b = a.withX(10);
+io.println(b.x);  # 10
+io.println(a.x);  # 1 — original unchanged
+
+try {
+    a.x = 99;
+} catch (ImmutableError e) {
+    io.println("blocked: " + e.message);
+}

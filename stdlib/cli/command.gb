@@ -1,0 +1,110 @@
+module cli.command;
+
+import cli;
+
+## Describes a typed command-line option and converts it to cli.parseArgs schema data.
+export class Option {
+    string name;
+    string kind;
+    string shortName = "";
+    string helpText = "";
+    bool requiredFlag = false;
+    bool hasDefaultValue = false;
+    any defaultValue = null;
+
+    func Option(string name, string kind) {
+        this.name = name;
+        this.kind = kind;
+    }
+
+    func short(string name): Option {
+        this.shortName = name;
+        return this;
+    }
+
+    func help(string text): Option {
+        this.helpText = text;
+        return this;
+    }
+
+    func required(): Option {
+        this.requiredFlag = true;
+        return this;
+    }
+
+    func default(any value): Option {
+        this.defaultValue = value;
+        this.hasDefaultValue = true;
+        return this;
+    }
+
+    func toSchema(): dict<string, any> {
+        dict<string, any> schema = {"type": this.kind};
+        if (!this.shortName.isEmpty()) {
+            schema["short"] = this.shortName;
+        }
+        if (!this.helpText.isEmpty()) {
+            schema["help"] = this.helpText;
+        }
+        if (this.requiredFlag) {
+            schema["required"] = true;
+        }
+        if (this.hasDefaultValue) {
+            schema["default"] = this.defaultValue;
+        }
+        return schema;
+    }
+}
+
+## Describes a command with options, parsing, help text, and required-argument validation.
+export class Command {
+    string name;
+    string description;
+    list<any> options;
+
+    func Command(string name, string description) {
+        this.name = name;
+        this.description = description;
+        this.options = [];
+    }
+
+    func option(Option option): Command {
+        this.options = this.options.push(option);
+        return this;
+    }
+
+    func schema(): dict<string, any> {
+        dict<string, any> schema = {};
+        for (option in this.options) {
+            Option opt = option as Option;
+            schema[opt.name] = opt.toSchema();
+        }
+        return schema;
+    }
+
+    func parse(list<string> argv): dict<string, any> {
+        return cli.parseArgs(argv, this.schema());
+    }
+
+    func help(): string {
+        return cli.help(this.name, this.schema());
+    }
+
+    func requireParsed(list<string> argv): dict<string, any> {
+        dict<string, any> parsed = this.parse(argv);
+        if (parsed["error"] != null) {
+            throw ValueError(parsed["error"] as string);
+        }
+        return parsed;
+    }
+}
+
+## Creates a command option builder for the given long name and type.
+export func newOption(string name, string kind): Option {
+    return Option(name, kind);
+}
+
+## Creates a command builder with a name and human-readable description.
+export func newCommand(string name, string description): Command {
+    return Command(name, description);
+}

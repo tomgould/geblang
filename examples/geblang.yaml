@@ -1,0 +1,9 @@
+name: examples
+version: 0.1.0
+source: .
+paths: []
+dependencies: {}
+extensions:
+  python_example:
+    command: ["python3", "extensions/python/extension.py"]
+    startup_timeout_ms: 10000

@@ -1,0 +1,64 @@
+/**
+ * @title Class serialization
+ * @summary Default field-dump, __serialize__ override, and the
+ *          json.parseAs / __deserialize__ deserialisation path.
+ * @category Data formats
+ */
+import io;
+import json;
+
+/* The stringify functions (json/yaml/toml) accept class instances out
+ * of the box. By default, fields not prefixed with `_` or `__` are
+ * dumped (no need to opt in for plain data classes). */
+class Point {
+    int x;
+    int y;
+    int _secret;
+
+    func Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+        this._secret = 99;
+    }
+}
+
+let p = Point(3, 4);
+io.println(json.stringify(p));
+/* Prints: {"x":3,"y":4}
+ * _secret is filtered out (underscore-prefix = private convention). */
+
+/* json.parseAs reconstructs the instance. Without a hook it matches
+ * the dict keys to the constructor's parameter names and calls it
+ * positionally. */
+let q = json.parseAs(json.stringify(p), Point);
+io.println(q.x);
+io.println(q.y);
+
+/* Classes can override both sides:
+ *   __serialize__()          - shape control on output
+ *   __deserialize__(dict d)  - static factory called by parseAs */
+class Tagged {
+    string kind;
+    string label;
+
+    func Tagged(string kind, string label) {
+        this.kind = kind;
+        this.label = label;
+    }
+
+    func __serialize__(): dict {
+        return {"kind": this.kind, "label": this.label, "v": 1};
+    }
+
+    static func __deserialize__(dict d): Tagged {
+        return Tagged(d["kind"], d["label"]);
+    }
+}
+
+let t = Tagged("note", "hello");
+let encoded = json.stringify(t);
+io.println(encoded);
+
+let decoded = json.parseAs(encoded, Tagged);
+io.println(decoded.kind);
+io.println(decoded.label);

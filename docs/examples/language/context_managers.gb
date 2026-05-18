@@ -1,0 +1,48 @@
+/**
+ * @title Context Managers
+ * @summary `with (...) { ... }` invokes `__enter__()` on entry and
+ *          `__exit__()` on every exit path (normal completion,
+ *          exception, return, break, continue).
+ * @category Language
+ * @description Context managers are a scoped-cleanup construct
+ *              distinct from destructors. They never invoke
+ *              `~ClassName()` - end-of-lifetime cleanup is a
+ *              separate concern.
+ */
+import io;
+
+class Transaction {
+    string label;
+
+    func Transaction(string label) { this.label = label; }
+
+    func __enter__(): Transaction {
+        io.println("begin " + this.label);
+        return this;
+    }
+
+    func __exit__(): void {
+        io.println("commit " + this.label);
+    }
+}
+
+with (tx = Transaction("write")) {
+    io.println("inside " + tx.label);
+}
+
+/* __exit__ runs on every exit path - here a break. */
+class Span {
+    string name;
+    func Span(string n) { this.name = n; }
+    func __enter__(): Span { return this; }
+    func __exit__(): void { io.println("end " + this.name); }
+}
+
+for (i in [1, 2, 3]) {
+    with (s = Span("iter-" + (i as string))) {
+        if (i == 2) {
+            break;
+        }
+        io.println("body " + s.name);
+    }
+}

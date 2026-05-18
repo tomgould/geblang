@@ -1,0 +1,15 @@
+/**
+ * @title Types
+ * @summary Demonstrates types in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+let x = "42";
+
+io.println(typeof(x));
+io.println(string.type);
+io.println(x instanceof string);
+io.println((x as int) + 1);
+io.println((7 as decimal) / 2);
+io.println(("true" as bool) && true);

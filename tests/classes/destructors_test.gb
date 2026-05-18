@@ -1,0 +1,63 @@
+/**
+ * @title Destructors + del test
+ * @summary func ~ClassName() destructor and the `del x` statement.
+ *          End-of-program sweep is covered by Go-level parity tests;
+ *          here we exercise the parts that fit the class-based test
+ *          framework (del runs the destructor inline; rebinding
+ *          clears the destroyed state).
+ */
+import test;
+import io;
+
+class Counter {
+    static int destroyed = 0;
+    string label;
+
+    func Counter(string label) {
+        this.label = label;
+    }
+
+    func ~Counter() {
+        Counter.destroyed = Counter.destroyed + 1;
+    }
+}
+
+class DestructorTest extends test.Test {
+    @test
+    func delFiresDestructorInline(): void {
+        Counter.destroyed = 0;
+        let c = Counter("a");
+        this.assertEquals(0, Counter.destroyed);
+        del c;
+        this.assertEquals(1, Counter.destroyed);
+    }
+
+    @test
+    func delClearsBinding(): void {
+        Counter.destroyed = 0;
+        let c = Counter("first");
+        del c;
+        let c = Counter("second");
+        this.assertEquals("second", c.label);
+        this.assertEquals(1, Counter.destroyed);
+    }
+
+    @test
+    func delRunsOnce(): void {
+        Counter.destroyed = 0;
+        let c = Counter("once");
+        del c;
+        this.assertEquals(1, Counter.destroyed);
+    }
+
+    @test
+    func destructorOnClassWithoutOneIsNoop(): void {
+        /* Sanity: classes without ~ClassName don't crash on del. */
+        let s = Stub();
+        del s;
+    }
+}
+
+class Stub {
+    func Stub() {}
+}

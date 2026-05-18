@@ -1,0 +1,76 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "geblang: check",
+      "type": "shell",
+      "command": "geblang",
+      "args": ["check", "${file}"],
+      "problemMatcher": {
+        "owner": "geblang",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.+\\.gb):\\s+error\\[(\\w+)\\]:\\s+(?:line\\s+(\\d+):(\\d+):\\s+)?(.+)$",
+          "file": 1,
+          "code": 2,
+          "line": 3,
+          "column": 4,
+          "message": 5
+        }
+      },
+      "group": "build"
+    },
+    {
+      "label": "geblang: check workspace",
+      "type": "shell",
+      "command": "geblang",
+      "args": ["check", "${workspaceFolder}"],
+      "problemMatcher": {
+        "owner": "geblang",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.+\\.gb):\\s+error\\[(\\w+)\\]:\\s+(?:line\\s+(\\d+):(\\d+):\\s+)?(.+)$",
+          "file": 1,
+          "code": 2,
+          "line": 3,
+          "column": 4,
+          "message": 5
+        }
+      },
+      "group": "build"
+    },
+    {
+      "label": "geblang: run current file",
+      "type": "shell",
+      "command": "geblang",
+      "args": ["${file}"],
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "geblang: test",
+      "type": "shell",
+      "command": "geblang",
+      "args": ["test", "${workspaceFolder}/tests/"],
+      "problemMatcher": {
+        "owner": "geblang",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^FAIL\\s+(\\S+):\\s+(\\S+):\\s+(.+)$",
+          "file": 1,
+          "code": 2,
+          "message": 3
+        }
+      },
+      "group": "test"
+    },
+    {
+      "label": "geblang: REPL",
+      "type": "shell",
+      "command": "geblang",
+      "args": ["repl"],
+      "problemMatcher": [],
+      "group": "none"
+    }
+  ]
+}

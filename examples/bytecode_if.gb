@@ -1,0 +1,20 @@
+/**
+ * @title Bytecode If
+ * @summary Demonstrates bytecode if in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+int x = 7;
+
+if (x > 3) {
+    io.println("big");
+} else {
+    io.println("small");
+}
+
+if (x == 8) {
+    io.println("bad");
+} else {
+    io.println("ok");
+}

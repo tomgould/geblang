@@ -1,0 +1,16 @@
+/**
+ * @title Template
+ * @summary Demonstrates template in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import template;
+
+io.println(template.renderString("<p>{{.name}}</p>", {"name": "<Ada>"}));
+
+let greeting = template.Template("Hello {{.name}}", "greeting");
+io.println(greeting.name());
+io.println(greeting.render({"name": "Grace"}));
+
+let engine = template.Engine("templates");
+io.println(engine.dir());

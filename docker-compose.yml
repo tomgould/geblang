@@ -1,0 +1,17 @@
+services:
+  # Builds the geblang binary and stdlib. Artifacts land in build/ via make compose-build.
+  geblang:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: artifacts
+    image: geblang-artifacts
+
+  # Compiles the VSCode extension and packages it as a VSIX.
+  # Artifacts land in build/vscode/ via make compose-build.
+  vscode-ext:
+    build:
+      context: ./vscode-geblang
+      dockerfile: Dockerfile
+      target: artifacts
+    image: geblang-vscode-artifacts

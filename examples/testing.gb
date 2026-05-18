@@ -1,0 +1,34 @@
+/**
+ * @title Testing
+ * @summary Demonstrates testing in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import test;
+
+class MathTest extends test.Test {
+    @test
+    func addition(): void {
+        this.assertEquals(4, 2 + 2);
+        this.assertNotEquals(5, 2 + 2);
+        this.assertTrue(4 > 3);
+        this.assertFalse(3 > 4);
+        this.assertNotNull("ok");
+        this.assertNull(null);
+        this.assertContains("hello Geblang", "Geblang");
+        this.assertEmpty([]);
+        this.assertGreaterThan(3, 4);
+    }
+
+    @test
+    func failure(): void {
+        this.assertEquals(2, 1);
+    }
+}
+
+let result = test.run(MathTest);
+
+io.println(result["total"]);
+io.println(result["passed"]);
+io.println(result["failed"]);
+io.println(result["failures"].length());

@@ -1,0 +1,185 @@
+module redis;
+
+import net;
+
+func encodeCommand(list<string> parts): string {
+    string out = "*" + (parts.length() as string) + "\r\n";
+    for (part in parts) {
+        string value = part as string;
+        out = out + "$" + (value.length() as string) + "\r\n" + value + "\r\n";
+    }
+    return out;
+}
+
+func parseReply(string reply): any {
+    if (reply.isEmpty()) {
+        return null;
+    }
+    string kind = reply[0];
+    string rest = reply[1..].trim();
+    if (kind == "+") {
+        return rest;
+    }
+    if (kind == "-") {
+        throw RuntimeError(rest);
+    }
+    if (kind == ":") {
+        return rest as int;
+    }
+    if (kind == "$") {
+        let lines = rest.split("\r\n");
+        if ((lines[0] as string) == "-1") {
+            return null;
+        }
+        if (lines.length() > 1) {
+            return lines[1] as string;
+        }
+        return "";
+    }
+    if (kind == "*") {
+        let lines = rest.split("\r\n");
+        list<any> values = [];
+        int i = 1;
+        while (i < lines.length()) {
+            string marker = lines[i] as string;
+            if (marker.startsWith("$")) {
+                if (marker == "$-1") {
+                    values = values.push(null);
+                } else if ((i + 1) < lines.length()) {
+                    values = values.push(lines[i + 1]);
+                    i = i + 1;
+                }
+            } else if (marker.startsWith(":")) {
+                values = values.push(marker[1..] as int);
+            } else if (marker.startsWith("+")) {
+                values = values.push(marker[1..]);
+            }
+            i = i + 1;
+        }
+        return values;
+    }
+    return reply;
+}
+
+## Minimal Redis client for strings, lists, sets, hashes, counters, expiry, and raw commands.
+export class Client {
+    any conn;
+
+    func Client(string address) {
+        this.conn = net.connectTcp(address);
+        net.setDeadline(this.conn, 5000);
+    }
+
+    func command(list<string> parts): any {
+        net.write(this.conn, encodeCommand(parts));
+        return parseReply(net.read(this.conn, 65536).toString());
+    }
+
+    func ping(): bool {
+        return (this.command(["PING"]) as string) == "PONG";
+    }
+
+    func auth(string password): bool {
+        return (this.command(["AUTH", password]) as string) == "OK";
+    }
+
+    func select(int database): bool {
+        return (this.command(["SELECT", database as string]) as string) == "OK";
+    }
+
+    func get(string key): any {
+        return this.command(["GET", key]);
+    }
+
+    func set(string key, string value): bool {
+        return (this.command(["SET", key, value]) as string) == "OK";
+    }
+
+    func del(string key): int {
+        return this.command(["DEL", key]) as int;
+    }
+
+    func exists(string key): bool {
+        return (this.command(["EXISTS", key]) as int) > 0;
+    }
+
+    func expire(string key, int seconds): bool {
+        return (this.command(["EXPIRE", key, seconds as string]) as int) == 1;
+    }
+
+    func incr(string key): int {
+        return this.command(["INCR", key]) as int;
+    }
+
+    func ttl(string key): int {
+        return this.command(["TTL", key]) as int;
+    }
+
+    func lpush(string key, string value): int {
+        return this.command(["LPUSH", key, value]) as int;
+    }
+
+    func rpush(string key, string value): int {
+        return this.command(["RPUSH", key, value]) as int;
+    }
+
+    func lpop(string key): any {
+        return this.command(["LPOP", key]);
+    }
+
+    func rpop(string key): any {
+        return this.command(["RPOP", key]);
+    }
+
+    func lrange(string key, int start, int stop): list<any> {
+        return this.command(["LRANGE", key, start as string, stop as string]) as list<any>;
+    }
+
+    func sadd(string key, string member): int {
+        return this.command(["SADD", key, member]) as int;
+    }
+
+    func srem(string key, string member): int {
+        return this.command(["SREM", key, member]) as int;
+    }
+
+    func sismember(string key, string member): bool {
+        return (this.command(["SISMEMBER", key, member]) as int) == 1;
+    }
+
+    func smembers(string key): list<any> {
+        return this.command(["SMEMBERS", key]) as list<any>;
+    }
+
+    func hset(string key, string field, string value): int {
+        return this.command(["HSET", key, field, value]) as int;
+    }
+
+    func hget(string key, string field): any {
+        return this.command(["HGET", key, field]);
+    }
+
+    func hdel(string key, string field): int {
+        return this.command(["HDEL", key, field]) as int;
+    }
+
+    func hgetAll(string key): dict<string, any> {
+        let values = this.command(["HGETALL", key]) as list<any>;
+        dict<string, any> out = {};
+        int i = 0;
+        while ((i + 1) < values.length()) {
+            out[values[i] as string] = values[i + 1];
+            i = i + 2;
+        }
+        return out;
+    }
+
+    func close(): void {
+        net.close(this.conn);
+    }
+}
+
+## Connects to a Redis server address and returns a Client.
+export func connect(string address): Client {
+    return Client(address);
+}

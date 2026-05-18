@@ -1,0 +1,32 @@
+/**
+ * @title Functools
+ * @summary Functional composition: pipe, compose, partial, memoize.
+ * @category Standard Library
+ */
+import functools;
+import io;
+
+let inc    = func(int n): int { return n + 1; };
+let double = func(int n): int { return n * 2; };
+let square = func(int n): int { return n * n; };
+
+let f = functools.pipe([inc, double, square]);
+io.println(f(1));                            # 16
+
+let g = functools.compose([square, double, inc]);
+io.println(g(1));                            # 16
+
+let add  = func(int a, int b): int { return a + b; };
+let plus = functools.partial(add, 10);
+io.println(plus(3));                         # 13
+
+int calls = 0;
+let slow = func(int n): int {
+    calls = calls + 1;
+    return n * n;
+};
+let fast = functools.memoize(slow);
+fast(5);
+fast(5);
+fast(5);
+io.println(calls);                           # 1

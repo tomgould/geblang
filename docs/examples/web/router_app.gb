@@ -1,0 +1,27 @@
+/**
+ * @title Router Application
+ * @summary Uses the source web router module to organise handlers.
+ * @category Web Applications
+ * @description This example demonstrates framework-style routing without needing a full framework. Routes are registered with handlers and can be exercised directly in tests.
+ */
+import io;
+import web.router as router;
+
+let app = router.newRouter();
+
+router.get(app, "/users/:id", func(dict<string, any> request): dict<string, any> {
+    return {
+        "status": 200,
+        "body": "user " + request["params"]["id"]
+    };
+});
+
+let response = router.handle(app, {
+    "method": "GET",
+    "path": "/users/42",
+    "headers": {},
+    "body": ""
+});
+
+io.println(response["status"]);
+io.println(response["body"]);

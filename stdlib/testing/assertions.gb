@@ -1,0 +1,21 @@
+module testing.assertions;
+
+## Returns true when text contains needle.
+export func contains(string text, string needle): bool {
+    return text.contains(needle);
+}
+
+## Returns true when text starts with prefix.
+export func startsWith(string text, string prefix): bool {
+    return text.startsWith(prefix);
+}
+
+## Returns true when text ends with suffix.
+export func endsWith(string text, string suffix): bool {
+    return text.endsWith(suffix);
+}
+
+## Returns true when text is empty after trimming whitespace.
+export func isBlank(string text): bool {
+    return text.trim().isEmpty();
+}

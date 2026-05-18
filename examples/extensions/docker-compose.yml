@@ -1,0 +1,32 @@
+services:
+  python-ext-example:
+    build: ./python
+    environment:
+      EXT_HOST: 0.0.0.0
+      EXT_PORT: "9101"
+    ports:
+      - "9101:9101"
+
+  php-ext-example:
+    build: ./php
+    environment:
+      EXT_HOST: 0.0.0.0
+      EXT_PORT: "9102"
+    ports:
+      - "9102:9102"
+
+  go-ext-example:
+    build: ./go
+    environment:
+      EXT_HOST: 0.0.0.0
+      EXT_PORT: "9103"
+    ports:
+      - "9103:9103"
+
+  node-ext-example:
+    build: ./node
+    environment:
+      EXT_HOST: 0.0.0.0
+      EXT_PORT: "9104"
+    ports:
+      - "9104:9104"

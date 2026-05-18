@@ -1,0 +1,259 @@
+# Modules And Packages
+
+## Imports
+
+```gb
+import io;
+import web.router as router;
+```
+
+Module paths are dot-separated. Imports can use aliases.
+
+An import binds a module value into the current scope. Imported module bindings
+are constants, so importing the same module twice under the same name is
+idempotent, but assigning a new value to that name is not allowed.
+
+```gb
+import json;
+import json; # harmless
+
+# json = {}; # invalid: imported module bindings are constant
+```
+
+## Exports
+
+User modules export declarations explicitly:
+
+```gb
+export class User {}
+
+export func findUser(string id): ?User {
+    return null;
+}
+```
+
+Declarations without `export` are private to the module. Use this for helper
+functions, constants, and implementation classes that should not become part of
+the public API.
+
+```gb
+module app.users;
+
+const TABLE = "users";
+
+func normalizeId(string id): string {
+    return id.trim().lower();
+}
+
+export func findUser(string id): dict<string, any> {
+    let key = normalizeId(id);
+    return {"id": key, "table": TABLE};
+}
+```
+
+When you run `geblang check` over a file or directory, module declarations are
+validated with the normal module resolver. If `module app.users;` resolves to a
+different file than the one declaring it, or if two checked files declare the
+same module name, `check` reports an error before anything is executed.
+
+## Executable Modules
+
+Use `geblang -m module.name` to run a module without writing a small wrapper
+script. The module is imported normally, then its exported `main` function is
+called with the remaining command-line arguments:
+
+```gb
+module app.cli;
+
+import io;
+
+export func main(list<string> args): int {
+    io.println("hello " + (args[0] as string));
+    return 0;
+}
+```
+
+```sh
+geblang -m app.cli Ada
+```
+
+The recommended contract is `main(list<string> args): int`. Returning `0`
+means success; returning a non-zero integer exits with that code. A `void`
+or `null` result is treated as success. Top-level module code still runs during
+import, but executable behavior should live in `main`.
+
+## Module Top-Level
+
+A file that opens with `module name;` is a **module file** and is held to a
+stricter shape than a script: only declarative statements are allowed at the
+top level. Anything that performs work — a function call, an `if`, a `for`,
+an assignment to an existing binding — must live inside an `init { ... }`
+block.
+
+Allowed at the top level of a module:
+
+| Statement                                 | Example                                  |
+|-------------------------------------------|------------------------------------------|
+| `module name;`                            | `module app.ids;`                        |
+| `import ...`                              | `import uuid;`                           |
+| `export ...`                              | `export func f(): int { return 1; }`     |
+| `type alias`                              | `type UserId = string;`                  |
+| Constant / variable declaration           | `const PREFIX = "x";`                    |
+|                                           | `let bootId = uuid.v7();`                |
+|                                           | `int counter = 0;`                       |
+| `func` declaration                        | `func g(int n): int { return n + 1; }`  |
+| `class` / `interface` / `enum` declaration | `class Tag { ... }`                     |
+| `init { ... }` block (at most one)        | see below                                |
+
+Anything else — `io.println("loaded");`, `if (cond) { ... }`, `[a, b] = ...`
+— is rejected by `geblang check` with a diagnostic like
+`free-standing top-level expression is not allowed in a module file; wrap
+imperative setup in an init { ... } block`.
+
+The reasoning: a module file should be readable as a contract. Looking at the
+top of the file, a caller should see what the module declares (`const`, `func`,
+`class`) and what setup runs on import (`init`). Hiding `io.println("loaded")`
+between two declarations partway down the file is exactly the
+load-order-as-execution-order trap that Python and PHP have to warn about in
+style guides; we prevent it at the parser level.
+
+```gb
+module app.ids;
+
+import uuid;
+
+const PREFIX = "usr";
+
+# Side-effecting *initialiser* on a declaration is fine - it's part of
+# the binding's value, not a free-standing effect.
+let bootId = uuid.v7();
+
+export func nextUserId(): string {
+    return PREFIX + "-" + uuid.v7();
+}
+```
+
+The cached-on-first-import behaviour still applies: the module body (including
+the `init` block, if any) runs at most once. Subsequent imports reuse the
+exports.
+
+### Init Blocks
+
+`init { ... }` is the single place imperative module setup lives:
+
+```gb
+module app.metrics;
+
+import metrics;
+import sys;
+
+const SERVICE = sys.getenv("SERVICE_NAME") ?? "unnamed";
+
+init {
+    metrics.register("requests_total");
+    metrics.register("errors_total");
+    metrics.tag("service", SERVICE);
+}
+
+export func recordRequest(): void { metrics.inc("requests_total"); }
+```
+
+Rules:
+
+- **One per file.** The semantic analyzer rejects more than one init block
+  per module with `only one init block is allowed per file`. If you have a
+  lot of setup, break it into a private helper function called from inside
+  `init`.
+- **Runs once.** The block fires the first time the module is imported.
+  Subsequent imports reuse the cached exports and `init` does not run again.
+- **In source order.** Code above the `init` block runs first (typically
+  declarations and their initialisers), then the block, then code below.
+- **Inside a module, init is the only imperative escape hatch.** Free-
+  standing calls, `if`, `while`, `for`, `match`, `try` and assignments to
+  existing bindings have to be inside `init` (or, if they belong to a piece
+  of logic the module wants to expose, inside an exported function).
+- **No special privileges.** `init` can do anything top-level code in a
+  script can do: call functions, declare locals, throw exceptions (which
+  propagate out of the import). It cannot `return` and is not an event hook.
+
+### Script files
+
+Files **without** a `module` declaration are scripts. They keep their full
+top-level freedom: top-level imperative code is the whole point. `geblang
+script.gb` runs `script.gb` top to bottom, so an `init` block isn't useful
+there and isn't required.
+
+The rule of thumb: if you're authoring a reusable module that other code
+will `import`, write `module name;` at the top and keep imperative setup in
+`init`. If you're writing a script, omit `module` and write the body
+directly.
+
+## Package Manifest
+
+`geblang.yaml` describes package roots, source paths, and extensions. User
+modules resolve from the current script/package roots before the bundled source
+stdlib.
+
+Example:
+
+```yaml
+name: acme.tools
+source:
+  - src
+```
+
+With that manifest, `import app.users;` can resolve to `src/app/users.gb`.
+Keeping source under `src/` also lets tests, examples, and generated files sit
+outside the import tree.
+
+## Source Stdlib
+
+Geblang ships source modules under `stdlib/` as normal `.gb` modules. Current
+source modules include:
+
+- `config`
+- `cli.command`
+- `testing.assertions`
+- `web.router`
+- `redis`
+
+Set `GEBLANG_STDLIB` to add or override bundled stdlib roots in custom
+installations.
+
+User modules take precedence over bundled stdlib modules in the normal package
+resolution path. Prefer unique package names for application code to avoid
+accidentally shadowing stdlib modules.
+
+## Multi-Module Layout
+
+An idiomatic project keeps executable entry points thin and moves reusable code
+into modules:
+
+```text
+geblang.yaml
+src/
+  main.gb
+  config.gb
+  domain.gb
+  repository.gb
+  service.gb
+```
+
+See `examples/expense_tracker/` for a small multi-module application.
+
+Recommended shape:
+
+```text
+src/
+  main.gb          # entry point, wiring, command dispatch
+  config.gb        # config loading
+  domain/
+    expense.gb     # classes and domain rules
+  storage/
+    repository.gb  # database or file persistence
+  web/
+    routes.gb      # HTTP route registration
+```
+
+Keep entry points thin. The rest of the application should be importable and
+testable without running the program.

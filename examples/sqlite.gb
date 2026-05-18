@@ -1,0 +1,22 @@
+/**
+ * @title Sqlite
+ * @summary Demonstrates sqlite in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import db;
+
+let conn = db.Connection("sqlite", "/tmp/geblang-example.sqlite");
+defer conn.close();
+
+conn.exec("drop table if exists users");
+conn.exec("create table users (id integer primary key, name text)");
+let inserted = conn.exec("insert into users (name) values (?)", "Ada");
+let rows = conn.query("select id, name from users where name = ?", "Ada");
+defer rows.close();
+
+io.println(inserted["rowsAffected"]);
+while (rows.next()) {
+    let row = rows.row();
+    io.println(row["name"]);
+}

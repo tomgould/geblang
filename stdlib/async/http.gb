@@ -1,0 +1,46 @@
+module async.http;
+
+import async;
+import http;
+
+## Starts an asynchronous HTTP GET request and resolves to the native HTTP response value.
+export func get(string url): Task<any> {
+    return async.run(func(): any {
+        return http.get(url);
+    });
+}
+
+## Starts an asynchronous HTTP POST request with the given body.
+export func post(string url, any body): Task<any> {
+    return async.run(func(): any {
+        return http.post(url, body);
+    });
+}
+
+## Starts an asynchronous JSON POST request, encoding the body as JSON.
+export func postJson(string url, any body): Task<any> {
+    return async.run(func(): any {
+        return http.postJson(url, body);
+    });
+}
+
+## Starts an asynchronous HTTP request for the supplied method, URL, and body.
+export func request(string method, string url, any body): Task<any> {
+    return async.run(func(): any {
+        return http.request(method, url, body);
+    });
+}
+
+## Starts an asynchronous HTTP request using the native HTTP options dictionary.
+export func requestWithOptions(dict<string, any> options): Task<any> {
+    return async.run(func(): any {
+        return http.requestWithOptions(options);
+    });
+}
+
+## Parses an HTTP response body as JSON asynchronously.
+export func parseJson(any response): Task<any> {
+    return async.run(func(): any {
+        return http.parseJson(response);
+    });
+}

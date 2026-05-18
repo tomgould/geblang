@@ -1,0 +1,13 @@
+/**
+ * @title CLI Color
+ * @summary ANSI styling helpers with NO_COLOR support.
+ * @category Standard Library
+ */
+import cli.color as color;
+import io;
+
+io.println(color.bold("=== build report ==="));
+io.println(color.green("OK") + "  parser");
+io.println(color.green("OK") + "  semantic analyzer");
+io.println(color.red("FAIL") + "  bytecode tests");
+io.println(color.dim("  set NO_COLOR=1 to disable styling"));

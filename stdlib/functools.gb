@@ -1,0 +1,67 @@
+module functools;
+
+import json;
+
+## Returns a function that applies `fns` left-to-right.
+##
+## `pipe([f, g, h])(x)` is equivalent to `h(g(f(x)))`.
+export func pipe(list<func> fns): func {
+    return func(any x): any {
+        any v = x;
+        for (let i = 0; i < fns.length(); i++) {
+            v = fns[i](v);
+        }
+        return v;
+    };
+}
+
+## Returns a function that applies `fns` right-to-left.
+##
+## `compose([f, g, h])(x)` is equivalent to `f(g(h(x)))`.
+export func compose(list<func> fns): func {
+    return func(any x): any {
+        any v = x;
+        for (let i = fns.length() - 1; i >= 0; i--) {
+            v = fns[i](v);
+        }
+        return v;
+    };
+}
+
+## Returns a function that calls `fn` with `bound` prepended to its arguments.
+##
+## `partial(add, 1)(2)` is equivalent to `add(1, 2)`.
+export func partial(func fn, any ...bound): func {
+    return func(any ...rest): any {
+        let combined = bound.concat(rest);
+        return fn(...combined);
+    };
+}
+
+## Returns an LRU-cached wrapper of `fn`.
+##
+## Cache keys are derived from the JSON representation of the call arguments,
+## so memoized functions must take JSON-serialisable arguments (primitives,
+## lists and dicts of primitives). When the cache reaches `max` entries the
+## least-recently-used entry is evicted.
+export func memoize(func fn, int max = 128): func {
+    dict<string, any> cache = {};
+    list<string> order = [];
+
+    return func(any ...args): any {
+        let key = json.stringify(args);
+        if (cache.hasKey(key)) {
+            order = order.filter(func(string k): bool { return k != key; }).push(key);
+            return cache[key];
+        }
+        let value = fn(...args);
+        cache[key] = value;
+        order = order.push(key);
+        if (order.length() > max) {
+            let oldest = order[0];
+            order = order.slice(1);
+            cache.delete(oldest);
+        }
+        return value;
+    };
+}

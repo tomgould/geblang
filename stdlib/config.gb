@@ -1,0 +1,129 @@
+module config;
+
+import serde;
+
+## Returns a shallow copy of a configuration dictionary.
+export func clone(dict<string, any> data): dict<string, any> {
+    dict<string, any> copied = {};
+    for (key, value in data.items()) {
+        copied[key] = value;
+    }
+    return copied;
+}
+
+## Recursively merges override values into a copy of base.
+export func merge(dict<string, any> base, dict<string, any> overrides): dict<string, any> {
+    dict<string, any> merged = clone(base);
+    for (key, value in overrides.items()) {
+        if (merged.hasKey(key) && merged[key] instanceof dict && value instanceof dict) {
+            merged[key] = merge(merged[key] as dict<string, any>, value as dict<string, any>);
+        } else {
+            merged[key] = value;
+        }
+    }
+    return merged;
+}
+
+## Applies default values first, then overlays explicit values.
+export func defaults(dict<string, any> values, dict<string, any> defaultValues): dict<string, any> {
+    return merge(defaultValues, values);
+}
+
+## Merges a list of configuration dictionaries from first to last.
+export func layer(list<any> layers): dict<string, any> {
+    dict<string, any> result = {};
+    for (layerData in layers) {
+        if (!(layerData instanceof dict)) {
+            throw ValueError("config.layer expects dictionaries");
+        }
+        result = merge(result, layerData as dict<string, any>);
+    }
+    return result;
+}
+
+## Returns true when a dotted configuration path exists.
+export func has(dict<string, any> data, string path): bool {
+    any current = data;
+    for (part in path.split(".")) {
+        if (!(current instanceof dict)) {
+            return false;
+        }
+        dict<string, any> currentDict = current as dict<string, any>;
+        if (!currentDict.hasKey(part)) {
+            return false;
+        }
+        current = currentDict[part];
+    }
+    return true;
+}
+
+## Returns a required dotted configuration value or throws ValueError.
+export func get(dict<string, any> data, string path): any {
+    if (!has(data, path)) {
+        throw ValueError("missing config value: " + path);
+    }
+    any current = data;
+    for (part in path.split(".")) {
+        current = (current as dict<string, any>)[part];
+    }
+    return current;
+}
+
+## Returns a dotted configuration value, or fallback when any path segment is missing.
+export func getOr(dict<string, any> data, string path, any fallback): any {
+    any current = data;
+    for (part in path.split(".")) {
+        if (!(current instanceof dict)) {
+            return fallback;
+        }
+        dict<string, any> currentDict = current as dict<string, any>;
+        if (!currentDict.hasKey(part)) {
+            return fallback;
+        }
+        current = currentDict[part];
+    }
+    return current;
+}
+
+## Alias for get when call sites want to make required configuration explicit.
+export func require(dict<string, any> data, string path): any {
+    return get(data, path);
+}
+
+## Immutable-style wrapper around configuration dictionaries with dotted-path lookup helpers.
+export class Config {
+    dict<string, any> data;
+
+    func Config(dict<string, any> data) {
+        this.data = clone(data);
+    }
+
+    func has(string path): bool {
+        return has(this.data, path);
+    }
+
+    func require(string path): any {
+        return require(this.data, path);
+    }
+
+    func get(string path): any {
+        return get(this.data, path);
+    }
+
+    func getOr(string path, any fallback): any {
+        return getOr(this.data, path, fallback);
+    }
+
+    func toDict(): dict<string, any> {
+        return clone(this.data);
+    }
+}
+
+## Parses a serde-supported document into a Config object.
+export func parse(string format, string text): Config {
+    any parsed = serde.parse(format, text);
+    if (!(parsed instanceof dict)) {
+        throw ValueError("config.parse expects " + format + " document to contain an object");
+    }
+    return Config(parsed as dict<string, any>);
+}

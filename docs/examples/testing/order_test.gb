@@ -1,0 +1,27 @@
+/**
+ * @title Service Test
+ * @summary Defines a small test class using the built-in test module.
+ * @category Testing
+ * @description Geblang tests are normal classes. Assertions live on the base test class, so tests can share helpers and state like other application code.
+ */
+import io;
+import test;
+
+func total(list<int> prices): int {
+    int sum = 0;
+    for (price in prices) {
+        sum = sum + price;
+    }
+    return sum;
+}
+
+class OrderTest extends test.Test {
+    @test
+    func totalAddsPrices(): void {
+        this.assertEquals(4200, total([1200, 3000]));
+        this.assertGreaterThan(0, total([1]));
+    }
+}
+
+let result = test.run(OrderTest);
+io.println(result["passed"]);

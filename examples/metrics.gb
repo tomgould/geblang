@@ -1,0 +1,17 @@
+/**
+ * @title Metrics
+ * @summary Demonstrates metrics in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import metrics;
+
+metrics.inc("requests");
+metrics.inc("requests", 2);
+metrics.set("queue.depth", 4);
+
+io.println(metrics.get("requests"));
+io.println(metrics.snapshot()["queue.depth"]);
+
+let start = metrics.now();
+io.println(metrics.duration(start) >= 0);

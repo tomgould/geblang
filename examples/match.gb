@@ -1,0 +1,23 @@
+/**
+ * @title Match
+ * @summary Demonstrates match in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+let value = 7;
+let label = match (value) {
+    case string s => s;
+    case int n if (n > 5) => "big";
+    case 0 => "zero";
+    default => "other";
+};
+
+io.println(label);
+
+match (Error("bad")) {
+    case ValueError e:
+        io.println("value");
+    case Error e:
+        io.println(e);
+}

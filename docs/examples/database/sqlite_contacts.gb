@@ -1,0 +1,24 @@
+/**
+ * @title SQLite Contacts
+ * @summary Stores and queries contacts through the standard database wrapper.
+ * @category Database
+ * @description This example uses SQLite because it requires no external service. The same db.Connection shape is used for PostgreSQL and MySQL.
+ */
+import db;
+import io;
+
+let conn = db.Connection("sqlite", "/tmp/geblang-docs-contacts.sqlite");
+defer conn.close();
+
+conn.exec("drop table if exists contacts");
+conn.exec("create table contacts (id integer primary key, name text, email text)");
+conn.exec("insert into contacts (name, email) values (?, ?)", "Ada", "ada@example.com");
+conn.exec("insert into contacts (name, email) values (?, ?)", "Grace", "grace@example.com");
+
+let rows = conn.query("select name, email from contacts order by name");
+defer rows.close();
+
+while (rows.next()) {
+    let row = rows.row();
+    io.println(row["name"] + " <" + row["email"] + ">");
+}

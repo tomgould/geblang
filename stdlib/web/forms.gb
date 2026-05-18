@@ -1,0 +1,83 @@
+module web.forms;
+
+import web.auth as auth;
+import web.http as http;
+import web.session as session;
+import web.validation as validation;
+
+## Parses URL-encoded form data from a request body.
+export func bind(dict<string, any> request): dict<string, any> {
+    return http.requestObject(request).form();
+}
+
+## Validates request form data and returns a result with valid, errors, and data keys.
+export func validate(dict<string, any> request, dict<string, any> rules): dict<string, any> {
+    return validation.form(request, rules);
+}
+
+## Returns true when a form validation result is valid.
+export func isValid(dict<string, any> result): bool {
+    return validation.isValid(result);
+}
+
+## Returns parsed form data from a validation result.
+export func data(dict<string, any> result): dict<string, any> {
+    return validation.data(result);
+}
+
+## Returns all validation errors for a field.
+export func fieldErrors(dict<string, any> result, string field): list<any> {
+    list<any> matches = [];
+    string prefix = "$." + field + ":";
+    for (error in validation.errors(result)) {
+        string message = error as string;
+        if (message.startsWith(prefix)) {
+            matches = matches.push(message);
+        }
+    }
+    return matches;
+}
+
+## Returns true when a field has validation errors.
+export func hasFieldError(dict<string, any> result, string field): bool {
+    return fieldErrors(result, field).length() > 0;
+}
+
+## Returns the first validation error for a field, or an empty string.
+export func firstFieldError(dict<string, any> result, string field): string {
+    let errors = fieldErrors(result, field);
+    if (errors.length() == 0) {
+        return "";
+    }
+    return errors[0] as string;
+}
+
+## Builds an HTML hidden input for a CSRF token value.
+export func csrfField(string token): string {
+    return "<input type=\"hidden\" name=\"_csrf\" value=\"" + token + "\">";
+}
+
+## Adds a CSRF cookie to a response using web.auth.
+export func withCsrf(dict<string, any> response, string secret, dict<string, any> options): dict<string, any> {
+    return auth.withCsrf(response, secret, options);
+}
+
+## Returns true when a request passes web.auth CSRF verification.
+export func verifyCsrf(dict<string, any> request, string secret): bool {
+    return auth.verifyCsrf(request, secret);
+}
+
+## Creates a redirect response with a flash message saved to the session store.
+export func redirectWithFlash(any sessionStore, dict<string, any> request, string location, string category, string message, dict<string, any> options): dict<string, any> {
+    return session.withFlash(sessionStore, http.redirect(location), request, category, message, options);
+}
+
+## Creates a redirect response with a success flash message.
+export func redirectSuccess(any sessionStore, dict<string, any> request, string location, string message, dict<string, any> options): dict<string, any> {
+    return session.withFlash(sessionStore, http.redirect(location), request, "success", message, options);
+}
+
+## Creates a redirect response with an error flash message.
+export func redirectError(any sessionStore, dict<string, any> request, string location, string message, dict<string, any> options): dict<string, any> {
+    return session.withFlash(sessionStore, http.redirect(location), request, "error", message, options);
+}

@@ -1,0 +1,23 @@
+/**
+ * @title Order Domain
+ * @summary Defines the domain object for the order service example.
+ * @category Order Service
+ * @description Domain classes keep business data and simple behaviour close together.
+ */
+module order_service.src.domain;
+
+export class Order {
+    string id;
+    string customer;
+    int totalCents;
+
+    func Order(string id, string customer, int totalCents) {
+        this.id = id;
+        this.customer = customer;
+        this.totalCents = totalCents;
+    }
+
+    func label(): string {
+        return this.id + " for " + this.customer;
+    }
+}

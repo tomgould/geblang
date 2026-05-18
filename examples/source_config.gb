@@ -1,0 +1,34 @@
+/**
+ * @title Source Config
+ * @summary Demonstrates source config in a runnable Geblang example.
+ * @category General
+ */
+import config;
+import io;
+
+let defaults = {
+    "app": {
+        "name": "Geblang",
+        "debug": false
+    },
+    "server": {
+        "host": "127.0.0.1",
+        "port": 8080
+    }
+};
+
+let file = config.parse("yaml", "app:\n  debug: true\nserver:\n  port: 9000\n");
+let env = {
+    "server": {
+        "host": "0.0.0.0"
+    }
+};
+
+let loaded = config.Config(config.layer([defaults, file.toDict(), env]));
+
+io.println(loaded.get("app.name"));
+io.println(loaded.get("app.debug"));
+io.println(loaded.get("server.host"));
+io.println(loaded.get("server.port"));
+io.println(loaded.has("server.port"));
+io.println(loaded.getOr("missing.value", "fallback"));

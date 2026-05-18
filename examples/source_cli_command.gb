@@ -1,0 +1,20 @@
+/**
+ * @title Source Cli Command
+ * @summary Demonstrates source cli command in a runnable Geblang example.
+ * @category General
+ */
+import cli.command as command;
+import io;
+
+let deploy = command.newCommand("deploy", "Deploy an app");
+deploy.option(command.newOption("env", "string").short("e").default("dev").help("target environment"));
+deploy.option(command.newOption("dry-run", "bool").help("show planned changes"));
+
+let parsed = deploy.parse(["--env", "prod", "--dry-run"]);
+let required = deploy.requireParsed(["--env=stage"]);
+
+io.println(parsed["env"]);
+io.println(parsed["dry-run"]);
+io.println(required["env"]);
+io.println(required["dry-run"]);
+io.println(deploy.help().contains("--env"));

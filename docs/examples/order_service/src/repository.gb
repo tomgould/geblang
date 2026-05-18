@@ -1,0 +1,27 @@
+/**
+ * @title Order Repository
+ * @summary Provides a small in-memory repository for the order service example.
+ * @category Order Service
+ * @description Repositories isolate storage details from service code. This one uses a list so the example stays self-contained.
+ */
+module order_service.src.repository;
+
+export class OrderRepository {
+    list<any> orders;
+
+    func OrderRepository() {
+        this.orders = [];
+    }
+
+    func add(any order): void {
+        this.orders = this.orders.push(order);
+    }
+
+    func all(): list<any> {
+        return this.orders;
+    }
+}
+
+export func newRepository(): OrderRepository {
+    return OrderRepository();
+}

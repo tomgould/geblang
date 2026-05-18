@@ -1,0 +1,59 @@
+/**
+ * @title datetime stdlib test
+ * @summary Timezone-aware now / partsInZone / formatRFC3339 / formatHTTP.
+ */
+import test;
+import datetime;
+
+class DateTimeTest extends test.Test {
+    @test
+    func nowDefaultIsUtc(): void {
+        let n = datetime.now();
+        this.assertEquals("UTC", n["zone"]);
+    }
+
+    @test
+    func nowWithZone(): void {
+        let london = datetime.now("Europe/London");
+        this.assertEquals("Europe/London", london["zone"]);
+    }
+
+    @test
+    func partsInZone(): void {
+        # 2023-11-14T22:13:20Z is 17:13:20 in America/New_York (EST, UTC-5).
+        let parts = datetime.partsInZone(1700000000, "America/New_York");
+        this.assertEquals(2023, parts["year"]);
+        this.assertEquals(11, parts["month"]);
+        this.assertEquals(14, parts["day"]);
+        this.assertEquals(17, parts["hour"]);
+        this.assertEquals("America/New_York", parts["zone"]);
+    }
+
+    @test
+    func partsInZoneUtc(): void {
+        let parts = datetime.partsInZone(1700000000, "UTC");
+        this.assertEquals(2023, parts["year"]);
+        this.assertEquals(22, parts["hour"]);
+    }
+
+    @test
+    func formatRFC3339IsISO(): void {
+        this.assertEquals("2023-11-14T22:13:20Z", datetime.formatRFC3339(1700000000));
+    }
+
+    @test
+    func formatHTTPIsRFC1123(): void {
+        this.assertEquals("Tue, 14 Nov 2023 22:13:20 GMT", datetime.formatHTTP(1700000000));
+    }
+
+    @test
+    func invalidZoneRaises(): void {
+        let threw = false;
+        try {
+            let bad = datetime.now("Not/AZone");
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+}

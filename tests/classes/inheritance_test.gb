@@ -1,0 +1,63 @@
+/**
+ * @title Inheritance test
+ * @summary Single inheritance, super calls, method override, interface impl.
+ */
+import test;
+
+interface Greeter {
+    func greet(): string;
+}
+
+class Animal {
+    string name;
+
+    func Animal(string name) {
+        this.name = name;
+    }
+
+    func describe(): string {
+        return "I am " + this.name;
+    }
+}
+
+class Dog extends Animal implements Greeter {
+    func Dog(string name) {
+        parent(name);
+    }
+
+    func describe(): string {
+        return parent.describe() + " the dog";
+    }
+
+    func greet(): string {
+        return "Woof, " + this.name;
+    }
+}
+
+class InheritanceTest extends test.Test {
+    @test
+    func parentMethod(): void {
+        let a = Animal("Aslan");
+        this.assertEquals("I am Aslan", a.describe());
+    }
+
+    @test
+    func overrideAndSuper(): void {
+        let d = Dog("Rex");
+        this.assertEquals("I am Rex the dog", d.describe());
+    }
+
+    @test
+    func instanceOfBoth(): void {
+        let d = Dog("Rex");
+        this.assertTrue(d instanceof Dog);
+        this.assertTrue(d instanceof Animal);
+        this.assertTrue(d instanceof Greeter);
+    }
+
+    @test
+    func interfaceMethod(): void {
+        let d = Dog("Rex");
+        this.assertEquals("Woof, Rex", d.greet());
+    }
+}

@@ -1,0 +1,174 @@
+{
+  "name": "vscode-geblang",
+  "displayName": "Geblang",
+  "description": "Geblang language support for Visual Studio Code",
+  "version": "1.0.0",
+  "publisher": "geblang",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Debuggers"
+  ],
+  "keywords": ["geblang", "gb"],
+  "activationEvents": [
+    "onLanguage:geblang",
+    "onDebugResolve:geblang",
+    "onDebugInitialConfigurations:geblang",
+    "onCommand:geblang.selectExecutablePath",
+    "onCommand:geblang.runFile",
+    "onCommand:geblang.openRepl",
+    "onCommand:geblang.runDoctor",
+    "onCommand:geblang.buildProject",
+    "onCommand:geblang.cleanCache"
+  ],
+  "extensionKind": ["workspace"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "geblang.selectExecutablePath",
+        "title": "Select Geblang Executable",
+        "category": "Geblang"
+      },
+      {
+        "command": "geblang.runFile",
+        "title": "Run Current File",
+        "category": "Geblang"
+      },
+      {
+        "command": "geblang.openRepl",
+        "title": "Open REPL",
+        "category": "Geblang"
+      },
+      {
+        "command": "geblang.runDoctor",
+        "title": "Run Doctor",
+        "category": "Geblang"
+      },
+      {
+        "command": "geblang.buildProject",
+        "title": "Build Project",
+        "category": "Geblang"
+      },
+      {
+        "command": "geblang.cleanCache",
+        "title": "Clean Bytecode Cache",
+        "category": "Geblang"
+      }
+    ],
+    "languages": [
+      {
+        "id": "geblang",
+        "aliases": ["Geblang", "geblang"],
+        "extensions": [".gb"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "geblang",
+        "scopeName": "source.geblang",
+        "path": "./syntaxes/geblang.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "geblang",
+        "path": "./snippets/geblang.json"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "geblang",
+        "label": "Geblang",
+        "languages": ["geblang"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to the Geblang script to debug.",
+                "default": "${file}"
+              },
+              "args": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Arguments passed to the script.",
+                "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory used when running and resolving local modules.",
+                "default": "${workspaceFolder}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Pause at the first statement.",
+                "default": false
+              },
+              "geblangPath": {
+                "type": "string",
+                "description": "Path to the geblang executable.",
+                "default": "geblang"
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "geblang",
+            "request": "launch",
+            "name": "Run Geblang Script",
+            "program": "${file}",
+            "cwd": "${workspaceFolder}",
+            "args": [],
+            "stopOnEntry": false
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Geblang: Launch",
+            "description": "Debug a Geblang script",
+            "body": {
+              "type": "geblang",
+              "request": "launch",
+              "name": "Launch ${1:script.gb}",
+              "program": "^\"${workspaceFolder}/${1:script.gb}\""
+            }
+          }
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "Geblang",
+      "properties": {
+        "geblang.executablePath": {
+          "type": "string",
+          "default": "geblang",
+          "markdownDescription": "Path to the `geblang` executable. Leave as `geblang` if it is on your `PATH`, or click the `$(tools) geblang:` status bar item to browse."
+        },
+        "geblang.executionMode": {
+          "type": "string",
+          "enum": ["auto", "native", "wsl"],
+          "default": "auto",
+          "markdownDescription": "How the extension launches `geblang`. `auto` uses native execution except for Linux/WSL paths on Windows, `native` always runs the configured executable directly, and `wsl` runs it through `wsl.exe`."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc -p ./ --noEmit"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/node": "^18.0.0",
+    "typescript": "^5.0.0",
+    "esbuild": "^0.21.0",
+    "vscode-languageclient": "^9.0.0"
+  }
+}

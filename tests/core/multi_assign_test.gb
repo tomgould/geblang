@@ -1,0 +1,49 @@
+/**
+ * @title Multiple assignment test
+ * @summary `a, b = b, a` swap, list unpacking, atomic ordering.
+ */
+import test;
+
+class MultiAssignTest extends test.Test {
+    @test
+    func swap(): void {
+        let a = 1;
+        let b = 2;
+        a, b = b, a;
+        this.assertEquals(2, a);
+        this.assertEquals(1, b);
+    }
+
+    @test
+    func listUnpack(): void {
+        let x = 0;
+        let y = 0;
+        let z = 0;
+        x, y, z = [10, 20, 30];
+        this.assertEquals(10, x);
+        this.assertEquals(20, y);
+        this.assertEquals(30, z);
+    }
+
+    @test
+    func multiValueRhs(): void {
+        let a = 0;
+        let b = 0;
+        let c = 0;
+        a, b, c = 1, 2, 3;
+        this.assertEquals(1, a);
+        this.assertEquals(2, b);
+        this.assertEquals(3, c);
+    }
+
+    @test
+    func rhsEvaluatedBeforeLhs(): void {
+        # Atomicity: all RHS expressions evaluate before any LHS binding
+        # changes, so a swap doesn't smear values.
+        let x = "first";
+        let y = "second";
+        x, y = y, x;
+        this.assertEquals("second", x);
+        this.assertEquals("first", y);
+    }
+}

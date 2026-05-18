@@ -1,0 +1,21 @@
+/**
+ * @title Core
+ * @summary Demonstrates core in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+int x = 1;
+const label = "count";
+
+while (x < 4) {
+    io.println(label + ": tick");
+    x = x + 1;
+}
+
+if (x == 4 && true xor false) {
+    io.println(x);
+}
+
+io.println(5 // 2);
+io.println(5 / 2);

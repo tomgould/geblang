@@ -1,0 +1,32 @@
+/**
+ * @title Domain
+ * @summary Demonstrates domain in a runnable Geblang example.
+ * @category Expense Tracker
+ */
+module expense.tracker.domain;
+
+export class Expense {
+    string category;
+    string description;
+    int cents;
+
+    func Expense(string category, string description, int cents) {
+        this.category = category;
+        this.description = description;
+        this.cents = cents;
+    }
+
+    func label(): string {
+        return this.category + ": " + this.description;
+    }
+}
+
+export func money(int cents, string currency): string {
+    int major = cents // 100;
+    int minor = cents % 100;
+    string suffix = minor as string;
+    if (minor < 10) {
+        suffix = "0" + suffix;
+    }
+    return currency + " " + (major as string) + "." + suffix;
+}

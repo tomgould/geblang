@@ -1,0 +1,16 @@
+/**
+ * @title Trace
+ * @summary Demonstrates trace in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import trace;
+
+let span = trace.start("request", {"path": "/health"});
+trace.event(span, "db", {"query": "select 1"});
+let ended = trace.end(span);
+
+io.println(ended["name"]);
+io.println(ended["ended"]);
+io.println(ended["events"][0]["name"]);
+io.println(trace.snapshot().length());

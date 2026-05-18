@@ -1,0 +1,13 @@
+/**
+ * @title Json
+ * @summary Demonstrates json in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import json;
+
+let data = json.parse('{"name":"Ada","count":3,"items":[true,null]}');
+io.println(data["name"]);
+io.println(data["count"] + 4);
+io.println(data["items"][0]);
+io.println(json.stringify({"ok": true, "name": data["name"]}));

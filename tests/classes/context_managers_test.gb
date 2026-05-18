@@ -1,0 +1,127 @@
+/**
+ * @title Context managers test
+ * @summary with-block invokes __enter__ on entry and __exit__ on
+ *          every exit path (normal, return, break, continue,
+ *          exception). __exit__ never falls back to the destructor.
+ */
+import test;
+
+class Resource {
+    list<string> log;
+    int enterCount;
+    int exitCount;
+
+    func Resource() {
+        this.log = [];
+        this.enterCount = 0;
+        this.exitCount = 0;
+    }
+
+    func __enter__(): Resource {
+        this.enterCount = this.enterCount + 1;
+        this.log = this.log.push("enter");
+        return this;
+    }
+
+    func __exit__(): void {
+        this.exitCount = this.exitCount + 1;
+        this.log = this.log.push("exit");
+    }
+
+    func record(string entry): void {
+        this.log = this.log.push(entry);
+    }
+}
+
+class ContextManagerTest extends test.Test {
+    @test
+    func enterAndExitOnNormalCompletion(): void {
+        let r = Resource();
+        with (r) {
+            r.record("body");
+        }
+        this.assertEquals(1, r.enterCount);
+        this.assertEquals(1, r.exitCount);
+        this.assertEquals(["enter", "body", "exit"], r.log);
+    }
+
+    @test
+    func enterBindingReturnedToName(): void {
+        let r = Resource();
+        with (bound = r) {
+            bound.record("body");
+        }
+        this.assertEquals(1, r.enterCount);
+        this.assertEquals(1, r.exitCount);
+    }
+
+    @test
+    func exitRunsOnException(): void {
+        let r = Resource();
+        let threw = false;
+        try {
+            with (r) {
+                r.record("before-throw");
+                throw ValueError("boom");
+            }
+        } catch (ValueError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+        this.assertEquals(1, r.exitCount);
+        this.assertEquals(["enter", "before-throw", "exit"], r.log);
+    }
+
+    @test
+    func exitRunsOnReturn(): void {
+        let r = Resource();
+        this.assertEquals(7, this.useReturn(r));
+        this.assertEquals(1, r.exitCount);
+    }
+
+    func useReturn(Resource r): int {
+        with (r) {
+            r.record("body");
+            return 7;
+        }
+        return 0;
+    }
+
+    @test
+    func exitRunsOnBreak(): void {
+        let r = Resource();
+        for (i in [1, 2]) {
+            with (r) {
+                r.record("iter-" + (i as string));
+                break;
+            }
+        }
+        this.assertEquals(1, r.enterCount);
+        this.assertEquals(1, r.exitCount);
+    }
+
+    @test
+    func bareExpressionFormNoBinding(): void {
+        let r = Resource();
+        with (r) {
+            r.record("body");
+        }
+        this.assertEquals(1, r.enterCount);
+        this.assertEquals(1, r.exitCount);
+    }
+
+    @test
+    func withoutExitMethodIsNoop(): void {
+        /* Resource without __exit__: with-block exits cleanly. */
+        let s = Plain();
+        with (s) {
+            s.count = s.count + 1;
+        }
+        this.assertEquals(1, s.count);
+    }
+}
+
+class Plain {
+    int count;
+    func Plain() { this.count = 0; }
+}

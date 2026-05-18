@@ -1,0 +1,5 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag string element in list<int>.
+ */
+list<int> xs = [1, "two", 3];

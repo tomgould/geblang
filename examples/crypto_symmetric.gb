@@ -1,0 +1,24 @@
+import crypt;
+import bytes;
+import io;
+import secrets;
+
+# AES-256-GCM round trip
+let key = secrets.randomBytes(32);
+let enc = crypt.aesEncrypt(key, "this is a secret session payload");
+
+io.println(enc["nonce"].length);     # 12 (AES-GCM nonce)
+io.println(enc["nonce"].toHex());
+let pt = crypt.aesDecrypt(key, enc["nonce"], enc["ciphertext"]);
+io.println("aes: " + pt.toString());
+
+# Authenticated associated data - both encrypt and decrypt must agree
+let aad = bytes.fromString("v1/user-42");
+let signed = crypt.aesEncrypt(key, "secret", aad);
+let verified = crypt.aesDecrypt(key, signed["nonce"], signed["ciphertext"], aad);
+io.println("aes+aad: " + verified.toString());
+
+# XChaCha20-Poly1305 round trip (24-byte nonce, no AES instructions required)
+let enc2 = crypt.chacha20Encrypt(key, "also secret");
+let pt2 = crypt.chacha20Decrypt(key, enc2["nonce"], enc2["ciphertext"]);
+io.println("chacha: " + pt2.toString());

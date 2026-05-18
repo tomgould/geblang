@@ -1,0 +1,31 @@
+/**
+ * @title Init block test
+ * @summary `init { ... }` runs at module-load time, in source order.
+ */
+import test;
+
+int order = 0;
+list<int> trail = [];
+
+init {
+    order = order + 1;
+    trail = trail.push(order);
+}
+
+class InitBlockTest extends test.Test {
+    @test
+    func initRanOnceAtLoadTime(): void {
+        # The init block ran when this file was first loaded by the
+        # test runner. It should have executed exactly once.
+        this.assertEquals(1, order);
+        this.assertEquals([1], trail);
+    }
+
+    @test
+    func initIsObservableFromTestMethods(): void {
+        # State mutated by init is visible from later code, including
+        # this test method.
+        this.assertTrue(order > 0);
+        this.assertEquals(1, trail.length());
+    }
+}

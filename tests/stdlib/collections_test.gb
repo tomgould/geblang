@@ -1,0 +1,45 @@
+/**
+ * @title Collections stdlib test
+ * @summary list/dict/set operations: sort, unique, map, filter, reduce.
+ */
+import test;
+import collections;
+
+class CollectionsTest extends test.Test {
+    @test
+    func sortList(): void {
+        let xs = [3, 1, 4, 1, 5, 9, 2, 6];
+        let sorted = collections.sort(xs);
+        this.assertEquals([1, 1, 2, 3, 4, 5, 6, 9], sorted);
+    }
+
+    @test
+    func unique(): void {
+        let xs = [1, 2, 2, 3, 3, 3, 4];
+        this.assertEquals([1, 2, 3, 4], collections.unique(xs));
+    }
+
+    @test
+    func mapFilter(): void {
+        let doubled = collections.map([1, 2, 3], func(int n): int { return n * 2; });
+        this.assertEquals([2, 4, 6], doubled);
+        let evens = collections.filter([1, 2, 3, 4, 5], func(int n): bool { return n % 2 == 0; });
+        this.assertEquals([2, 4], evens);
+    }
+
+    @test
+    func reduce(): void {
+        let sum = collections.reduce([1, 2, 3, 4, 5], func(int acc, int n): int { return acc + n; }, 0);
+        this.assertEquals(15, sum);
+    }
+
+    @test
+    func chunk(): void {
+        this.assertEquals([[1, 2], [3, 4], [5]], collections.chunk([1, 2, 3, 4, 5], 2));
+    }
+
+    @test
+    func flatten(): void {
+        this.assertEquals([1, 2, 3, 4], collections.flatten([[1, 2], [3, 4]]));
+    }
+}

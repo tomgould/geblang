@@ -1,0 +1,38 @@
+/**
+ * @title Sales Report
+ * @summary Groups order rows into a simple revenue report.
+ * @category Data Processing
+ * @description This example is intentionally small, but mirrors a common batch-job pattern: iterate records, aggregate into a dictionary, and print a report.
+ */
+import io;
+
+let rows = [
+    {"region": "north", "amount": 12900},
+    {"region": "south", "amount": 8400},
+    {"region": "north", "amount": 4600},
+    {"region": "west", "amount": 15250}
+];
+
+dict<string, int> totals = {"north": 0, "south": 0, "west": 0};
+
+for (row in rows) {
+    string region = row["region"];
+    int amount = row["amount"];
+    if (region == "north") {
+        totals["north"] = totals["north"] + amount;
+    } else if (region == "south") {
+        totals["south"] = totals["south"] + amount;
+    } else if (region == "west") {
+        totals["west"] = totals["west"] + amount;
+    }
+}
+
+for (region in totals.keys()) {
+    int cents = totals[region];
+    int minor = cents % 100;
+    string suffix = minor as string;
+    if (minor < 10) {
+        suffix = "0" + suffix;
+    }
+    io.println(region + ": $" + ((cents // 100) as string) + "." + suffix);
+}

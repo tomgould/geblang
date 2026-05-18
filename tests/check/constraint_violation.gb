@@ -1,0 +1,15 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag type parameter not satisfying its constraint.
+ */
+interface Greeter {
+    func greet(): string;
+}
+class Counter {
+    int value = 0;
+}
+func greetAll<T implements Greeter>(T x, T y): void {
+    x.greet();
+    y.greet();
+}
+greetAll(Counter(), Counter());

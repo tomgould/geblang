@@ -1,0 +1,42 @@
+/**
+ * @title Main
+ * @summary Demonstrates main in a runnable Geblang example.
+ * @category Expense Tracker
+ */
+import expense.tracker.config as config;
+import expense.tracker.domain as domain;
+import expense.tracker.reporting as reporting;
+import expense.tracker.repository as repository;
+import expense.tracker.service as service;
+import io;
+
+let settings = config.defaults();
+let repo = repository.newRepository();
+let expenses = service.newService(repo);
+
+let first = expenses.record({
+    "category": "Hosting",
+    "description": "Production API",
+    "cents": 12900
+});
+let second = expenses.record({
+    "category": "Tools",
+    "description": "Design review",
+    "cents": 4500
+});
+let invalid = expenses.record({
+    "category": "Travel",
+    "description": "Bad receipt",
+    "cents": 0
+});
+
+let report = reporting.summary(repo.all(), settings);
+let categories = report["byCategory"] as dict<string, any>;
+
+io.println(first["ok"]);
+io.println(second["ok"]);
+io.println(invalid["ok"]);
+io.println(report["count"]);
+io.println(domain.money(report["totalCents"] as int, settings["currency"] as string));
+io.println(domain.money(categories["Hosting"] as int, settings["currency"] as string));
+io.println(report["overWarning"]);

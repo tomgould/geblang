@@ -1,0 +1,59 @@
+module schema.validator;
+
+import schema as nativeSchema;
+
+## Holds a schema definition and validates values against it.
+export class Validator {
+    dict<string, any> schemaDict;
+
+    func Validator(dict<string, any> schemaDict) {
+        this.schemaDict = schemaDict;
+    }
+
+    ## Validates value and returns a Result.
+    func validate(any value): dict<string, any> {
+        return nativeSchema.validate(value, this.schemaDict);
+    }
+
+    ## Returns true when value passes validation.
+    func isValid(any value): bool {
+        let result = nativeSchema.validate(value, this.schemaDict);
+        return result["valid"] as bool;
+    }
+
+    ## Returns the list of error strings for a failed validation, or empty list.
+    func errors(any value): list<string> {
+        let result = nativeSchema.validate(value, this.schemaDict);
+        if (result["valid"] as bool) {
+            return [];
+        }
+        list<string> errs = [];
+        for (e in result["errors"]) {
+            errs.push(e as string);
+        }
+        return errs;
+    }
+
+    ## Returns errors for a specific dotted-path prefix (e.g. "$.name").
+    func fieldErrors(any value, string field): list<string> {
+        let all = this.errors(value);
+        list<string> matches = [];
+        let prefix = "$." + field + ":";
+        for (e in all) {
+            if (e.startsWith(prefix)) {
+                matches.push(e.substring(prefix.length()).trim());
+            }
+        }
+        return matches;
+    }
+}
+
+## Returns a Validator wrapping the given schema dict.
+export func of(dict<string, any> schemaDict): Validator {
+    return Validator(schemaDict);
+}
+
+## Validates value directly and returns the result dict {valid, errors}.
+export func validate(any value, dict<string, any> schemaDict): dict<string, any> {
+    return nativeSchema.validate(value, schemaDict);
+}

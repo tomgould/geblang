@@ -1,0 +1,28 @@
+/**
+ * @title Errors Stacktrace
+ * @summary Demonstrates errors stacktrace in a runnable Geblang example.
+ * @category General
+ */
+import errors;
+import io;
+
+func readProfile(): void {
+    throw RuntimeError("profile missing");
+}
+
+func loadUser(): void {
+    readProfile();
+}
+
+try {
+    loadUser();
+} catch (RuntimeError e) {
+    let trace = e.stackTrace();
+    let first = trace.first();
+
+    io.println(e.class + ": " + e.message);
+    io.println(errors.hasStackTrace(e) as string);
+    io.println(first.function());
+    io.println(first.line() > 0 as string);
+    io.println(errors.frames(e)[0]["function"]);
+}

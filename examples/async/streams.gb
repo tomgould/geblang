@@ -1,0 +1,46 @@
+/**
+ * @title Streams
+ * @summary Demonstrates streams in a runnable Geblang example.
+ * @category Async
+ */
+import async.stream as astream;
+import io;
+
+class Events {
+    int count;
+
+    func Events() {
+        this.count = 0;
+    }
+
+    func onStartObject(): void {
+        this.count = this.count + 1;
+    }
+
+    func onKey(string key): void {
+        this.count = this.count + 1;
+    }
+
+    func onString(string value): void {
+        this.count = this.count + 1;
+    }
+
+    func onValue(any value): void {
+        this.count = this.count + 1;
+    }
+
+    func onEndObject(): void {
+        this.count = this.count + 1;
+    }
+
+    func onStartArray(): void {}
+    func onEndArray(): void {}
+    func onError(string error): void {}
+}
+
+let handler = Events();
+let task = astream.jsonStream('{"name":"Ada"}', handler);
+
+io.println("stream started");
+io.println(await task);
+io.println(handler.count);

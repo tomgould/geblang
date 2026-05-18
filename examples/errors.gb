@@ -1,0 +1,66 @@
+/**
+ * @title Errors
+ * @summary Demonstrates errors in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import errors;
+
+# Built-in error types
+try {
+    throw ValueError("bad");
+} catch (TypeError e) {
+    io.println("type");
+} catch (ValueError e) {
+    io.println(e.message);
+} finally {
+    io.println("cleanup");
+}
+
+try {
+    throw Error("fallback");
+} catch {
+    io.println("caught");
+}
+
+func returnsWithFinally(): int {
+    try {
+        return 7;
+    } finally {
+        io.println("before return");
+    }
+}
+
+io.println(returnsWithFinally() as string);
+
+# User-defined error classes
+class AppError extends Error {}
+class NetworkError extends RuntimeError {}
+class DatabaseError extends RuntimeError {}
+
+try {
+    throw AppError("service unavailable");
+} catch (NetworkError e) {
+    io.println("network: " + e.message);
+} catch (AppError e) {
+    io.println("app: " + e.message);
+} catch (Error e) {
+    io.println("other: " + e.message);
+}
+
+# Catch by parent class
+try {
+    throw NetworkError("timeout");
+} catch (Error e) {
+    io.println(e.class + ": " + e.message);
+}
+
+# errors module helpers
+let err = DatabaseError("connection refused");
+io.println(errors.class(err));
+io.println(errors.message(err));
+io.println(errors.is(err, "RuntimeError") as string);
+io.println(errors.is(err, "TypeError") as string);
+
+let wrapped = errors.wrap(err, "query failed");
+io.println(wrapped.message);

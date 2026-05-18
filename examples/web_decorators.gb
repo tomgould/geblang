@@ -1,0 +1,65 @@
+/**
+ * @title Web Decorators
+ * @summary Demonstrates web decorators in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import web.auth as auth;
+import web.http as http;
+import web.router as router;
+import web.session as session;
+
+let sessions = session.fileSessionStore(io.tempDir("web-decorator-sessions"), 3600);
+let loginResponse = auth.login(sessions, http.text("logged in"), {"name": "Ada", "roles": ["admin"]}, {"httpOnly": true});
+let editorResponse = auth.login(sessions, http.text("logged in"), {"name": "Grace", "roles": ["editor"]}, {"httpOnly": true});
+
+class ApiController {
+    @route("GET", "/health")
+    func health(dict<string, any> request): dict<string, any> {
+        return http.jsonStatus({"ok": true}, 200);
+    }
+
+    @loginRequired
+    @route("GET", "/me")
+    func me(dict<string, any> request): dict<string, any> {
+        let user = auth.currentUser(sessions, request);
+        return http.jsonStatus({"user": user["name"]}, 200);
+    }
+
+    @loginRequired
+    @isGranted("admin")
+    @route("POST", "/admin")
+    func admin(dict<string, any> request): dict<string, any> {
+        return http.created({"created": true});
+    }
+}
+
+let app = router.newRouter();
+let api = router.group(app, "/api");
+router.mountWithOptions(api, ApiController(), {
+    "sessionStore": sessions
+});
+
+let health = router.handle(app, http.request("GET", "/api/health"));
+
+let anonymous = http.request("GET", "/api/me");
+anonymous["headers"] = {};
+let unauthorized = router.handle(app, anonymous);
+
+let user = http.request("GET", "/api/me");
+user["headers"] = {"Cookie": loginResponse["headers"]["Set-Cookie"]};
+let me = router.handle(app, user);
+
+let denied = http.requestWithBody("POST", "/api/admin", {});
+denied["headers"] = {"Cookie": editorResponse["headers"]["Set-Cookie"]};
+let forbidden = router.handle(app, denied);
+
+let allowed = http.requestWithBody("POST", "/api/admin", {});
+allowed["headers"] = {"Cookie": loginResponse["headers"]["Set-Cookie"]};
+let created = router.handle(app, allowed);
+
+io.println(health["status"]);
+io.println(unauthorized["status"]);
+io.println(me["body"]);
+io.println(forbidden["status"]);
+io.println(created["status"]);

@@ -1,0 +1,26 @@
+/**
+ * @title Send Mail
+ * @summary Demonstrates send mail in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import mailer;
+
+let message = mailer.Message("Welcome to Geblang")
+    .fromAddress("App <noreply@example.com>")
+    .toAddress("Ada <ada@example.com>")
+    .withText("Hello Ada,\n\nYour account is ready.")
+    .withHtml("<h1>Hello Ada</h1><p>Your account is ready.</p>")
+    .withHeader("X-App", "Geblang")
+    .attach(mailer.Attachment("welcome.txt", "Thanks for trying Geblang.").withContentType("text/plain"));
+
+let transport = mailer.smtpTransport("smtp.example.com", 587, "user", "secret")
+    .fromAddress("App <noreply@example.com>");
+let client = mailer.Mailer(transport);
+
+# Use client.send(message) with real SMTP credentials. Rendering is useful for
+# tests, previews, and local debugging without network access.
+let rendered = client.render(message);
+io.println(rendered.contains("multipart/mixed") as string);
+io.println(rendered.contains("Welcome to Geblang") as string);
+io.println(rendered.contains("welcome.txt") as string);

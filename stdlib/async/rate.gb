@@ -1,0 +1,60 @@
+module async.rate;
+
+import async;
+import time;
+
+## Returns a wrapper that invokes `fn` at most once per `ms` milliseconds.
+##
+## Subsequent calls within the window return the result of the most
+## recent invocation without calling `fn` again. Useful for rate-limiting
+## handlers that fire on every keystroke / scroll / message.
+##
+## ```gb
+## let log = async.rate.throttle(func(string m): void {
+##     io.println(m);
+## }, 200);
+## log("a"); log("b"); log("c");  # only one io.println in 200ms
+## ```
+export func throttle(func fn, int ms): func {
+    int lastAt = 0;
+    any lastResult = null;
+    return func(any ...args): any {
+        let now = time.now();
+        if (now - lastAt < ms) {
+            return lastResult;
+        }
+        lastAt = now;
+        lastResult = fn(...args);
+        return lastResult;
+    };
+}
+
+## Returns a wrapper that delays invocation until `ms` milliseconds have
+## passed since the last call. Repeated calls within that window cancel
+## prior pending invocations.
+##
+## The wrapper returns a `Task<any>` that resolves to the value of `fn`
+## once it eventually runs, or `null` if a later call superseded it.
+## await it if you care about the result.
+##
+## ```gb
+## let save = async.rate.debounce(func(string text): void {
+##     persist(text);
+## }, 300);
+## save("hello"); save("hello!"); save("hello world");
+## # persist("hello world") runs 300ms after the last call
+## ```
+export func debounce(func fn, int ms): func {
+    int generation = 0;
+    return func(any ...args): Task<any> {
+        generation = generation + 1;
+        let myGen = generation;
+        return async.run(func(): any {
+            async.sleep(ms);
+            if (myGen == generation) {
+                return fn(...args);
+            }
+            return null;
+        });
+    };
+}

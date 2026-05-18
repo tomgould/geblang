@@ -1,0 +1,26 @@
+/**
+ * @title Static
+ * @summary Demonstrates static in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+class Named {
+    static const prefix = "N";
+
+    static func label(string name): string {
+        return Named.prefix + ":" + name;
+    }
+}
+
+class User extends Named {
+    static func labelUser(string name): string {
+        return User.label(name);
+    }
+}
+
+io.println(Named.prefix);
+io.println(Named.label("Ada"));
+io.println(User.prefix);
+io.println(User.label("Bea"));
+io.println(User.labelUser("Cal"));

@@ -1,0 +1,17 @@
+/**
+ * @title Io Links
+ * @summary Demonstrates io links in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+let dir = io.tempDir("geb-links-*");
+let target = dir + "/target.txt";
+let link = dir + "/target-link.txt";
+
+io.writeText(target, "linked");
+io.symlink(target, link);
+io.println(io.readText(link));
+io.println(io.readLink(link) == target);
+
+io.remove(dir);

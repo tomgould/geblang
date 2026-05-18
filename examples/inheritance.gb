@@ -1,0 +1,38 @@
+/**
+ * @title Inheritance
+ * @summary Demonstrates inheritance in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+class Animal {
+    string name;
+
+    func Animal(string name) {
+        this.name = name;
+    }
+
+    func speak(): string {
+        return this.name + ":?";
+    }
+}
+
+class Dog extends Animal {
+    string breed;
+
+    func Dog(string name, string breed) {
+        parent(name);
+        this.breed = breed;
+    }
+
+    func speak(): string {
+        return parent.speak() + ":woof:" + this.breed;
+    }
+}
+
+Dog d = Dog("Ada", "Collie");
+io.println(d.name);
+io.println(d.breed);
+io.println(d.speak());
+io.println(d instanceof Dog);
+io.println(d instanceof Animal);

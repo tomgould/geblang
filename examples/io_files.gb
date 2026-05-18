@@ -1,0 +1,35 @@
+/**
+ * @title Io Files
+ * @summary Demonstrates io files in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+let path = "/tmp/geblang-file-example.txt";
+let csvPath = "/tmp/geblang-file-example.csv";
+
+let handle = io.open(path, "w");
+io.write(handle, "hello");
+io.flush(handle);
+io.sync(handle);
+io.close(handle);
+
+io.appendText(path, " world");
+
+let reader = io.open(path, "r");
+io.println(io.read(reader, 5));
+io.println(io.readAll(reader));
+io.close(reader);
+
+let stat = io.stat(path);
+io.println(stat["size"]);
+
+io.chmod(path, 420);
+io.println(io.stat(path)["mode"]);
+
+io.writeCSV(csvPath, [["name", "age"], ["Ada", 37]]);
+let rows = io.readCSV(csvPath);
+io.println(rows[1][0]);
+
+io.remove(path);
+io.remove(csvPath);

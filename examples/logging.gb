@@ -1,0 +1,29 @@
+/**
+ * @title Logging
+ * @summary Demonstrates logging in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import log;
+
+class Capture implements log.LogInterface {
+    string last = "";
+
+    func handle(string level, string message, dict<string, any> fields): void {
+        this.last = level + ":" + message + ":" + fields["id"];
+    }
+}
+
+let stdout = log.stdout();
+log.info(stdout, "hello", {"id": "1"});
+
+let file = log.file("/tmp/geblang-example.log");
+log.warn(file, "file", {"id": "2"});
+log.close(file);
+io.println(io.readText("/tmp/geblang-example.log").length() > 0);
+
+Capture capture = Capture();
+let custom = log.custom(capture);
+log.error(custom, "custom", {"id": "3"});
+io.println(capture.last);
+io.println(capture instanceof log.LogInterface);

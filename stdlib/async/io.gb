@@ -1,0 +1,108 @@
+module async.io;
+
+import async;
+import io;
+
+## Reads a text file asynchronously and resolves to its full contents.
+export func readText(string path): Task<string> {
+    return async.run(func(): string {
+        return io.readText(path);
+    });
+}
+
+## Writes text to a file asynchronously, replacing any existing contents.
+export func writeText(string path, string text): Task<any> {
+    return async.run(func(): any {
+        io.writeText(path, text);
+        return null;
+    });
+}
+
+## Appends text to a file asynchronously.
+export func appendText(string path, string text): Task<any> {
+    return async.run(func(): any {
+        io.appendText(path, text);
+        return null;
+    });
+}
+
+## Reads a file as bytes asynchronously.
+export func readBytes(string path): Task<bytes> {
+    return async.run(func(): bytes {
+        return io.readBytes(path);
+    });
+}
+
+## Writes bytes to a file asynchronously, replacing any existing contents.
+export func writeBytes(string path, bytes data): Task<any> {
+    return async.run(func(): any {
+        io.writeBytes(path, data);
+        return null;
+    });
+}
+
+## Appends bytes to a file asynchronously.
+export func appendBytes(string path, bytes data): Task<any> {
+    return async.run(func(): any {
+        io.appendBytes(path, data);
+        return null;
+    });
+}
+
+## Reads up to size units from an open handle asynchronously.
+export func read(any handle, int size): Task<any> {
+    return async.run(func(): any {
+        return io.read(handle, size);
+    });
+}
+
+## Reads all remaining data from an open handle asynchronously.
+export func readAll(any handle): Task<any> {
+    return async.run(func(): any {
+        return io.readAll(handle);
+    });
+}
+
+## Writes a value to an open handle asynchronously.
+export func write(any handle, any value): Task<any> {
+    return async.run(func(): any {
+        return io.write(handle, value);
+    });
+}
+
+## Writes a value and newline to an open handle asynchronously.
+export func writeln(any handle, any value): Task<any> {
+    return async.run(func(): any {
+        return io.writeln(handle, value);
+    });
+}
+
+## Flushes an open handle asynchronously when the handle supports flushing.
+export func flush(any handle): Task<any> {
+    return async.run(func(): any {
+        io.flush(handle);
+        return null;
+    });
+}
+
+## Closes an open handle asynchronously.
+export func close(any handle): Task<any> {
+    return async.run(func(): any {
+        io.close(handle);
+        return null;
+    });
+}
+
+## Reads filesystem metadata for a path asynchronously.
+export func stat(string path): Task<any> {
+    return async.run(func(): dict<string, any> {
+        return io.stat(path);
+    });
+}
+
+## Lists directory entries asynchronously.
+export func listDir(string path): Task<any> {
+    return async.run(func(): list<any> {
+        return io.listDir(path);
+    });
+}

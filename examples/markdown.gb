@@ -1,0 +1,85 @@
+/**
+ * @title Markdown
+ * @summary Demonstrates markdown in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import markdown;
+
+let source = """
+# Geblang
+
+The `markdown` module supports GitHub Flavored Markdown (GFM).
+
+## Features
+
+- headings and paragraphs
+- **bold**, *italic*, ~~strikethrough~~
+- `inline code` and fenced code blocks
+- ordered and unordered lists
+- task lists
+- tables
+- blockquotes
+- horizontal rules
+
+## Table example
+
+| Name  | Score |
+|-------|-------|
+| Ada   | 10    |
+| Grace | 12    |
+
+## Task list
+
+- [x] CommonMark baseline
+- [x] GFM extensions (tables, strikethrough, task lists, autolinks)
+- [x] Raw HTML passthrough
+
+> This is a blockquote.
+
+---
+
+```gb
+io.println("hello from a code block");
+```
+""";
+
+let html = markdown.renderHtml(source);
+io.println("renderHtml contains <table>:");
+io.println(html.contains("<table>"));
+io.println("renderHtml contains <del>:");
+io.println(html.contains("<del>"));
+io.println("renderHtml contains <blockquote>:");
+io.println(html.contains("<blockquote>"));
+io.println("renderHtml contains <hr:");
+io.println(html.contains("<hr"));
+
+let blocks = markdown.parse(source);
+io.println("block count:");
+io.println(blocks.length());
+
+for (b in blocks) {
+    let t = b["type"];
+    if (t == "heading") {
+        io.println("heading level " + (b["level"] as string) + ": " + b["text"]);
+    } else if (t == "table") {
+        io.println("table headers: " + b["headers"][0] + ", " + b["headers"][1]);
+        io.println("first row: " + b["rows"][0][0] + " = " + b["rows"][0][1]);
+    } else if (t == "task_list") {
+        for (item in b["items"]) {
+            let mark = " ";
+            if (item["checked"] == true) { mark = "x"; }
+            io.println("task [" + mark + "] " + item["text"]);
+        }
+    } else if (t == "blockquote") {
+        io.println("blockquote: " + b["text"]);
+    } else if (t == "hr") {
+        io.println("--- (horizontal rule)");
+    }
+}
+
+let stripped = markdown.stripText(source);
+io.println("stripped contains 'GFM':");
+io.println(stripped.contains("GFM"));
+io.println("stripped contains code block body:");
+io.println(stripped.contains("io.println"));

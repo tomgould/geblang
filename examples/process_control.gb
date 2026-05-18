@@ -1,0 +1,18 @@
+/**
+ * @title Process Control
+ * @summary Demonstrates process control in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import sys;
+
+let proc = sys.start("sh", "-c", "printf abcdef; sleep 1");
+
+io.println(sys.processPid(proc) > 0);
+io.println(sys.processReadStdoutN(proc, 3));
+io.println(sys.processReadStdout(proc));
+io.println(sys.processWait(proc));
+
+let sleeper = sys.start("sh", "-c", "sleep 5");
+sys.processSignal(sleeper, "KILL");
+io.println(sys.processWait(sleeper) != 0);

@@ -1,0 +1,341 @@
+module web.router;
+
+import reflect;
+import web;
+import web.auth as auth;
+import web.http as http;
+
+## Creates a new router dictionary around a native web app.
+export func newRouter(): dict<string, any> {
+    return {"app": web.new(), "prefix": ""};
+}
+
+## Wraps an existing native web app as a router dictionary.
+export func fromApp(any app): dict<string, any> {
+    return {"app": app, "prefix": ""};
+}
+
+## Creates a router group that prefixes all registered routes.
+export func group(dict<string, any> router, string prefix): dict<string, any> {
+    return {"app": router["app"], "prefix": (router["prefix"] as string) + prefix};
+}
+
+## Adds global response middleware. The middleware receives (request, response) and returns a response.
+export func use(dict<string, any> router, callable middleware): dict<string, any> {
+    web.use(router["app"], middleware);
+    return router;
+}
+
+## Adds global before middleware. The middleware receives request and returns null or a response.
+export func before(dict<string, any> router, callable middleware): dict<string, any> {
+    web.before(router["app"], middleware);
+    return router;
+}
+
+## Adds global response middleware. Alias of use for readability.
+export func after(dict<string, any> router, callable middleware): dict<string, any> {
+    web.after(router["app"], middleware);
+    return router;
+}
+
+## Registers a route handler for an HTTP method and path.
+export func route(dict<string, any> router, string method, string path, any handler): dict<string, any> {
+    web.route(router["app"], method.upper(), (router["prefix"] as string) + path, handler);
+    return router;
+}
+
+## Registers a GET route handler.
+export func get(dict<string, any> router, string path, any handler): dict<string, any> {
+    return route(router, "GET", path, handler);
+}
+
+## Registers a POST route handler.
+export func post(dict<string, any> router, string path, any handler): dict<string, any> {
+    return route(router, "POST", path, handler);
+}
+
+## Registers a PUT route handler.
+export func put(dict<string, any> router, string path, any handler): dict<string, any> {
+    return route(router, "PUT", path, handler);
+}
+
+## Registers a PATCH route handler.
+export func patch(dict<string, any> router, string path, any handler): dict<string, any> {
+    return route(router, "PATCH", path, handler);
+}
+
+## Registers a DELETE route handler.
+export func delete(dict<string, any> router, string path, any handler): dict<string, any> {
+    return route(router, "DELETE", path, handler);
+}
+
+## Registers an OPTIONS route handler.
+export func options(dict<string, any> router, string path, any handler): dict<string, any> {
+    return route(router, "OPTIONS", path, handler);
+}
+
+func decoratorName(dict<string, any> decorator): string {
+    return (decorator["name"] as string).lower();
+}
+
+func decoratorNamedArgs(dict<string, any> decorator): dict<string, any> {
+    if (decorator.hasKey("namedArgs") && decorator["namedArgs"] instanceof dict) {
+        return decorator["namedArgs"] as dict<string, any>;
+    }
+    return {};
+}
+
+func decoratorArgs(dict<string, any> decorator): list<any> {
+    if (decorator.hasKey("args") && decorator["args"] instanceof list) {
+        return decorator["args"] as list<any>;
+    }
+    return [];
+}
+
+func decoratorString(dict<string, any> decorator, int index, string key, string fallback): string {
+    list<any> args = decoratorArgs(decorator);
+    if (args.length() > index) {
+        return args[index] as string;
+    }
+    dict<string, any> named = decoratorNamedArgs(decorator);
+    if (named.hasKey(key)) {
+        return named[key] as string;
+    }
+    return fallback;
+}
+
+func routeMethod(dict<string, any> decorator): string {
+    string name = decoratorName(decorator);
+    if (name == "get" || name == "post" || name == "put" || name == "patch" || name == "delete" || name == "options") {
+        return name.upper();
+    }
+    if (name == "route") {
+        string method = decoratorString(decorator, 0, "method", "");
+        if (!method.isEmpty()) {
+            return method.upper();
+        }
+    }
+    throw ValueError("route decorator requires a method");
+}
+
+func routePath(dict<string, any> decorator): string {
+    string name = decoratorName(decorator);
+    if (name == "route") {
+        string path = decoratorString(decorator, 1, "path", "");
+        if (!path.isEmpty()) {
+            return path;
+        }
+    } else {
+        string path = decoratorString(decorator, 0, "path", "");
+        if (!path.isEmpty()) {
+            return path;
+        }
+    }
+    throw ValueError("route decorator requires a path");
+}
+
+func isRouteDecorator(dict<string, any> decorator): bool {
+    string name = decoratorName(decorator);
+    return name == "route" || name == "get" || name == "post" || name == "put" || name == "patch" || name == "delete" || name == "options";
+}
+
+func routePrefixFromDecorator(dict<string, any> decorator): string {
+    string name = decoratorName(decorator);
+    if (name == "prefix" || name == "routeprefix" || name == "group" || name == "controller") {
+        return decoratorString(decorator, 0, "prefix", decoratorString(decorator, 0, "path", ""));
+    }
+    return "";
+}
+
+func middlewareFromOptions(dict<string, any> options, dict<string, any> decorator): any {
+    string name = decoratorName(decorator);
+    if (options.hasKey("sessionStore")) {
+        let sessionStore = options["sessionStore"];
+        if (name == "loginrequired" || name == "requireauth") {
+            return auth.requireAuth(sessionStore);
+        }
+        if (name == "isgranted" || name == "requirerole") {
+            string role = decoratorString(decorator, 0, "role", "");
+            if (role.isEmpty()) {
+                throw ValueError(name + " decorator requires a role");
+            }
+            return auth.requireRole(sessionStore, role);
+        }
+        if (name == "requirepermission") {
+            string permission = decoratorString(decorator, 0, "permission", "");
+            if (permission.isEmpty()) {
+                throw ValueError(name + " decorator requires a permission");
+            }
+            return auth.requirePermission(sessionStore, permission);
+        }
+    }
+    if (options.hasKey("middleware") && options["middleware"] instanceof dict) {
+        let map = options["middleware"] as dict<string, any>;
+        if (map.hasKey(name)) {
+            return map[name];
+        }
+    }
+    if (options.hasKey("policies") && options["policies"] instanceof dict) {
+        let map = options["policies"] as dict<string, any>;
+        if (map.hasKey(name)) {
+            let factory = map[name];
+            return factory(decorator);
+        }
+    }
+    return null;
+}
+
+func appendDecoratorMiddleware(list<any> values, dict<string, any> options, dict<string, any> decorator): list<any> {
+    let middleware = middlewareFromOptions(options, decorator);
+    if (middleware != null) {
+        return values.push(middleware);
+    }
+    return values;
+}
+
+func appendMiddlewareDecorators(list<any> values, list<any> decorators, dict<string, any> options): list<any> {
+    for (decoratorValue in decorators) {
+        let decorator = decoratorValue as dict<string, any>;
+        if (isRouteDecorator(decorator)) {
+            continue;
+        }
+        string name = decoratorName(decorator);
+        if (name == "prefix" || name == "routeprefix" || name == "group" || name == "controller") {
+            continue;
+        }
+        values = appendDecoratorMiddleware(values, options, decorator);
+    }
+    return values;
+}
+
+func appendNamedMiddleware(list<any> values, dict<string, any> options, dict<string, any> decorator): list<any> {
+    string name = decoratorString(decorator, 0, "name", "");
+    if (name.isEmpty()) {
+        return appendDecoratorMiddleware(values, options, decorator);
+    }
+    let args = decoratorArgs(decorator);
+    let named = decoratorNamedArgs(decorator);
+    dict<string, any> alias = {"name": name, "args": args, "namedArgs": named};
+    return appendDecoratorMiddleware(values, options, alias);
+}
+
+func normalizeResponse(any response): dict<string, any> {
+    return http.normalize(response);
+}
+
+class RoutePipeline {
+    any handler;
+    list<any> beforeList;
+    list<any> afterList;
+
+    func RoutePipeline(any handler, list<any> beforeList, list<any> afterList) {
+        this.handler = handler;
+        this.beforeList = beforeList;
+        this.afterList = afterList;
+    }
+
+    func __invoke(dict<string, any> request): dict<string, any> {
+        for (middleware in this.beforeList) {
+            let beforeMiddleware = middleware;
+            let result = beforeMiddleware(request);
+            if (result != null) {
+                return normalizeResponse(result);
+            }
+        }
+        let handler = this.handler;
+        any rawResponse = handler(request);
+        dict<string, any> response = normalizeResponse(rawResponse);
+        for (middleware in this.afterList) {
+            let afterMiddleware = middleware;
+            any transformed = afterMiddleware(request, response);
+            if (transformed instanceof dict) {
+                response = transformed as dict<string, any>;
+            } else {
+                response = http.text(transformed);
+            }
+        }
+        return response;
+    }
+}
+
+func withRouteMiddleware(any handler, list<any> beforeList, list<any> afterList): any {
+    if (beforeList.length() == 0 && afterList.length() == 0) {
+        return handler;
+    }
+    return RoutePipeline(handler, beforeList, afterList);
+}
+
+## Mounts a controller by reading route, prefix, middleware, auth, and policy decorators.
+export func mountWithOptions(dict<string, any> router, any controller, dict<string, any> options): dict<string, any> {
+    let controllerClass = reflect.class(controller);
+    string controllerPrefix = "";
+    list<any> controllerBefore = [];
+    list<any> controllerAfter = [];
+    for (decoratorValue in reflect.decorators(controllerClass)) {
+        let decorator = decoratorValue as dict<string, any>;
+        string prefix = routePrefixFromDecorator(decorator);
+        if (!prefix.isEmpty()) {
+            controllerPrefix = controllerPrefix + prefix;
+            continue;
+        }
+        string name = decoratorName(decorator);
+        if (name == "before") {
+            controllerBefore = appendNamedMiddleware(controllerBefore, options, decorator);
+            continue;
+        }
+        if (name == "after" || name == "middleware") {
+            controllerAfter = appendNamedMiddleware(controllerAfter, options, decorator);
+            continue;
+        }
+        controllerBefore = appendDecoratorMiddleware(controllerBefore, options, decorator);
+    }
+
+    let targetRouter = router;
+    if (!controllerPrefix.isEmpty()) {
+        targetRouter = group(router, controllerPrefix);
+    }
+
+    for (name in reflect.methods(controllerClass)) {
+        let handler = reflect.method(controller, name as string);
+        list<any> decorators = reflect.decorators(handler);
+        for (decoratorValue in decorators) {
+            let decorator = decoratorValue as dict<string, any>;
+            string decoratorNameValue = decoratorName(decorator);
+            if (decoratorNameValue == "before") {
+                before(targetRouter, handler);
+                continue;
+            }
+            if (decoratorNameValue == "after" || decoratorNameValue == "middleware") {
+                use(targetRouter, handler);
+            }
+        }
+        for (decoratorValue in decorators) {
+            let decorator = decoratorValue as dict<string, any>;
+            if (!isRouteDecorator(decorator)) {
+                continue;
+            }
+            list<any> beforeList = controllerBefore;
+            list<any> afterList = controllerAfter;
+            beforeList = appendMiddlewareDecorators(beforeList, decorators, options);
+            any mountedHandler = withRouteMiddleware(handler, beforeList, afterList);
+            route(targetRouter, routeMethod(decorator), routePath(decorator), mountedHandler);
+        }
+    }
+    return targetRouter;
+}
+
+## Mounts a decorator-driven controller without extra middleware or policy options.
+export func mount(dict<string, any> router, any controller): dict<string, any> {
+    dict<string, any> options = {};
+    return mountWithOptions(router, controller, options);
+}
+
+## Dispatches a request dictionary through the router and returns a response dictionary.
+export func handle(dict<string, any> router, dict<string, any> request): dict<string, any> {
+    return web.handle(router["app"], request);
+}
+
+## Returns the underlying native web app value for lower-level integrations.
+export func raw(dict<string, any> router): any {
+    return router["app"];
+}

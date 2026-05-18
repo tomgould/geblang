@@ -1,0 +1,572 @@
+module web.http;
+
+import json;
+import schema;
+import template;
+import url;
+import web;
+
+func parsePairs(string text): dict<string, any> {
+    dict<string, any> values = {};
+    if (text.isEmpty()) {
+        return values;
+    }
+    for (item in text.split("&")) {
+        let parts = (item as string).split("=");
+        if (parts.length() > 1) {
+            values[url.decode(parts[0] as string)] = url.decode(parts[1] as string);
+        }
+    }
+    return values;
+}
+
+## Object wrapper for request dictionaries with query, form, JSON, header, parameter, and cookie helpers.
+export class Request {
+    dict<string, any> data;
+
+    func Request(dict<string, any> data) {
+        this.data = data;
+    }
+
+    func method(): string {
+        return this.data["method"] as string;
+    }
+
+    func path(): string {
+        return this.data["path"] as string;
+    }
+
+    func body(): any {
+        return this.data["body"];
+    }
+
+    func query(): dict<string, any> {
+        if (this.data.hasKey("query") && this.data["query"] instanceof dict) {
+            return this.data["query"] as dict<string, any>;
+        }
+        let parts = this.path().split("?");
+        if (parts.length() > 1) {
+            return parsePairs(parts[1] as string);
+        }
+        return {};
+    }
+
+    func queryParam(string name): string {
+        let values = this.query();
+        if (values.hasKey(name)) {
+            return values[name] as string;
+        }
+        return "";
+    }
+
+    func form(): dict<string, any> {
+        if (this.body() instanceof string) {
+            return parsePairs(this.body() as string);
+        }
+        return {};
+    }
+
+    func formValue(string name): string {
+        let values = this.form();
+        if (values.hasKey(name)) {
+            return values[name] as string;
+        }
+        return "";
+    }
+
+    func jsonBody(): dict<string, any> {
+        if (this.body() instanceof dict) {
+            return this.body() as dict<string, any>;
+        }
+        if (this.body() instanceof string) {
+            return json.parse(this.body() as string) as dict<string, any>;
+        }
+        return {};
+    }
+
+    func validate(dict<string, any> rules): dict<string, any> {
+        return schema.validate(this.jsonBody(), rules);
+    }
+
+    func validateForm(dict<string, any> rules): dict<string, any> {
+        return schema.validate(this.form(), rules);
+    }
+
+    func headers(): dict<string, any> {
+        if (!this.data.hasKey("headers")) {
+            return {};
+        }
+        return this.data["headers"] as dict<string, any>;
+    }
+
+    func header(string name): string {
+        let headers = this.headers();
+        if (headers.hasKey(name)) {
+            return headers[name] as string;
+        }
+        string target = name.lower();
+        for (key, value in headers.items()) {
+            if ((key as string).lower() == target) {
+                return value as string;
+            }
+        }
+        return "";
+    }
+
+    func hasHeader(string name): bool {
+        let headers = this.headers();
+        if (headers.hasKey(name)) {
+            return true;
+        }
+        string target = name.lower();
+        for (key, value in headers.items()) {
+            if ((key as string).lower() == target) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    func params(): dict<string, any> {
+        if (!this.data.hasKey("params")) {
+            return {};
+        }
+        return this.data["params"] as dict<string, any>;
+    }
+
+    func param(string name): string {
+        let values = this.params();
+        if (values.hasKey(name)) {
+            return values[name] as string;
+        }
+        return "";
+    }
+
+    func paramDefault(string name, string fallback): string {
+        string value = this.param(name);
+        if (value.isEmpty()) {
+            return fallback;
+        }
+        return value;
+    }
+
+    func hasParam(string name): bool {
+        return this.params().hasKey(name);
+    }
+
+    func cookies(): dict<string, any> {
+        dict<string, any> values = {};
+        string header = this.header("Cookie");
+        if (header.isEmpty()) {
+            header = this.header("cookie");
+        }
+        if (header.isEmpty()) {
+            return values;
+        }
+        for (item in header.split(";")) {
+            let parts = (item as string).split("=");
+            if (parts.length() > 1) {
+                values[(parts[0] as string).trim()] = (parts[1] as string).trim();
+            }
+        }
+        return values;
+    }
+
+    func cookie(string name): string {
+        let values = this.cookies();
+        if (values.hasKey(name)) {
+            return values[name] as string;
+        }
+        return "";
+    }
+
+    func toDict(): dict<string, any> {
+        return this.data;
+    }
+}
+
+## Object wrapper for response dictionaries with fluent header and cookie mutation helpers.
+export class Response {
+    dict<string, any> data;
+
+    func Response(int status, any body) {
+        this.data = {"status": status, "body": body};
+    }
+
+    func header(string name, string value): Response {
+        this.data = web.withHeader(this.data, name, value);
+        return this;
+    }
+
+    func statusCode(): int {
+        if (this.data.hasKey("status")) {
+            return this.data["status"] as int;
+        }
+        return 200;
+    }
+
+    func body(): any {
+        if (this.data.hasKey("body")) {
+            return this.data["body"];
+        }
+        return "";
+    }
+
+    func headers(): dict<string, any> {
+        if (this.data.hasKey("headers") && this.data["headers"] instanceof dict) {
+            return this.data["headers"] as dict<string, any>;
+        }
+        return {};
+    }
+
+    func headerValue(string name): string {
+        let headers = this.headers();
+        if (headers.hasKey(name)) {
+            return headers[name] as string;
+        }
+        string target = name.lower();
+        for (key, value in headers.items()) {
+            if ((key as string).lower() == target) {
+                return value as string;
+            }
+        }
+        return "";
+    }
+
+    func hasHeader(string name): bool {
+        let values = this.headers();
+        if (values.hasKey(name)) {
+            return true;
+        }
+        string target = name.lower();
+        for (key, value in values.items()) {
+            if ((key as string).lower() == target) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    func cookie(string name, string value): Response {
+        this.data = web.withHeader(this.data, "Set-Cookie", name + "=" + value);
+        return this;
+    }
+
+    func cookieOptions(string name, string value, dict<string, any> options): Response {
+        string cookie = name + "=" + value;
+        if (options.hasKey("path")) {
+            cookie = cookie + "; Path=" + (options["path"] as string);
+        }
+        if (options.hasKey("domain")) {
+            cookie = cookie + "; Domain=" + (options["domain"] as string);
+        }
+        if (options.hasKey("maxAge")) {
+            cookie = cookie + "; Max-Age=" + (options["maxAge"] as string);
+        }
+        if (options.hasKey("sameSite")) {
+            cookie = cookie + "; SameSite=" + (options["sameSite"] as string);
+        }
+        if (options.hasKey("secure") && (options["secure"] as bool)) {
+            cookie = cookie + "; Secure";
+        }
+        if (options.hasKey("httpOnly") && (options["httpOnly"] as bool)) {
+            cookie = cookie + "; HttpOnly";
+        }
+        this.data = web.withHeader(this.data, "Set-Cookie", cookie);
+        return this;
+    }
+
+    func toDict(): dict<string, any> {
+        return this.data;
+    }
+}
+
+## Per-request convenience object combining Request accessors with common response builders.
+export class Context {
+    Request request;
+
+    func Context(dict<string, any> request) {
+        this.request = Request(request);
+    }
+
+    func method(): string { return this.request.method(); }
+    func path(): string { return this.request.path(); }
+    func body(): any { return this.request.body(); }
+    func query(): dict<string, any> { return this.request.query(); }
+    func queryParam(string name): string { return this.request.queryParam(name); }
+    func form(): dict<string, any> { return this.request.form(); }
+    func formValue(string name): string { return this.request.formValue(name); }
+    func jsonBody(): dict<string, any> { return this.request.jsonBody(); }
+    func validate(dict<string, any> rules): dict<string, any> { return this.request.validate(rules); }
+    func validateForm(dict<string, any> rules): dict<string, any> { return this.request.validateForm(rules); }
+    func header(string name): string { return this.request.header(name); }
+    func hasHeader(string name): bool { return this.request.hasHeader(name); }
+    func cookies(): dict<string, any> { return this.request.cookies(); }
+    func cookie(string name): string { return this.request.cookie(name); }
+    func params(): dict<string, any> { return this.request.params(); }
+    func param(string name): string { return this.request.param(name); }
+    func paramDefault(string name, string fallback): string { return this.request.paramDefault(name, fallback); }
+    func hasParam(string name): bool { return this.request.hasParam(name); }
+    func text(any body): dict<string, any> { return {"status": 200, "body": body}; }
+    func json(any body): dict<string, any> { return web.withHeader({"status": 200, "body": json.stringify(body)}, "Content-Type", "application/json"); }
+    func html(any body): dict<string, any> { return web.withHeader({"status": 200, "body": body}, "Content-Type", "text/html; charset=utf-8"); }
+    func render(string source, dict<string, any> data): dict<string, any> { return web.withHeader({"status": 200, "body": template.renderString(source, data)}, "Content-Type", "text/html; charset=utf-8"); }
+    func status(int code): dict<string, any> { return {"status": code, "body": ""}; }
+    func redirect(string location): dict<string, any> { return web.withHeader({"status": 302, "body": ""}, "Location", location); }
+}
+
+## Builds a minimal request dictionary with method, path, parsed query parameters, and an empty body.
+export func request(string method, string path): dict<string, any> {
+    let parts = path.split("?");
+    dict<string, any> query = {};
+    if (parts.length() > 1) {
+        query = parsePairs(parts[1] as string);
+    }
+    return {"method": method.upper(), "path": parts[0], "query": query, "body": ""};
+}
+
+## Builds a request dictionary with method, path, parsed query parameters, and body.
+export func requestWithBody(string method, string path, any body): dict<string, any> {
+    let parts = path.split("?");
+    dict<string, any> query = {};
+    if (parts.length() > 1) {
+        query = parsePairs(parts[1] as string);
+    }
+    return {"method": method.upper(), "path": parts[0], "query": query, "body": body};
+}
+
+## Wraps a request dictionary in a Request object.
+export func requestObject(dict<string, any> data): Request {
+    return Request(data);
+}
+
+## Creates a Response object with status and body.
+export func responseObject(int status, any body): Response {
+    return Response(status, body);
+}
+
+## Wraps a request dictionary in a Context object.
+export func context(dict<string, any> request): Context {
+    return Context(request);
+}
+
+## Validates a request JSON body against schema rules.
+export func validate(dict<string, any> request, dict<string, any> rules): dict<string, any> {
+    return Request(request).validate(rules);
+}
+
+## Validates a request form body against schema rules.
+export func validateForm(dict<string, any> request, dict<string, any> rules): dict<string, any> {
+    return Request(request).validateForm(rules);
+}
+
+## Creates a 200 response dictionary with the supplied body.
+export func text(any body): dict<string, any> {
+    return {"status": 200, "body": body};
+}
+
+## Creates a response dictionary with explicit status and body.
+export func response(int status, any body): dict<string, any> {
+    return {"status": status, "body": body};
+}
+
+## Normalizes strings, null, and response dictionaries into a response dictionary.
+export func normalize(any value): dict<string, any> {
+    if (value instanceof dict) {
+        return value as dict<string, any>;
+    }
+    if (value == null) {
+        return noContent();
+    }
+    return text(value);
+}
+
+## Returns the status code from a response dictionary, defaulting to 200.
+export func statusCode(dict<string, any> response): int {
+    if (response.hasKey("status")) {
+        return response["status"] as int;
+    }
+    return 200;
+}
+
+## Returns the body from a response dictionary, defaulting to an empty string.
+export func body(dict<string, any> response): any {
+    if (response.hasKey("body")) {
+        return response["body"];
+    }
+    return "";
+}
+
+## Wraps an existing response dictionary in a Response object.
+export func responseFrom(dict<string, any> data): Response {
+    int code = 200;
+    any responseBody = "";
+    if (data.hasKey("status")) {
+        code = data["status"] as int;
+    }
+    if (data.hasKey("body")) {
+        responseBody = data["body"];
+    }
+    let wrapped = Response(code, responseBody);
+    if (data.hasKey("headers") && data["headers"] instanceof dict) {
+        wrapped.data["headers"] = data["headers"];
+    }
+    return wrapped;
+}
+
+## Returns response headers, defaulting to an empty dictionary.
+export func headers(dict<string, any> response): dict<string, any> {
+    if (response.hasKey("headers") && response["headers"] instanceof dict) {
+        return response["headers"] as dict<string, any>;
+    }
+    return {};
+}
+
+## Returns a response header value using case-insensitive lookup.
+export func header(dict<string, any> response, string name): string {
+    let values = headers(response);
+    if (values.hasKey(name)) {
+        return values[name] as string;
+    }
+    string target = name.lower();
+    for (key, value in values.items()) {
+        if ((key as string).lower() == target) {
+            return value as string;
+        }
+    }
+    return "";
+}
+
+## Returns true when a response header is present using case-insensitive lookup.
+export func hasHeader(dict<string, any> response, string name): bool {
+    let values = headers(response);
+    if (values.hasKey(name)) {
+        return true;
+    }
+    string target = name.lower();
+    for (key, value in values.items()) {
+        if ((key as string).lower() == target) {
+            return true;
+        }
+    }
+    return false;
+}
+
+## Adds or replaces a response header.
+export func withHeader(dict<string, any> response, string name, string value): dict<string, any> {
+    return web.withHeader(response, name, value);
+}
+
+## Creates an empty response dictionary with the supplied status code.
+export func status(int code): dict<string, any> {
+    return {"status": code, "body": ""};
+}
+
+## Creates a JSON response with status 200 and application/json content type.
+export func jsonResponse(any body): dict<string, any> {
+    return web.withHeader({"status": 200, "body": json.stringify(body)}, "Content-Type", "application/json");
+}
+
+## Creates a JSON response with an explicit status code.
+export func jsonStatus(any body, int status): dict<string, any> {
+    return web.withHeader({"status": status, "body": json.stringify(body)}, "Content-Type", "application/json");
+}
+
+## Creates a JSON response with status 201.
+export func jsonCreated(any body): dict<string, any> {
+    return web.withHeader({"status": 201, "body": json.stringify(body)}, "Content-Type", "application/json");
+}
+
+## Creates a JSON error response with an error message and status code.
+export func jsonError(string message, int status): dict<string, any> {
+    return web.withHeader({"status": status, "body": json.stringify({"error": message})}, "Content-Type", "application/json");
+}
+
+## Creates an HTML response with status 200 and text/html content type.
+export func html(any body): dict<string, any> {
+    return web.withHeader({"status": 200, "body": body}, "Content-Type", "text/html; charset=utf-8");
+}
+
+## Creates an HTML response with an explicit status code.
+export func htmlStatus(any body, int status): dict<string, any> {
+    return web.withHeader({"status": status, "body": body}, "Content-Type", "text/html; charset=utf-8");
+}
+
+## Renders a template string with data into an HTML response.
+export func render(string source, dict<string, any> data): dict<string, any> {
+    return web.withHeader({"status": 200, "body": template.renderString(source, data)}, "Content-Type", "text/html; charset=utf-8");
+}
+
+## Creates a redirect response with an explicit status code.
+export func redirectStatus(string location, int status): dict<string, any> {
+    return web.withHeader({"status": status, "body": ""}, "Location", location);
+}
+
+## Creates a 302 redirect response with a Location header.
+export func redirect(string location): dict<string, any> {
+    return web.withHeader({"status": 302, "body": ""}, "Location", location);
+}
+
+## Creates a 201 Created response.
+export func created(any body): dict<string, any> {
+    return {"status": 201, "body": body};
+}
+
+## Creates a 204 No Content response.
+export func noContent(): dict<string, any> {
+    return {"status": 204, "body": ""};
+}
+
+## Creates a 400 Bad Request response.
+export func badRequest(any body): dict<string, any> {
+    return {"status": 400, "body": body};
+}
+
+## Creates a 401 Unauthorized response.
+export func unauthorized(any body): dict<string, any> {
+    return {"status": 401, "body": body};
+}
+
+## Creates a 403 Forbidden response.
+export func forbidden(any body): dict<string, any> {
+    return {"status": 403, "body": body};
+}
+
+## Creates a 404 Not Found response.
+export func notFound(any body): dict<string, any> {
+    return {"status": 404, "body": body};
+}
+
+## Adds a simple Set-Cookie header to a response dictionary.
+export func withCookie(dict<string, any> response, string name, string value): dict<string, any> {
+    return web.withHeader(response, "Set-Cookie", name + "=" + value);
+}
+
+## Adds a Set-Cookie header using path, domain, maxAge, sameSite, secure, and httpOnly options.
+export func withCookieOptions(dict<string, any> response, string name, string value, dict<string, any> options): dict<string, any> {
+    string cookie = name + "=" + value;
+    if (options.hasKey("path")) {
+        cookie = cookie + "; Path=" + (options["path"] as string);
+    }
+    if (options.hasKey("domain")) {
+        cookie = cookie + "; Domain=" + (options["domain"] as string);
+    }
+    if (options.hasKey("maxAge")) {
+        cookie = cookie + "; Max-Age=" + (options["maxAge"] as string);
+    }
+    if (options.hasKey("sameSite")) {
+        cookie = cookie + "; SameSite=" + (options["sameSite"] as string);
+    }
+    if (options.hasKey("secure") && (options["secure"] as bool)) {
+        cookie = cookie + "; Secure";
+    }
+    if (options.hasKey("httpOnly") && (options["httpOnly"] as bool)) {
+        cookie = cookie + "; HttpOnly";
+    }
+    return web.withHeader(response, "Set-Cookie", cookie);
+}
+
+## Adds an expired Set-Cookie header for the named cookie.
+export func deleteCookie(dict<string, any> response, string name): dict<string, any> {
+    return withCookieOptions(response, name, "", {"path": "/", "maxAge": 0});
+}

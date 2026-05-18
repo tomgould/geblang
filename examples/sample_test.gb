@@ -1,0 +1,21 @@
+/**
+ * @title Sample Test
+ * @summary Demonstrates sample test in a runnable Geblang example.
+ * @category General
+ */
+import test;
+
+class SampleTest extends test.Test {
+    int value = 0;
+
+    func setup(): void {
+        this.value = 2;
+    }
+
+    @tag("fast")
+    @test
+    func addition(): void {
+        this.assertEquals(4, this.value + 2);
+        this.assertContains(["math", "fast"], "fast");
+    }
+}

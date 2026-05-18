@@ -1,0 +1,51 @@
+/**
+ * @title Magic
+ * @summary Demonstrates magic in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+class Dynamic {
+    dict<string, any> values;
+
+    func Dynamic() {
+        this.values = {};
+    }
+
+    func __get(string name): any {
+        return this.values.get(name);
+    }
+
+    func __set(string name, any value): void {
+        this.values[name] = value;
+    }
+
+    func __call(string name, list<any> args): string {
+        return name + ":" + (args.length() as string);
+    }
+
+    func __invoke(int x): int {
+        return x + 1;
+    }
+
+    static func __getStatic(string name): string {
+        return "static:" + name;
+    }
+
+    static func __setStatic(string name, any value): void {
+        io.println(name + "=" + (value as string));
+    }
+
+    static func __callStatic(string name, list<any> args): string {
+        return "staticcall:" + name + ":" + (args.length() as string);
+    }
+}
+
+Dynamic d = Dynamic();
+d.name = "Ada";
+io.println(d.name);
+io.println(d.missing(1, 2));
+io.println(d(4));
+io.println(Dynamic.value);
+Dynamic.value = 7;
+io.println(Dynamic.make("x"));

@@ -1,0 +1,6 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag inconsistent generic type-parameter binding.
+ */
+func twoArgs<T>(T x, T y): T { return x; }
+let n = twoArgs(1, "hello");

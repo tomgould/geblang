@@ -1,0 +1,20 @@
+/**
+ * @title Io Lock
+ * @summary Demonstrates io lock in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+let path = io.tempFile("geb-lock-*.txt");
+let file = io.open(path, "rw");
+
+io.write(file, "locked");
+io.lock(file);
+io.println("exclusive");
+io.unlock(file);
+
+io.println(io.tryLock(file, "shared"));
+io.unlock(file);
+
+io.close(file);
+io.remove(path);

@@ -1,0 +1,21 @@
+/**
+ * @title Yaml
+ * @summary Demonstrates yaml in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import yaml;
+
+let config = yaml.parse("title: Geblang\nserver:\n  port: 8080\n");
+io.println(config["title"]);
+io.println(config["server"]["port"]);
+
+let text = yaml.stringify({
+    "title": "Geblang",
+    "server": {
+        "port": 8080,
+        "enabled": true
+    }
+});
+
+io.println(text.contains("server:"));

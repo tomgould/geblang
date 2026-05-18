@@ -1,0 +1,58 @@
+/**
+ * @title Operators
+ * @summary Demonstrates operators in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+class Money {
+    int cents;
+
+    func Money(int cents) {
+        this.cents = cents;
+    }
+
+    func __add(Money other): Money {
+        return Money(this.cents + other.cents);
+    }
+
+    func __lt(Money other): bool {
+        return this.cents < other.cents;
+    }
+}
+
+Money a = Money(125);
+Money b = Money(75);
+Money c = a + b;
+
+io.println(c.cents);
+io.println(b < a);
+
+# Ternary operator: condition ? then_expr : else_expr
+let score = 85;
+let grade = score >= 90 ? "A" : (score >= 70 ? "B" : "C");
+io.println(grade);
+
+# Optional chaining: obj?.field  obj?.method()
+class Address {
+    string city;
+    func Address(string city) { this.city = city; }
+}
+
+class Person {
+    string name;
+    Address address;
+    func Person(string name, Address addr) {
+        this.name = name;
+        this.address = addr;
+    }
+    func getAddress(): Address { return this.address; }
+}
+
+let p = Person("Ada", Address("London"));
+io.println(p?.address?.city);
+io.println(p?.getAddress()?.city);
+
+let nobody = null;
+let city = nobody?.address?.city;
+if (city == null) { io.println("no city"); }

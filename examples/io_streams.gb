@@ -1,0 +1,39 @@
+/**
+ * @title Io Streams
+ * @summary Demonstrates io streams in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import test;
+
+class OutputTest extends test.Test {
+    @test
+    func capturesStdout(): void {
+        let capture = io.captureStdout();
+
+        io.println("hidden from real stdout");
+        io.stdoutWrite("also captured\n");
+
+        this.assertContains(io.toString(capture), "hidden from real stdout");
+        io.close(capture);
+    }
+
+    @test
+    func redirectsStdoutToMemory(): void {
+        let stream = io.memory();
+        let restore = io.redirectStdout(stream);
+
+        io.println("captured in memory");
+        restore();
+
+        this.assertEquals("captured in memory\n", io.toString(stream));
+    }
+}
+
+let memory = io.memory("hello");
+io.writeln(memory, " streams");
+io.println(io.toString(memory));
+
+let result = test.run(OutputTest);
+io.println(result["passed"]);
+io.println(result["failed"]);

@@ -1,0 +1,23 @@
+/**
+ * @title Watch
+ * @summary Demonstrates watch in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import sys;
+import watch;
+
+let path = io.tempFile("geb-watch-*.txt");
+io.writeText(path, "a");
+
+let before = watch.snapshot(path);
+io.println(before["exists"]);
+io.println(before["size"]);
+
+let proc = sys.start("sh", "-c", "sleep 0.1; printf b >> " + path);
+let result = watch.wait(path, 2000, 50);
+io.println(result["changed"]);
+io.println(result["after"]["size"]);
+io.println(sys.processWait(proc));
+
+io.remove(path);

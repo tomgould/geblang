@@ -1,0 +1,21 @@
+.DS_Store
+*.test
+*.out
+coverage.out
+/geblang
+/docsite
+/build/
+/docs/site/
+memory/
+
+# Python extension/example caches.
+__pycache__/
+*.py[cod]
+
+# Local editor and tool state.
+.idea/
+.vscode/
+
+# Geblang scratch outputs used by examples/tests.
+tmp/
+.geblang-cache/

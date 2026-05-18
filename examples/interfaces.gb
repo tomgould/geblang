@@ -1,0 +1,36 @@
+/**
+ * @title Interfaces
+ * @summary Demonstrates interfaces in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+interface Printable {
+    func print(): string;
+}
+
+interface Labelled extends Printable {
+    func label(): string;
+}
+
+class Report implements Labelled {
+    string name;
+
+    func Report(string name) {
+        this.name = name;
+    }
+
+    func print(): string {
+        return "report:" + this.name;
+    }
+
+    func label(): string {
+        return this.name;
+    }
+}
+
+Report r = Report("Q1");
+io.println(r.print());
+io.println(r instanceof Report);
+io.println(r instanceof Labelled);
+io.println(r instanceof Printable);

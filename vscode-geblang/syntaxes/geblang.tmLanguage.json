@@ -1,0 +1,132 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Geblang",
+  "scopeName": "source.geblang",
+  "fileTypes": ["gb"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.geblang",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.geblang",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.triple.double.geblang",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "patterns": [{ "include": "#interpolation" }]
+        },
+        {
+          "name": "string.quoted.triple.single.geblang",
+          "begin": "'''",
+          "end": "'''"
+        },
+        {
+          "name": "string.quoted.double.geblang",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "include": "#interpolation" },
+            { "name": "constant.character.escape.geblang", "match": "\\\\." }
+          ]
+        },
+        {
+          "name": "string.quoted.single.geblang",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            { "name": "constant.character.escape.geblang", "match": "\\\\." }
+          ]
+        }
+      ]
+    },
+    "interpolation": {
+      "name": "meta.embedded.geblang",
+      "begin": "\\$\\{",
+      "end": "\\}",
+      "patterns": [{ "include": "$self" }]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.geblang",
+          "match": "\\b(if|else|while|for|return|break|continue|match|case|try|catch|finally|throw|yield|await|in|by|as|instanceof|with|del)\\b"
+        },
+        {
+          "name": "keyword.declaration.geblang",
+          "match": "\\b(func|class|interface|enum|module|import|export|init|let|const|type|async|static|extends|implements)\\b"
+        },
+        {
+          "name": "constant.language.geblang",
+          "match": "\\b(true|false|null|this|super)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.geblang",
+          "match": "\\b(int|float|decimal|string|bool|bytes|void|any|auto|callable|function|iterable|generator|Task|Type)\\b"
+        },
+        {
+          "name": "entity.name.type.geblang",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.geblang",
+          "match": "\\b0[xX][0-9a-fA-F]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.geblang",
+          "match": "\\b[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.geblang",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.geblang",
+          "match": "(\\+\\+|--|\\+|-|\\*|/|%|==|!=|<=|>=|<|>|&&|\\|\\||!|\\?\\.|\\?\\.?|\\.\\.<?|=>|@)"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "entity.name.function.geblang",
+          "match": "\\b([a-z_][a-zA-Z0-9_]*)(?=\\s*\\()"
+        },
+        {
+          "name": "variable.other.geblang",
+          "match": "\\b[a-z_][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,49 @@
+/**
+ * @title Generators
+ * @summary Demonstrates generators in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+func numbers(int max): generator<int> {
+    for (let int i = 1; i <= max; i++) {
+        yield i;
+    }
+}
+
+func sum(iterable<int> values): int {
+    int total = 0;
+    for (n in values) {
+        total = total + n;
+    }
+    return total;
+}
+
+io.println(sum(numbers(4)));
+
+func naturals(): generator<int> {
+    int n = 0;
+    while (true) {
+        yield n;
+        n++;
+    }
+}
+
+for (n in naturals()) {
+    io.println(n);
+    if (n == 2) {
+        break;
+    }
+}
+
+func makePair(int start): callable {
+    return func(): generator<int> {
+        yield start;
+        yield start + 1;
+    };
+}
+
+let pair = makePair(10);
+for (n in pair()) {
+    io.println(n);
+}

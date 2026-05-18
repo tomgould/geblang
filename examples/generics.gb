@@ -1,0 +1,98 @@
+/**
+ * @title Generics
+ * @summary Demonstrates generics in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+# Generic functions
+
+func identity<T>(T value): T {
+    return value;
+}
+
+func single<T>(T value): list<T> {
+    return [value];
+}
+
+func first<T>(list<T> values): T {
+    return values[0];
+}
+
+io.println(identity("Ada"));
+io.println(identity(7));
+io.println(single("x")[0]);
+io.println(first([10, 20, 30]));
+
+# instanceof T inside a generic function
+
+func assertIs<T>(T value): bool {
+    return value instanceof T;
+}
+
+io.println(assertIs("hello"));
+io.println(assertIs(42));
+
+# Generic classes
+
+class Box<T> {
+    T value;
+
+    func Box(T v) {
+        this.value = v;
+    }
+
+    func get(): T {
+        return this.value;
+    }
+
+    func set(T v) {
+        this.value = v;
+    }
+
+    func isT(): bool {
+        return this.value instanceof T;
+    }
+}
+
+Box<string> b = Box("hello");
+io.println(b.get());
+b.set("world");
+io.println(b.get());
+io.println(b.isT());
+
+Box<int> n = Box(42);
+io.println(n.get());
+io.println(n.isT());
+
+# Generic class with multiple type parameters
+
+class Pair<A, B> {
+    A first;
+    B second;
+
+    func Pair(A a, B b) {
+        this.first = a;
+        this.second = b;
+    }
+
+    func getFirst(): A {
+        return this.first;
+    }
+
+    func getSecond(): B {
+        return this.second;
+    }
+
+    func swapped(): Pair {
+        return Pair(this.second, this.first);
+    }
+}
+
+Pair<string, int> p = Pair("answer", 42);
+io.println(p.getFirst());
+io.println(p.getSecond());
+
+Pair<int, string> s = p.swapped();
+io.println(s.getFirst());
+io.println(s.getSecond());

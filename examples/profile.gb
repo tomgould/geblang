@@ -1,0 +1,15 @@
+/**
+ * @title Profile
+ * @summary Demonstrates profile in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import profile;
+
+let stats = profile.memStats();
+io.println(stats["alloc"] >= 0);
+io.println(stats["goroutines"] >= 1);
+
+let start = profile.now();
+profile.gc();
+io.println(profile.elapsed(start) >= 0);

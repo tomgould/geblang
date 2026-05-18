@@ -1,0 +1,30 @@
+/**
+ * @title Network Engine
+ * @summary Demonstrates network engine in a runnable Geblang example.
+ * @category Async
+ */
+import async;
+import async.net as anet;
+import bytes;
+import io;
+import net;
+
+let listener = await anet.listenTcp("127.0.0.1:0");
+let address = net.localAddr(listener);
+
+let server = async.run(func(): string {
+    let conn = await anet.accept(listener);
+    let message = await anet.read(conn, 4);
+    await anet.write(conn, "pong");
+    await anet.close(conn);
+    return bytes.toString(message);
+});
+
+let client = await anet.connectTcp(address);
+await anet.write(client, "ping");
+let reply = await anet.read(client, 4);
+await anet.close(client);
+await anet.close(listener);
+
+io.println(bytes.toString(reply));
+io.println(await server);

@@ -1,0 +1,27 @@
+/**
+ * @title Api Docs
+ * @summary Demonstrates api docs in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import reflect;
+
+## Creates a response body for the public status endpoint.
+@route("GET", "/status")
+func status(): dict<string, any> {
+    return {"ok": true};
+}
+
+/** Service used by examples that generate source API documentation. */
+class StatusService {
+    ## Converts a boolean status to display text.
+    func label(bool ok): string {
+        if (ok) {
+            return "ok";
+        }
+        return "down";
+    }
+}
+
+io.println(reflect.docs(status)["summary"]);
+io.println(reflect.doc(StatusService));

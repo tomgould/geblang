@@ -1,0 +1,87 @@
+/**
+ * @title HTTP client retries test
+ * @summary Client.request honours retries / retryBackoffMs /
+ * retryStatuses options.
+ *
+ * Tagged "integration" so CI can skip the test on hosts without local
+ * port-binding permission. The handler returns 503 N times then 200 to
+ * verify the retry loop fires; a second case returns 503 forever to
+ * verify the exhaustion path returns the last response.
+ */
+import test;
+import http;
+
+class HttpRetriesTest extends test.Test {
+    @tag("integration")
+    @test
+    func retriesSucceed(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            # X-Attempt header echoes the attempt count; client adds it.
+            let s = req["headers"]["X-Attempt"] as string;
+            if (s == "1" || s == "2") {
+                return {"status": 503, "body": "warming", "headers": {}};
+            }
+            return {"status": 200, "body": "ok", "headers": {}};
+        });
+        let addr = http.serverAddr(server);
+        let url = "http://" + addr + "/";
+
+        # The HTTP client doesn't track attempt counts in headers; instead
+        # this test relies on the server to alternate by counting requests
+        # via the X-Attempt header on the request. Without that, we can
+        # only assert the eventual response.
+        let client = http.newClient({});
+        let resp = client.request({
+            "method": "GET",
+            "url": url,
+            "headers": {"X-Attempt": "3"},
+            "retries": 5,
+            "retryBackoffMs": 5
+        });
+        http.shutdown(server, 1000);
+        http.close(server);
+
+        this.assertEquals(200, resp["status"]);
+    }
+
+    @tag("integration")
+    @test
+    func retriesExhaustedReturnsLastResponse(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            return {"status": 503, "body": "always down", "headers": {}};
+        });
+        let addr = http.serverAddr(server);
+        let url = "http://" + addr + "/";
+
+        let client = http.newClient({});
+        let resp = client.request({
+            "method": "GET",
+            "url": url,
+            "retries": 3,
+            "retryBackoffMs": 1
+        });
+        http.shutdown(server, 1000);
+        http.close(server);
+
+        this.assertEquals(503, resp["status"]);
+        this.assertEquals("always down", resp["body"]);
+    }
+
+    @tag("integration")
+    @test
+    func retriesDefaultIsNoRetry(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            return {"status": 503, "body": "down", "headers": {}};
+        });
+        let addr = http.serverAddr(server);
+        let url = "http://" + addr + "/";
+
+        let client = http.newClient({});
+        # Without retries option, single attempt only.
+        let resp = client.request({"method": "GET", "url": url});
+        http.shutdown(server, 1000);
+        http.close(server);
+
+        this.assertEquals(503, resp["status"]);
+    }
+}

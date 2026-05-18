@@ -1,0 +1,858 @@
+package runtime
+
+import (
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"math/big"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+
+	"geblang/internal/ast"
+)
+
+// ErrTaskCancelled is the sentinel error stored on a Task that was
+// cancelled before completing. Surfaced through Await for any caller
+// that holds the task value.
+var ErrTaskCancelled = errors.New("task cancelled")
+
+type Value interface {
+	TypeName() string
+	Inspect() string
+}
+
+type Null struct{}
+
+func (Null) TypeName() string { return "null" }
+func (Null) Inspect() string  { return "null" }
+
+type Bool struct {
+	Value bool
+}
+
+func (v Bool) TypeName() string { return "bool" }
+func (v Bool) Inspect() string {
+	if v.Value {
+		return "true"
+	}
+	return "false"
+}
+
+type Int struct {
+	Value *big.Int
+}
+
+func NewIntLiteral(lit string) (Int, error) {
+	digits := strings.ReplaceAll(lit, "_", "")
+	base := 10
+	if len(digits) > 2 && digits[0] == '0' {
+		switch digits[1] {
+		case 'b', 'B':
+			base = 2
+			digits = digits[2:]
+		case 'o', 'O':
+			base = 8
+			digits = digits[2:]
+		case 'x', 'X':
+			base = 16
+			digits = digits[2:]
+		}
+	}
+	if digits == "" {
+		return Int{}, fmt.Errorf("invalid integer literal %q", lit)
+	}
+	value, ok := new(big.Int).SetString(digits, base)
+	if !ok {
+		return Int{}, fmt.Errorf("invalid integer literal %q", lit)
+	}
+	return Int{Value: value}, nil
+}
+
+func NewInt64(v int64) Int {
+	return Int{Value: big.NewInt(v)}
+}
+
+func (v Int) TypeName() string { return "int" }
+func (v Int) Inspect() string  { return v.Value.String() }
+
+// SmallInt is an int that fits in int64. It is stored without heap allocation
+// when boxed into the Value interface, making it the fast path for integer
+// arithmetic. TypeName returns "int" (same as Int) so type checks are uniform.
+type SmallInt struct {
+	Value int64
+}
+
+func (v SmallInt) TypeName() string { return "int" }
+func (v SmallInt) Inspect() string  { return strconv.FormatInt(v.Value, 10) }
+
+type Decimal struct {
+	Value *big.Rat
+}
+
+func NewDecimalLiteral(lit string) (Decimal, error) {
+	digits := strings.ReplaceAll(lit, "_", "")
+	value, ok := new(big.Rat).SetString(digits)
+	if !ok {
+		return Decimal{}, fmt.Errorf("invalid decimal literal %q", lit)
+	}
+	return Decimal{Value: value}, nil
+}
+
+func (v Decimal) TypeName() string { return "decimal" }
+func (v Decimal) Inspect() string  { return v.Value.FloatString(10) }
+
+type Float struct {
+	Value float64
+}
+
+func (v Float) TypeName() string { return "float" }
+func (v Float) Inspect() string  { return fmt.Sprintf("%g", v.Value) }
+
+type String struct {
+	Value string
+}
+
+func (v String) TypeName() string { return "string" }
+func (v String) Inspect() string  { return v.Value }
+
+type Bytes struct {
+	Value []byte
+}
+
+func (v Bytes) TypeName() string { return "bytes" }
+func (v Bytes) Inspect() string  { return hex.EncodeToString(v.Value) }
+
+type DateTimeInstant struct {
+	Unix int64
+}
+
+func (v DateTimeInstant) TypeName() string { return "datetime.Instant" }
+func (v DateTimeInstant) Inspect() string  { return fmt.Sprintf("<datetime.Instant %d>", v.Unix) }
+
+type DateTimeDuration struct {
+	Seconds int64
+}
+
+func (v DateTimeDuration) TypeName() string { return "datetime.Duration" }
+func (v DateTimeDuration) Inspect() string  { return fmt.Sprintf("<datetime.Duration %ds>", v.Seconds) }
+
+type DateTimeZone struct {
+	Name string
+}
+
+func (v DateTimeZone) TypeName() string { return "datetime.Zone" }
+func (v DateTimeZone) Inspect() string  { return "<datetime.Zone " + v.Name + ">" }
+
+type URLValue struct {
+	Raw string
+}
+
+func (v URLValue) TypeName() string { return "url.URL" }
+func (v URLValue) Inspect() string  { return "<url.URL " + v.Raw + ">" }
+
+type HTTPHeaders struct {
+	Values map[string][]string
+}
+
+func (v HTTPHeaders) TypeName() string { return "http.Headers" }
+func (v HTTPHeaders) Inspect() string  { return "<http.Headers>" }
+
+type HTTPCookie struct {
+	Name     string
+	Value    string
+	Path     string
+	Domain   string
+	Expires  int64
+	MaxAge   int64
+	Secure   bool
+	HTTPOnly bool
+	SameSite string
+}
+
+func (v HTTPCookie) TypeName() string { return "http.Cookie" }
+func (v HTTPCookie) Inspect() string  { return "<http.Cookie " + v.Name + ">" }
+
+type TemplateValue struct {
+	Name string
+	Text string
+	Path string
+}
+
+func (v TemplateValue) TypeName() string { return "template.Template" }
+func (v TemplateValue) Inspect() string {
+	if v.Name != "" {
+		return "<template.Template " + v.Name + ">"
+	}
+	return "<template.Template>"
+}
+
+type TemplateEngine struct {
+	Dir string
+}
+
+func (v TemplateEngine) TypeName() string { return "template.Engine" }
+func (v TemplateEngine) Inspect() string  { return "<template.Engine " + v.Dir + ">" }
+
+type List struct {
+	Elements []Value
+	Frozen   bool
+}
+
+func (v List) TypeName() string { return "list" }
+func (v List) Inspect() string {
+	parts := make([]string, 0, len(v.Elements))
+	for _, el := range v.Elements {
+		parts = append(parts, el.Inspect())
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+type Dict struct {
+	Entries map[string]DictEntry
+	Frozen  bool
+}
+
+func (v Dict) TypeName() string { return "dict" }
+func (v Dict) Inspect() string  { return "{...}" }
+
+type DictEntry struct {
+	Key   Value
+	Value Value
+}
+
+type Set struct {
+	Elements map[string]SetEntry
+	Frozen   bool
+}
+
+func (v Set) TypeName() string { return "set" }
+func (v Set) Inspect() string {
+	parts := make([]string, 0, len(v.Elements))
+	for _, entry := range v.Elements {
+		parts = append(parts, entry.Value.Inspect())
+	}
+	sort.Strings(parts)
+	return "set{" + strings.Join(parts, ", ") + "}"
+}
+
+type SetEntry struct {
+	Value Value
+}
+
+type Range struct {
+	Start     *big.Int
+	End       *big.Int
+	Exclusive bool
+	Step      *big.Int
+}
+
+func (v Range) TypeName() string { return "range" }
+func (v Range) Inspect() string {
+	var sb strings.Builder
+	sb.WriteString(v.Start.String())
+	sb.WriteString("..")
+	if v.Exclusive {
+		sb.WriteByte('<')
+	}
+	sb.WriteString(v.End.String())
+	if v.Step != nil && v.Step.Cmp(big.NewInt(1)) != 0 {
+		sb.WriteString(" by ")
+		sb.WriteString(v.Step.String())
+	}
+	return sb.String()
+}
+
+// Length returns the number of elements produced by iterating this range.
+func (v Range) Length() *big.Int {
+	step := v.Step
+	if step.Sign() == 0 {
+		return new(big.Int)
+	}
+	diff := new(big.Int).Sub(v.End, v.Start)
+	if step.Sign() > 0 {
+		if diff.Sign() < 0 {
+			return new(big.Int)
+		}
+	} else {
+		if diff.Sign() > 0 {
+			return new(big.Int)
+		}
+		diff.Neg(diff)
+		step = new(big.Int).Neg(step)
+	}
+	if v.Exclusive {
+		count := new(big.Int).Add(diff, new(big.Int).Sub(step, big.NewInt(1)))
+		return count.Div(count, step)
+	}
+	count := new(big.Int).Div(diff, step)
+	return count.Add(count, big.NewInt(1))
+}
+
+// ContainsInt reports whether n is a value produced by iterating this range.
+func (v Range) ContainsInt(n *big.Int) bool {
+	step := v.Step
+	if step.Sign() == 0 {
+		return false
+	}
+	if step.Sign() > 0 {
+		if n.Cmp(v.Start) < 0 {
+			return false
+		}
+		if v.Exclusive && n.Cmp(v.End) >= 0 {
+			return false
+		}
+		if !v.Exclusive && n.Cmp(v.End) > 0 {
+			return false
+		}
+	} else {
+		if n.Cmp(v.Start) > 0 {
+			return false
+		}
+		if v.Exclusive && n.Cmp(v.End) <= 0 {
+			return false
+		}
+		if !v.Exclusive && n.Cmp(v.End) < 0 {
+			return false
+		}
+	}
+	diff := new(big.Int).Sub(n, v.Start)
+	rem := new(big.Int).Rem(diff, step)
+	return rem.Sign() == 0
+}
+
+type Generator struct {
+	mu       sync.Mutex
+	elements []Value
+	index    int
+	next     func() (Value, bool, error)
+	close    func()
+	closed   bool
+}
+
+func NewGeneratorFromSlice(elements []Value) *Generator {
+	return &Generator{elements: append([]Value(nil), elements...)}
+}
+
+func NewGenerator(next func() (Value, bool, error)) *Generator {
+	return &Generator{next: next}
+}
+
+func NewClosableGenerator(next func() (Value, bool, error), close func()) *Generator {
+	return &Generator{next: next, close: close}
+}
+
+func (v *Generator) TypeName() string { return "generator" }
+func (v *Generator) Inspect() string  { return "<generator>" }
+func (v *Generator) Next() (Value, bool, error) {
+	if v == nil {
+		return nil, false, nil
+	}
+	v.mu.Lock()
+	if v.closed {
+		v.mu.Unlock()
+		return nil, false, nil
+	}
+	v.mu.Unlock()
+	if v.next != nil {
+		return v.next()
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.index >= len(v.elements) {
+		return nil, false, nil
+	}
+	value := v.elements[v.index]
+	v.index++
+	return value, true, nil
+}
+
+func (v *Generator) Close() {
+	if v == nil {
+		return
+	}
+	v.mu.Lock()
+	if v.closed {
+		v.mu.Unlock()
+		return
+	}
+	v.closed = true
+	closeFn := v.close
+	v.mu.Unlock()
+	if closeFn != nil {
+		closeFn()
+	}
+}
+
+type Function struct {
+	Name                 string
+	Doc                  string
+	TypeParameters       []string
+	TypeParamConstraints map[string]*ast.TypeRef
+	Parameters           []ast.Parameter
+	ReturnType           *ast.TypeRef
+	Body                 *ast.BlockStatement
+	Env                  *Environment
+	Decorators           []ast.Decorator
+	Target               string
+	Async                bool
+	IsGenerator          bool
+	Native               func(this *Instance, args []Value) (Value, error)
+	ForwardThis          bool
+	// OwnerClass is set when the function is a class method/constructor; it
+	// identifies the lexical class for `parent(...)` resolution, which must
+	// dispatch on the declaring class rather than the runtime instance class
+	// (otherwise `parent` inside a parent's body would re-enter that same
+	// parent through the subclass's instance).
+	OwnerClass *Class
+	// TypeBindings captures the enclosing generic function's type
+	// parameter bindings at the moment this function value was created.
+	// Anonymous functions (lambdas) and references to generic top-level
+	// functions both pick this up so that an inner `T x` parameter
+	// resolves against the outer call site's concrete bindings.
+	// Mirror of BytecodeClosure.TypeBindings on the VM side.
+	TypeBindings map[string]string
+}
+
+func (v Function) TypeName() string { return "func" }
+func (v Function) Inspect() string {
+	if v.Name != "" {
+		return "<func " + v.Name + ">"
+	}
+	return "<func>"
+}
+
+type OverloadedFunction struct {
+	Name      string
+	Overloads []Function
+}
+
+func (v OverloadedFunction) TypeName() string { return "func" }
+func (v OverloadedFunction) Inspect() string {
+	if v.Name != "" {
+		return "<overloaded func " + v.Name + ">"
+	}
+	return "<overloaded func>"
+}
+
+type DecoratorMetadata struct {
+	Name      string
+	Target    string
+	Position  int64
+	Overload  int64
+	Args      []Value
+	NamedArgs map[string]Value
+	Line      int64
+	Column    int64
+}
+
+type ParameterMetadata struct {
+	Name       string
+	Type       string
+	Variadic   bool
+	HasDefault bool
+}
+
+type FunctionMetadata struct {
+	Name           string
+	Target         string
+	Doc            string
+	TypeParameters []string
+	Parameters     []ParameterMetadata
+	ReturnType     string
+	Async          bool
+	Variadic       bool
+	Decorators     []DecoratorMetadata
+}
+
+type ClassMetadata struct {
+	Name          string
+	Doc           string
+	Parent        string
+	Fields        []string
+	Methods       []string
+	StaticMethods []string
+	Interfaces    []string
+}
+
+type DecoratorTarget struct {
+	Target     string
+	Decorators []DecoratorMetadata
+	Function   *FunctionMetadata
+	Class      *ClassMetadata
+	Callable   Value
+}
+
+func (v DecoratorTarget) TypeName() string { return "reflectTarget" }
+func (v DecoratorTarget) Inspect() string  { return "<reflect " + v.Target + ">" }
+
+type Module struct {
+	Name    string
+	Exports map[string]Value
+}
+
+func (v *Module) TypeName() string { return "module" }
+func (v *Module) Inspect() string  { return "<module " + v.Name + ">" }
+
+type BytecodeFunction struct {
+	Module         string
+	Name           string
+	Doc            string
+	TypeParameters []string
+	Index          int64
+	Raw            bool
+	Parameters     []ParameterMetadata
+	ReturnType     string
+	Async          bool
+	Variadic       bool
+	Decorators     []DecoratorMetadata
+}
+
+func (v BytecodeFunction) TypeName() string { return "function" }
+func (v BytecodeFunction) Inspect() string {
+	if v.Module == "" {
+		return "<bytecode func " + v.Name + ">"
+	}
+	return "<bytecode func " + v.Module + "." + v.Name + ">"
+}
+
+type BytecodeClosure struct {
+	FunctionIndex int64
+	Name          string
+	Module        string
+	Upvalues      []Value
+	// TypeBindings captures the enclosing generic function's type
+	// parameter bindings at the moment the closure was created. When
+	// the closure later runs, these bindings are planted into its call
+	// frame so that an anonymous function declared inside `func f<T>(...)`
+	// can still reference `T` as a parameter type or in `instanceof T`
+	// checks. A named generic function passed by reference (compiled
+	// to OpMakeClosure with zero upvalues) is treated symmetrically.
+	// Nil when the closure was created outside any generic scope.
+	TypeBindings map[string]string
+}
+
+func (v BytecodeClosure) TypeName() string { return "func" }
+func (v BytecodeClosure) Inspect() string {
+	if v.Name != "" {
+		if v.Module != "" {
+			return "<closure " + v.Module + "." + v.Name + ">"
+		}
+		return "<closure " + v.Name + ">"
+	}
+	return "<closure>"
+}
+
+type BytecodeCell struct {
+	Value Value
+}
+
+func (v *BytecodeCell) TypeName() string {
+	if v == nil || v.Value == nil {
+		return "null"
+	}
+	return v.Value.TypeName()
+}
+
+func (v *BytecodeCell) Inspect() string {
+	if v == nil || v.Value == nil {
+		return "null"
+	}
+	return v.Value.Inspect()
+}
+
+type BytecodeClass struct {
+	Module              string
+	Name                string
+	Doc                 string
+	Index               int64
+	Parent              string
+	Fields              []string
+	Interfaces          []string
+	Decorators          []DecoratorMetadata
+	MethodDecorators    map[string][]DecoratorMetadata
+	StaticDecorators    map[string][]DecoratorMetadata
+	MethodMetadata      map[string][]FunctionMetadata
+	StaticMetadata      map[string][]FunctionMetadata
+	ConstructorMetadata []FunctionMetadata
+	Immutable           bool
+}
+
+func (v BytecodeClass) TypeName() string { return "class" }
+func (v BytecodeClass) Inspect() string {
+	if v.Module == "" {
+		return "<bytecode class " + v.Name + ">"
+	}
+	return "<bytecode class " + v.Module + "." + v.Name + ">"
+}
+
+type NativeObject struct {
+	Kind string
+	ID   int64
+}
+
+func (v NativeObject) TypeName() string { return v.Kind }
+func (v NativeObject) Inspect() string  { return "<" + v.Kind + ">" }
+
+type EnumVariantDefRuntime struct {
+	Name       string
+	FieldCount int
+}
+
+type EnumDef struct {
+	Name     string
+	Variants []EnumVariantDefRuntime
+}
+
+func (v *EnumDef) TypeName() string { return v.Name }
+func (v *EnumDef) Inspect() string  { return "<enum " + v.Name + ">" }
+
+type EnumVariant struct {
+	Enum    *EnumDef
+	Variant string
+	Fields  []Value
+}
+
+func (v EnumVariant) TypeName() string { return v.Enum.Name }
+func (v EnumVariant) Inspect() string {
+	if len(v.Fields) == 0 {
+		return v.Enum.Name + "." + v.Variant
+	}
+	parts := make([]string, 0, len(v.Fields))
+	for _, f := range v.Fields {
+		parts = append(parts, f.Inspect())
+	}
+	return v.Enum.Name + "." + v.Variant + "(" + strings.Join(parts, ", ") + ")"
+}
+
+type TaskResult struct {
+	Value Value
+	Err   error
+}
+
+type Task struct {
+	once        sync.Once
+	cancelOnce  sync.Once
+	done        chan struct{}
+	cancel      chan struct{}
+	mu          sync.Mutex
+	result      TaskResult
+	cancelled   bool
+}
+
+func NewTask() *Task {
+	return &Task{done: make(chan struct{}), cancel: make(chan struct{})}
+}
+
+func NewCompletedTask(value Value, err error) *Task {
+	task := NewTask()
+	task.Complete(value, err)
+	return task
+}
+
+func (v *Task) TypeName() string { return "Task" }
+func (v *Task) Inspect() string  { return "<Task>" }
+
+func (v *Task) Complete(value Value, err error) {
+	v.once.Do(func() {
+		if value == nil {
+			value = Null{}
+		}
+		v.mu.Lock()
+		v.result = TaskResult{Value: value, Err: err}
+		v.mu.Unlock()
+		close(v.done)
+	})
+}
+
+// Cancel signals that the task should stop. Producers that respect
+// cancellation can watch CancelChan() and bail out. If the task has
+// not yet completed, Cancel also resolves it with a "task cancelled"
+// runtime error so any subsequent Await unblocks. Idempotent.
+func (v *Task) Cancel() {
+	v.cancelOnce.Do(func() {
+		v.mu.Lock()
+		v.cancelled = true
+		v.mu.Unlock()
+		close(v.cancel)
+	})
+	v.Complete(Null{}, ErrTaskCancelled)
+}
+
+// Cancelled reports whether Cancel has been called.
+func (v *Task) Cancelled() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.cancelled
+}
+
+// CancelChan exposes the cancel signal channel so async producers can
+// race their own work against the cancellation.
+func (v *Task) CancelChan() <-chan struct{} {
+	return v.cancel
+}
+
+// DoneChan exposes the completion channel so callers can race
+// completion against other channels (e.g., timeout, sibling-task
+// failures).
+func (v *Task) DoneChan() <-chan struct{} {
+	return v.done
+}
+
+func (v *Task) Await() TaskResult {
+	<-v.done
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.result
+}
+
+func (v *Task) Done() bool {
+	select {
+	case <-v.done:
+		return true
+	default:
+		return false
+	}
+}
+
+type Error struct {
+	Class      string
+	Message    string
+	StackTrace string
+	Fields     map[string]Value
+}
+
+func (v Error) TypeName() string { return v.Class }
+func (v Error) Inspect() string {
+	if v.Message == "" {
+		return v.Class
+	}
+	return v.Class + ": " + v.Message
+}
+
+type ErrorStackFrame struct {
+	Function string
+	Line     int64
+}
+
+func (v ErrorStackFrame) TypeName() string { return "errors.Frame" }
+func (v ErrorStackFrame) Inspect() string {
+	if v.Line > 0 {
+		return fmt.Sprintf("<errors.Frame %s:%d>", v.Function, v.Line)
+	}
+	return "<errors.Frame " + v.Function + ">"
+}
+
+type ErrorStackTrace struct {
+	Raw    string
+	Frames []ErrorStackFrame
+}
+
+func (v ErrorStackTrace) TypeName() string { return "errors.StackTrace" }
+func (v ErrorStackTrace) Inspect() string {
+	return fmt.Sprintf("<errors.StackTrace %d frame(s)>", len(v.Frames))
+}
+
+type Type struct {
+	Name string
+}
+
+func (v Type) TypeName() string { return "Type" }
+func (v Type) Inspect() string  { return v.Name }
+
+var builtinTypeNames = map[string]bool{
+	"string": true, "int": true, "float": true, "decimal": true,
+	"bool": true, "bytes": true, "any": true, "void": true,
+	"null": true, "list": true, "dict": true, "set": true,
+	"range": true, "func": true, "generator": true, "iterable": true,
+}
+
+func IsBuiltinTypeName(name string) bool {
+	return builtinTypeNames[strings.ToLower(name)]
+}
+
+type Field struct {
+	Name    string
+	Default ast.Expression
+}
+
+type Class struct {
+	Name                 string
+	Doc                  string
+	Module               string
+	TypeParameters       []string
+	TypeParamConstraints map[string]*ast.TypeRef
+	Parent               *Class
+	// ParentArguments captures the type arguments supplied at class
+	// declaration time. For `class Sub extends Base<string, int>` this
+	// is ["string", "int"]. Empty when the parent is non-generic or
+	// declared without type args.
+	ParentArguments      []string
+	Implements           []*Interface
+	Decorators           []ast.Decorator
+	Fields               []Field
+	Methods              map[string][]Function
+	StaticMethods        map[string][]Function
+	MethodMetadata       map[string][]FunctionMetadata
+	StaticMetadata       map[string][]FunctionMetadata
+	StaticValues         map[string]Value
+	Constructors         []Function
+	// Destructor is the optional `func ~ClassName()` cleanup method.
+	// Nil when the class doesn't declare one. The runtime invokes it
+	// at `with`-block exit (and via explicit cleanup paths added by
+	// future work) - see the executor's WithStatement handling.
+	Destructor           *Function
+	Env                  *Environment
+	Immutable            bool
+}
+
+func (v *Class) TypeName() string { return "class" }
+func (v *Class) Inspect() string  { return "<class " + v.Name + ">" }
+
+type Interface struct {
+	Name           string
+	Doc            string
+	TypeParameters []string
+	Parents        []*Interface
+	Methods        []*ast.FunctionSignature
+}
+
+func (v *Interface) TypeName() string { return "interface" }
+func (v *Interface) Inspect() string  { return "<interface " + v.Name + ">" }
+
+type Instance struct {
+	Class        *Class
+	Fields       map[string]Value
+	TypeBindings map[string]string
+	Frozen       bool
+	// Destroyed is set by the runtime after the class destructor
+	// has run for this instance (via `del x` or the program-exit
+	// sweep). The flag is one-way; once set, neither the sweep nor
+	// a subsequent `del` will invoke the destructor again.
+	Destroyed bool
+}
+
+func (v *Instance) TypeName() string { return v.Class.Name }
+func (v *Instance) Inspect() string  { return "<" + v.Class.Name + ">" }
+
+func IsCallableValue(value Value) bool {
+	switch value := value.(type) {
+	case Function, OverloadedFunction, BytecodeFunction, BytecodeClosure:
+		return true
+	case DecoratorTarget:
+		return value.Callable != nil && IsCallableValue(value.Callable)
+	case *Instance:
+		if value == nil || value.Class == nil {
+			return false
+		}
+		for class := value.Class; class != nil; class = class.Parent {
+			if len(class.Methods["__invoke"]) > 0 {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}

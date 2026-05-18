@@ -1,0 +1,30 @@
+/**
+ * @title Web
+ * @summary Demonstrates web in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import web;
+
+let app = web.new();
+
+web.use(app, func(dict<string, any> request, dict<string, any> response): dict<string, any> {
+    return web.withHeader(response, "X-App", "Geblang");
+});
+
+web.get(app, "/users/:id", func(dict<string, any> request): dict<string, any> {
+    return {
+        "status": 200,
+        "body": "user " + request["params"]["id"]
+    };
+});
+
+let response = web.handle(app, {
+    "method": "GET",
+    "path": "/users/42",
+    "body": ""
+});
+
+io.println(response["status"]);
+io.println(response["body"]);
+io.println(response["headers"]["X-App"]);

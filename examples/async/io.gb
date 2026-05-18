@@ -1,0 +1,23 @@
+/**
+ * @title Io
+ * @summary Demonstrates io in a runnable Geblang example.
+ * @category Async
+ */
+import async.io as aio;
+import collections;
+import io;
+
+let path = io.tempFile("geb-aio-*.txt");
+
+let writeTask = aio.writeText(path, "alpha\nbeta\n");
+io.println("write started");
+await writeTask;
+
+let readTask = aio.readText(path);
+
+for (i in collections.range(0, 3, 1)) {
+    io.println("counter " + (i as int).toString());
+}
+
+io.println(await readTask);
+io.remove(path);

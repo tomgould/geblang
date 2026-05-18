@@ -1,0 +1,259 @@
+module web.session;
+
+import crypt;
+import datetime;
+import db;
+import io;
+import json;
+import secrets;
+import web.http as http;
+
+## Reads a signed cookie-backed session dictionary from a request.
+export func session(dict<string, any> request, string secret): dict<string, any> {
+    let token = http.requestObject(request).cookie("geb_session");
+    if (token.isEmpty()) {
+        return {};
+    }
+    let verified = crypt.jwtVerify(token, secret);
+    if (verified == null || !(verified instanceof dict)) {
+        return {};
+    }
+    return verified as dict<string, any>;
+}
+
+## Writes a signed cookie-backed session dictionary to a response.
+export func withSession(dict<string, any> response, dict<string, any> data, string secret, dict<string, any> options): dict<string, any> {
+    let token = crypt.jwtSign(data, secret);
+    return http.withCookieOptions(response, "geb_session", token, options);
+}
+
+## Clears the signed cookie-backed session cookie.
+export func clearSession(dict<string, any> response): dict<string, any> {
+    return http.deleteCookie(response, "geb_session");
+}
+
+## Session store backed by Redis keys and opaque session-id cookies.
+export class RedisSessionStore {
+    any client;
+    string prefix;
+    int ttl;
+
+    func RedisSessionStore(any client, string prefix, int ttl) {
+        this.client = client;
+        this.prefix = prefix;
+        this.ttl = ttl;
+    }
+
+    func key(string id): string {
+        return this.prefix + id;
+    }
+
+    func load(dict<string, any> request): dict<string, any> {
+        string id = http.requestObject(request).cookie("geb_sid");
+        if (id.isEmpty()) {
+            return {};
+        }
+        let value = this.client.get(this.key(id));
+        if (value == null) {
+            return {};
+        }
+        return json.parse(value as string) as dict<string, any>;
+    }
+
+    func save(dict<string, any> response, dict<string, any> data, dict<string, any> options): dict<string, any> {
+        string id = secrets.randomHex(32);
+        string key = this.key(id);
+        this.client.set(key, json.stringify(data));
+        this.client.expire(key, this.ttl);
+        if (!options.hasKey("path")) {
+            options["path"] = "/";
+        }
+        if (!options.hasKey("maxAge")) {
+            options["maxAge"] = this.ttl;
+        }
+        return http.withCookieOptions(response, "geb_sid", id, options);
+    }
+
+    func clear(dict<string, any> response, dict<string, any> request): dict<string, any> {
+        string id = http.requestObject(request).cookie("geb_sid");
+        if (!id.isEmpty()) {
+            this.client.del(this.key(id));
+        }
+        return http.deleteCookie(response, "geb_sid");
+    }
+}
+
+## Creates a Redis-backed session store.
+export func redisSessionStore(any client, string prefix, int ttl): RedisSessionStore {
+    return RedisSessionStore(client, prefix, ttl);
+}
+
+func sessionExpired(dict<string, any> payload): bool {
+    if (!payload.hasKey("expiresAt")) {
+        return false;
+    }
+    return (payload["expiresAt"] as int) <= datetime.nowUnix();
+}
+
+func sessionPayload(dict<string, any> data, int ttl): string {
+    return json.stringify({"data": data, "expiresAt": datetime.nowUnix() + ttl});
+}
+
+func sessionDataFromPayload(string value): dict<string, any> {
+    let payload = json.parse(value) as dict<string, any>;
+    if (sessionExpired(payload)) {
+        return {};
+    }
+    if (!payload.hasKey("data") || !(payload["data"] instanceof dict)) {
+        return {};
+    }
+    return payload["data"] as dict<string, any>;
+}
+
+## Session store backed by JSON files in a directory.
+export class FileSessionStore {
+    string directory;
+    int ttl;
+
+    func FileSessionStore(string directory, int ttl) {
+        this.directory = directory;
+        this.ttl = ttl;
+        io.mkdir(directory, 493);
+    }
+
+    func path(string id): string {
+        return this.directory + "/" + id + ".json";
+    }
+
+    func load(dict<string, any> request): dict<string, any> {
+        string id = http.requestObject(request).cookie("geb_sid");
+        if (id.isEmpty()) {
+            return {};
+        }
+        string path = this.path(id);
+        if (!io.exists(path)) {
+            return {};
+        }
+        let data = sessionDataFromPayload(io.readText(path));
+        if (data.isEmpty()) {
+            io.remove(path);
+        }
+        return data;
+    }
+
+    func save(dict<string, any> response, dict<string, any> data, dict<string, any> options): dict<string, any> {
+        string id = secrets.randomHex(32);
+        io.writeText(this.path(id), sessionPayload(data, this.ttl));
+        if (!options.hasKey("path")) {
+            options["path"] = "/";
+        }
+        if (!options.hasKey("maxAge")) {
+            options["maxAge"] = this.ttl;
+        }
+        return http.withCookieOptions(response, "geb_sid", id, options);
+    }
+
+    func clear(dict<string, any> response, dict<string, any> request): dict<string, any> {
+        string id = http.requestObject(request).cookie("geb_sid");
+        if (!id.isEmpty()) {
+            io.remove(this.path(id));
+        }
+        return http.deleteCookie(response, "geb_sid");
+    }
+}
+
+## Creates a file-backed session store.
+export func fileSessionStore(string directory, int ttl): FileSessionStore {
+    return FileSessionStore(directory, ttl);
+}
+
+## Session store backed by a database table with id, data, and expiry columns.
+export class DatabaseSessionStore {
+    any conn;
+    string table;
+    int ttl;
+
+    func DatabaseSessionStore(any conn, string table, int ttl) {
+        this.conn = conn;
+        this.table = table;
+        this.ttl = ttl;
+    }
+
+    func install(): DatabaseSessionStore {
+        db.exec(this.conn, "create table if not exists " + this.table + " (id text primary key, data text not null, expires_at integer not null)");
+        return this;
+    }
+
+    func load(dict<string, any> request): dict<string, any> {
+        string id = http.requestObject(request).cookie("geb_sid");
+        if (id.isEmpty()) {
+            return {};
+        }
+        let rows = db.query(this.conn, "select data, expires_at from " + this.table + " where id = ?", id);
+        if (rows.length() == 0) {
+            return {};
+        }
+        let row = rows[0] as dict<string, any>;
+        if ((row["expires_at"] as int) <= datetime.nowUnix()) {
+            db.exec(this.conn, "delete from " + this.table + " where id = ?", id);
+            return {};
+        }
+        return json.parse(row["data"] as string) as dict<string, any>;
+    }
+
+    func save(dict<string, any> response, dict<string, any> data, dict<string, any> options): dict<string, any> {
+        string id = secrets.randomHex(32);
+        db.exec(this.conn, "delete from " + this.table + " where id = ?", id);
+        db.exec(this.conn, "insert into " + this.table + " (id, data, expires_at) values (?, ?, ?)", id, json.stringify(data), datetime.nowUnix() + this.ttl);
+        if (!options.hasKey("path")) {
+            options["path"] = "/";
+        }
+        if (!options.hasKey("maxAge")) {
+            options["maxAge"] = this.ttl;
+        }
+        return http.withCookieOptions(response, "geb_sid", id, options);
+    }
+
+    func clear(dict<string, any> response, dict<string, any> request): dict<string, any> {
+        string id = http.requestObject(request).cookie("geb_sid");
+        if (!id.isEmpty()) {
+            db.exec(this.conn, "delete from " + this.table + " where id = ?", id);
+        }
+        return http.deleteCookie(response, "geb_sid");
+    }
+}
+
+## Creates a database-backed session store; call install() to create its table.
+export func databaseSessionStore(any conn, string table, int ttl): DatabaseSessionStore {
+    return DatabaseSessionStore(conn, table, ttl);
+}
+
+## Returns queued flash messages from a session store.
+export func flashes(any sessionStore, dict<string, any> request): list<any> {
+    let data = sessionStore.load(request);
+    if (!data.hasKey("flashes") || !(data["flashes"] instanceof list)) {
+        return [];
+    }
+    return data["flashes"] as list<any>;
+}
+
+## Appends a flash message to the current session and saves it.
+export func withFlash(any sessionStore, dict<string, any> response, dict<string, any> request, string category, string message, dict<string, any> options): dict<string, any> {
+    let data = sessionStore.load(request);
+    list<any> messages = [];
+    if (data.hasKey("flashes") && data["flashes"] instanceof list) {
+        messages = data["flashes"] as list<any>;
+    }
+    messages = messages.push({"category": category, "message": message});
+    data["flashes"] = messages;
+    return sessionStore.save(response, data, options);
+}
+
+## Removes flash messages from the current session and saves it.
+export func clearFlashes(any sessionStore, dict<string, any> response, dict<string, any> request, dict<string, any> options): dict<string, any> {
+    let data = sessionStore.load(request);
+    if (data.hasKey("flashes")) {
+        data.delete("flashes");
+    }
+    return sessionStore.save(response, data, options);
+}

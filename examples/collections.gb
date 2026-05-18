@@ -1,0 +1,27 @@
+/**
+ * @title Collections
+ * @summary Demonstrates collections in a runnable Geblang example.
+ * @category General
+ */
+import io;
+
+let nums = [1, 2, 3];
+nums[0] = 9;
+nums.set(-1, 7);
+
+io.println(nums[0]);
+io.println(nums.get(-1));
+io.println(nums.length());
+
+let data = {"name": "Dave"};
+data["age"] = 42;
+data.set("name", "Sarah");
+
+io.println(data.get("name"));
+io.println(data["age"]);
+io.println(data.length());
+
+string name = "Geb";
+io.println(name[0]);
+io.println(name.get(-1));
+io.println(name.length());

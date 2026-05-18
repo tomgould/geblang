@@ -1,0 +1,13 @@
+import io;
+import sys;
+
+func fib(int n): int {
+    if (n < 2) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+let args = sys.args();
+int n = args.length() > 0 ? args[0].toInt() : 28;
+io.println(fib(n));

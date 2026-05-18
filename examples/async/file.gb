@@ -1,0 +1,17 @@
+/**
+ * @title File
+ * @summary Demonstrates file in a runnable Geblang example.
+ * @category Async
+ */
+import io;
+
+async func writeAndRead(string path): string {
+    io.writeText(path, "async file data");
+    return io.readText(path);
+}
+
+let path = io.tempFile("geb-async-file-*.txt");
+let task = writeAndRead(path);
+
+io.println(await task);
+io.remove(path);

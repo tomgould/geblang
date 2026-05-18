@@ -1,0 +1,16 @@
+/**
+ * @title Http Server
+ * @summary Demonstrates http server in a runnable Geblang example.
+ * @category General
+ */
+import http;
+
+func app(dict<string, any> request): dict<string, any> {
+    return {
+        "status": 200,
+        "headers": {"Content-Type": "text/plain"},
+        "body": "Geblang " + request["method"] + " " + request["path"]
+    };
+}
+
+http.serve("127.0.0.1:8080", app);

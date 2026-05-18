@@ -1,0 +1,18 @@
+/**
+ * @title Bytes
+ * @summary Demonstrates bytes in a runnable Geblang example.
+ * @category General
+ */
+import bytes;
+import io;
+
+let data = bytes.fromString("hello");
+io.println(data.length());
+io.println(data.toHex());
+io.println(bytes.fromHex("776f726c64").toString());
+
+let path = io.tempFile("geb-bytes-*.bin");
+io.writeBytes(path, bytes.concat(data, bytes.fromString("!")));
+let read = io.readBytes(path);
+io.println(read.toString());
+io.remove(path);

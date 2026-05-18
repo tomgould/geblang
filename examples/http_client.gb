@@ -1,0 +1,70 @@
+/**
+ * @title Http Client
+ * @summary Demonstrates http client in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import http;
+
+let response = http.request("GET", "https://example.com", "", {});
+
+io.println(response["status"]);
+io.println(response["body"].length() > 0);
+
+let withOptions = http.requestWithOptions({
+    "method": "GET",
+    "url": "https://example.com",
+    "headers": {"Accept": "text/html"},
+    "timeoutMs": 5000
+});
+
+io.println(withOptions["status"]);
+
+let client = http.newClient({"timeoutMs": 5000});
+client.setDefaultHeader("Accept", "text/html");
+let r = client.get("https://example.com");
+io.println(r["status"]);
+
+let j = client.cookieJar();
+io.println(typeof(j));
+
+let r2 = http.build("https://example.com")
+    .method("GET")
+    .header("Accept", "text/html")
+    .timeout(5000)
+    .send();
+io.println(r2["status"]);
+
+# Async methods — fire individual requests without blocking
+let t1 = client.getAsync("https://example.com");
+let t2 = client.getAsync("https://example.com");
+let ra = await t1;
+let rb = await t2;
+io.println(ra["status"]);
+io.println(rb["status"]);
+
+# fetchAll — parallel batch, results in input order
+let ordered = await http.fetchAll([
+    {"method": "GET", "url": "https://example.com"},
+    {"method": "GET", "url": "https://example.com"}
+]);
+io.println(ordered.length());
+
+# fetchStream — results arrive as each completes (completion order, not input order)
+let stream = http.fetchStream([
+    {"method": "GET", "url": "https://example.com"},
+    {"method": "GET", "url": "https://example.com"}
+]);
+while (!stream.done()) {
+    let result = stream.next();
+    io.println(result["status"]);
+}
+
+# Client-scoped batch (shares session cookies and default headers)
+let cs = http.newClient({"timeoutMs": 5000});
+cs.setDefaultHeader("Accept", "text/html");
+let cstream = cs.fetchStream([
+    {"method": "GET", "url": "https://example.com"}
+]);
+let cr = cstream.next();
+io.println(cr["status"]);

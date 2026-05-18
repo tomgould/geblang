@@ -1,0 +1,21 @@
+/**
+ * @title Order Service Entrypoint
+ * @summary Wires the order service modules together and prints a report.
+ * @category Order Service
+ * @description This file is intentionally small: it composes dependencies, records data and prints output.
+ */
+import order_service.src.repository as repository;
+import order_service.src.service as service;
+import io;
+
+let repo = repository.newRepository();
+let orders = service.newService(repo);
+
+orders.record("A-100", "Ada", 12900);
+orders.record("A-101", "Grace", 8400);
+
+for (order in repo.all()) {
+    io.println(order.label());
+}
+
+io.println("revenue cents: " + (orders.revenue() as string));

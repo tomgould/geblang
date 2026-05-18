@@ -1,0 +1,37 @@
+/**
+ * @title Closures test
+ * @summary Function literals, captured variables, returned closures.
+ */
+import test;
+
+func makeCounter(): callable {
+    int count = 0;
+    return func(): int {
+        count = count + 1;
+        return count;
+    };
+}
+
+func makeAdder(int delta): callable {
+    return func(int x): int {
+        return x + delta;
+    };
+}
+
+class ClosuresTest extends test.Test {
+    @test
+    func counterRetainsState(): void {
+        let c = makeCounter();
+        this.assertEquals(1, c());
+        this.assertEquals(2, c());
+        this.assertEquals(3, c());
+    }
+
+    @test
+    func capturedParameter(): void {
+        let add5 = makeAdder(5);
+        let add10 = makeAdder(10);
+        this.assertEquals(15, add5(10));
+        this.assertEquals(20, add10(10));
+    }
+}

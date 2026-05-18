@@ -1,0 +1,57 @@
+/**
+ * @title Class Serialization
+ * @summary `json.stringify` accepts class instances; the default
+ *          dumps public fields. `__serialize__` overrides output;
+ *          `json.parseAs(text, Class)` reconstructs an instance,
+ *          preferring a static `__deserialize__(dict)` factory
+ *          when defined.
+ * @category Language
+ * @description The same protocol works for `yaml.stringify` /
+ *              `yaml.parseAs`, `toml.stringify` / `toml.parseAs`,
+ *              and `xml.stringify` / `xml.parseAs`.
+ */
+import io;
+import json;
+
+class Point {
+    int x;
+    int y;
+    int _secret;
+    func Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+        this._secret = 99;
+    }
+}
+
+io.println(json.stringify(Point(3, 4)));
+
+let q = json.parseAs("{\"x\":10,\"y\":20}", Point);
+io.println(q.x);
+io.println(q.y);
+
+class Tagged {
+    string kind;
+    string label;
+
+    func Tagged(string kind, string label) {
+        this.kind = kind;
+        this.label = label;
+    }
+
+    func __serialize__(): dict {
+        return {"kind": this.kind, "label": this.label, "v": 1};
+    }
+
+    static func __deserialize__(dict d): Tagged {
+        return Tagged(d["kind"], d["label"]);
+    }
+}
+
+let t = Tagged("note", "hello");
+let text = json.stringify(t);
+io.println(text);
+
+let round = json.parseAs(text, Tagged);
+io.println(round.kind);
+io.println(round.label);

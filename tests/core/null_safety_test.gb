@@ -1,0 +1,47 @@
+/**
+ * @title Null safety test
+ * @summary Null narrowing, optional chaining, null coalescing.
+ */
+import test;
+
+class NullSafetyTest extends test.Test {
+    @test
+    func nullCoalesce(): void {
+        ?string maybe = null;
+        let resolved = maybe ?? "default";
+        this.assertEquals("default", resolved);
+
+        ?string value = "hello";
+        let resolved2 = value ?? "default";
+        this.assertEquals("hello", resolved2);
+    }
+
+    @test
+    func nullNarrowingGuard(): void {
+        ?string maybe = "hello";
+        if (maybe == null) {
+            this.fail("expected non-null");
+            return;
+        }
+        # narrowed here
+        this.assertEquals(5, maybe.length());
+    }
+
+    @test
+    func optionalChain(): void {
+        ?list<int> xs = null;
+        let len = xs?.length() ?? 0;
+        this.assertEquals(0, len);
+
+        ?list<int> ys = [1, 2, 3];
+        this.assertEquals(3, ys?.length());
+    }
+
+    @test
+    func nullableAssignment(): void {
+        ?int n = 5;
+        this.assertNotNull(n);
+        n = null;
+        this.assertNull(n);
+    }
+}

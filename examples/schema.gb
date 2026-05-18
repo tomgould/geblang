@@ -1,0 +1,23 @@
+/**
+ * @title Schema
+ * @summary Demonstrates schema in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import schema;
+
+let userSchema = {
+    "type": "object",
+    "required": ["name"],
+    "properties": {
+        "name": {"type": "string"},
+        "age": {"type": "number"}
+    }
+};
+
+let result = schema.validate({"name": "Ada", "age": 37}, userSchema);
+io.println(result["valid"]);
+
+let bad = schema.validate({"name": 42}, userSchema);
+io.println(bad["valid"]);
+io.println(bad["errors"].length());

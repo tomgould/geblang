@@ -1,0 +1,17 @@
+/**
+ * @title Path
+ * @summary Demonstrates path in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import path;
+
+let joined = path.join("a", "b", "file.txt");
+
+io.println(joined);
+io.println(path.base(joined));
+io.println(path.dir(joined));
+io.println(path.ext(joined));
+io.println(path.clean("a/../b"));
+io.println(path.rel("/tmp", "/tmp/app/file.txt"));
+io.println(path.abs(".").length() > 0);

@@ -1,0 +1,89 @@
+/**
+ * @title Control flow test
+ * @summary if/elif/else, while, for, break, continue, defer.
+ */
+import test;
+
+class ControlFlowTest extends test.Test {
+    @test
+    func ifElseChain(): void {
+        let result = "";
+        int n = 5;
+        if (n < 0) {
+            result = "neg";
+        } else if (n == 0) {
+            result = "zero";
+        } else if (n < 10) {
+            result = "small";
+        } else {
+            result = "large";
+        }
+        this.assertEquals("small", result);
+    }
+
+    @test
+    func whileLoop(): void {
+        int i = 0;
+        int sum = 0;
+        while (i < 5) {
+            sum = sum + i;
+            i++;
+        }
+        this.assertEquals(10, sum);
+    }
+
+    @test
+    func forLoop(): void {
+        int total = 0;
+        for (int i = 1; i <= 5; i++) {
+            total = total + i;
+        }
+        this.assertEquals(15, total);
+    }
+
+    @test
+    func forIn(): void {
+        let xs = [10, 20, 30];
+        int sum = 0;
+        for (n in xs) {
+            sum = sum + n;
+        }
+        this.assertEquals(60, sum);
+    }
+
+    @test
+    func breakContinue(): void {
+        int last = -1;
+        int skipped = 0;
+        for (int i = 0; i < 10; i++) {
+            if (i == 3) {
+                skipped = skipped + 1;
+                continue;
+            }
+            if (i == 7) {
+                break;
+            }
+            last = i;
+        }
+        this.assertEquals(6, last);
+        this.assertEquals(1, skipped);
+    }
+
+    @test
+    func deferOrder(): void {
+        # defer queues function-call statements; they run in LIFO order
+        # before the enclosing function returns.
+        list<string> order = [];
+        func record(string label): void {
+            order = order.push(label);
+        }
+        func wrapper(): void {
+            defer record("a");
+            defer record("b");
+            defer record("c");
+            record("body");
+        }
+        wrapper();
+        this.assertEquals(["body", "c", "b", "a"], order);
+    }
+}

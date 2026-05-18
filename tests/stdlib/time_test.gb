@@ -1,0 +1,36 @@
+/**
+ * @title time stdlib test
+ * @summary time.now / elapsed / sleep monotonic-style timing.
+ */
+import test;
+import time;
+
+class TimeTest extends test.Test {
+    @test
+    func nowIsPositiveAndIncreasing(): void {
+        let t1 = time.now();
+        this.assertTrue(t1 > 0);
+        time.sleep(2);
+        let t2 = time.now();
+        this.assertTrue(t2 >= t1);
+    }
+
+    @test
+    func elapsedIsMonotonic(): void {
+        let t0 = time.now();
+        time.sleep(5);
+        let elapsed = time.elapsed(t0);
+        # Allow generous slack for slow test environments but assert the
+        # rough ballpark.
+        this.assertTrue(elapsed >= 3);
+        this.assertTrue(elapsed < 5000);
+    }
+
+    @test
+    func sleepZeroIsImmediate(): void {
+        let t0 = time.now();
+        time.sleep(0);
+        let elapsed = time.elapsed(t0);
+        this.assertTrue(elapsed < 100);
+    }
+}
