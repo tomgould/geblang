@@ -499,8 +499,9 @@ func (v DecoratorTarget) TypeName() string { return "reflectTarget" }
 func (v DecoratorTarget) Inspect() string  { return "<reflect " + v.Target + ">" }
 
 type Module struct {
-	Name    string
-	Exports map[string]Value
+	Name      string
+	Canonical string
+	Exports   map[string]Value
 }
 
 func (v *Module) TypeName() string { return "module" }

@@ -1,0 +1,36 @@
+/**
+ * @title Import alias collisions don't leak across files
+ * @summary A user file aliasing `import X as Y` (where Y is the name
+ * of a native module imported elsewhere) must not poison the
+ * dispatch of `Y.foo` in any other file. Each file's identifier
+ * scope is what determines the canonical module, not a process-wide
+ * import map.
+ */
+import test;
+/* Alias a non-native module to a name that ALSO matches a native
+ * (the `websocket` native module is registered by the evaluator at
+ * the same key). If alias state leaks into stdlib code that
+ * imports the real `websocket` module, this entire test file fails
+ * to load - which is the actual regression we want to guard. */
+import web.websocket as websocket;
+import web.sse as sse;
+
+class AliasCollisionTest extends test.Test {
+    @test
+    func aliasResolvesToUserModuleInThisFile(): void {
+        /* `websocket` in this scope is the wrapped `web.websocket`,
+         * so `upgrade` is the high-level (Connection-wrapping)
+         * variant - returns a dict with a `websocket` key. */
+        let r = websocket.upgrade(func(any conn): void { });
+        this.assertTrue((r as dict<string, any>).contains("websocket"));
+    }
+
+    @test
+    func stdlibStillSeesItsOwnImports(): void {
+        /* `web.sse.streaming(...)` is implemented in stdlib by
+         * calling `http.stream(...)` - confirms the stdlib's own
+         * imports are not polluted by our `websocket` alias above. */
+        let r = sse.streaming(func(any handle): void { });
+        this.assertTrue((r as dict<string, any>).contains("stream"));
+    }
+}

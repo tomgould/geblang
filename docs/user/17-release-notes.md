@@ -6,6 +6,16 @@ Small parity / ergonomics fixes uncovered while extending Gebweb.
 
 ### Bug fixes
 
+- **Import alias collisions no longer leak across files (evaluator).**
+  Two files using the same alias for different canonical modules
+  (e.g. `import web.websocket as websocket;` in user code vs
+  `import websocket;` in stdlib) used to collide via a shared
+  importNames map: stdlib calls then routed through the user's
+  wrapped module instead of the native, surfacing as
+  "module websocket has no export upgrade". Adds a `Canonical`
+  field to `runtime.Module` and has the dispatcher consult the
+  env-local binding before the shared map. VM was already correct.
+
 - **`list.sort()` is an alias for `list.sorted()`.** The LSP catalog
   advertised both method names but only `sorted` was wired up at
   runtime, so user code calling `xs.sort()` failed with `list has no

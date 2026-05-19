@@ -6870,6 +6870,89 @@ io.println(wrap(userFn));
 `, "caught 404: missing widget\n")
 }
 
+// TestParityImportAliasDoesNotCollideAcrossFiles guards a VM-only-correct
+// regression: the evaluator kept a process-wide `importNames` map that
+// recorded the LAST `import X as Y` to use alias `Y`. Two files that both
+// used the same alias for different canonical modules (e.g. a user file
+// `import web.websocket as websocket;` while stdlib `import websocket;`
+// keeps the native) collided - whichever import ran last won, and stdlib
+// code that wanted the native ended up dispatching against the user
+// module, surfacing as "module websocket has no export upgrade".
+// The VM was already correct because each compiled chunk owns its own
+// globals; the evaluator now consults the env-local Module's
+// `Canonical` field first and only falls back to the shared map.
+func TestParityImportAliasDoesNotCollideAcrossFiles(t *testing.T) {
+	dir := t.TempDir()
+	donorModule := filepath.Join(dir, "alias_donor.gb")
+	/* The donor module has its own `import websocket;` that should
+	 * resolve to the NATIVE websocket regardless of what aliases
+	 * the caller registers. We can't call native upgrade() from
+	 * the donor scope without actually upgrading, so the donor
+	 * exposes a tiny shim that calls a function we KNOW only the
+	 * native module exports (`websocket.upgrade` returns a dict
+	 * with a `websocket` key). */
+	if err := os.WriteFile(donorModule, []byte(`module alias_donor;
+
+import websocket;
+
+export func makeUpgrade(callable handler): dict<string, any> {
+    return websocket.upgrade(handler);
+}
+`), 0o644); err != nil {
+		t.Fatalf("write module: %v", err)
+	}
+
+	source := `import io;
+import alias_donor as donor;
+/* Alias web.websocket to the same identifier the donor's
+ * import websocket uses. The donor must continue to resolve to the
+ * native websocket regardless of this user-side alias. */
+import web.websocket as websocket;
+
+let r = donor.makeUpgrade(func(any conn): void { });
+io.println(r.contains("websocket"));
+/* Plus verify our local alias still resolves to web.websocket: the
+ * wrapped version also returns a dict containing "websocket". */
+let local = websocket.upgrade(func(any conn): void { });
+io.println(local.contains("websocket"));
+`
+
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	want := "true\ntrue\n"
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: got %q, want %q", evOut.String(), want)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: got %q, want %q", vmOut.String(), want)
+	}
+}
+
 // TestParityListSortAliasesSorted guards the `list.sort()` -> `list.sorted()`
 // alias: the LSP catalog (`internal/lsp/catalog.go:142-143`) advertised both
 // names but only `sorted` was dispatched at runtime, so any user code reading
