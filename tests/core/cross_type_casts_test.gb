@@ -65,6 +65,35 @@ class ListSetCastTest extends test.Test {
     }
 }
 
+class NullableCastBox {
+    int x;
+    func NullableCastBox(int x) { this.x = x; }
+}
+
+class NullableCastTest extends test.Test {
+    @test
+    func nullAsNullablePrimitive(): void {
+        let a = null as ?int;
+        this.assertEquals(null, a);
+        let b = null as ?string;
+        this.assertEquals(null, b);
+    }
+
+    @test
+    func nullAsNullableUserClass(): void {
+        let b = null as ?NullableCastBox;
+        this.assertEquals(null, b);
+    }
+
+    @test
+    func nonNullValueCastsThroughNullable(): void {
+        /* `42 as ?int` should still succeed when the value is non-null,
+         * falling through to the integer-cast path. */
+        let n = 42 as ?int;
+        this.assertEquals(42, n);
+    }
+}
+
 class StringModuleTest extends test.Test {
     @test
     func fromCodePointAscii(): void {

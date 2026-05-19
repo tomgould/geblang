@@ -2012,6 +2012,16 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			return nil, err
 		}
 		target := e.resolveTypeRef(expr.Type)
+		// Nullable cast: `null as ?T` is null; `value as ?T` for
+		// non-null falls through to the underlying type's cast logic.
+		// Must check before the class-chain match below, otherwise
+		// null/T mismatches reject what the user explicitly opted into
+		// by writing the `?` prefix.
+		if target.Nullable {
+			if _, isNull := value.(runtime.Null); isNull {
+				return runtime.Null{}, nil
+			}
+		}
 		// Class / interface / parent-chain widening: a value whose
 		// class chain contains the target (with the module prefix
 		// stripped) is already an instance of the target, so cast
@@ -5052,6 +5062,14 @@ func typeNameFromExpression(expr ast.Expression) (string, error) {
 func castValue(value runtime.Value, target string) (runtime.Value, error) {
 	if valueMatchesType(value, target) {
 		return value, nil
+	}
+	/* Nullable targets accept null directly; non-null values fall
+	 * through to the underlying type's cast logic. */
+	if strings.HasPrefix(target, "?") {
+		if _, isNull := value.(runtime.Null); isNull {
+			return runtime.Null{}, nil
+		}
+		return castValue(value, target[1:])
 	}
 	switch target {
 	case "string":

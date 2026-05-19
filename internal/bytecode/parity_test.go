@@ -6473,6 +6473,31 @@ io.println(materialized.length);
 `, "5\nhello\n8\nrésumé\n3\n3\n")
 }
 
+// TestParityNullAsNullableType guards `null as ?T` working on
+// both backends. The evaluator's cast path used to drop the
+// nullable bit from the target TypeRef before calling castValue,
+// so the cast rejected null on the eval side while the VM
+// accepted it after the 1.0.2 cast-error catchability work. The
+// eval path now special-cases a nullable target ahead of the
+// class-chain match.
+func TestParityNullAsNullableType(t *testing.T) {
+	runParity(t, `import io;
+
+class Box {
+    int x;
+    func Box(int x) { this.x = x; }
+}
+
+let n = null;
+let b = n as ?Box;
+io.println(b == null);
+let n2 = null as ?int;
+io.println(n2 == null);
+let n3 = null as ?string;
+io.println(n3 == null);
+`, "true\ntrue\ntrue\n")
+}
+
 // TestParityStringModule guards the new `string` module
 // introduced in 1.0.2 - a namespace for static / factory
 // functions that don't fit as instance methods on a string

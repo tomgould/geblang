@@ -127,6 +127,15 @@ A quality-of-life release.
   For timing-attack-safe comparison see
   `secrets.constantTimeEqual` - the string-module helpers are
   not constant-time.
+- `null as ?T` succeeds on both backends. The evaluator's cast
+  path used to drop the nullable bit and reject the cast; the VM
+  accepted it. Now both special-case the nullable target ahead
+  of the class-chain match.
+- VM method-dispatch hot path: two small memoising caches
+  (`nameLowerCache`, `classInfoNameCache`) skip per-call
+  `strings.ToLower` and class-index lookups. ~12% improvement on
+  the new `class_dispatch` benchmark (50000 method calls); other
+  cases unchanged.
 
 ## 1.0.1 (2026-05)
 
