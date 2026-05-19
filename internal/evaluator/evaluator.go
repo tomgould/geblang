@@ -17807,9 +17807,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				}
 			}
 			return runtime.NewInt64(int64(n)), nil
-		case "sorted":
+		case "sorted", "sort":
 			if len(args) > 1 {
-				return nil, fmt.Errorf("list.sorted expects zero or one argument")
+				return nil, fmt.Errorf("list.%s expects zero or one argument", name)
 			}
 			newElements := make([]runtime.Value, len(value.Elements))
 			copy(newElements, value.Elements)

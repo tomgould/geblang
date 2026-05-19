@@ -6870,6 +6870,21 @@ io.println(wrap(userFn));
 `, "caught 404: missing widget\n")
 }
 
+// TestParityListSortAliasesSorted guards the `list.sort()` -> `list.sorted()`
+// alias: the LSP catalog (`internal/lsp/catalog.go:142-143`) advertised both
+// names but only `sorted` was dispatched at runtime, so any user code reading
+// the documented surface and writing `xs.sort()` failed with
+// `list has no method sort`. Both backends now accept both names.
+func TestParityListSortAliasesSorted(t *testing.T) {
+	runParity(t, `import io;
+let xs = [3, 1, 4, 1, 5, 9, 2, 6];
+io.println(xs.sort());
+io.println(xs.sorted());
+let desc = xs.sort(func(int a, int b): bool { return a > b; });
+io.println(desc);
+`, "[1, 1, 2, 3, 4, 5, 6, 9]\n[1, 1, 2, 3, 4, 5, 6, 9]\n[9, 6, 5, 4, 3, 2, 1, 1]\n")
+}
+
 // TestParityCrossModuleImplements guards a VM-only regression where the
 // bytecode compiler rejected `class C implements mod.Iface { ... }` for
 // any interface declared in a different module - including

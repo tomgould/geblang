@@ -7570,9 +7570,9 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list runtime.List, 
 			}
 		}
 		return runtime.NewInt64(int64(n)), true, nil
-	case "sorted":
+	case "sorted", "sort":
 		if len(args) > 1 {
-			return nil, true, fmt.Errorf("list.sorted expects zero or one argument")
+			return nil, true, fmt.Errorf("list.%s expects zero or one argument", name)
 		}
 		newElements := make([]runtime.Value, len(list.Elements))
 		copy(newElements, list.Elements)

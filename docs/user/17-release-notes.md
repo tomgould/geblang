@@ -6,6 +6,11 @@ Small parity / ergonomics fixes uncovered while extending Gebweb.
 
 ### Bug fixes
 
+- **`list.sort()` is an alias for `list.sorted()`.** The LSP catalog
+  advertised both method names but only `sorted` was wired up at
+  runtime, so user code calling `xs.sort()` failed with `list has no
+  method sort`. Both names now dispatch identically on both backends.
+
 - **`geblang check` accepts `import string;`.** The CLI's
   native-module allowlist was missing the `string` module, so files
   using `string.fromCodePoint(...)` / `string.compare(...)` failed
