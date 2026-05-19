@@ -1,0 +1,89 @@
+/**
+ * @title web.parseMultipart native
+ * @summary New native that decodes a multipart/form-data request body
+ * into a `{fields, files}` dict, where each file entry is
+ * `{filename, contentType, bytes}`. Non-multipart bodies raise a
+ * catchable error.
+ */
+import test;
+import web;
+
+const BOUNDARY = "----testB";
+
+func multipartBody(string fieldName, string fieldValue,
+        string fileField, string filename, string contentType, string fileBody): string {
+    return "------testB\r\n" +
+        "Content-Disposition: form-data; name=\"" + fieldName + "\"\r\n\r\n" +
+        fieldValue + "\r\n" +
+        "------testB\r\n" +
+        "Content-Disposition: form-data; name=\"" + fileField +
+        "\"; filename=\"" + filename + "\"\r\n" +
+        "Content-Type: " + contentType + "\r\n\r\n" +
+        fileBody + "\r\n" +
+        "------testB--\r\n";
+}
+
+class WebMultipartTest extends test.Test {
+    @test
+    func parsesFieldsAndFilesFromMixedBody(): void {
+        let body = multipartBody("name", "alice", "avatar", "a.png", "image/png", "PNG_BYTES");
+        let parsed = web.parseMultipart({
+            "method": "POST",
+            "path": "/u",
+            "headers": {"Content-Type": "multipart/form-data; boundary=----testB"},
+            "body": body,
+        }) as dict<string, any>;
+        let fields = parsed["fields"] as dict<string, any>;
+        let files = parsed["files"] as dict<string, any>;
+        this.assertEquals("alice", fields["name"]);
+        let avatar = files["avatar"] as dict<string, any>;
+        this.assertEquals("a.png", avatar["filename"]);
+        this.assertEquals("image/png", avatar["contentType"]);
+        this.assertEquals("PNG_BYTES", (avatar["bytes"] as bytes) as string);
+    }
+
+    @test
+    func nonMultipartContentTypeErrors(): void {
+        try {
+            web.parseMultipart({
+                "method": "POST",
+                "path": "/u",
+                "headers": {"Content-Type": "application/json"},
+                "body": "{}",
+            });
+            this.assertTrue(false, "expected error on non-multipart body");
+        } catch (RuntimeError e) {
+            this.assertTrue(e.message.contains("not multipart"));
+        }
+    }
+
+    @test
+    func missingBoundaryErrors(): void {
+        try {
+            web.parseMultipart({
+                "method": "POST",
+                "path": "/u",
+                "headers": {"Content-Type": "multipart/form-data"},
+                "body": "",
+            });
+            this.assertTrue(false, "expected error on missing boundary");
+        } catch (RuntimeError e) {
+            this.assertTrue(e.message.contains("boundary"));
+        }
+    }
+
+    @test
+    func bytesBodyAlsoParses(): void {
+        /* The native accepts string or bytes as the request body. */
+        let body = multipartBody("k", "v", "f", "x.bin", "application/octet-stream", "bin-payload");
+        let parsed = web.parseMultipart({
+            "method": "POST",
+            "path": "/u",
+            "headers": {"Content-Type": "multipart/form-data; boundary=----testB"},
+            "body": body as bytes,
+        }) as dict<string, any>;
+        let files = parsed["files"] as dict<string, any>;
+        let f = files["f"] as dict<string, any>;
+        this.assertEquals("bin-payload", (f["bytes"] as bytes) as string);
+    }
+}

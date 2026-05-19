@@ -21,6 +21,8 @@ import (
 	"math"
 	"math/big"
 	mrand "math/rand"
+	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -6897,15 +6899,16 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"elapsed":  metricsDuration,
 		},
 		"web": {
-			"new":        e.webNew,
-			"use":        e.webUse,
-			"before":     e.webBefore,
-			"after":      e.webUse,
-			"route":      e.webRoute,
-			"get":        e.webGet,
-			"post":       e.webPost,
-			"handle":     e.webHandle,
-			"withHeader": webWithHeader,
+			"new":            e.webNew,
+			"use":            e.webUse,
+			"before":         e.webBefore,
+			"after":          e.webUse,
+			"route":          e.webRoute,
+			"get":            e.webGet,
+			"post":           e.webPost,
+			"handle":         e.webHandle,
+			"withHeader":     webWithHeader,
+			"parseMultipart": webParseMultipart,
 		},
 		"crypt": {
 			"md5":                    e.registryBuiltin("crypt", "md5"),
@@ -8972,6 +8975,106 @@ func webWithHeader(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 	putDict(headers.Entries, name.Value, value)
 	putDict(out.Entries, "headers", headers)
 	return out, nil
+}
+
+// webParseMultipart parses a `multipart/form-data` request body and
+// returns a dict of the form
+//
+//	{"fields": dict<string, string>, "files": dict<string, dict>}
+//
+// where each file entry is `{filename, contentType, bytes}`. The
+// argument is the same request dict the framework dispatches to
+// route handlers: it must carry a `body` (string or bytes) and a
+// `headers` dict with `Content-Type: multipart/form-data; boundary=...`.
+//
+// Returns an error if the body isn't multipart or the boundary is
+// missing/malformed; callers can wrap that as a 400.
+func webParseMultipart(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects request dict", call.Callee.String())
+	}
+	request, ok := args[0].(runtime.Dict)
+	if !ok {
+		return nil, fmt.Errorf("%s request must be dict", call.Callee.String())
+	}
+
+	headersValue, _ := dictField(request, "headers")
+	contentType := ""
+	if headers, ok := headersValue.(runtime.Dict); ok {
+		for _, entry := range headers.Entries {
+			if key, ok := entry.Key.(runtime.String); ok && strings.EqualFold(key.Value, "Content-Type") {
+				if v, ok := entry.Value.(runtime.String); ok {
+					contentType = v.Value
+					break
+				}
+			}
+		}
+	}
+	if contentType == "" {
+		return nil, fmt.Errorf("%s request has no Content-Type header", call.Callee.String())
+	}
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil, fmt.Errorf("%s parse Content-Type: %v", call.Callee.String(), err)
+	}
+	if !strings.HasPrefix(mediaType, "multipart/") {
+		return nil, fmt.Errorf("%s Content-Type is not multipart (got %q)", call.Callee.String(), mediaType)
+	}
+	boundary, ok := params["boundary"]
+	if !ok || boundary == "" {
+		return nil, fmt.Errorf("%s Content-Type missing boundary", call.Callee.String())
+	}
+
+	bodyValue, _ := dictField(request, "body")
+	var bodyReader io.Reader
+	switch v := bodyValue.(type) {
+	case runtime.String:
+		bodyReader = strings.NewReader(v.Value)
+	case runtime.Bytes:
+		bodyReader = bytes.NewReader(v.Value)
+	case nil, runtime.Null:
+		bodyReader = strings.NewReader("")
+	default:
+		return nil, fmt.Errorf("%s request body must be string or bytes (got %s)", call.Callee.String(), bodyValue.TypeName())
+	}
+
+	reader := multipart.NewReader(bodyReader, boundary)
+	fieldsEntries := map[string]runtime.DictEntry{}
+	filesEntries := map[string]runtime.DictEntry{}
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s read part: %v", call.Callee.String(), err)
+		}
+		name := part.FormName()
+		filename := part.FileName()
+		data, err := io.ReadAll(part)
+		_ = part.Close()
+		if err != nil {
+			return nil, fmt.Errorf("%s read part body: %v", call.Callee.String(), err)
+		}
+		if filename == "" {
+			putDict(fieldsEntries, name, runtime.String{Value: string(data)})
+			continue
+		}
+		partContentType := part.Header.Get("Content-Type")
+		if partContentType == "" {
+			partContentType = "application/octet-stream"
+		}
+		fileEntries := map[string]runtime.DictEntry{}
+		putDict(fileEntries, "filename", runtime.String{Value: filename})
+		putDict(fileEntries, "contentType", runtime.String{Value: partContentType})
+		putDict(fileEntries, "bytes", runtime.Bytes{Value: data})
+		putDict(filesEntries, name, runtime.Dict{Entries: fileEntries})
+	}
+
+	out := map[string]runtime.DictEntry{}
+	putDict(out, "fields", runtime.Dict{Entries: fieldsEntries})
+	putDict(out, "files", runtime.Dict{Entries: filesEntries})
+	return runtime.Dict{Entries: out}, nil
 }
 
 func (e *Evaluator) webApp(value runtime.Value) (*webApp, error) {

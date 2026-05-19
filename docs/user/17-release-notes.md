@@ -4,6 +4,15 @@
 
 Small parity / ergonomics fixes uncovered while extending Gebweb.
 
+### New
+
+- **`web.parseMultipart(request)`.** Decodes a
+  `multipart/form-data` request body into
+  `{fields: dict<string, string>, files: dict<string, dict>}` (each
+  file is `{filename, contentType, bytes}`). Errors on non-multipart
+  bodies or missing boundary - catchable, wrappable as 400. New
+  parity test `TestParityWebParseMultipart`.
+
 ### Bug fixes
 
 - **Import alias collisions no longer leak across files (evaluator).**

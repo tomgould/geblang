@@ -418,7 +418,8 @@ var stdlibCatalog = map[string]moduleDoc{
 		"get":        fn([]string{"App app", "string path", "func handler"}, "App", "Adds a GET route."),
 		"post":       fn([]string{"App app", "string path", "func handler"}, "App", "Adds a POST route."),
 		"handle":     fn([]string{"App app", "Request request"}, "Response", "Handles a request."),
-		"withHeader": fn([]string{"Response response", "string name", "string value"}, "Response", "Returns a response with a header."),
+		"withHeader":     fn([]string{"Response response", "string name", "string value"}, "Response", "Returns a response with a header."),
+		"parseMultipart": fn([]string{"Request request"}, "dict<string, any>", "Parses a multipart/form-data request body into {fields, files}."),
 	}},
 	"websocket": {functions: map[string]functionDoc{
 		"connect":   fn([]string{"string url", "dict<string, any> headers = {}"}, "Connection", "Connects to a WebSocket URL."),

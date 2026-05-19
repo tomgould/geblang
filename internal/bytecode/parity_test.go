@@ -6870,6 +6870,44 @@ io.println(wrap(userFn));
 `, "caught 404: missing widget\n")
 }
 
+// TestParityWebParseMultipart guards the new `web.parseMultipart` native:
+// both backends parse a `multipart/form-data` body into a
+// `{fields, files}` dict, where each file is `{filename, contentType,
+// bytes}`. The native is stateful so the VM dispatches through the
+// evaluator, but the parity test still documents the public shape.
+func TestParityWebParseMultipart(t *testing.T) {
+	runParityStateful(t, `import io;
+import web;
+
+let boundary = "----parity1";
+let body = "------parity1\r\n" +
+    "Content-Disposition: form-data; name=\"name\"\r\n\r\n" +
+    "alice\r\n" +
+    "------parity1\r\n" +
+    "Content-Disposition: form-data; name=\"avatar\"; filename=\"a.png\"\r\n" +
+    "Content-Type: image/png\r\n\r\n" +
+    "PNG_BYTES\r\n" +
+    "------parity1--\r\n";
+
+let r = {
+    "method": "POST",
+    "path": "/u",
+    "headers": {"Content-Type": "multipart/form-data; boundary=" + boundary},
+    "body": body,
+};
+
+let parsed = web.parseMultipart(r) as dict<string, any>;
+let fields = parsed["fields"] as dict<string, any>;
+let files = parsed["files"] as dict<string, any>;
+let avatar = files["avatar"] as dict<string, any>;
+
+io.println(fields["name"]);
+io.println(avatar["filename"]);
+io.println(avatar["contentType"]);
+io.println((avatar["bytes"] as bytes) as string);
+`, "alice\na.png\nimage/png\nPNG_BYTES\n")
+}
+
 // TestParityImportAliasDoesNotCollideAcrossFiles guards a VM-only-correct
 // regression: the evaluator kept a process-wide `importNames` map that
 // recorded the LAST `import X as Y` to use alias `Y`. Two files that both
