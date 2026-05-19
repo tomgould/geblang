@@ -318,8 +318,8 @@ class Controller extends Base implements Named {
 
 io.println(reflect.parent(Controller));
 io.println(reflect.interfaces(Controller)[0]);
-io.println(reflect.fields(Controller)[0]);
-io.println(reflect.fields(Controller)[1]);
+io.println(reflect.fields(Controller)[0]["name"]);
+io.println(reflect.fields(Controller)[1]["name"]);
 io.println(reflect.methods(Controller)[0]);
 io.println(reflect.methods(Controller)[1]);
 io.println(reflect.staticMethods(Controller)[0]);

@@ -153,6 +153,20 @@ func (l *stdlibModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, a
 	return l.newSubVM(class.Module).ConstructClass(class.Index, args)
 }
 
+func (l *stdlibModuleLoader) DeserializeModuleClass(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, error) {
+	if _, ok := l.chunks[class.Module]; !ok {
+		return nil, fmt.Errorf("module %s is not loaded", class.Module)
+	}
+	return l.newSubVM(class.Module).DeserializeIntoChunkClass(class, value)
+}
+
+func (l *stdlibModuleLoader) ConstructorsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error) {
+	if _, ok := l.chunks[class.Module]; !ok {
+		return nil, fmt.Errorf("module %s is not loaded", class.Module)
+	}
+	return l.newSubVM(class.Module).ReflectConstructorsForChunkClass(class)
+}
+
 func (l *stdlibModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value) (runtime.Value, error) {
 	if _, ok := l.chunks[class.Module]; !ok {
 		return nil, fmt.Errorf("module %s is not loaded", class.Module)
@@ -165,6 +179,45 @@ func (l *stdlibModuleLoader) CallModuleMethod(module string, className string, m
 		return nil, fmt.Errorf("module %s is not loaded", module)
 	}
 	return l.newSubVM(module).CallInstanceMethod(instance, methodName, args)
+}
+
+func (l *stdlibModuleLoader) FindFunctionByName(name string) (runtime.Value, bool) {
+	for _, module := range l.modules {
+		if module == nil {
+			continue
+		}
+		if v, ok := module.Exports[name]; ok {
+			switch v := v.(type) {
+			case runtime.Function, runtime.OverloadedFunction, runtime.BytecodeFunction, runtime.DecoratorTarget:
+				return v, true
+			default:
+				_ = v
+			}
+		}
+	}
+	return nil, false
+}
+
+func (l *stdlibModuleLoader) FindClassByName(name string) (runtime.Value, bool) {
+	for module, chunk := range l.chunks {
+		for idx, classInfo := range chunk.Classes {
+			if classInfo.Name == name {
+				return runtime.BytecodeClass{
+					Name:             classInfo.Name,
+					Doc:              classInfo.Doc,
+					Index:            int64(idx),
+					Module:           module,
+					Parent:           classInfo.ParentName,
+					Fields:           append([]string(nil), classInfo.FieldNames...),
+					Interfaces:       append([]string(nil), classInfo.Implements...),
+					Decorators:       classInfo.Decorators,
+					MethodDecorators: classInfo.MethodDecorators,
+					StaticDecorators: classInfo.StaticDecorators,
+				}, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // runParityWithStdlib is like runParityStateful but additionally wires
@@ -910,8 +963,8 @@ class Controller extends Base implements Named {
 
 io.println(reflect.parent(Controller));
 io.println(reflect.interfaces(Controller)[0]);
-io.println(reflect.fields(Controller)[0]);
-io.println(reflect.fields(Controller)[1]);
+io.println(reflect.fields(Controller)[0]["name"]);
+io.println(reflect.fields(Controller)[1]["name"]);
 io.println(reflect.methods(Controller)[0]);
 io.println(reflect.methods(Controller)[1]);
 io.println(reflect.staticMethods(Controller)[0]);
@@ -6165,4 +6218,665 @@ use(sub);
 	if !strings.Contains(vmErr.Error(), "got Container<Sub>") {
 		t.Fatalf("vm error did not mention reified Container<Sub>: %v", vmErr)
 	}
+}
+
+// TestParityRangeBuiltin verifies the top-level `range(start, end[, step])`
+// shorthand produces identical inclusive lists on both backends.
+func TestParityRangeBuiltin(t *testing.T) {
+	runParity(t, `import io;
+io.println(range(1, 5));
+io.println(range(10, 2, -2));
+io.println(range(5, 1));
+`, "[1, 2, 3, 4, 5]\n[10, 8, 6, 4, 2]\n[5, 4, 3, 2, 1]\n")
+}
+
+// TestParityCharRange verifies `'a'..'z'` produces a list<string> on both
+// backends and respects the exclusive variant.
+func TestParityCharRange(t *testing.T) {
+	runParity(t, `import io;
+io.println('a'..'e');
+io.println('a'..<'e');
+`, "[a, b, c, d, e]\n[a, b, c, d]\n")
+}
+
+// TestParityListToListNoop verifies list.toList() is a no-op pass-through,
+// preserving order.
+func TestParityListToListNoop(t *testing.T) {
+	runParity(t, `import io;
+io.println([1, 2, 3].toList());
+`, "[1, 2, 3]\n")
+}
+
+// TestParityCollectionTypeBindings verifies reflect.typeBindings on tagged
+// list/dict/set values reads the declared element types on both backends.
+func TestParityCollectionTypeBindings(t *testing.T) {
+	runParity(t, `import io;
+import json;
+import reflect;
+let list<int> xs = [1, 2, 3];
+io.println(json.stringify(reflect.typeBindings(xs)));
+let dict<string, int> d = {"a": 1};
+let b = reflect.typeBindings(d);
+io.println(b["K"]);
+io.println(b["V"]);
+let untagged = [4, 5];
+io.println(json.stringify(reflect.typeBindings(untagged)));
+`, "{\"T\":\"int\"}\nstring\nint\n{}\n")
+}
+
+// TestParityInstanceofGenericCollection verifies `instanceof list<int>`
+// parses and dispatches on both backends, honouring the tag when set and
+// walking elements when the value is untagged.
+func TestParityInstanceofGenericCollection(t *testing.T) {
+	runParity(t, `import io;
+let list<int> xs = [1, 2, 3];
+io.println(xs instanceof list<int>);
+io.println(xs instanceof list<string>);
+io.println([1, 2, 3] instanceof list<int>);
+io.println([1, 2, "three"] instanceof list<int>);
+let dict<string, int> d = {"a": 1};
+io.println(d instanceof dict<string, int>);
+io.println(d instanceof dict<string, string>);
+`, "true\nfalse\ntrue\nfalse\ntrue\nfalse\n")
+}
+
+// TestParityClosureCaptureCamelCase guards a 1.0.2 regression: the
+// compiler's freeVarSet was lowercasing identifier names while local
+// scope entries kept their original case, causing closures that
+// captured a variable with uppercase letters in its name to silently
+// miss the capture. The closure body then emitted OpGetLocal at the
+// wrong slot and at runtime read whichever value happened to be
+// there, producing wildly wrong type errors. Both backends must now
+// resolve case-sensitively.
+func TestParityClosureCaptureCamelCase(t *testing.T) {
+	runParity(t, `import io;
+
+func makeAdapter(list<string> pathParamNames): callable {
+    return func(int x): void {
+        io.println(typeof(pathParamNames));
+    };
+}
+
+makeAdapter(["a", "b"])(42);
+`, "list\n")
+}
+
+// TestParityReflectAcceptsInstancesAndStrings verifies the harmonised
+// reflect.class / reflect.methods / reflect.fields API on both
+// backends: instances, class values, and bare name strings all
+// produce the same metadata. 1.0.2 closed several eval/VM
+// divergences here.
+func TestParityReflectAcceptsInstancesAndStrings(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+
+class Foo {
+    string name;
+    func Foo(string n) { this.name = n; }
+    func hello(): string { return this.name; }
+}
+
+let f = Foo("ada");
+io.println(reflect.methods(f)[0]);
+io.println(reflect.methods(Foo)[0]);
+io.println(reflect.methods(reflect.class("Foo"))[0]);
+io.println(reflect.fields(f)[0]["name"]);
+io.println(reflect.fields(f)[0]["type"]);
+`, "hello\nhello\nhello\nname\nstring\n")
+}
+
+// TestParityReflectPrimitives verifies reflect.methods works on
+// built-in primitive values (list / dict / set / string / bytes /
+// range) and returns a sorted method list.
+func TestParityReflectPrimitives(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+io.println(reflect.methods([1,2,3])[0]);
+io.println(reflect.methods({"a":1})[0]);
+io.println(reflect.methods("abc")[0]);
+io.println(reflect.methods(1..5)[0]);
+`, "append\ncontains\nchars\ncontains\n")
+}
+
+// TestParityUserErrorParentChain verifies that user-defined error
+// subclasses (BadRequestError extends HttpException extends
+// RuntimeError) walk the full parent chain under instanceof and catch
+// on both backends - the case that was diverging before 1.0.2.
+func TestParityUserErrorParentChain(t *testing.T) {
+	runParity(t, `import io;
+
+class HttpException extends RuntimeError {
+    int status;
+    string detail;
+    func HttpException(int s, string d) {
+        parent("HTTP " + (s as string));
+        this.status = s;
+        this.detail = d;
+    }
+}
+
+class BadRequestError extends HttpException {
+    func BadRequestError(string d) {
+        parent(400, d);
+    }
+}
+
+let e = BadRequestError("missing");
+io.println(e instanceof BadRequestError);
+io.println(e instanceof HttpException);
+io.println(e instanceof RuntimeError);
+
+let caught = "";
+try {
+    throw BadRequestError("nope");
+} catch (HttpException err) {
+    caught = "http:" + err.detail;
+}
+io.println(caught);
+`, "true\ntrue\ntrue\nhttp:nope\n")
+}
+
+// TestParityReflectClassByName verifies reflect.class("Name") returns
+// the same class metadata on both backends when the class is declared
+// in the local module.
+func TestParityReflectClassByName(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+
+class Box { string label; }
+
+let cls = reflect.class("Box");
+io.println(cls != null);
+io.println(reflect.fields(cls)[0]["name"]);
+io.println(reflect.fields(cls)[0]["type"]);
+`, "true\nlabel\nstring\n")
+}
+
+// TestParityForwardFunctionReferences guards a compiler regression
+// where a function calling a sibling declared later in the same
+// file (`func a() { return b(); } func b() { ... }`) failed with
+// "no matching overload" because the forward-declared FunctionInfo
+// hadn't been populated with parameter / return-type metadata by
+// the time the body of `a` was compiled. Pre-pass now records
+// signatures up front; bodies fill in on the second pass.
+func TestParityForwardFunctionReferences(t *testing.T) {
+	runParity(t, `import io;
+
+func a(): bool {
+    return b(7);
+}
+
+func b(int x): bool {
+    return x > 0;
+}
+
+io.println(a());
+`, "true\n")
+}
+
+// TestParityFloorDivOnDecimalAndFloat verifies the `//` floor-
+// division operator handles decimal / float operands (eval used
+// to error with "unsupported decimal operator //"). Floor toward
+// negative infinity matches Python's `//` and Geblang's
+// established int//int behaviour.
+func TestParityFloorDivOnDecimalAndFloat(t *testing.T) {
+	runParity(t, `import io;
+
+io.println(5 // 2);
+io.println(-7 // 2);
+io.println(7.5 // 2.0);
+io.println((-7.5) // 2.0);
+io.println(10.0 % 3.0);
+io.println((-10.0) % 3.0);
+`, "2\n-4\n3.0000000000\n-4.0000000000\n1.0000000000\n2.0000000000\n")
+}
+
+// TestParityCastTruncatesDecimalAndFloat guards the cast policy
+// agreed for 1.0.2: `decimal as int` and `float as int` truncate
+// toward zero instead of erroring on non-integer values. Matches
+// the C/Java/Go integer-cast convention.
+func TestParityCastTruncatesDecimalAndFloat(t *testing.T) {
+	runParity(t, `import io;
+
+io.println(2.7 as int);
+io.println(-2.7 as int);
+io.println(2.0 as int);
+io.println(true as int);
+io.println(false as int);
+io.println((3.99 as decimal) as int);
+io.println(((-3.99) as decimal) as int);
+`, "2\n-2\n2\n1\n0\n3\n-3\n")
+}
+
+// TestParityCrossTypeCastsForBytesAndCollections guards the 1.0.2
+// cast extensions: `string <-> bytes` round-trip UTF-8 (errors on
+// invalid byte sequences); `list as set<T>` de-duplicates; and
+// `set as list<T>` materializes. Pre-1.0.2 each raised "cannot
+// cast X to Y" on both backends; the runtime parity was already
+// good (both errored identically), the change is the behaviour.
+func TestParityCrossTypeCastsForBytesAndCollections(t *testing.T) {
+	runParity(t, `import io;
+
+let b = "hello" as bytes;
+io.println(b.length);
+io.println(b as string);
+
+let u = "résumé" as bytes;
+io.println(u.length);
+io.println(u as string);
+
+let dedup = [1, 1, 2, 3, 3] as set<int>;
+io.println(dedup.length);
+
+let materialized = {1, 2, 3} as list<int>;
+io.println(materialized.length);
+`, "5\nhello\n8\nrésumé\n3\n3\n")
+}
+
+// TestParityStringModule guards the new `string` module
+// introduced in 1.0.2 - a namespace for static / factory
+// functions that don't fit as instance methods on a string
+// value. Pairs with the existing `.codePointAt(i)` instance
+// method (round-trips through fromCodePoint).
+func TestParityStringModule(t *testing.T) {
+	runParity(t, `import io;
+import string;
+
+io.println(string.fromCodePoint(65));
+io.println(string.fromCodePoint(8364));
+io.println(string.fromCodePoint("€".codePointAt(0)));
+io.println(string.fromCodePoints([72, 105, 33]));
+io.println(string.compare("apple", "banana"));
+io.println(string.compare("banana", "apple"));
+io.println(string.compare("same", "same"));
+io.println(string.equalsFold("Hello", "HELLO"));
+io.println(string.equalsFold("abc", "abd"));
+`, "A\n€\n€\nHi!\n-1\n1\n0\ntrue\nfalse\n")
+}
+
+// TestParityErrorGetMessageAndGetClass guards the Java/PHP-style
+// accessor methods on built-in error values. Pre-1.0.2 only the
+// `.message` field was exposed - calls like `e.getMessage()`
+// (the convention everywhere else) errored with "X has no method
+// getMessage". Both names now resolve consistently on eval + VM.
+func TestParityErrorGetMessageAndGetClass(t *testing.T) {
+	runParity(t, `import io;
+
+try {
+    throw RuntimeError("boom");
+} catch (RuntimeError e) {
+    io.println(e.message);
+    io.println(e.getMessage());
+    io.println(e.getClass());
+}
+`, "boom\nboom\nRuntimeError\n")
+}
+
+// TestParityCastErrorIsCatchable guards that a failed `x as Y`
+// raises a catchable RuntimeError on both backends instead of
+// escaping as an uncatchable "bytecode runtime error" (VM
+// divergence pre-1.0.2: the VM emitted vm.runtimeError directly,
+// so a surrounding try/catch never saw the failure). Uses
+// list->int which has no defined cast.
+func TestParityCastErrorIsCatchable(t *testing.T) {
+	runParity(t, `import io;
+
+try {
+    let n = [1, 2, 3] as int;
+    io.println("unreached");
+} catch (RuntimeError e) {
+    io.println("caught: " + e.message);
+}
+io.println("after");
+`, "caught: cannot cast list to int\nafter\n")
+}
+
+// TestParityCrossChunkInstanceFields guards a regression where
+// `reflect.fields(instance)` on a value handed to a sub-module
+// returned an empty list because the originating chunk's
+// ClassInfo wasn't reachable from the sub-VM's classIndex. The
+// instance's runtime.Class.Fields is now populated at
+// construction time and carries the field decorators through any
+// module boundary, so framework code (`@Groups` filtering in the
+// gebweb framework, similar reflection-driven helpers) sees the
+// originating class's annotations.
+func TestParityCrossChunkInstanceFields(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+
+class Box {
+    @Groups("read", "admin") string id;
+    string label;
+}
+
+func surfaceFieldsFromOtherFunction(any value): int {
+    let fields = reflect.fields(value);
+    int withGroups = 0;
+    for (entry in fields) {
+        let f = entry as dict<string, any>;
+        if (!f.contains("decorators")) {
+            continue;
+        }
+        for (d in f["decorators"] as list<any>) {
+            let dec = d as dict<string, any>;
+            if ((dec["name"] as string) == "Groups") {
+                withGroups = withGroups + 1;
+            }
+        }
+    }
+    return withGroups;
+}
+
+let b = Box();
+b.id = "b1";
+b.label = "demo";
+io.println(reflect.fields(b).length());
+io.println(surfaceFieldsFromOtherFunction(b));
+`, "2\n1\n")
+}
+
+// TestParityReflectGetFieldSetField covers the native dynamic-field
+// accessors. `reflect.getField(instance, name)` reads a field by
+// runtime-known name; `reflect.setField(instance, name, value)`
+// writes one. Framework code (Gebweb's @Assert / PATCH handlers)
+// needs these to drive validation and partial updates without a
+// json.parse(json.stringify(x)) round-trip.
+func TestParityReflectGetFieldSetField(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+
+class User {
+    string name;
+    int age;
+}
+
+let u = User();
+u.name = "Ada";
+u.age = 30;
+
+io.println(reflect.getField(u, "name"));
+io.println(reflect.getField(u, "age"));
+io.println(reflect.getField(u, "missing"));
+
+reflect.setField(u, "name", "Grace");
+reflect.setField(u, "age", 40);
+io.println(u.name);
+io.println(u.age);
+`, "Ada\n30\nnull\nGrace\n40\n")
+}
+
+// TestParityLocalShadowsBuiltinModule guards a regression where a
+// `name.method(...)` call against a local variable whose identifier
+// happens to match a built-in stdlib module would dispatch to the
+// module instead of invoking the method on the local. Lexical scope
+// wins: a local in scope is checked first.
+func TestParityLocalShadowsBuiltinModule(t *testing.T) {
+	runParity(t, `import io;
+import errors;
+
+func f(): int {
+    let errors = [1, 2, 3];
+    errors = errors.push(4);
+    return errors.length();
+}
+io.println(f());
+`, "4\n")
+}
+
+// TestParityTrailingCommaInListLiteral guards a parser regression
+// where a trailing comma in a list literal raised "expected
+// expression, got ]". Trailing commas are legal in dict/set literals
+// already; list literals now agree.
+func TestParityTrailingCommaInListLiteral(t *testing.T) {
+	runParity(t, `import io;
+
+let a = [1, 2, 3,];
+let b = [
+    "x",
+    "y",
+];
+io.println(a.length());
+io.println(b.length());
+`, "3\n2\n")
+}
+
+// TestParityBareReturnInVoidFunction guards an analyzer regression
+// where a bare `return;` inside a function declared as returning
+// `void` raised "cannot return null from F returning void". Early
+// exits should be legal: there is no value being returned, only an
+// early termination of the body. Surfaced while wiring @Assert
+// validation through the Gebweb dispatch path.
+func TestParityBareReturnInVoidFunction(t *testing.T) {
+	runParity(t, `import io;
+
+func early(int n): void {
+    if (n < 0) {
+        return;
+    }
+    io.println(n);
+}
+
+early(-5);
+early(7);
+io.println("done");
+`, "7\ndone\n")
+}
+
+// TestParityFieldDecoratorsAndDottedNames covers two language
+// additions that together let frameworks attach annotations to
+// class fields: dotted decorator names (`@Assert.email`,
+// `@Foo.bar.baz`) parse as a single composite identifier, and
+// `@`-prefixed decorators on field declarations inside a class
+// body persist into `reflect.fields(class)` as a per-field
+// `decorators` list. Field decorators are pure metadata; the
+// runtime never executes them automatically.
+func TestParityFieldDecoratorsAndDottedNames(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+
+class User {
+    @Assert.email
+    string email;
+
+    @Assert.minLength(2)
+    @Assert.maxLength(64)
+    string name;
+
+    string id;
+}
+
+for (entry in reflect.fields(User)) {
+    let field = entry as dict<string, any>;
+    io.println(field["name"]);
+    if (field.contains("decorators")) {
+        for (d in field["decorators"] as list<any>) {
+            let dec = d as dict<string, any>;
+            io.print("  @" + (dec["name"] as string));
+            let args = dec["args"] as list<any>;
+            if (args.length() > 0) {
+                io.print("(" + (args[0] as string) + ")");
+            }
+            io.println("");
+        }
+    }
+}
+`, "email\n  @Assert.email\nid\nname\n  @Assert.minLength(2)\n  @Assert.maxLength(64)\n")
+}
+
+// TestParityReflectClassName verifies that `reflect.className` returns
+// the class's own identifier for a class value, an instance, and a
+// primitive. Symmetric with `reflect.class(name)` going the other way.
+// Required by gebweb's DI container to produce useful error messages
+// without instantiating the class.
+func TestParityReflectClassName(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+
+class User { string name; }
+let u = User();
+
+io.println(reflect.className(User));
+io.println(reflect.className(u));
+io.println(reflect.className("hello"));
+io.println(reflect.className(42));
+`, "User\nUser\nstring\nint\n")
+}
+
+// TestParityClassRefRuntimeConstruction guards a VM-only regression
+// where `classRef()` via a variable (e.g. a class value carried
+// through a function parameter or obtained from `reflect.class`)
+// dispatched as a static-method call on `__invoke` rather than as
+// construction. Required by gebweb's DI container which holds class
+// refs in a dict and constructs them at resolve time.
+func TestParityClassRefRuntimeConstruction(t *testing.T) {
+	runParity(t, `import io;
+
+class Box {
+    int n;
+    func Box(int n) { this.n = n; }
+}
+
+func makeOne(any cls): any {
+    return cls(7);
+}
+
+let b = makeOne(Box) as Box;
+io.println(b.n);
+`, "7\n")
+}
+
+// TestParityParenthesizedSelectorInvokesValue verifies that a
+// parenthesized field-access on a method-call target invokes the
+// VALUE of the field (a callable) rather than dispatching as a
+// method call. Surfaced while caching `appmod.dispatcher(app)` on
+// a TestClient field: `(this.dispatch)(request)` previously parsed
+// the same as `this.dispatch(request)` so the VM/eval looked up a
+// `dispatch` method on TestClient (which doesn't exist).
+func TestParityParenthesizedSelectorInvokesValue(t *testing.T) {
+	runParity(t, `import io;
+
+class C {
+    callable fn;
+    func C(callable f) { this.fn = f; }
+    func via(int x): int {
+        return (this.fn)(x);
+    }
+}
+
+let c = C(func(int n): int { return n * 3; });
+io.println(c.via(7));
+`, "21\n")
+}
+
+// TestParityReflectMethodPreservesModuleAccess guards an eval-only
+// regression where a method body invoked through reflect.method()()
+// couldn't resolve imported modules because the bound Native closure
+// ran on a fresh stub Evaluator with no module loader. The fix
+// captures the live host Evaluator on the bound method's closure.
+func TestParityReflectMethodPreservesModuleAccess(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import reflect;
+import json;
+
+class Ctl {
+    func produce(): string {
+        return json.stringify({"k": 1});
+    }
+}
+
+let c = Ctl();
+let m = reflect.method(c, "produce");
+io.println(m());
+`, "{\"k\":1}\n")
+}
+
+// TestParityCrossModuleThrowCatch guards a VM-only regression where a
+// throw originating in a sub-module (or in a callback dispatched from a
+// sub-module) collapsed to "uncaught RuntimeError" at the VM boundary,
+// losing the original class + parent chain. The fix wraps the
+// underlying runtime.Error in a vmThrownError so the calling VM can
+// recover it via errors.As and re-throw it as a typed pendingThrow.
+// Surfaced building the Gebweb adapter: stdlib catch (errors.HttpException)
+// failed to match user-script throws.
+func TestParityCrossModuleThrowCatch(t *testing.T) {
+	runParity(t, `import io;
+
+class HttpException extends RuntimeError {
+    int status;
+    func HttpException(int s, string m) { parent(m); this.status = s; }
+}
+class NotFoundError extends HttpException {
+    func NotFoundError(string m) { parent(404, m); }
+}
+
+func wrap(callable fn): string {
+    try {
+        fn();
+        return "no throw";
+    } catch (HttpException e) {
+        return "caught " + (e.status as string) + ": " + e.message;
+    }
+}
+
+let userFn = func(): void {
+    throw NotFoundError("missing widget");
+};
+
+io.println(wrap(userFn));
+`, "caught 404: missing widget\n")
+}
+
+// TestParityCastWidensToParentClass guards a VM-only regression where the
+// `as` operator rejected widening an error-derived value (or instance)
+// to a parent class declared in another module. Surfaced while writing
+// the Gebweb hello-world example: the framework adapter does `e as
+// errors.HttpException` against a thrown NotFoundError. Evaluator
+// already walked the parent chain; VM did not.
+func TestParityCastWidensToParentClass(t *testing.T) {
+	runParity(t, `import io;
+
+class A extends RuntimeError {
+    func A(string m) { parent(m); }
+}
+class B extends A {
+    func B(string m) { parent(m); }
+}
+
+let b = B("nope");
+let a = b as A;
+io.println(a instanceof A);
+io.println(a instanceof B);
+
+class P {}
+class C extends P {}
+let c = C();
+let p = c as P;
+io.println(p instanceof P);
+io.println(p instanceof C);
+`, "true\ntrue\ntrue\ntrue\n")
+}
+
+// TestParityNullMatchesAnyParam guards a VM regression where method
+// overload resolution rejected a null argument flowing into an `any`-typed
+// parameter. The evaluator always accepted null for any; the VM tripped
+// on the early null check in matchValueToTypeSpec before the vmTypeAny
+// short-circuit. Surfaced while writing the Gebweb hello-world example
+// (TestClient.send accepts `any body` and was being called with null).
+func TestParityNullMatchesAnyParam(t *testing.T) {
+	runParity(t, `import io;
+
+class TestClient {
+    func send(string method, any body): int {
+        return 99;
+    }
+    func get(string path): int {
+        return this.send("GET", null);
+    }
+}
+
+let c = TestClient();
+io.println(c.get("/"));
+io.println(c.send("POST", {"k": 1}));
+io.println(c.send("PUT", "raw body"));
+`, "99\n99\n99\n")
 }

@@ -1,0 +1,79 @@
+/**
+ * @title Floor division + cross-type cast truncation (1.0.2)
+ * @summary `//` produces a same-kind floor-divided result for
+ * int/int, decimal/decimal, and float/float operands. `%` is the
+ * floor-modulo companion (sign of remainder follows divisor).
+ * `as int` truncates toward zero from decimal / float / bool.
+ */
+import test;
+
+class FloorDivisionTest extends test.Test {
+    @test
+    func intFloorDivBasic(): void {
+        this.assertEquals(2, 5 // 2);
+        this.assertEquals(3, 7 // 2);
+        this.assertEquals(0, 1 // 5);
+    }
+
+    @test
+    func intFloorDivNegativeOperands(): void {
+        /* Floor (not truncate) toward negative infinity:
+         * -7/2 = -3.5, floor(-3.5) = -4. */
+        this.assertEquals(-4, -7 // 2);
+        this.assertEquals(-4, 7 // -2);
+    }
+
+    @test
+    func intModulo(): void {
+        /* Sign of remainder follows divisor (floor-modulo). */
+        this.assertEquals(1, 10 % 3);
+        this.assertEquals(2, -10 % 3);
+        this.assertEquals(-2, 10 % -3);
+    }
+
+    @test
+    func decimalFloorDivStaysDecimal(): void {
+        /* Same-kind policy: decimal // decimal -> decimal with
+         * integer numerator (not a collapse to int). */
+        let q = 7.5 // 2.0;
+        this.assertEquals("3.0000000000", q as string);
+        let neg = (-7.5) // 2.0;
+        this.assertEquals("-4.0000000000", neg as string);
+    }
+
+    @test
+    func decimalModulo(): void {
+        let r = 10.0 % 3.0;
+        this.assertEquals("1.0000000000", r as string);
+    }
+}
+
+class CastTruncateTest extends test.Test {
+    @test
+    func decimalAsIntTruncatesToward0(): void {
+        this.assertEquals(2, 2.7 as int);
+        this.assertEquals(-2, -2.7 as int);
+        this.assertEquals(0, 0.99 as int);
+        this.assertEquals(0, -0.99 as int);
+    }
+
+    @test
+    func integerValuedDecimalCastsCleanly(): void {
+        this.assertEquals(2, 2.0 as int);
+        this.assertEquals(-5, -5.0 as int);
+    }
+
+    @test
+    func boolAsInt(): void {
+        this.assertEquals(1, true as int);
+        this.assertEquals(0, false as int);
+    }
+
+    @test
+    func chainedDecimalIntCast(): void {
+        /* `3.99 as decimal as int` exercises the decimal-path
+         * truncation independently of the float path. */
+        this.assertEquals(3, (3.99 as decimal) as int);
+        this.assertEquals(-3, ((-3.99) as decimal) as int);
+    }
+}

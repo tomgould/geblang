@@ -1,0 +1,119 @@
+/**
+ * @title Cross-type casts + string module (1.0.2)
+ * @summary `string <-> bytes` round-trip via UTF-8; `list <-> set`
+ * de-duplicates / materializes; new `string` module with
+ * `fromCodePoint`, `fromCodePoints`, `compare`, and `equalsFold`.
+ */
+import test;
+import string;
+
+class StringBytesCastTest extends test.Test {
+    @test
+    func stringToBytesEncodesUtf8(): void {
+        let b = "hello" as bytes;
+        this.assertEquals(5, b.length);
+    }
+
+    @test
+    func bytesToStringDecodesUtf8(): void {
+        let b = "hello" as bytes;
+        this.assertEquals("hello", b as string);
+    }
+
+    @test
+    func roundTripNonAscii(): void {
+        let original = "résumé €";
+        let b = original as bytes;
+        this.assertEquals(original, b as string);
+    }
+
+    @test
+    func invalidUtf8BytesRejected(): void {
+        import bytes as bytesmod;
+        let bad = bytesmod.fromHex("fffe80");
+        try {
+            let s = bad as string;
+            this.fail("should have thrown on invalid UTF-8");
+        } catch (RuntimeError e) {
+            this.assertContains(e.getMessage(), "not valid UTF-8");
+        }
+    }
+}
+
+class ListSetCastTest extends test.Test {
+    @test
+    func listToSetDeduplicates(): void {
+        let s = [1, 1, 2, 3, 3, 2] as set<int>;
+        this.assertEquals(3, s.length);
+    }
+
+    @test
+    func setToListMaterializes(): void {
+        let original = {1, 2, 3};
+        let l = original as list<int>;
+        this.assertEquals(3, l.length);
+        /* Iteration order is unspecified; assert content via set. */
+        let backToSet = l as set<int>;
+        this.assertEquals(3, backToSet.length);
+    }
+
+    @test
+    func listSetRoundTripPreservesUniqueElements(): void {
+        let xs = ["a", "b", "c", "b", "a"];
+        let unique = (xs as set<string>) as list<string>;
+        this.assertEquals(3, unique.length);
+    }
+}
+
+class StringModuleTest extends test.Test {
+    @test
+    func fromCodePointAscii(): void {
+        this.assertEquals("A", string.fromCodePoint(65));
+        this.assertEquals(" ", string.fromCodePoint(32));
+    }
+
+    @test
+    func fromCodePointUnicode(): void {
+        this.assertEquals("€", string.fromCodePoint(8364));
+        this.assertEquals("你", string.fromCodePoint(0x4F60));
+    }
+
+    @test
+    func fromCodePointsBuildsString(): void {
+        this.assertEquals("Hi!", string.fromCodePoints([72, 105, 33]));
+        this.assertEquals("你好", string.fromCodePoints([0x4F60, 0x597D]));
+        this.assertEquals("", string.fromCodePoints([]));
+    }
+
+    @test
+    func fromCodePointRejectsSurrogates(): void {
+        /* The U+D800..U+DFFF range is reserved for UTF-16 surrogate
+         * halves and is not a valid scalar Unicode codepoint. */
+        try {
+            string.fromCodePoint(0xD800);
+            this.fail("should reject surrogate");
+        } catch (RuntimeError e) {
+            this.assertContains(e.getMessage(), "not a valid Unicode codepoint");
+        }
+    }
+
+    @test
+    func compareThreeWay(): void {
+        this.assertEquals(-1, string.compare("apple", "banana"));
+        this.assertEquals(1, string.compare("banana", "apple"));
+        this.assertEquals(0, string.compare("same", "same"));
+    }
+
+    @test
+    func equalsFoldIsCaseInsensitive(): void {
+        this.assertTrue(string.equalsFold("Hello", "HELLO"));
+        this.assertTrue(string.equalsFold("CafÉ", "café"));
+        this.assertFalse(string.equalsFold("abc", "abd"));
+    }
+
+    @test
+    func roundTripWithCodePointAt(): void {
+        let n = "€".codePointAt(0);
+        this.assertEquals("€", string.fromCodePoint(n));
+    }
+}

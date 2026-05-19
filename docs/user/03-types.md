@@ -101,10 +101,35 @@ and class names can be used directly as type values in comparisons.
 
 ### Generic type parameters and built-in collections
 
-Generic type parameters on built-in collection types (`list<T>`, `dict<K,V>`,
-`set<T>`) are **not preserved at runtime**. `typeof([1, 2, 3])` returns `list`,
-not `list<int>`. Compare against the base type name only: `typeof(myList) == list`.
-There is no `Type<T>` expression syntax.
+`typeof([1, 2, 3])` returns `list` (not `list<int>`); the base type
+name remains the canonical identifier for the kind. There is no
+`Type<T>` expression syntax.
+
+The element-type bindings on `list<T>`, `dict<K,V>`, and `set<T>`
+are **preserved when the value flows through a typed declaration or
+parameter boundary** (since 1.0.2). The runtime attaches a reified
+tag that downstream `reflect.typeBindings` and `instanceof` checks
+can read:
+
+```gb
+import reflect;
+
+let list<int> xs = [1, 2, 3];
+reflect.typeBindings(xs);    # {"T": "int"}
+xs instanceof list<int>;     # true
+xs instanceof list<string>;  # false
+
+# An untagged collection (no typed boundary) has no bindings;
+# reflect.typeBindings returns an empty dict and instanceof
+# walks the elements structurally.
+let raw = [1, 2, 3];
+reflect.typeBindings(raw);   # {}
+raw instanceof list<int>;    # true (every element is int)
+raw instanceof list<string>; # false
+```
+
+`dict<K,V>` exposes the tag as `{"K": "...", "V": "..."}`;
+`set<T>` exposes `{"T": "..."}`.
 
 Type annotations on parameters using generic collections are enforced at typed
 function/method call boundaries and typed declaration boundaries:
@@ -284,6 +309,53 @@ type IntList = int[];
 ```
 
 Aliases document intent but do not create distinct runtime types.
+
+## Ranges and lists
+
+A range expression `start..end` (or `start..<end` exclusive) produces
+a `Range` value. Ranges are iterable - `for (x in 1..5) { ... }` walks
+the inclusive sequence - and support `.length`, `.contains(n)`,
+`.first`, `.last`, and `.toList()`. The list form is the canonical way
+to assign a range to a typed declaration:
+
+```gb
+let xs = (1..5).toList();     # [1, 2, 3, 4, 5]
+list<int> ys = (1..5).toList();
+```
+
+For convenience, the top-level `range(start, end[, step])` builtin
+returns the list directly without an intermediate `Range`:
+
+```gb
+let xs = range(1, 5);            # [1, 2, 3, 4, 5]
+let ys = range(10, 2, -2);       # [10, 8, 6, 4, 2]
+let zs = range(5, 1);            # [5, 4, 3, 2, 1] (auto-negative step)
+```
+
+Both forms are inclusive of both endpoints. Use `..<` for a half-open
+range (`(1..<5).toList()` is `[1, 2, 3, 4]`).
+
+A char-range literal `'a'..'e'` evaluates eagerly to a `list<string>`
+of single-character entries:
+
+```gb
+let letters = 'a'..'e';          # ["a", "b", "c", "d", "e"]
+let digits  = '0'..<'5';         # ["0", "1", "2", "3"]
+list<string> alphabet = 'a'..'z';   # works in a typed declaration too
+```
+
+> **Watch out for the bracket trap.** `['a'..'z']` is a list containing
+> *one* element which is itself the char-range list. The char range
+> *is* the list; you don't wrap it. Single and double quotes both
+> work for the bounds (`"a".."z"` is equivalent to `'a'..'z'`).
+
+Char ranges don't produce a `Range` value - they go straight to the
+list, so `.toList()` on the result is a no-op (which `list.toList()`
+supports for symmetry).
+
+Geblang has no separate `char` type. Single characters are simply
+strings of length one, so the element type of a char range is
+`string`.
 
 ## Generics
 

@@ -199,6 +199,12 @@ type DeclarationStatement struct {
 	Type  *TypeRef
 	Name  *Identifier
 	Value Expression
+	// Decorators applies only to declarations that live inside a
+	// class body (`@Assert.email string x;`). It is metadata only -
+	// pure annotations consulted by reflection, never executed
+	// automatically on field access or assignment. Empty for
+	// declarations outside a class.
+	Decorators []Decorator
 }
 
 func (*DeclarationStatement) statementNode()         {}
@@ -441,6 +447,13 @@ type ClassStatement struct {
 	// Stored alongside Members so the executor can invoke it
 	// specifically at instance cleanup (with-block exit, for now).
 	Destructor *FunctionStatement
+	// FieldDecorators[i] is the slice of decorators that prefixed
+	// the i-th *DeclarationStatement* in Members. Stored on the
+	// parent so reflection over fields can surface the per-field
+	// metadata without touching the DeclarationStatement node
+	// type (which is reused for top-level variable declarations
+	// too).
+	FieldDecorators map[string][]Decorator
 }
 
 func (*ClassStatement) statementNode()         {}
@@ -680,6 +693,12 @@ type SelectorExpression struct {
 	Object   Expression
 	Name     *Identifier
 	Optional bool
+	// Parenthesized is set when the parser sees a literal `(obj.x)`
+	// group enclosing this selector. At call time `(obj.x)(args)`
+	// invokes the value of obj.x rather than dispatching as a
+	// method call on obj. Without parens `obj.x(args)` keeps its
+	// usual method-call interpretation.
+	Parenthesized bool
 }
 
 func (*SelectorExpression) expressionNode()        {}

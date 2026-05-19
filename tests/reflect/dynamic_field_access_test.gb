@@ -1,0 +1,64 @@
+/**
+ * @title reflect.getField + reflect.setField (1.0.2)
+ * @summary Native dynamic field-by-name access on instances.
+ * `reflect.getField(instance, name)` reads, returning null for an
+ * unknown field. `reflect.setField(instance, name, value)` writes,
+ * returning the same instance for chaining.
+ */
+import test;
+import reflect;
+
+class Box {
+    string label;
+    int weight;
+    ?string optional;
+}
+
+class DynamicFieldTest extends test.Test {
+    @test
+    func getFieldReadsKnownField(): void {
+        let b = Box();
+        b.label = "fragile";
+        b.weight = 5;
+        this.assertEquals("fragile", reflect.getField(b, "label"));
+        this.assertEquals(5, reflect.getField(b, "weight"));
+    }
+
+    @test
+    func getFieldReturnsNullForMissing(): void {
+        let b = Box();
+        b.label = "x";
+        b.weight = 1;
+        this.assertTrue(reflect.getField(b, "noSuchField") == null);
+    }
+
+    @test
+    func setFieldAssignsAndReturnsInstance(): void {
+        let b = Box();
+        b.label = "old";
+        b.weight = 1;
+        let r = reflect.setField(b, "label", "new");
+        this.assertEquals("new", b.label);
+        /* The return value is the same instance for fluent chaining. */
+        this.assertEquals("new", (r as Box).label);
+    }
+
+    @test
+    func setFieldRespectsValueType(): void {
+        let b = Box();
+        b.label = "x";
+        b.weight = 0;
+        reflect.setField(b, "weight", 42);
+        this.assertEquals(42, b.weight);
+    }
+
+    @test
+    func setFieldAcceptsNullForNullableField(): void {
+        let b = Box();
+        b.label = "x";
+        b.weight = 1;
+        b.optional = "previously";
+        reflect.setField(b, "optional", null);
+        this.assertTrue(b.optional == null);
+    }
+}

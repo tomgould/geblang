@@ -193,6 +193,16 @@ func ErrorStackTraceMethod(trace runtime.ErrorStackTrace, name string, args []ru
 
 func ErrorMethod(err runtime.Error, name string, args []runtime.Value) (runtime.Value, error) {
 	switch name {
+	case "getMessage":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("%s.getMessage expects no arguments", err.Class)
+		}
+		return runtime.String{Value: err.Message}, nil
+	case "getClass":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("%s.getClass expects no arguments", err.Class)
+		}
+		return runtime.String{Value: err.Class}, nil
 	case "stackTrace":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("%s.stackTrace expects no arguments", err.Class)

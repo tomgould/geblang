@@ -1,4 +1,4 @@
-.PHONY: test test-go test-lang check-lang build bench bench-docker run repl check doctor cache-stats clean fmt docs docker-build compose-build vscode-build vscode-install vscode-install-wsl vscode-install-native
+.PHONY: test test-go test-lang check-lang build build-with-path install bench bench-docker run repl check doctor cache-stats clean fmt docs docker-build compose-build vscode-build vscode-install vscode-install-wsl vscode-install-native
 
 BINARY ?= geblang
 GO ?= go
@@ -31,6 +31,24 @@ check-lang: build
 
 build:
 	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto $(GO) build -o $(BINARY) ./cmd/geblang
+
+# Build and install the binary into INSTALL_DIR (defaults to /usr/local/bin).
+# Override with `make build-with-path INSTALL_DIR=~/.local/bin`. Uses sudo
+# when INSTALL_DIR is not writable by the current user.
+INSTALL_DIR ?= /usr/local/bin
+
+build-with-path: build
+	@if [ -w "$(INSTALL_DIR)" ]; then \
+		install -m 0755 $(BINARY) $(INSTALL_DIR)/$(BINARY); \
+		echo "installed $(INSTALL_DIR)/$(BINARY)"; \
+	else \
+		echo "installing into $(INSTALL_DIR) (requires sudo)"; \
+		sudo install -m 0755 $(BINARY) $(INSTALL_DIR)/$(BINARY); \
+		echo "installed $(INSTALL_DIR)/$(BINARY)"; \
+	fi
+
+# Alias of build-with-path for muscle memory.
+install: build-with-path
 
 bench:
 	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto ./benchmarks/run.sh

@@ -1,0 +1,45 @@
+/**
+ * @title reflect.className (1.0.2)
+ * @summary Returns the class's own identifier from a class value,
+ * an instance, or falls back to the runtime type name for
+ * primitives. Symmetric with `reflect.class(name)` going the other
+ * way.
+ */
+import test;
+import reflect;
+
+class User {
+    string name;
+}
+
+class Box {
+    int n;
+}
+
+class ReflectClassNameTest extends test.Test {
+    @test
+    func classValueReturnsClassName(): void {
+        this.assertEquals("User", reflect.className(User));
+    }
+
+    @test
+    func instanceReturnsClassName(): void {
+        let u = User();
+        this.assertEquals("User", reflect.className(u));
+    }
+
+    @test
+    func primitiveReturnsTypeName(): void {
+        this.assertEquals("string", reflect.className("abc"));
+        this.assertEquals("int", reflect.className(42));
+        this.assertEquals("bool", reflect.className(true));
+    }
+
+    @test
+    func roundTripsThroughReflectClass(): void {
+        let name = reflect.className(Box) as string;
+        let cls = reflect.class(name);
+        this.assertTrue(cls != null);
+        this.assertEquals("Box", reflect.className(cls));
+    }
+}

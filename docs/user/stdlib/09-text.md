@@ -125,7 +125,39 @@ io.println(msg);  # Hello, Ada! You have 3 messages.
 |--------|---------|-------------|
 | `toString()` | `string` | Returns the string itself (identity) |
 
-Cast with `as int`, `as decimal`, `as float`, `as bool` where needed.
+Cast with `as int`, `as decimal`, `as float`, `as bool` where needed. Also new in 1.0.2: `as bytes` encodes the string as UTF-8, and a `bytes` value cast back `as string` decodes UTF-8 (the cast raises a catchable `RuntimeError` if the byte sequence is not valid UTF-8).
+
+```gb
+let b = "résumé" as bytes;
+io.println(b.length);     # 8 — two two-byte runes plus four ASCII
+io.println(b as string);  # résumé
+```
+
+---
+
+## String Factories: `string`
+
+Import `string`. The module is a small namespace for static / factory functions that don't belong on a string instance (you can't ask a non-existent string for its codepoint). Everything else string-related is an instance method - see [String Methods](#string-methods) above.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `fromCodePoint(n)` | `string` | Single-character string for the Unicode codepoint `n`. Rejects negative values, values above U+10FFFF, and the UTF-16 surrogate range U+D800..U+DFFF. |
+| `fromCodePoints(list<int>)` | `string` | Multi-character string built from a list of codepoints. Same validation per element. |
+| `compare(a, b)` | `int` | Three-way comparison returning -1 / 0 / +1. Useful as a sort key (`xs.sortBy(string.compare)`). Compares the underlying UTF-8 bytes, which agrees with codepoint order. |
+| `equalsFold(a, b)` | `bool` | Case-insensitive equality respecting Unicode case folding. `string.equalsFold("CafÉ", "café")` is `true`. |
+
+```gb
+import string;
+import io;
+
+io.println(string.fromCodePoint(65));               # A
+io.println(string.fromCodePoint(8364));             # €
+io.println(string.fromCodePoints([72, 105, 33]));   # Hi!
+io.println(string.compare("apple", "banana"));      # -1
+io.println(string.equalsFold("Hello", "HELLO"));    # true
+```
+
+For *timing-attack-safe* string equality (HMAC verification, token comparison, etc.) use `secrets.constantTimeEqual(a, b)` from the security module - see [Security](12-security.md). `string.equalsFold` and `string.compare` are **not** constant-time.
 
 ---
 

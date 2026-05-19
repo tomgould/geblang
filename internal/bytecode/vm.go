@@ -16,7 +16,9 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
+	"geblang/internal/ast"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
 )
@@ -72,6 +74,26 @@ type ModuleLoader interface {
 	ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value) (runtime.Value, error)
 	CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value) (runtime.Value, error)
 	CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error)
+	// FindClassByName looks up a class by its bare (unqualified) name
+	// across every loaded module. Returns nil when nothing matches.
+	// Used by reflect.class so framework code can resolve a user
+	// class regardless of which module declared it.
+	FindClassByName(name string) (runtime.Value, bool)
+	// FindFunctionByName looks up a function by its bare name
+	// across every loaded module. Returns nil when nothing matches.
+	FindFunctionByName(name string) (runtime.Value, bool)
+	// DeserializeModuleClass runs json.parseAs / xml.parseAs style
+	// deserialization for a class declared in another chunk. The
+	// loader resolves the right chunk by class.Module and dispatches
+	// to a VM bound to it. Used when a stdlib module receives a
+	// class value originating from the user's main program.
+	DeserializeModuleClass(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, error)
+	// ConstructorsForModuleClass returns `reflect.constructors(class)`
+	// for a class declared in another chunk. The loader dispatches to
+	// a VM bound to the right chunk so the metadata reflects the
+	// originating class's actual constructor list rather than the
+	// caller chunk's stale view.
+	ConstructorsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error)
 }
 
 type StatefulNativeCaller interface {
@@ -192,6 +214,18 @@ type vmTypedError struct {
 
 func (e vmTypedError) Error() string { return e.class + ": " + e.message }
 
+// vmThrownError carries a runtime.Error across a VM boundary so the
+// caller VM can re-throw it as a catchable pendingThrow instead of
+// losing the class / parent-chain information by collapsing it to a
+// plain string. Used when a closure called via the moduleLoader
+// throws — the sub-VM packages its pendingThrow into a vmThrownError
+// and the caller VM's invocation site unwraps it.
+type vmThrownError struct {
+	err runtime.Error
+}
+
+func (e vmThrownError) Error() string { return "uncaught " + e.err.Inspect() }
+
 type vmTypeSpec struct {
 	raw       string
 	base      string
@@ -256,7 +290,38 @@ func NewVM(chunk Chunk, stdout io.Writer) *VM {
 func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value) (runtime.Value, error) {
 	class, ok := classValue.(runtime.BytecodeClass)
 	if !ok {
-		return nil, fmt.Errorf("deserialize: expected class, got %s", classValue.TypeName())
+		// `reflect.class("Name")` on the VM can compile-time-resolve
+		// to a DecoratorTarget; promote it to a BytecodeClass via
+		// the chunk's class index so json.parseAs et al. can
+		// deserialize through the same path.
+		if target, isTarget := classValue.(runtime.DecoratorTarget); isTarget && target.Target == "class" && target.Class != nil {
+			if idx, ok := vm.classIndex[strings.ToLower(target.Class.Name)]; ok && int(idx) < len(vm.chunk.Classes) {
+				class = vm.bytecodeClassFromInfo(vm.chunk.Classes[idx], int64(idx))
+			} else if vm.moduleLoader != nil {
+				if v, found := vm.moduleLoader.FindClassByName(target.Class.Name); found {
+					if bc, isClass := v.(runtime.BytecodeClass); isClass {
+						class = bc
+					} else {
+						return nil, fmt.Errorf("deserialize: expected class, got %s", classValue.TypeName())
+					}
+				} else {
+					return nil, fmt.Errorf("deserialize: expected class, got %s", classValue.TypeName())
+				}
+			} else {
+				return nil, fmt.Errorf("deserialize: expected class, got %s", classValue.TypeName())
+			}
+		} else {
+			return nil, fmt.Errorf("deserialize: expected class, got %s", classValue.TypeName())
+		}
+	}
+	// If the class was declared in a different chunk than the one
+	// this VM is bound to, dispatch to a sub-VM via the moduleLoader
+	// so the indices resolve against the right chunk. The check
+	// covers both directions: a sub-VM holding a main-chunk class
+	// (class.Module=="" while vm.moduleName!=""), and the main VM
+	// holding an imported-module class.
+	if vm.moduleLoader != nil && class.Module != vm.moduleName {
+		return vm.moduleLoader.DeserializeModuleClass(class, value)
 	}
 	if class.Index < 0 || int(class.Index) >= len(vm.chunk.Classes) {
 		return nil, fmt.Errorf("deserialize %s: class index out of range", class.Name)
@@ -275,7 +340,26 @@ func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value
 		return nil, fmt.Errorf("deserialize %s: expected dict, got %s", class.Name, value.TypeName())
 	}
 	if len(classInfo.ConstructorIndices) == 0 {
-		return vm.ConstructClass(class.Index, nil)
+		// Classes without an explicit constructor get their fields
+		// populated directly from the dict. Matches the evaluator's
+		// data-class behaviour so `json.parseAs(text, MyDTO)` is
+		// usable without writing a constructor.
+		v, err := vm.ConstructClass(class.Index, nil)
+		if err != nil {
+			return nil, err
+		}
+		instance, ok := v.(*runtime.Instance)
+		if !ok {
+			return v, nil
+		}
+		for _, fieldName := range classInfo.FieldNames {
+			key := runtime.String{Value: fieldName}
+			entry, hit := dict.Entries[native.DictKey(key)]
+			if hit {
+				instance.Fields[fieldName] = entry.Value
+			}
+		}
+		return instance, nil
 	}
 	ctorIndex := classInfo.ConstructorIndices[0]
 	if ctorIndex < 0 || int(ctorIndex) >= len(vm.chunk.Functions) {
@@ -1012,6 +1096,10 @@ func (vm *VM) Run() (err error) {
 				return err
 			}
 			ip = nextIP
+		case OpRange:
+			if err := vm.execRange(instruction); err != nil {
+				return err
+			}
 		case OpTypeOf:
 			value, err := vm.pop()
 			if err != nil {
@@ -1030,9 +1118,11 @@ func (vm *VM) Run() (err error) {
 				return err
 			}
 		case OpCast:
-			if err := vm.cast(instruction); err != nil {
+			nextIP, err := vm.cast(instruction, ip)
+			if err != nil {
 				return err
 			}
+			ip = nextIP
 		case OpMethodCall:
 			nextIP, err := vm.methodCall(instruction, ip)
 			if err != nil {
@@ -1498,7 +1588,11 @@ func (vm *VM) Run() (err error) {
 					if len(inst.Fields) > 0 {
 						fields = inst.Fields
 					}
-					value = runtime.Error{Class: inst.Class.Name, Message: msg, Fields: fields}
+					var parents []string
+					if classInfo, ok := vm.classInfo(inst.Class.Name); ok {
+						parents = vm.errorParentChain(classInfo)
+					}
+					value = runtime.Error{Class: inst.Class.Name, Message: msg, Fields: fields, Parents: parents}
 				}
 			}
 			if isImmutableClass {
@@ -2071,7 +2165,8 @@ func (vm *VM) callPrefixOperatorMethod(instruction Instruction, ip int, value ru
 		}
 		result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, methodName, instance, nil)
 		if err != nil {
-			return 0, true, vm.runtimeError(instruction, "%s", err.Error())
+			nextIP, perr := vm.propagateModuleError(instruction, ip, err)
+			return nextIP, true, perr
 		}
 		vm.push(result)
 		return ip, true, nil
@@ -2201,7 +2296,7 @@ func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 			}
 			result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, "__eq", instance, vm.wrapStatefulNativeArgs([]runtime.Value{right}))
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return vm.propagateModuleError(instruction, ip, err)
 			}
 			vm.push(result)
 			return ip, nil
@@ -2327,7 +2422,12 @@ func (vm *VM) rethrow(instruction Instruction, ip int) (int, error) {
 
 func (vm *VM) jumpToExceptionHandler(instruction Instruction, ip int) (int, error) {
 	if len(vm.exceptionHandlers) == 0 {
-		return 0, vm.runtimeError(instruction, "uncaught %s", vm.pendingThrow.Inspect())
+		thrown := *vm.pendingThrow
+		// Wrap a vmThrownError so caller VMs can recover the original
+		// runtime.Error (with its class + parent chain) and re-throw
+		// it as a typed pendingThrow rather than collapsing it to a
+		// plain string at the boundary.
+		return 0, vm.runtimeErrorWith(instruction, vmThrownError{err: thrown}, "uncaught %s", thrown.Inspect())
 	}
 	handler := vm.exceptionHandlers[len(vm.exceptionHandlers)-1]
 	vm.exceptionHandlers = vm.exceptionHandlers[:len(vm.exceptionHandlers)-1]
@@ -2371,7 +2471,7 @@ func (vm *VM) catchException(instruction Instruction, ip int) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if !vm.errorTypeMatches(vm.pendingThrow.Class, target) {
+		if !vm.errorValueMatches(*vm.pendingThrow, target) {
 			return nextIP - 1, nil
 		}
 	}
@@ -2839,7 +2939,8 @@ func (vm *VM) callBinaryOperatorMethod(instruction Instruction, ip int, left run
 		}
 		result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, methodName, instance, vm.wrapStatefulNativeArgs([]runtime.Value{right}))
 		if err != nil {
-			return 0, true, vm.runtimeError(instruction, "%s", err.Error())
+			nextIP, perr := vm.propagateModuleError(instruction, ip, err)
+			return nextIP, true, perr
 		}
 		vm.push(result)
 		return ip, true, nil
@@ -2932,7 +3033,10 @@ func (vm *VM) decimalBinary(instruction Instruction, l runtime.Decimal, r runtim
 			return vm.runtimeError(instruction, "decimal integer division by zero")
 		}
 		quotient := new(big.Rat).Quo(l.Value, r.Value)
-		vm.push(runtime.Int{Value: ratFloorInt(quotient)})
+		/* Same-kind result: decimal // decimal stays a decimal
+		 * (with an integer numerator). Returning Int here would
+		 * silently collapse arbitrary-precision values. */
+		vm.push(runtime.Decimal{Value: new(big.Rat).SetInt(ratFloorInt(quotient))})
 	case OpMod:
 		if r.Value.Sign() == 0 {
 			return vm.runtimeError(instruction, "decimal modulo by zero")
@@ -2963,8 +3067,20 @@ func (vm *VM) floatBinary(instruction Instruction, l runtime.Float, r runtime.Fl
 		vm.push(runtime.Float{Value: l.Value * r.Value})
 	case OpDiv:
 		vm.push(runtime.Float{Value: l.Value / r.Value})
+	case OpIntDiv:
+		if r.Value == 0 {
+			return vm.runtimeError(instruction, "float division by zero")
+		}
+		vm.push(runtime.Float{Value: math.Floor(l.Value / r.Value)})
 	case OpMod:
-		vm.push(runtime.Float{Value: math.Mod(l.Value, r.Value)})
+		if r.Value == 0 {
+			return vm.runtimeError(instruction, "float modulo by zero")
+		}
+		/* Floor modulo: sign of the remainder follows the divisor.
+		 * Consistent with Geblang's int and decimal modulo, and
+		 * with Python's `%` for floats. (Go's `math.Mod` is
+		 * truncated modulo, which we deliberately don't expose.) */
+		vm.push(runtime.Float{Value: l.Value - math.Floor(l.Value/r.Value)*r.Value})
 	case OpPow:
 		vm.push(runtime.Float{Value: math.Pow(l.Value, r.Value)})
 	default:
@@ -3568,6 +3684,110 @@ func (vm *VM) typeAssert(instruction Instruction) error {
 		}
 		return vm.runtimeError(instruction, "type error: cannot assign %s to %s%s", gotName, typeStr.Value, suffix)
 	}
+	// Attach the reified element-type tag so reflect.typeBindings() and
+	// `instanceof list<T>` see the declared bindings on the tagged value.
+	// Mutate the top of the stack in place: List/Dict/Set are value
+	// types, so we pop, tag the copy, and push the tagged version.
+	if tagged, ok := vm.tagCollectionWithSpec(value, spec); ok {
+		if _, err := vm.pop(); err != nil {
+			return vm.runtimeError(instruction, "%s", err.Error())
+		}
+		vm.push(tagged)
+	}
+	return nil
+}
+
+// tagCollectionWithSpec mirrors the evaluator's tagCollectionWithTypeRef
+// for the VM's vmTypeSpec form. Returns (tagged, true) when the value is
+// a List/Dict/Set whose tag should be set; otherwise (value, false).
+func (vm *VM) tagCollectionWithSpec(value runtime.Value, spec vmTypeSpec) (runtime.Value, bool) {
+	switch v := value.(type) {
+	case runtime.List:
+		if len(spec.args) >= 1 {
+			tag := make([]string, len(spec.args))
+			for i, a := range spec.args {
+				tag[i] = a.base
+			}
+			v.ElementTypes = tag
+			return v, true
+		}
+	case runtime.Set:
+		if len(spec.args) >= 1 {
+			v.ElementTypes = []string{spec.args[0].base}
+			return v, true
+		}
+	case runtime.Dict:
+		if len(spec.args) >= 2 {
+			v.ElementTypes = []string{spec.args[0].base, spec.args[1].base}
+			return v, true
+		}
+	}
+	return value, false
+}
+
+// execRange implements OpRange: pops 2 or 3 integer values and pushes a
+// list<int> covering the inclusive range. With 3 args the step is
+// explicit; with 2 args the step defaults to +1 (or -1 when start > end).
+func (vm *VM) execRange(instruction Instruction) error {
+	if len(instruction.Operands) != 1 {
+		return vm.runtimeError(instruction, "range expects argument count operand")
+	}
+	argc := int(instruction.Operands[0])
+	if argc != 2 && argc != 3 {
+		return vm.runtimeError(instruction, "range expects (start, end) or (start, end, step)")
+	}
+	var step *big.Int
+	if argc == 3 {
+		stepVal, err := vm.pop()
+		if err != nil {
+			return vm.runtimeError(instruction, "%s", err.Error())
+		}
+		s, ok := native.IntValueToBigInt(stepVal)
+		if !ok {
+			return vm.runtimeError(instruction, "range step must be int")
+		}
+		step = s
+	}
+	endVal, err := vm.pop()
+	if err != nil {
+		return vm.runtimeError(instruction, "%s", err.Error())
+	}
+	endBig, ok := native.IntValueToBigInt(endVal)
+	if !ok {
+		return vm.runtimeError(instruction, "range end must be int")
+	}
+	startVal, err := vm.pop()
+	if err != nil {
+		return vm.runtimeError(instruction, "%s", err.Error())
+	}
+	startBig, ok := native.IntValueToBigInt(startVal)
+	if !ok {
+		return vm.runtimeError(instruction, "range start must be int")
+	}
+	if step == nil {
+		if startBig.Cmp(endBig) > 0 {
+			step = big.NewInt(-1)
+		} else {
+			step = big.NewInt(1)
+		}
+	}
+	if step.Sign() == 0 {
+		return vm.runtimeError(instruction, "range step cannot be zero")
+	}
+	var elements []runtime.Value
+	current := new(big.Int).Set(startBig)
+	for {
+		cmp := current.Cmp(endBig)
+		if step.Sign() > 0 && cmp > 0 {
+			break
+		}
+		if step.Sign() < 0 && cmp < 0 {
+			break
+		}
+		elements = append(elements, runtime.Int{Value: new(big.Int).Set(current)})
+		current.Add(current, step)
+	}
+	vm.push(runtime.List{Elements: elements})
 	return nil
 }
 
@@ -3654,6 +3874,36 @@ func (vm *VM) buildRange(instruction Instruction) error {
 	startValue, err := vm.pop()
 	if err != nil {
 		return vm.runtimeError(instruction, "%s", err.Error())
+	}
+	// Char-range fast path: 'a'..'z' (single-character string operands)
+	// builds an eager list<string> of single-character entries rather
+	// than a Range value. Step is ignored - char ranges always step by 1.
+	if startStr, ok := startValue.(runtime.String); ok && len([]rune(startStr.Value)) == 1 {
+		endStr, ok := endValue.(runtime.String)
+		if !ok || len([]rune(endStr.Value)) != 1 {
+			return vm.runtimeError(instruction, "char range end must be a single-character string")
+		}
+		exclusive := instruction.Operands[0] != 0
+		startRune := []rune(startStr.Value)[0]
+		endRune := []rune(endStr.Value)[0]
+		var elements []runtime.Value
+		if startRune <= endRune {
+			for r := startRune; r <= endRune; r++ {
+				if exclusive && r == endRune {
+					break
+				}
+				elements = append(elements, runtime.String{Value: string(r)})
+			}
+		} else {
+			for r := startRune; r >= endRune; r-- {
+				if exclusive && r == endRune {
+					break
+				}
+				elements = append(elements, runtime.String{Value: string(r)})
+			}
+		}
+		vm.push(runtime.List{Elements: elements})
+		return nil
 	}
 	start := big.NewInt(0)
 	if _, ok := startValue.(runtime.Null); !ok {
@@ -4560,6 +4810,20 @@ func (vm *VM) constructClass(instruction Instruction, ip int) (int, error) {
 			Methods:        vm.runtimeMethodWrappers(classIndex),
 			MethodMetadata: vm.classFunctionMetadata(classInfo.Methods, "method", 1),
 			StaticMetadata: vm.classFunctionMetadata(classInfo.StaticMethods, "staticMethod", 0),
+			// Link the parent runtime.Class so cross-module
+			// `instanceof Parent` and `reflect.parent(instance)`
+			// can walk the chain regardless of which chunk holds
+			// the parent's ClassInfo.
+			Parent:     vm.runtimeClassForParent(classInfo),
+			Implements: vm.runtimeInterfacesForClass(classInfo),
+			// Populate runtime.Class.Fields with field metadata
+			// (name + optional decorators) so cross-chunk reflect
+			// from a sub-VM can read the originating chunk's
+			// declarations even when the bytecode ClassInfo isn't
+			// reachable. Type-info on the field is left nil here;
+			// reflectFieldsResult re-derives type strings from the
+			// chunk when present.
+			Fields: vm.runtimeFieldsForClass(classInfo),
 		},
 		Fields: map[string]runtime.Value{},
 	}
@@ -4595,7 +4859,7 @@ func (vm *VM) constructClass(instruction Instruction, ip int) (int, error) {
 			if len(instance.Fields) > 0 {
 				fields = instance.Fields
 			}
-			vm.push(runtime.Error{Class: classInfo.Name, Fields: fields})
+			vm.push(runtime.Error{Class: classInfo.Name, Fields: fields, Parents: vm.errorParentChain(classInfo)})
 		} else {
 			if classInfo.Immutable {
 				instance.Frozen = true
@@ -4645,6 +4909,67 @@ func (vm *VM) constructClass(instruction Instruction, ip int) (int, error) {
 		}
 	}
 	return nextIP, nil
+}
+
+// runtimeFieldsForClass builds the per-field metadata on a
+// runtime.Class. The slice is consumed by cross-chunk reflect.fields
+// when the receiving VM can't look up the class by index in its own
+// chunk. Decorators ride along so framework reflection sees the
+// originating chunk's annotations from any other module.
+func (vm *VM) runtimeFieldsForClass(classInfo ClassInfo) []runtime.Field {
+	fields := make([]runtime.Field, 0, len(classInfo.FieldNames))
+	for i, name := range classInfo.FieldNames {
+		field := runtime.Field{Name: name}
+		if i < len(classInfo.FieldDecorators) && len(classInfo.FieldDecorators[i]) > 0 {
+			field.Decorators = decoratorsToAST(classInfo.FieldDecorators[i])
+		}
+		fields = append(fields, field)
+	}
+	return fields
+}
+
+// decoratorsToAST converts persisted DecoratorMetadata (chunk-format)
+// back into ast.Decorator values for the reflection surface. Used when
+// populating runtime.Class.Fields from the bytecode ClassInfo.
+func decoratorsToAST(metas []runtime.DecoratorMetadata) []ast.Decorator {
+	out := make([]ast.Decorator, 0, len(metas))
+	for _, m := range metas {
+		dec := ast.Decorator{Name: &ast.Identifier{Value: m.Name}}
+		for _, arg := range m.Args {
+			dec.Arguments = append(dec.Arguments, ast.CallArgument{Value: literalExpressionForValue(arg)})
+		}
+		for k, v := range m.NamedArgs {
+			dec.Arguments = append(dec.Arguments, ast.CallArgument{
+				Name:  &ast.Identifier{Value: k},
+				Value: literalExpressionForValue(v),
+			})
+		}
+		out = append(out, dec)
+	}
+	return out
+}
+
+// literalExpressionForValue is a thin shim that returns an AST node
+// wrapping a runtime value. Only used for decorator arg reconstruction
+// where the user previously passed a literal (string / int / etc.).
+// Returns nil for anything more elaborate - the decorator-reading
+// helpers know to fall back to the raw metadata in that case.
+func literalExpressionForValue(v runtime.Value) ast.Expression {
+	switch x := v.(type) {
+	case runtime.String:
+		return &ast.StringLiteral{Value: x.Value}
+	case runtime.SmallInt:
+		return &ast.IntegerLiteral{Value: fmt.Sprintf("%d", x.Value)}
+	case runtime.Int:
+		return &ast.IntegerLiteral{Value: x.Value.String()}
+	case runtime.Float:
+		return &ast.FloatLiteral{Value: fmt.Sprintf("%g", x.Value)}
+	case runtime.Bool:
+		return &ast.Literal{Value: x.Value}
+	case runtime.Null:
+		return &ast.Literal{Value: nil}
+	}
+	return nil
 }
 
 func (vm *VM) runtimeMethodWrappers(classIndex int64) map[string][]runtime.Function {
@@ -5591,17 +5916,66 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 			return nil, fmt.Errorf("reflect.typeOf expects value")
 		}
 		return runtime.Type{Name: args[0].TypeName()}, nil
-	case "fields", "methods", "staticMethods", "parent", "interfaces":
+	case "getField":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("reflect.getField expects (instance, fieldName)")
+		}
+		instance, ok := args[0].(*runtime.Instance)
+		if !ok {
+			return nil, fmt.Errorf("reflect.getField expects instance, got %s", args[0].TypeName())
+		}
+		name, ok := args[1].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("reflect.getField field name must be string")
+		}
+		if v, hit := instance.Fields[name.Value]; hit {
+			return v, nil
+		}
+		return runtime.Null{}, nil
+	case "setField":
+		if len(args) != 3 {
+			return nil, fmt.Errorf("reflect.setField expects (instance, fieldName, value)")
+		}
+		instance, ok := args[0].(*runtime.Instance)
+		if !ok {
+			return nil, fmt.Errorf("reflect.setField expects instance, got %s", args[0].TypeName())
+		}
+		name, ok := args[1].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("reflect.setField field name must be string")
+		}
+		if instance.Fields == nil {
+			instance.Fields = map[string]runtime.Value{}
+		}
+		instance.Fields[name.Value] = args[2]
+		return instance, nil
+	case "fields", "methods", "staticMethods", "parent", "interfaces", "className":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("reflect.%s expects class", fn)
 		}
 		metadata, ok := reflectClassMetadata(args[0])
 		if !ok {
+			// Fall back to built-in primitive metadata so
+			// `reflect.methods([1,2,3])` and the rest of the
+			// reflect API work on lists / dicts / sets / strings
+			// / bytes / ranges.
+			if md, primOk := vmPrimitiveTypeMetadata(args[0]); primOk {
+				metadata = md
+				ok = true
+			}
+		}
+		if !ok {
+			// className is total: for a primitive without class
+			// metadata, return its runtime type name (symmetric
+			// with how reflect.typeOf handles instances).
+			if fn == "className" {
+				return runtime.String{Value: args[0].TypeName()}, nil
+			}
 			return nil, fmt.Errorf("reflect.%s expects class, got %s", fn, args[0].TypeName())
 		}
 		switch fn {
 		case "fields":
-			return bytecodeStringList(metadata.Fields), nil
+			return vm.reflectFieldsResult(args[0], metadata), nil
 		case "methods":
 			return bytecodeStringList(metadata.Methods), nil
 		case "staticMethods":
@@ -5611,6 +5985,11 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 				return runtime.Null{}, nil
 			}
 			return runtime.String{Value: metadata.Parent}, nil
+		case "className":
+			if metadata.Name == "" {
+				return runtime.Null{}, nil
+			}
+			return runtime.String{Value: metadata.Name}, nil
 		case "interfaces":
 			return bytecodeStringList(metadata.Interfaces), nil
 		}
@@ -5624,14 +6003,31 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		if len(args) != 1 {
 			return nil, fmt.Errorf("reflect.typeBindings expects instance")
 		}
-		instance, ok := args[0].(*runtime.Instance)
-		if !ok {
-			return nil, fmt.Errorf("reflect.typeBindings expects instance, got %s", args[0].TypeName())
-		}
 		entries := map[string]runtime.DictEntry{}
-		for name, typeName := range instance.TypeBindings {
+		putBinding := func(name, typeName string) {
 			k := runtime.String{Value: name}
 			entries[native.DictKey(k)] = runtime.DictEntry{Key: k, Value: runtime.String{Value: typeName}}
+		}
+		switch v := args[0].(type) {
+		case *runtime.Instance:
+			for name, typeName := range v.TypeBindings {
+				putBinding(name, typeName)
+			}
+		case runtime.List:
+			if len(v.ElementTypes) >= 1 {
+				putBinding("T", v.ElementTypes[0])
+			}
+		case runtime.Set:
+			if len(v.ElementTypes) >= 1 {
+				putBinding("T", v.ElementTypes[0])
+			}
+		case runtime.Dict:
+			if len(v.ElementTypes) >= 2 {
+				putBinding("K", v.ElementTypes[0])
+				putBinding("V", v.ElementTypes[1])
+			}
+		default:
+			return nil, fmt.Errorf("reflect.typeBindings expects instance or generic collection, got %s", args[0].TypeName())
 		}
 		return runtime.Dict{Entries: entries}, nil
 	case "interfaceMethods", "interfaceParents":
@@ -5712,6 +6108,16 @@ func (vm *VM) reflectLookupNativeCall(fn string, args []runtime.Value) (runtime.
 			}
 		case runtime.BytecodeFunction:
 			return value, nil
+		case runtime.String:
+			// Look up a function in the chunk by name (or fall
+			// through to module loader). Returns Null when the
+			// name isn't found, matching the eval semantics.
+			if vm.moduleLoader != nil {
+				if found, ok := vm.moduleLoader.FindFunctionByName(value.Value); ok {
+					return found, nil
+				}
+			}
+			return runtime.Null{}, nil
 		}
 		return nil, fmt.Errorf("reflect.function expects function, got %s", value.TypeName())
 	case "class":
@@ -5722,6 +6128,21 @@ func (vm *VM) reflectLookupNativeCall(fn string, args []runtime.Value) (runtime.
 			}
 		case runtime.BytecodeClass:
 			return value, nil
+		case runtime.String:
+			// Look up the class by name in the chunk's class table
+			// first; fall back to cross-module search through the
+			// module loader so framework helpers can resolve a
+			// user-declared class from another module.
+			if classIndex, ok := vm.classIndex[strings.ToLower(value.Value)]; ok {
+				classInfo := vm.chunk.Classes[classIndex]
+				return vm.bytecodeClassFromInfo(classInfo, int64(classIndex)), nil
+			}
+			if vm.moduleLoader != nil {
+				if found, ok := vm.moduleLoader.FindClassByName(value.Value); ok {
+					return found, nil
+				}
+			}
+			return runtime.Null{}, nil
 		case *runtime.Instance:
 			classIndex, ok := vm.classIndex[strings.ToLower(value.Class.Name)]
 			if !ok {
@@ -5731,22 +6152,9 @@ func (vm *VM) reflectLookupNativeCall(fn string, args []runtime.Value) (runtime.
 				return nil, fmt.Errorf("reflect.class unknown class %s", value.Class.Name)
 			}
 			classInfo := vm.chunk.Classes[classIndex]
-			return runtime.BytecodeClass{
-				Name:                classInfo.Name,
-				Doc:                 classInfo.Doc,
-				Index:               int64(classIndex),
-				Parent:              classInfo.ParentName,
-				Fields:              append([]string(nil), classInfo.FieldNames...),
-				Interfaces:          append([]string(nil), classInfo.Implements...),
-				Decorators:          classInfo.Decorators,
-				MethodDecorators:    classInfo.MethodDecorators,
-				StaticDecorators:    classInfo.StaticDecorators,
-				MethodMetadata:      vm.classFunctionMetadata(classInfo.Methods, "method", 1),
-				StaticMetadata:      vm.classFunctionMetadata(classInfo.StaticMethods, "staticMethod", 0),
-				ConstructorMetadata: vm.constructorFunctionMetadata(classInfo.ConstructorIndices),
-			}, nil
+			return vm.bytecodeClassFromInfo(classInfo, int64(classIndex)), nil
 		}
-		return nil, fmt.Errorf("reflect.class expects class, got %s", value.TypeName())
+		return nil, fmt.Errorf("reflect.class expects class, instance, or name string, got %s", value.TypeName())
 	default:
 		return nil, fmt.Errorf("unsupported reflect lookup %s", fn)
 	}
@@ -5934,6 +6342,27 @@ func reflectFunctionMetadata(value runtime.Value) (runtime.FunctionMetadata, boo
 	return runtime.FunctionMetadata{}, false
 }
 
+// bytecodeClassFromInfo builds a BytecodeClass value from a class index.
+// Used by reflect.class when looking up a class by name or instance so
+// the produced value matches the one users get from passing the class
+// reference directly.
+func (vm *VM) bytecodeClassFromInfo(classInfo ClassInfo, index int64) runtime.BytecodeClass {
+	return runtime.BytecodeClass{
+		Name:                classInfo.Name,
+		Doc:                 classInfo.Doc,
+		Index:               index,
+		Parent:              classInfo.ParentName,
+		Fields:              append([]string(nil), classInfo.FieldNames...),
+		Interfaces:          append([]string(nil), classInfo.Implements...),
+		Decorators:          classInfo.Decorators,
+		MethodDecorators:    classInfo.MethodDecorators,
+		StaticDecorators:    classInfo.StaticDecorators,
+		MethodMetadata:      vm.classFunctionMetadata(classInfo.Methods, "method", 1),
+		StaticMetadata:      vm.classFunctionMetadata(classInfo.StaticMethods, "staticMethod", 0),
+		ConstructorMetadata: vm.constructorFunctionMetadata(classInfo.ConstructorIndices),
+	}
+}
+
 func reflectClassMetadata(value runtime.Value) (runtime.ClassMetadata, bool) {
 	switch value := value.(type) {
 	case runtime.DecoratorTarget:
@@ -5944,8 +6373,53 @@ func reflectClassMetadata(value runtime.Value) (runtime.ClassMetadata, bool) {
 		return bytecodeClassMetadata(value), true
 	case *runtime.Class:
 		return runtimeClassMetadata(value)
+	case *runtime.Instance:
+		// Accept an instance and walk to its class so framework
+		// code that has the instance in hand doesn't need to
+		// recover the class separately.
+		if value != nil && value.Class != nil {
+			return runtimeClassMetadata(value.Class)
+		}
 	}
 	return runtime.ClassMetadata{}, false
+}
+
+// vmPrimitiveTypeMetadata mirrors the evaluator's primitiveTypeMetadata
+// for the VM. See evaluator.go for the rationale.
+func vmPrimitiveTypeMetadata(value runtime.Value) (runtime.ClassMetadata, bool) {
+	switch value.(type) {
+	case runtime.List:
+		return runtime.ClassMetadata{Name: "list", Methods: vmPrimitiveMethodNamesFor("list")}, true
+	case runtime.Dict:
+		return runtime.ClassMetadata{Name: "dict", Methods: vmPrimitiveMethodNamesFor("dict")}, true
+	case runtime.Set:
+		return runtime.ClassMetadata{Name: "set", Methods: vmPrimitiveMethodNamesFor("set")}, true
+	case runtime.String:
+		return runtime.ClassMetadata{Name: "string", Methods: vmPrimitiveMethodNamesFor("string")}, true
+	case runtime.Bytes:
+		return runtime.ClassMetadata{Name: "bytes", Methods: vmPrimitiveMethodNamesFor("bytes")}, true
+	case runtime.Range:
+		return runtime.ClassMetadata{Name: "range", Methods: vmPrimitiveMethodNamesFor("range")}, true
+	}
+	return runtime.ClassMetadata{}, false
+}
+
+func vmPrimitiveMethodNamesFor(typeName string) []string {
+	switch typeName {
+	case "list":
+		return []string{"append", "contains", "filter", "first", "indexOf", "insert", "isEmpty", "join", "last", "length", "map", "pop", "prepend", "push", "remove", "reverse", "set", "slice", "sort", "toList", "unshift"}
+	case "dict":
+		return []string{"contains", "entries", "get", "insert", "isEmpty", "keys", "length", "remove", "set", "values"}
+	case "set":
+		return []string{"add", "contains", "difference", "intersection", "isEmpty", "length", "remove", "toList", "union"}
+	case "string":
+		return []string{"chars", "codeAt", "contains", "endsWith", "format", "indexOf", "isEmpty", "length", "lower", "padLeft", "padRight", "replace", "split", "startsWith", "substring", "toBool", "toDecimal", "toFloat", "toInt", "trim", "trimLeft", "trimRight", "upper"}
+	case "bytes":
+		return []string{"contains", "get", "isEmpty", "length", "toBase64", "toHex", "toString"}
+	case "range":
+		return []string{"contains", "first", "isEmpty", "last", "length", "toList"}
+	}
+	return nil
 }
 
 func runtimeClassMetadata(value *runtime.Class) (runtime.ClassMetadata, bool) {
@@ -6060,6 +6534,65 @@ func classMethodMetadata(class runtime.BytecodeClass, key string, static bool) *
 	}
 	metadata := methods[0]
 	return &metadata
+}
+
+// decoratorMetadataDictFromAST mirrors decoratorMetadataDict for AST-
+// shaped decorators carried on runtime.Class.Fields. Used by the
+// cross-chunk reflect.fields path where the field's decorators were
+// rebuilt from ast nodes (see decoratorsToAST). Only literal-shape
+// args are reproduced; the named-args map is preserved for parity.
+func decoratorMetadataDictFromAST(decorator ast.Decorator) runtime.Dict {
+	entries := map[string]runtime.DictEntry{}
+	name := ""
+	if decorator.Name != nil {
+		name = decorator.Name.Value
+	}
+	putBytecodeDict(entries, "name", runtime.String{Value: name})
+	putBytecodeDict(entries, "target", runtime.String{Value: "field"})
+	args := []runtime.Value{}
+	named := map[string]runtime.DictEntry{}
+	for _, arg := range decorator.Arguments {
+		v := literalValueForExpression(arg.Value)
+		if arg.Name != nil {
+			putBytecodeDict(named, arg.Name.Value, v)
+		} else {
+			args = append(args, v)
+		}
+	}
+	putBytecodeDict(entries, "args", runtime.List{Elements: args})
+	putBytecodeDict(entries, "namedArgs", runtime.Dict{Entries: named})
+	return runtime.Dict{Entries: entries}
+}
+
+// literalValueForExpression is the inverse of literalExpressionForValue
+// (used during decoratorsToAST). For decorator-arg AST nodes we know
+// were rebuilt from literal values, recover the runtime value.
+func literalValueForExpression(expr ast.Expression) runtime.Value {
+	switch e := expr.(type) {
+	case *ast.StringLiteral:
+		return runtime.String{Value: e.Value}
+	case *ast.IntegerLiteral:
+		n, err := runtime.NewIntLiteral(e.Value)
+		if err == nil && n.Value.IsInt64() {
+			return runtime.SmallInt{Value: n.Value.Int64()}
+		}
+		if err == nil {
+			return n
+		}
+	case *ast.FloatLiteral:
+		f, err := strconv.ParseFloat(e.Value, 64)
+		if err == nil {
+			return runtime.Float{Value: f}
+		}
+	case *ast.Literal:
+		switch v := e.Value.(type) {
+		case bool:
+			return runtime.Bool{Value: v}
+		case nil:
+			return runtime.Null{}
+		}
+	}
+	return runtime.Null{}
 }
 
 func decoratorMetadataDict(decorator runtime.DecoratorMetadata) runtime.Dict {
@@ -6776,6 +7309,11 @@ func (vm *VM) classFunctionMetadata(methods map[string][]int64, target string, p
 }
 
 func (vm *VM) reflectConstructors(arg runtime.Value) (runtime.Value, error) {
+	/* Cross-chunk class: dispatch through the moduleLoader so the
+	 * index resolves against the chunk that declared the class. */
+	if bc, ok := arg.(runtime.BytecodeClass); ok && bc.Module != vm.moduleName && vm.moduleLoader != nil {
+		return vm.moduleLoader.ConstructorsForModuleClass(bc)
+	}
 	var classIndex int64 = -1
 	switch value := arg.(type) {
 	case runtime.BytecodeClass:
@@ -7779,6 +8317,69 @@ func (vm *VM) CallClosure(closure runtime.BytecodeClosure, args []runtime.Value)
 	return vm.callCallable(closure, args)
 }
 
+// ReflectConstructorsForChunkClass is the public entry the moduleLoader
+// calls into to evaluate `reflect.constructors(class)` against the
+// chunk that declared the class.
+func (vm *VM) ReflectConstructorsForChunkClass(class runtime.BytecodeClass) (runtime.Value, error) {
+	return vm.reflectConstructors(class)
+}
+
+// DeserializeIntoChunkClass is the public entry the moduleLoader uses
+// to deserialize a class declared in this VM's chunk. It bypasses the
+// cross-module dispatch in deserializeIntoClass (we are already on the
+// right VM) and goes straight to the local logic.
+func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, error) {
+	if class.Index < 0 || int(class.Index) >= len(vm.chunk.Classes) {
+		return nil, fmt.Errorf("deserialize %s: class index out of range", class.Name)
+	}
+	classInfo := vm.chunk.Classes[class.Index]
+	if indices, ok := vm.lookupStaticMethod(classInfo, "__deserialize__"); ok && len(indices) > 0 {
+		args := []runtime.Value{value}
+		functionIndex, err := vm.selectRuntimeFunction(Instruction{}, "__deserialize__", indices, args, 0)
+		if err != nil {
+			return nil, fmt.Errorf("deserialize %s: %w", class.Name, err)
+		}
+		return vm.CallFunctionRaw(functionIndex, args)
+	}
+	dict, ok := value.(runtime.Dict)
+	if !ok {
+		return nil, fmt.Errorf("deserialize %s: expected dict, got %s", class.Name, value.TypeName())
+	}
+	if len(classInfo.ConstructorIndices) == 0 {
+		v, err := vm.ConstructClass(class.Index, nil)
+		if err != nil {
+			return nil, err
+		}
+		instance, ok := v.(*runtime.Instance)
+		if !ok {
+			return v, nil
+		}
+		for _, fieldName := range classInfo.FieldNames {
+			key := runtime.String{Value: fieldName}
+			entry, hit := dict.Entries[native.DictKey(key)]
+			if hit {
+				instance.Fields[fieldName] = entry.Value
+			}
+		}
+		return instance, nil
+	}
+	ctorIndex := classInfo.ConstructorIndices[0]
+	if ctorIndex < 0 || int(ctorIndex) >= len(vm.chunk.Functions) {
+		return nil, fmt.Errorf("deserialize %s: constructor index out of range", class.Name)
+	}
+	ctor := vm.chunk.Functions[ctorIndex]
+	args := make([]runtime.Value, 0, len(ctor.ParamNames))
+	for _, paramName := range ctor.ParamNames {
+		key := runtime.String{Value: paramName}
+		entry, hit := dict.Entries[native.DictKey(key)]
+		if !hit {
+			return nil, fmt.Errorf("deserialize %s: missing field %q", class.Name, paramName)
+		}
+		args = append(args, entry.Value)
+	}
+	return vm.ConstructClass(class.Index, args)
+}
+
 func (vm *VM) ConstructClass(index int64, args []runtime.Value) (runtime.Value, error) {
 	if index < 0 || int(index) >= len(vm.chunk.Classes) {
 		return nil, fmt.Errorf("class index out of range")
@@ -8082,29 +8683,188 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 		return nil
 	}
 	if instance, ok := value.(*runtime.Instance); ok {
-		classInfo, ok := vm.classInfo(instance.Class.Name)
-		vm.push(runtime.Bool{Value: ok && (vm.classMatches(classInfo, target) || vm.classImplements(classInfo, target))})
+		// Try the chunk-local ClassInfo first (cheaper and lets
+		// classImplements consult the per-chunk interface table).
+		// Fall back to a direct walk of the runtime.Class parent
+		// chain so cross-chunk class hierarchies - e.g. a class
+		// imported from another module - also resolve correctly.
+		stripped := stripModulePrefix(target)
+		if classInfo, ok := vm.classInfo(instance.Class.Name); ok {
+			if vm.classMatches(classInfo, stripped) || vm.classImplements(classInfo, stripped) {
+				vm.push(runtime.Bool{Value: true})
+				return nil
+			}
+		}
+		if runtimeClassMatches(instance.Class, stripped) {
+			vm.push(runtime.Bool{Value: true})
+			return nil
+		}
+		vm.push(runtime.Bool{Value: false})
+		return nil
+	}
+	if errValue, ok := value.(runtime.Error); ok {
+		// Error-derived class instances are wrapped as runtime.Error
+		// rather than *runtime.Instance. Walk the parent chain
+		// captured at construction so `instanceof Parent` matches an
+		// error subclass even when the parent class was declared in
+		// another module.
+		stripped := stripModulePrefix(target)
+		vm.push(runtime.Bool{Value: vm.errorClassMatches(errValue, stripped)})
+		return nil
+	}
+	// `instanceof list<int>` and friends: split off the generic args
+	// and dispatch element-aware matching. Tagged collections compare
+	// the recorded element types; untagged collections walk elements.
+	if base, args, ok := vmSplitGenericTypeName(target); ok {
+		vm.push(runtime.Bool{Value: vmCollectionMatchesGeneric(value, base, args)})
 		return nil
 	}
 	vm.push(runtime.Bool{Value: value.TypeName() == target})
 	return nil
 }
 
-func (vm *VM) cast(instruction Instruction) error {
+func vmSplitGenericTypeName(typeName string) (string, []string, bool) {
+	if strings.HasPrefix(typeName, "?") {
+		typeName = typeName[1:]
+	}
+	lt := strings.IndexByte(typeName, '<')
+	if lt < 0 || !strings.HasSuffix(typeName, ">") {
+		return "", nil, false
+	}
+	base := typeName[:lt]
+	inner := typeName[lt+1 : len(typeName)-1]
+	var args []string
+	depth := 0
+	start := 0
+	for i := 0; i < len(inner); i++ {
+		switch inner[i] {
+		case '<':
+			depth++
+		case '>':
+			depth--
+		case ',':
+			if depth == 0 {
+				args = append(args, strings.TrimSpace(inner[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	if start <= len(inner) {
+		args = append(args, strings.TrimSpace(inner[start:]))
+	}
+	return base, args, true
+}
+
+func vmCollectionMatchesGeneric(value runtime.Value, base string, args []string) bool {
+	switch v := value.(type) {
+	case runtime.List:
+		if base != "list" || len(args) != 1 {
+			return false
+		}
+		if len(v.ElementTypes) >= 1 {
+			return strings.EqualFold(v.ElementTypes[0], args[0])
+		}
+		for _, el := range v.Elements {
+			if !vmValueMatchesSimpleType(el, args[0]) {
+				return false
+			}
+		}
+		return true
+	case runtime.Set:
+		if base != "set" || len(args) != 1 {
+			return false
+		}
+		if len(v.ElementTypes) >= 1 {
+			return strings.EqualFold(v.ElementTypes[0], args[0])
+		}
+		for _, e := range v.Elements {
+			if !vmValueMatchesSimpleType(e.Value, args[0]) {
+				return false
+			}
+		}
+		return true
+	case runtime.Dict:
+		if base != "dict" || len(args) != 2 {
+			return false
+		}
+		if len(v.ElementTypes) >= 2 {
+			return strings.EqualFold(v.ElementTypes[0], args[0]) && strings.EqualFold(v.ElementTypes[1], args[1])
+		}
+		for _, e := range v.Entries {
+			if !vmValueMatchesSimpleType(e.Key, args[0]) {
+				return false
+			}
+			if !vmValueMatchesSimpleType(e.Value, args[1]) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func vmValueMatchesSimpleType(value runtime.Value, target string) bool {
+	if base, args, ok := vmSplitGenericTypeName(target); ok {
+		return vmCollectionMatchesGeneric(value, base, args)
+	}
+	switch value.(type) {
+	case runtime.SmallInt, runtime.Int:
+		return target == "int"
+	case runtime.Float:
+		return target == "float"
+	case runtime.Decimal:
+		return target == "decimal"
+	case runtime.String:
+		return target == "string"
+	case runtime.Bool:
+		return target == "bool"
+	case runtime.Bytes:
+		return target == "bytes"
+	}
+	return strings.EqualFold(value.TypeName(), target)
+}
+
+func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 	target, err := vm.popString(instruction, "cast target must be string")
 	if err != nil {
-		return err
+		return 0, err
 	}
 	value, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.runtimeError(instruction, "%s", err.Error())
+	}
+	// Class / interface / parent-chain widening cast: an Error or
+	// Instance is assignable to any ancestor in its chain, with the
+	// module prefix on the target name stripped (so `e as errors.X`
+	// matches `e` whose class extends X declared in any module).
+	stripped := stripModulePrefix(target)
+	if errValue, ok := value.(runtime.Error); ok {
+		if vm.errorClassMatches(errValue, stripped) {
+			vm.push(value)
+			return ip, nil
+		}
+	}
+	if instance, ok := value.(*runtime.Instance); ok {
+		if classInfo, ok := vm.classInfo(instance.Class.Name); ok {
+			if vm.classMatches(classInfo, stripped) || vm.classImplements(classInfo, stripped) {
+				vm.push(value)
+				return ip, nil
+			}
+		}
+		if runtimeClassMatches(instance.Class, stripped) {
+			vm.push(value)
+			return ip, nil
+		}
 	}
 	cast, err := castValue(value, target)
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		/* Cast failures are user-catchable via `try / catch (RuntimeError e)`.
+		 * Matches the evaluator, where castValue's error bubbles into the
+		 * try frame as a thrown RuntimeError. */
+		return vm.throwTyped(instruction, ip, "RuntimeError", err.Error())
 	}
 	vm.push(cast)
-	return nil
+	return ip, nil
 }
 
 func (vm *VM) selectRuntimeFunction(instruction Instruction, name string, indices []int64, args []runtime.Value, paramOffset int) (int64, error) {
@@ -8372,6 +9132,9 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 	if typeParams[spec.baseLower] {
 		return true
 	}
+	if spec.kind == vmTypeAny {
+		return true
+	}
 	// Null is assignable to any nullable type, regardless of element
 	// parameterisation. The element walk below would otherwise type-assert
 	// the null as a List/Set/Dict and panic.
@@ -8536,12 +9299,33 @@ func (vm *VM) runtimeValueMatchesTypeSpec(value runtime.Value, spec vmTypeSpec) 
 	if value.TypeName() == spec.base {
 		return true
 	}
+	stripped := stripModulePrefix(spec.base)
+	// Error-derived values: walk the captured parent chain so a
+	// parameter typed `HttpException` accepts a `BadRequestError`.
+	if errValue, ok := value.(runtime.Error); ok {
+		if strings.EqualFold(errValue.Class, stripped) {
+			return true
+		}
+		for _, ancestor := range errValue.Parents {
+			if strings.EqualFold(ancestor, stripped) {
+				return true
+			}
+		}
+		return false
+	}
 	instance, ok := value.(*runtime.Instance)
 	if !ok {
 		return false
 	}
-	classInfo, ok := vm.classInfo(instance.Class.Name)
-	return ok && (vm.classMatches(classInfo, spec.base) || vm.classImplements(classInfo, spec.base))
+	if classInfo, ok := vm.classInfo(instance.Class.Name); ok {
+		if vm.classMatches(classInfo, stripped) || vm.classImplements(classInfo, stripped) {
+			return true
+		}
+	}
+	// Fall back to the cross-chunk runtime.Class chain (set up at
+	// instance construction) so parameters typed with an imported
+	// class still match.
+	return runtimeClassMatches(instance.Class, stripped)
 }
 
 func (vm *VM) methodCallSpread(instruction Instruction, ip int) (int, error) {
@@ -8612,7 +9396,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		}
 		result, err := vm.callCallable(target.Callable, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return vm.propagateModuleError(instruction, ip, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -8623,7 +9407,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		}
 		result, err := vm.callCallable(function, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return vm.propagateModuleError(instruction, ip, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -8634,7 +9418,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		}
 		result, err := vm.callCallable(overloaded, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return vm.propagateModuleError(instruction, ip, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -8657,7 +9441,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			}
 			result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, nameValue.Value, instance, vm.wrapStatefulNativeArgs(args))
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return vm.propagateModuleError(instruction, ip, err)
 			}
 			vm.push(result)
 			return ip, nil
@@ -8841,7 +9625,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			}
 			result, err := vm.moduleLoader.CallModuleFunction(function, vm.wrapStatefulNativeArgs(args))
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return vm.propagateModuleError(instruction, ip, err)
 			}
 			vm.push(result)
 			return ip, nil
@@ -8852,7 +9636,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			}
 			result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs(args))
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return vm.propagateModuleError(instruction, ip, err)
 			}
 			vm.push(result)
 			return ip, nil
@@ -8865,19 +9649,44 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		}
 		result, err := vm.callCallable(function, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return vm.propagateModuleError(instruction, ip, err)
 		}
 		vm.push(result)
 		return ip, nil
 	}
 	if class, ok := receiver.(runtime.BytecodeClass); ok {
+		/* `Class(...args)` at runtime (e.g. a class ref passed
+		 * through a variable, or one obtained from `reflect.class`)
+		 * compiles to "push the value, OpMethodCall __invoke".
+		 * Treat that as construction rather than a static-method
+		 * lookup of a method literally named "__invoke". */
+		if nameValue.Value == "__invoke" {
+			/* Class declared in a different chunk: route through the
+			 * moduleLoader so the index resolves against the right
+			 * chunk. Main-chunk classes have Module="" so the check
+			 * looks at both directions. */
+			if class.Module != vm.moduleName && vm.moduleLoader != nil {
+				result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs(args))
+				if err != nil {
+					return vm.propagateModuleError(instruction, ip, err)
+				}
+				vm.push(result)
+				return ip, nil
+			}
+			result, err := vm.ConstructClass(class.Index, args)
+			if err != nil {
+				return 0, vm.runtimeError(instruction, "%s", err.Error())
+			}
+			vm.push(result)
+			return ip, nil
+		}
 		if class.Module != "" && class.Module != vm.moduleName {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
 			result, err := vm.moduleLoader.CallModuleStaticMethod(class, nameValue.Value, vm.wrapStatefulNativeArgs(args))
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return vm.propagateModuleError(instruction, ip, err)
 			}
 			vm.push(result)
 			return ip, nil
@@ -8917,7 +9726,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			}
 			result, err := vm.moduleLoader.CallModuleClosure(closure, vm.wrapStatefulNativeArgs(args))
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return vm.propagateModuleError(instruction, ip, err)
 			}
 			vm.push(result)
 			return ip, nil
@@ -9038,7 +9847,7 @@ func (vm *VM) methodCallNamed(instruction Instruction, ip int) (int, error) {
 			}
 			result, err := vm.moduleLoader.CallModuleClosure(closure, vm.wrapStatefulNativeArgs(args))
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return vm.propagateModuleError(instruction, ip, err)
 			}
 			vm.push(result)
 			return ip, nil
@@ -9150,6 +9959,7 @@ func (vm *VM) lookupStaticMethod(classInfo ClassInfo, name string) ([]int64, boo
 }
 
 func (vm *VM) classMatches(classInfo ClassInfo, target string) bool {
+	target = stripModulePrefix(target)
 	if strings.EqualFold(classInfo.Name, target) {
 		return true
 	}
@@ -9159,7 +9969,294 @@ func (vm *VM) classMatches(classInfo ClassInfo, target string) bool {
 	return false
 }
 
+// stripModulePrefix returns the trailing identifier of a possibly
+// qualified type name. "mod.Sub" -> "Sub"; "Sub" -> "Sub". Matches
+// `simpleTypeName` in the evaluator.
+func stripModulePrefix(typeName string) string {
+	if dot := strings.LastIndexByte(typeName, '.'); dot >= 0 {
+		return typeName[dot+1:]
+	}
+	return typeName
+}
+
+// runtimeInterfacesForClass builds the runtime.Class.Implements slice
+// for cross-chunk instanceof. Each implemented interface is captured by
+// name (and a flattened parent chain when reachable in the current
+// chunk) so `instance instanceof iface` resolves regardless of which
+// module declared the interface.
+func (vm *VM) runtimeInterfacesForClass(classInfo ClassInfo) []*runtime.Interface {
+	if len(classInfo.Implements) == 0 {
+		return nil
+	}
+	out := make([]*runtime.Interface, 0, len(classInfo.Implements))
+	for _, name := range classInfo.Implements {
+		out = append(out, vm.buildRuntimeInterface(name, map[string]bool{}))
+	}
+	return out
+}
+
+func (vm *VM) buildRuntimeInterface(name string, seen map[string]bool) *runtime.Interface {
+	if name == "" || seen[strings.ToLower(name)] {
+		return nil
+	}
+	seen[strings.ToLower(name)] = true
+	iface := &runtime.Interface{Name: name}
+	if info, ok := vm.lookupInterfaceInfo(name); ok {
+		for _, parentName := range info.Parents {
+			if p := vm.buildRuntimeInterface(parentName, seen); p != nil {
+				iface.Parents = append(iface.Parents, p)
+			}
+		}
+	}
+	return iface
+}
+
+// runtimeClassForParent constructs a runtime.Class for the parent of the
+// given ClassInfo, walking the ParentIndex chain. Returns nil when the
+// class has no parent. The returned value's Parent field is set
+// recursively so the full chain is reachable via Go pointers - this
+// lets cross-module `instanceof` / `reflect.parent` find ancestors
+// without falling back to the chunk-local classIndex.
+func (vm *VM) runtimeClassForParent(classInfo ClassInfo) *runtime.Class {
+	if classInfo.ParentIndex < 0 || int(classInfo.ParentIndex) >= len(vm.chunk.Classes) {
+		return nil
+	}
+	parentInfo := vm.chunk.Classes[classInfo.ParentIndex]
+	return &runtime.Class{
+		Name:           parentInfo.Name,
+		Module:         vm.moduleName,
+		TypeParameters: append([]string(nil), parentInfo.TypeParameters...),
+		Methods:        vm.runtimeMethodWrappers(classInfo.ParentIndex),
+		MethodMetadata: vm.classFunctionMetadata(parentInfo.Methods, "method", 1),
+		StaticMetadata: vm.classFunctionMetadata(parentInfo.StaticMethods, "staticMethod", 0),
+		Parent:         vm.runtimeClassForParent(parentInfo),
+		Implements:     vm.runtimeInterfacesForClass(parentInfo),
+	}
+}
+
+// errorClassMatches walks an error class's parent chain so
+// `instanceof BadRequestError` / `instanceof HttpException` /
+// `instanceof RuntimeError` all match an error-derived value, even
+// when the error class was defined in another module than the chunk
+// currently executing. Match is case-insensitive.
+func (vm *VM) errorClassMatches(errValue runtime.Error, target string) bool {
+	if strings.EqualFold(errValue.Class, target) {
+		return true
+	}
+	for _, ancestor := range errValue.Parents {
+		if strings.EqualFold(ancestor, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// reflectFieldsResult returns the per-field metadata list shape that
+// reflect.fields produces - {name, type, nullable, hasDefault} dicts.
+// Pulls type info from the chunk's class table when available, falling
+// back to "any" for builtin classes or compile-time targets without
+// type info.
+func (vm *VM) reflectFieldsResult(target runtime.Value, metadata runtime.ClassMetadata) runtime.Value {
+	if instance, ok := target.(*runtime.Instance); ok && instance != nil && instance.Class != nil {
+		// Prefer the chunk-local ClassInfo when the instance's class
+		// is in this VM's classIndex - it carries full FieldTypes
+		// strings. Fall back to runtime.Class.Fields (populated at
+		// construction in any originating chunk) for cross-chunk
+		// instances; that path loses the type-string detail but
+		// retains decorators so framework reflection still works
+		// across module boundaries.
+		if idx, ok := vm.classIndex[strings.ToLower(instance.Class.Name)]; ok && int(idx) < len(vm.chunk.Classes) {
+			target = vm.bytecodeClassFromInfo(vm.chunk.Classes[idx], int64(idx))
+		} else if len(instance.Class.Fields) > 0 {
+			entries := make([]runtime.Value, 0, len(instance.Class.Fields))
+			for _, field := range instance.Class.Fields {
+				fieldType := "any"
+				nullable := false
+				if field.Type != nil {
+					fieldType = field.Type.String()
+					nullable = field.Type.Nullable
+				}
+				dictEntries := map[string]runtime.DictEntry{
+					native.DictKey(runtime.String{Value: "name"}):       {Key: runtime.String{Value: "name"}, Value: runtime.String{Value: field.Name}},
+					native.DictKey(runtime.String{Value: "type"}):       {Key: runtime.String{Value: "type"}, Value: runtime.String{Value: fieldType}},
+					native.DictKey(runtime.String{Value: "nullable"}):   {Key: runtime.String{Value: "nullable"}, Value: runtime.Bool{Value: nullable}},
+					native.DictKey(runtime.String{Value: "hasDefault"}): {Key: runtime.String{Value: "hasDefault"}, Value: runtime.Bool{Value: field.Default != nil}},
+				}
+				/* Cross-chunk reflection: the field decorators come
+				 * from the originating chunk's ClassInfo and were
+				 * persisted onto runtime.Class.Fields at instance
+				 * construction time. Surface them on the same shape
+				 * as the bytecode-class path. */
+				if len(field.Decorators) > 0 {
+					decValues := make([]runtime.Value, 0, len(field.Decorators))
+					for _, dec := range field.Decorators {
+						decValues = append(decValues, decoratorMetadataDictFromAST(dec))
+					}
+					key := runtime.String{Value: "decorators"}
+					dictEntries[native.DictKey(key)] = runtime.DictEntry{Key: key, Value: runtime.List{Elements: decValues}}
+				}
+				entries = append(entries, runtime.Dict{Entries: dictEntries})
+			}
+			return runtime.List{Elements: entries}
+		}
+	}
+	// Pull type info from the chunk's class table when reachable
+	// (BytecodeClass / DecoratorTarget / string-name).
+	var classInfo ClassInfo
+	var haveClass bool
+	switch v := target.(type) {
+	case runtime.BytecodeClass:
+		if v.Index >= 0 && int(v.Index) < len(vm.chunk.Classes) {
+			classInfo = vm.chunk.Classes[v.Index]
+			haveClass = true
+		}
+	case runtime.DecoratorTarget:
+		if v.Class != nil {
+			if idx, ok := vm.classIndex[strings.ToLower(v.Class.Name)]; ok && int(idx) < len(vm.chunk.Classes) {
+				classInfo = vm.chunk.Classes[idx]
+				haveClass = true
+			}
+		}
+	case runtime.String:
+		if idx, ok := vm.classIndex[strings.ToLower(v.Value)]; ok && int(idx) < len(vm.chunk.Classes) {
+			classInfo = vm.chunk.Classes[idx]
+			haveClass = true
+		}
+	}
+	if haveClass {
+		type fieldEntry struct {
+			name string
+			dict runtime.Value
+		}
+		entries := make([]fieldEntry, 0, len(classInfo.FieldNames))
+		for i, name := range classInfo.FieldNames {
+			fieldType := "any"
+			nullable := false
+			if i < len(classInfo.FieldTypes) && classInfo.FieldTypes[i] != "" {
+				fieldType = classInfo.FieldTypes[i]
+				nullable = strings.HasPrefix(fieldType, "?")
+			}
+			fieldDict := map[string]runtime.DictEntry{
+				native.DictKey(runtime.String{Value: "name"}):       {Key: runtime.String{Value: "name"}, Value: runtime.String{Value: name}},
+				native.DictKey(runtime.String{Value: "type"}):       {Key: runtime.String{Value: "type"}, Value: runtime.String{Value: fieldType}},
+				native.DictKey(runtime.String{Value: "nullable"}):   {Key: runtime.String{Value: "nullable"}, Value: runtime.Bool{Value: nullable}},
+				native.DictKey(runtime.String{Value: "hasDefault"}): {Key: runtime.String{Value: "hasDefault"}, Value: runtime.Bool{Value: false}},
+			}
+			if i < len(classInfo.FieldDecorators) {
+				decValues := make([]runtime.Value, 0, len(classInfo.FieldDecorators[i]))
+				for _, dec := range classInfo.FieldDecorators[i] {
+					decValues = append(decValues, decoratorMetadataDict(dec))
+				}
+				key := runtime.String{Value: "decorators"}
+				fieldDict[native.DictKey(key)] = runtime.DictEntry{Key: key, Value: runtime.List{Elements: decValues}}
+			}
+			entries = append(entries, fieldEntry{name: name, dict: runtime.Dict{Entries: fieldDict}})
+		}
+		// Sort alphabetically by name to match the evaluator's ordering.
+		sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
+		out := make([]runtime.Value, 0, len(entries))
+		for _, e := range entries {
+			out = append(out, e.dict)
+		}
+		return runtime.List{Elements: out}
+	}
+	// Last resort: name-only entries with type="any".
+	entries := make([]runtime.Value, 0, len(metadata.Fields))
+	for _, name := range metadata.Fields {
+		entries = append(entries, runtime.Dict{Entries: map[string]runtime.DictEntry{
+			native.DictKey(runtime.String{Value: "name"}):       {Key: runtime.String{Value: "name"}, Value: runtime.String{Value: name}},
+			native.DictKey(runtime.String{Value: "type"}):       {Key: runtime.String{Value: "type"}, Value: runtime.String{Value: "any"}},
+			native.DictKey(runtime.String{Value: "nullable"}):   {Key: runtime.String{Value: "nullable"}, Value: runtime.Bool{Value: false}},
+			native.DictKey(runtime.String{Value: "hasDefault"}): {Key: runtime.String{Value: "hasDefault"}, Value: runtime.Bool{Value: false}},
+		}})
+	}
+	return runtime.List{Elements: entries}
+}
+
+// errorParentChain returns the parent chain for an error-derived
+// ClassInfo, immediate parent first, the built-in chain (RuntimeError
+// -> Error) terminating at the root. Used at error-value construction
+// to capture the chain so cross-module instanceof checks work without
+// requiring access to the originating chunk.
+func (vm *VM) errorParentChain(classInfo ClassInfo) []string {
+	var parents []string
+	visited := map[string]bool{}
+	current := classInfo
+	for {
+		if current.ParentName == "" {
+			break
+		}
+		if visited[current.ParentName] {
+			break
+		}
+		visited[current.ParentName] = true
+		parents = append(parents, current.ParentName)
+		if classIndex, ok := vm.classIndex[strings.ToLower(current.ParentName)]; ok && int(classIndex) < len(vm.chunk.Classes) {
+			current = vm.chunk.Classes[classIndex]
+			continue
+		}
+		// Cross-chunk or built-in parent - extend via the static
+		// built-in chain.
+		for next := isBuiltinErrorChainParent(current.ParentName); next != ""; next = isBuiltinErrorChainParent(next) {
+			if visited[next] {
+				break
+			}
+			visited[next] = true
+			parents = append(parents, next)
+		}
+		break
+	}
+	return parents
+}
+
+// isBuiltinErrorChainParent returns the static parent name for built-in
+// error class names (RuntimeError -> Error etc.). Empty when the input
+// has no static parent.
+func isBuiltinErrorChainParent(class string) string {
+	switch class {
+	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError":
+		return "Error"
+	}
+	return ""
+}
+
+// runtimeClassMatches walks an instance's runtime.Class parent chain
+// (Go pointer-following) and returns true if any ancestor name (or any
+// implemented interface name) matches the target. Used as a fallback
+// in instanceof / cast / catch when the instance's class was defined
+// in a module other than the active chunk, so vm.classIndex doesn't
+// have it.
+func runtimeClassMatches(class *runtime.Class, target string) bool {
+	for c := class; c != nil; c = c.Parent {
+		if strings.EqualFold(stripModulePrefix(c.Name), target) {
+			return true
+		}
+		for _, iface := range c.Implements {
+			if iface != nil && runtimeInterfaceMatches(iface, target) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func runtimeInterfaceMatches(iface *runtime.Interface, target string) bool {
+	if iface == nil {
+		return false
+	}
+	if strings.EqualFold(stripModulePrefix(iface.Name), target) {
+		return true
+	}
+	for _, parent := range iface.Parents {
+		if runtimeInterfaceMatches(parent, target) {
+			return true
+		}
+	}
+	return false
+}
+
 func (vm *VM) classImplements(classInfo ClassInfo, target string) bool {
+	target = stripModulePrefix(target)
 	for _, implemented := range classInfo.Implements {
 		if vm.interfaceMatches(implemented, target) {
 			return true
@@ -10275,6 +11372,8 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			return nil, fmt.Errorf("toList expects no arguments")
 		}
 		switch value := receiver.(type) {
+		case runtime.List:
+			return value, nil
 		case runtime.Set:
 			return runtime.List{Elements: orderedSetValues(value)}, nil
 		case runtime.Range:
@@ -11140,6 +12239,10 @@ func (vm *VM) errorsIs(args []runtime.Value) (runtime.Value, error) {
 }
 
 func (vm *VM) errorTypeMatches(class string, target string) bool {
+	// Strip an optional module prefix - `catch (errors.HttpException e)`
+	// or `instanceof errors.HttpException` matches the bare class name
+	// the parent chain records.
+	target = stripModulePrefix(target)
 	if target == "" || target == "Error" {
 		return true
 	}
@@ -11150,11 +12253,33 @@ func (vm *VM) errorTypeMatches(class string, target string) bool {
 			return false
 		}
 		seen[key] = true
-		if strings.EqualFold(current, target) {
+		if strings.EqualFold(stripModulePrefix(current), target) {
 			return true
 		}
 	}
 	return false
+}
+
+// errorValueMatches is the value-aware variant: when the runtime.Error
+// carries a Parents chain (populated at construction for error-derived
+// classes) the chain takes precedence over vm.errorParent's chunk-local
+// walk, so cross-module catch and `instanceof Parent` resolve correctly.
+func (vm *VM) errorValueMatches(err runtime.Error, target string) bool {
+	target = stripModulePrefix(target)
+	if target == "" || target == "Error" {
+		return true
+	}
+	if strings.EqualFold(stripModulePrefix(err.Class), target) {
+		return true
+	}
+	for _, ancestor := range err.Parents {
+		if strings.EqualFold(stripModulePrefix(ancestor), target) {
+			return true
+		}
+	}
+	// Fall back to the chunk-local walk for built-in error classes
+	// whose parent chain isn't recorded in Parents.
+	return vm.errorTypeMatches(err.Class, target)
 }
 
 func (vm *VM) errorParent(class string) string {
@@ -11223,6 +12348,16 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 	}
 	switch target {
 	case "string":
+		/* `bytes as string` decodes UTF-8 (errors on invalid bytes)
+		 * rather than producing the hex form `value.Inspect()` returns
+		 * for bytes. Other types still use `Inspect()` as the canonical
+		 * string representation. */
+		if v, ok := value.(runtime.Bytes); ok {
+			if !utf8.Valid(v.Value) {
+				return nil, fmt.Errorf("bytes value is not valid UTF-8")
+			}
+			return runtime.String{Value: string(v.Value)}, nil
+		}
 		return runtime.String{Value: value.Inspect()}, nil
 	case "int":
 		switch v := value.(type) {
@@ -11240,19 +12375,22 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 			}
 			return value, nil
 		case runtime.Decimal:
-			if !v.Value.IsInt() {
-				return nil, fmt.Errorf("cannot cast non-integer decimal to int")
+			/* Truncate toward zero: big.Int.Quo handles arbitrary
+			 * precision correctly. */
+			num := new(big.Int).Set(v.Value.Num())
+			den := v.Value.Denom()
+			q := new(big.Int).Quo(num, den)
+			if q.IsInt64() {
+				return runtime.SmallInt{Value: q.Int64()}, nil
 			}
-			n := v.Value.Num()
-			if n.IsInt64() {
-				return runtime.SmallInt{Value: n.Int64()}, nil
-			}
-			return runtime.Int{Value: n}, nil
+			return runtime.Int{Value: q}, nil
 		case runtime.Float:
-			if v.Value != math.Trunc(v.Value) {
-				return nil, fmt.Errorf("cannot cast non-integer float to int")
+			return runtime.SmallInt{Value: int64(math.Trunc(v.Value))}, nil
+		case runtime.Bool:
+			if v.Value {
+				return runtime.SmallInt{Value: 1}, nil
 			}
-			return runtime.SmallInt{Value: int64(v.Value)}, nil
+			return runtime.SmallInt{Value: 0}, nil
 		}
 	case "decimal":
 		switch v := value.(type) {
@@ -11303,6 +12441,39 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 			}
 		case runtime.Null:
 			return runtime.Bool{Value: false}, nil
+		}
+	case "bytes":
+		/* `string as bytes` encodes UTF-8. Go strings are already UTF-8,
+		 * so we copy out the underlying byte sequence. The inverse
+		 * (`bytes as string`) is handled in the "string" case above. */
+		if v, ok := value.(runtime.String); ok {
+			b := make([]byte, len(v.Value))
+			copy(b, v.Value)
+			return runtime.Bytes{Value: b}, nil
+		}
+	case "list":
+		/* `set as list` materializes; the underlying map's range order
+		 * means the resulting list ordering is unspecified (sets are
+		 * unordered by design). */
+		if v, ok := value.(runtime.Set); ok {
+			out := make([]runtime.Value, 0, len(v.Elements))
+			for _, entry := range v.Elements {
+				out = append(out, entry.Value)
+			}
+			return runtime.List{Elements: out}, nil
+		}
+	case "set":
+		/* `list as set` de-duplicates. First occurrence wins. */
+		if v, ok := value.(runtime.List); ok {
+			elements := make(map[string]runtime.SetEntry, len(v.Elements))
+			for _, elem := range v.Elements {
+				k := native.DictKey(elem)
+				if _, seen := elements[k]; seen {
+					continue
+				}
+				elements[k] = runtime.SetEntry{Value: elem}
+			}
+			return runtime.Set{Elements: elements}, nil
 		}
 	}
 	return nil, fmt.Errorf("cannot cast %s to %s", value.TypeName(), target)
@@ -11683,4 +12854,47 @@ func (vm *VM) runtimeError(instruction Instruction, format string, args ...any) 
 		return fmt.Errorf("%s%s", base, trace)
 	}
 	return fmt.Errorf("bytecode runtime error: %s%s", message, trace)
+}
+
+// runtimeErrorWith wraps the formatted runtime-error message around a
+// caller-supplied inner error so the chain can be unwrapped with
+// errors.As. Used to thread a vmThrownError (carrying the underlying
+// runtime.Error) across a VM boundary so the calling VM can catch it.
+func (vm *VM) runtimeErrorWith(instruction Instruction, inner error, format string, args ...any) error {
+	message := fmt.Sprintf(format, args...)
+	trace := vm.vmStackTrace(instruction.Line)
+	var prefix string
+	if instruction.Line > 0 {
+		prefix = fmt.Sprintf("bytecode runtime error at %d:%d: %s%s", instruction.Line, instruction.Column, message, trace)
+	} else {
+		prefix = fmt.Sprintf("bytecode runtime error: %s%s", message, trace)
+	}
+	return &wrappedError{prefix: prefix, inner: inner}
+}
+
+// wrappedError preserves Unwrap support so callers can recover the
+// inner vmThrownError via errors.As while still seeing the formatted
+// runtime-error stack trace via Error().
+type wrappedError struct {
+	prefix string
+	inner  error
+}
+
+func (e *wrappedError) Error() string { return e.prefix }
+func (e *wrappedError) Unwrap() error { return e.inner }
+
+// propagateModuleError converts a Go error returned by a moduleLoader
+// dispatch into the calling VM's exception state. If the error wraps a
+// vmThrownError, the embedded runtime.Error is set as the calling VM's
+// pendingThrow and control jumps to the nearest exception handler so
+// `catch` clauses see the original typed throw rather than a stringified
+// "uncaught X: Y" message. All other errors are returned verbatim.
+func (vm *VM) propagateModuleError(instruction Instruction, ip int, err error) (int, error) {
+	var thrown vmThrownError
+	if errors.As(err, &thrown) {
+		captured := thrown.err
+		vm.pendingThrow = &captured
+		return vm.jumpToExceptionHandler(instruction, ip)
+	}
+	return 0, vm.runtimeError(instruction, "%s", err.Error())
 }

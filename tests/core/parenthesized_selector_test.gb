@@ -1,0 +1,43 @@
+/**
+ * @title Parenthesized selector invokes the value (1.0.2)
+ * @summary `(obj.fn)(args)` invokes the VALUE of `obj.fn`
+ * (typically a callable stored in a field) rather than dispatching
+ * `fn` as a method on `obj`. Without parens `obj.fn(args)` keeps
+ * its method-call interpretation.
+ */
+import test;
+
+class Container {
+    callable fn;
+
+    func Container(callable f) {
+        this.fn = f;
+    }
+
+    func dispatch(int x): int {
+        return (this.fn)(x);
+    }
+}
+
+class ParenthesizedSelectorTest extends test.Test {
+    @test
+    func parenthesizedSelectorCallsFieldValue(): void {
+        let c = Container(func(int n): int { return n * 3; });
+        this.assertEquals(21, c.dispatch(7));
+    }
+
+    @test
+    func parenthesizedSelectorAcceptsClosureWithCapture(): void {
+        let multiplier = 5;
+        let c = Container(func(int n): int { return n * multiplier; });
+        this.assertEquals(50, c.dispatch(10));
+    }
+
+    @test
+    func reassigningTheFieldUpdatesDispatch(): void {
+        let c = Container(func(int n): int { return n + 1; });
+        this.assertEquals(8, c.dispatch(7));
+        c.fn = func(int n): int { return n - 1; };
+        this.assertEquals(6, c.dispatch(7));
+    }
+}

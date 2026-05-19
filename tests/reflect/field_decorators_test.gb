@@ -1,0 +1,94 @@
+/**
+ * @title Field decorators + dotted decorator names (1.0.2)
+ * @summary `@`-prefixed annotations on field declarations inside a
+ * class body parse and persist into `reflect.fields(class)` as a
+ * per-field `decorators` list. Dotted decorator names like
+ * `@Assert.email` parse as a single composite identifier. Field
+ * decorators are pure metadata - never auto-executed.
+ */
+import test;
+import reflect;
+
+class User {
+    @Assert.email
+    string email;
+
+    @Assert.minLength(2)
+    @Assert.maxLength(64)
+    string name;
+
+    @Groups("read", "admin")
+    string passwordHash;
+
+    string plainField;
+}
+
+class FieldDecoratorTest extends test.Test {
+    @test
+    func plainFieldHasNoDecorators(): void {
+        for (entry in reflect.fields(User)) {
+            let f = entry as dict<string, any>;
+            if ((f["name"] as string) == "plainField") {
+                this.assertTrue(!f.contains("decorators")
+                    || (f["decorators"] as list<any>).length() == 0);
+            }
+        }
+    }
+
+    @test
+    func dottedDecoratorNamePreservedAsIs(): void {
+        for (entry in reflect.fields(User)) {
+            let f = entry as dict<string, any>;
+            if ((f["name"] as string) == "email") {
+                let decs = f["decorators"] as list<any>;
+                this.assertEquals(1, decs.length());
+                let d = decs[0] as dict<string, any>;
+                this.assertEquals("Assert.email", d["name"]);
+            }
+        }
+    }
+
+    @test
+    func multipleDecoratorsAccumulate(): void {
+        for (entry in reflect.fields(User)) {
+            let f = entry as dict<string, any>;
+            if ((f["name"] as string) == "name") {
+                let decs = f["decorators"] as list<any>;
+                this.assertEquals(2, decs.length());
+            }
+        }
+    }
+
+    @test
+    func decoratorArgsAreReadable(): void {
+        for (entry in reflect.fields(User)) {
+            let f = entry as dict<string, any>;
+            if ((f["name"] as string) == "name") {
+                for (d in f["decorators"] as list<any>) {
+                    let dec = d as dict<string, any>;
+                    if ((dec["name"] as string) == "Assert.minLength") {
+                        let args = dec["args"] as list<any>;
+                        this.assertEquals(2, args[0]);
+                    }
+                }
+            }
+        }
+    }
+
+    @test
+    func groupsArgsAreReadable(): void {
+        for (entry in reflect.fields(User)) {
+            let f = entry as dict<string, any>;
+            if ((f["name"] as string) == "passwordHash") {
+                let decs = f["decorators"] as list<any>;
+                this.assertEquals(1, decs.length());
+                let dec = decs[0] as dict<string, any>;
+                this.assertEquals("Groups", dec["name"]);
+                let args = dec["args"] as list<any>;
+                this.assertEquals(2, args.length());
+                this.assertEquals("read", args[0]);
+                this.assertEquals("admin", args[1]);
+            }
+        }
+    }
+}

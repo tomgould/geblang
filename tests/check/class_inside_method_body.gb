@@ -1,0 +1,15 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST reject a class declaration inside a
+ * function body. Nested class declarations aren't supported - the
+ * runtime registers classes globally, so a class declared in a
+ * block has no meaningful scope of its own. The parser flags it
+ * with a clear top-level-only message rather than letting the
+ * downstream analyzer fail with something opaque.
+ */
+func make(): int {
+    class Inner {
+        int x;
+    }
+    return 1;
+}

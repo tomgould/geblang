@@ -36,6 +36,7 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"geblang/internal/ast"
 	"geblang/internal/lexer"
@@ -91,6 +92,10 @@ type Evaluator struct {
 	dbRowsClass          *runtime.Class
 	streamIfaces         map[string]*runtime.Interface
 	errorClassParents    map[string]string
+	// globalClasses is the cross-module class registry. Every user
+	// class registers here at definition time so reflect.class(name)
+	// from any module can find it.
+	globalClasses        map[string]*runtime.Class
 	errorSentinels       map[string]*runtime.Class
 	deferFrames          []*deferFrame
 	yieldFrames          []*yieldFrame
@@ -487,7 +492,7 @@ func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []st
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, traces: map[int64]*traceSpan{}, webApps: map[int64]*webApp{}, websockets: map[int64]*websocket.Conn{}, netHandles: map[int64]*netHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, traces: map[int64]*traceSpan{}, webApps: map[int64]*webApp{}, websockets: map[int64]*websocket.Conn{}, netHandles: map[int64]*netHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}}
 	e.builtins = e.builtinModules()
 	// Register an InstanceInvoker so native code (e.g.
 	// convert.go's __serialize__ dispatch) can call class
@@ -515,7 +520,26 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 		return nil, fmt.Errorf("deserialize %s: expected dict, got %s", class.Name, value.TypeName())
 	}
 	if len(class.Constructors) == 0 {
-		return e.instantiateClass(class, nil)
+		// Classes without an explicit constructor get their fields
+		// populated directly from the dict, matching the implicit
+		// "data class" shape. Missing keys leave the default; extra
+		// keys are ignored.
+		v, err := e.instantiateClass(class, nil)
+		if err != nil {
+			return nil, err
+		}
+		instance, ok := v.(*runtime.Instance)
+		if !ok {
+			return v, nil
+		}
+		for _, field := range class.Fields {
+			key := runtime.String{Value: field.Name}
+			entry, hit := dict.Entries[native.DictKey(key)]
+			if hit {
+				instance.Fields[field.Name] = entry.Value
+			}
+		}
+		return instance, nil
 	}
 	ctor := class.Constructors[0]
 	args := make([]runtime.Value, 0, len(ctor.Parameters))
@@ -1571,6 +1595,12 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 							}
 							return signal{}, fmt.Errorf("type error: cannot assign %s to %s%s", gotName, expectedType.String(), suffix)
 						}
+						// Attach the reified element-type tag so subsequent
+						// reflect.typeBindings() and `instanceof list<T>`
+						// checks see the declared bindings rather than a
+						// bare `list`. Untagged collections retain their
+						// nil ElementTypes.
+						value = tagCollectionWithTypeRef(value, expectedType)
 					}
 				}
 			}
@@ -1727,6 +1757,11 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 		if err != nil {
 			return signal{}, err
 		}
+		// Register globally so reflect.class(name) from another
+		// module can resolve to this class. The env.Define below
+		// scopes the binding for normal lookup; the global registry
+		// is the cross-module fallback consulted by reflect.
+		e.registerGlobalClass(class)
 		return signal{}, env.Define(stmt.Name.Value, class, true)
 	case *ast.InterfaceStatement:
 		iface, err := e.buildInterface(stmt, env)
@@ -1880,7 +1915,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			if bound, ok := env.GetTypeBinding(typeName); ok {
 				typeName = bound
 			}
-			return runtime.Bool{Value: valueMatchesType(left, typeName)}, nil
+			return runtime.Bool{Value: e.valueMatchesType(left, typeName)}, nil
 		}
 		if expr.Operator == "&&" || expr.Operator == "||" {
 			left, err := e.evalExpression(expr.Left, env)
@@ -1977,6 +2012,14 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			return nil, err
 		}
 		target := e.resolveTypeRef(expr.Type)
+		// Class / interface / parent-chain widening: a value whose
+		// class chain contains the target (with the module prefix
+		// stripped) is already an instance of the target, so cast
+		// is a no-op. Falls through to castValue for primitive
+		// conversions when the chain doesn't match.
+		if e.valueMatchesType(value, target.Name) {
+			return value, nil
+		}
 		return castValue(value, target.Name)
 	case *ast.FunctionLiteral:
 		// Capture the enclosing scope's type bindings so an inner `T x`
@@ -2116,6 +2159,27 @@ func (e *Evaluator) matchCase(value runtime.Value, c ast.MatchCase, env *runtime
 	return caseEnv, true, nil
 }
 
+// valueMatchesType (method form) is the evaluator-aware variant of the
+// free function. It walks `errorClassParents` so cross-module
+// user-defined error class hierarchies (BadRequestError -> HttpException
+// -> RuntimeError, etc.) resolve correctly under `instanceof`. The free
+// function is preserved for call sites that don't have an *Evaluator
+// in hand and only care about plain class / interface matching.
+func (e *Evaluator) valueMatchesType(value runtime.Value, typeName string) bool {
+	if dotIdx := strings.Index(typeName, "."); dotIdx >= 0 {
+		if ev, ok := value.(runtime.EnumVariant); ok {
+			enumTypeName := typeName[:dotIdx]
+			variantName := typeName[dotIdx+1:]
+			return strings.EqualFold(ev.Enum.Name, enumTypeName) && strings.EqualFold(ev.Variant, variantName)
+		}
+	}
+	stripped := simpleTypeName(typeName)
+	if errValue, ok := value.(runtime.Error); ok {
+		return e.errorTypeMatches(errValue.Class, stripped)
+	}
+	return valueMatchesType(value, typeName)
+}
+
 func valueMatchesType(value runtime.Value, typeName string) bool {
 	// Check dotted "EnumType.Variant" before stripping the module prefix.
 	if dotIdx := strings.Index(typeName, "."); dotIdx >= 0 {
@@ -2124,6 +2188,14 @@ func valueMatchesType(value runtime.Value, typeName string) bool {
 			variantName := typeName[dotIdx+1:]
 			return strings.EqualFold(ev.Enum.Name, enumTypeName) && strings.EqualFold(ev.Variant, variantName)
 		}
+	}
+	// `instanceof list<int>` (and friends) targets a parameterised
+	// collection. Check both the base type and the generic args. When
+	// the value is a tagged collection the args must match exactly
+	// (invariance, same rule as 1.0.1 user-class generics); when the
+	// value is untagged, walk each element and require structural match.
+	if baseName, args, ok := splitGenericTypeName(typeName); ok {
+		return collectionMatchesGenericType(value, baseName, args)
 	}
 	typeName = simpleTypeName(typeName)
 	if ev, ok := value.(runtime.EnumVariant); ok {
@@ -2144,6 +2216,91 @@ func valueMatchesType(value runtime.Value, typeName string) bool {
 		return false
 	}
 	return typeNamesEqual(value.TypeName(), typeName)
+}
+
+// splitGenericTypeName splits "list<int>" / "dict<string,int>" / "?list<int>"
+// into ("list", ["int"], true) / ("dict", ["string","int"], true) /
+// ("list", ["int"], true). Returns (_, _, false) when the input has no
+// generic-arg clause.
+func splitGenericTypeName(typeName string) (string, []string, bool) {
+	if strings.HasPrefix(typeName, "?") {
+		typeName = typeName[1:]
+	}
+	lt := strings.IndexByte(typeName, '<')
+	if lt < 0 || !strings.HasSuffix(typeName, ">") {
+		return "", nil, false
+	}
+	base := typeName[:lt]
+	inner := typeName[lt+1 : len(typeName)-1]
+	// Split top-level commas, ignoring those inside nested generics.
+	var args []string
+	depth := 0
+	start := 0
+	for i := 0; i < len(inner); i++ {
+		switch inner[i] {
+		case '<':
+			depth++
+		case '>':
+			depth--
+		case ',':
+			if depth == 0 {
+				args = append(args, strings.TrimSpace(inner[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	if start <= len(inner) {
+		args = append(args, strings.TrimSpace(inner[start:]))
+	}
+	return base, args, true
+}
+
+func collectionMatchesGenericType(value runtime.Value, base string, args []string) bool {
+	switch v := value.(type) {
+	case runtime.List:
+		if base != "list" || len(args) != 1 {
+			return false
+		}
+		if len(v.ElementTypes) >= 1 {
+			return typeNamesEqual(v.ElementTypes[0], args[0])
+		}
+		for _, el := range v.Elements {
+			if !valueMatchesType(el, args[0]) {
+				return false
+			}
+		}
+		return true
+	case runtime.Set:
+		if base != "set" || len(args) != 1 {
+			return false
+		}
+		if len(v.ElementTypes) >= 1 {
+			return typeNamesEqual(v.ElementTypes[0], args[0])
+		}
+		for _, e := range v.Elements {
+			if !valueMatchesType(e.Value, args[0]) {
+				return false
+			}
+		}
+		return true
+	case runtime.Dict:
+		if base != "dict" || len(args) != 2 {
+			return false
+		}
+		if len(v.ElementTypes) >= 2 {
+			return typeNamesEqual(v.ElementTypes[0], args[0]) && typeNamesEqual(v.ElementTypes[1], args[1])
+		}
+		for _, e := range v.Entries {
+			if !valueMatchesType(e.Key, args[0]) {
+				return false
+			}
+			if !valueMatchesType(e.Value, args[1]) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func (e *Evaluator) buildInterface(stmt *ast.InterfaceStatement, env *runtime.Environment) (*runtime.Interface, error) {
@@ -4185,7 +4342,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 			if strings.HasPrefix(member.Kind, "static ") {
 				return nil, fmt.Errorf("only static const and static let class members are supported")
 			}
-			class.Fields = append(class.Fields, runtime.Field{Name: member.Name.Value, Default: member.Value})
+			class.Fields = append(class.Fields, runtime.Field{Name: member.Name.Value, Type: member.Type, Default: member.Value, Decorators: member.Decorators})
 		case *ast.FunctionStatement:
 			target := "method"
 			if member.Static {
@@ -4275,7 +4432,7 @@ func (e *Evaluator) instantiateClass(class *runtime.Class, args []runtime.Value)
 				break
 			}
 		}
-		return runtime.Error{Class: class.Name, Message: msg}, nil
+		return runtime.Error{Class: class.Name, Message: msg, Parents: e.errorParentChain(class.Name)}, nil
 	}
 	instance := &runtime.Instance{Class: class, Fields: map[string]runtime.Value{}}
 	if err := e.initializeFields(instance, class); err != nil {
@@ -4344,7 +4501,35 @@ func (e *Evaluator) instantiateUserErrorClass(class *runtime.Class, args []runti
 	if len(instance.Fields) > 0 {
 		fields = instance.Fields
 	}
-	return runtime.Error{Class: class.Name, Message: msg, Fields: fields}, nil
+	return runtime.Error{Class: class.Name, Message: msg, Fields: fields, Parents: e.errorParentChain(class.Name)}, nil
+}
+
+// registerGlobalClass adds a class to the cross-module registry so
+// reflect.class(name) can find it from any module. Idempotent: classes
+// re-imported across modules just overwrite the entry with the same
+// pointer (Geblang class identity is global by name).
+func (e *Evaluator) registerGlobalClass(class *runtime.Class) {
+	if class == nil || class.Name == "" {
+		return
+	}
+	e.globalClasses[class.Name] = class
+}
+
+// errorParentChain returns the parent class name list (immediate parent
+// first) for an error-derived class, used when constructing a
+// runtime.Error value so cross-module `instanceof` / typed-parameter
+// matching can walk the chain without re-reading the evaluator state.
+func (e *Evaluator) errorParentChain(className string) []string {
+	var parents []string
+	visited := map[string]bool{className: true}
+	for parent := e.errorParent(className); parent != ""; parent = e.errorParent(parent) {
+		if visited[parent] {
+			break
+		}
+		visited[parent] = true
+		parents = append(parents, parent)
+	}
+	return parents
 }
 
 func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.CallExpression, env *runtime.Environment, declared ...*ast.TypeRef) (runtime.Value, error) {
@@ -4367,7 +4552,7 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 				break
 			}
 		}
-		return runtime.Error{Class: class.Name, Message: msg}, nil
+		return runtime.Error{Class: class.Name, Message: msg, Parents: e.errorParentChain(class.Name)}, nil
 	}
 	instance := &runtime.Instance{Class: class, Fields: map[string]runtime.Value{}}
 	// Inherit type bindings from the parent class's declaration (e.g.
@@ -4870,21 +5055,36 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 	}
 	switch target {
 	case "string":
+		/* `bytes as string` decodes UTF-8 (errors on invalid bytes)
+		 * rather than producing the hex form `value.Inspect()` returns
+		 * for bytes. Other types still use `Inspect()` as the canonical
+		 * string representation. */
+		if v, ok := value.(runtime.Bytes); ok {
+			if !utf8.Valid(v.Value) {
+				return nil, fmt.Errorf("bytes value is not valid UTF-8")
+			}
+			return runtime.String{Value: string(v.Value)}, nil
+		}
 		return runtime.String{Value: value.Inspect()}, nil
 	case "int":
 		switch v := value.(type) {
 		case runtime.String:
 			return runtime.NewIntLiteral(v.Value)
 		case runtime.Decimal:
-			if !v.Value.IsInt() {
-				return nil, fmt.Errorf("cannot cast non-integer decimal to int")
-			}
-			return runtime.Int{Value: v.Value.Num()}, nil
+			/* Truncate toward zero: matches the C/Java/Go integer-
+			 * cast convention. Use big.Int division of num/den so
+			 * arbitrary-precision decimals round correctly. */
+			num := new(big.Int).Set(v.Value.Num())
+			den := v.Value.Denom()
+			q := new(big.Int).Quo(num, den)
+			return runtime.Int{Value: q}, nil
 		case runtime.Float:
-			if v.Value != math.Trunc(v.Value) {
-				return nil, fmt.Errorf("cannot cast non-integer float to int")
+			return runtime.NewInt64(int64(math.Trunc(v.Value))), nil
+		case runtime.Bool:
+			if v.Value {
+				return runtime.SmallInt{Value: 1}, nil
 			}
-			return runtime.NewInt64(int64(v.Value)), nil
+			return runtime.SmallInt{Value: 0}, nil
 		}
 	case "decimal":
 		switch v := value.(type) {
@@ -4931,6 +5131,40 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 			}
 		case runtime.Null:
 			return runtime.Bool{Value: false}, nil
+		}
+	case "bytes":
+		/* `string as bytes` encodes UTF-8. Go strings are already UTF-8,
+		 * so we copy out the underlying byte sequence. The inverse
+		 * (`bytes as string`) is handled below. */
+		if v, ok := value.(runtime.String); ok {
+			b := make([]byte, len(v.Value))
+			copy(b, v.Value)
+			return runtime.Bytes{Value: b}, nil
+		}
+	case "list":
+		/* `set as list` materializes in iteration order (the underlying
+		 * map's range order; not insertion order — sets are unordered
+		 * by design). To get a deterministic order, sort the result. */
+		if v, ok := value.(runtime.Set); ok {
+			out := make([]runtime.Value, 0, len(v.Elements))
+			for _, entry := range v.Elements {
+				out = append(out, entry.Value)
+			}
+			return runtime.List{Elements: out}, nil
+		}
+	case "set":
+		/* `list as set` de-duplicates. First occurrence wins; later
+		 * duplicates are dropped. */
+		if v, ok := value.(runtime.List); ok {
+			elements := make(map[string]runtime.SetEntry, len(v.Elements))
+			for _, elem := range v.Elements {
+				k := dictKey(elem)
+				if _, seen := elements[k]; seen {
+					continue
+				}
+				elements[k] = runtime.SetEntry{Value: elem}
+			}
+			return runtime.Set{Elements: elements}, nil
 		}
 	}
 	return nil, fmt.Errorf("cannot cast %s to %s", value.TypeName(), target)
@@ -5333,7 +5567,9 @@ func (e *Evaluator) catchMatches(clause ast.CatchClause, err runtime.Error) bool
 	if clause.Type == nil {
 		return true
 	}
-	return e.errorTypeMatches(err.Class, clause.Type.Name)
+	// Strip an optional module prefix - `catch (errors.HttpException e)`
+	// matches the bare "HttpException" the parent chain records.
+	return e.errorTypeMatches(err.Class, simpleTypeName(clause.Type.Name))
 }
 
 func (e *Evaluator) evalForInStatement(stmt *ast.ForStatement, loopEnv *runtime.Environment) (signal, error) {
@@ -5546,6 +5782,46 @@ func (e *Evaluator) evalBoolCondition(expr ast.Expression, env *runtime.Environm
 	return boolValue.Value, nil
 }
 
+// applyCallableValue dispatches a CallExpression whose callee has
+// already been evaluated to a runtime value. Used both for the normal
+// "callee is an expression" path and for the parenthesized-selector
+// form `(obj.fn)(args)` that must invoke obj.fn's value rather than
+// dispatch as a method call.
+func (e *Evaluator) applyCallableValue(callee runtime.Value, call *ast.CallExpression, env *runtime.Environment, expected *ast.TypeRef) (runtime.Value, error) {
+	if fn, ok := callee.(runtime.Function); ok {
+		args, err := e.evalFunctionCallArguments(fn, call, env)
+		if err != nil {
+			return nil, err
+		}
+		if fn.ForwardThis {
+			if value, ok := env.Get("this"); ok {
+				if instance, ok := value.(*runtime.Instance); ok {
+					return e.applyFunctionWithThis(fn, args, instance)
+				}
+			}
+		}
+		return e.applyFunctionWithTypeArgs(fn, args, call.TypeArguments)
+	}
+	if overloaded, ok := callee.(runtime.OverloadedFunction); ok {
+		return e.applyOverloadedFunction(overloaded.Name, overloaded.Overloads, call, env, nil, expected)
+	}
+	if class, ok := callee.(*runtime.Class); ok {
+		return e.instantiateClassFromCall(class, call, env, expected)
+	}
+	if instance, ok := callee.(*runtime.Instance); ok {
+		method, ok := lookupMethod(instance.Class, "__invoke")
+		if !ok {
+			return nil, fmt.Errorf("%s is not callable", call.Callee.String())
+		}
+		args, err := e.evalFunctionCallArguments(method, call, env)
+		if err != nil {
+			return nil, err
+		}
+		return e.applyFunctionWithThis(method, args, instance)
+	}
+	return nil, fmt.Errorf("%s is not callable", call.Callee.String())
+}
+
 func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runtime.Environment, expected *ast.TypeRef) (runtime.Value, error) {
 	if ident, ok := call.Callee.(*ast.Identifier); ok && ident.Value == "parent" {
 		this, err := currentInstance(env)
@@ -5607,6 +5883,9 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 	if ident, ok := call.Callee.(*ast.Identifier); ok && strings.EqualFold(ident.Value, "dir") {
 		return e.evalDirCall(call, env)
 	}
+	if ident, ok := call.Callee.(*ast.Identifier); ok && ident.Value == "range" {
+		return e.evalRangeBuiltin(call, env)
+	}
 	if ident, ok := call.Callee.(*ast.Identifier); ok && isBuiltinErrorClass(ident.Value) {
 		args, err := e.evalCallArguments(call, env)
 		if err != nil {
@@ -5614,9 +5893,49 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 		}
 		return newErrorValue(ident.Value, args)
 	}
+	// A parenthesized selector like `(this.fn)(args)` is a
+	// "call the value" expression, not a method call. Bypass the
+	// module / method dispatch and evaluate the selector as a value.
+	if selector, ok := call.Callee.(*ast.SelectorExpression); ok && selector.Parenthesized {
+		callee, err := e.evalExpression(call.Callee, env)
+		if err != nil {
+			return nil, err
+		}
+		return e.applyCallableValue(callee, call, env, expected)
+	}
 	module, name, ok := selectorName(call.Callee)
+	/* Local shadowing wins over module-call dispatch: if the
+	 * receiver of an `X.Y(...)` call resolves in the current
+	 * scope to a non-module value (a list, a class instance, a
+	 * closure, ...), treat it as a method call on that value
+	 * rather than as a module-export lookup. Important because
+	 * the evaluator's `imports` table is process-wide - a sibling
+	 * module's `import errors as errors` would otherwise cause
+	 * `let errors = []` in our function to dispatch to the
+	 * unrelated module's namespace. */
+	if ok {
+		if value, found := env.Get(module); found {
+			if _, isModule := value.(*runtime.Module); !isModule {
+				if selector, ok := call.Callee.(*ast.SelectorExpression); ok {
+					if v, handled, err := e.evalParentMethodCall(selector, call, env); handled {
+						return v, err
+					}
+					receiver, err := e.evalExpression(selector.Object, env)
+					if err != nil {
+						return nil, err
+					}
+					if selector.Optional {
+						if _, isNull := receiver.(runtime.Null); isNull {
+							return runtime.Null{}, nil
+						}
+					}
+					return e.evalMethodCallExpression(receiver, selector.Name.Value, call, env)
+				}
+			}
+		}
+	}
 	if !ok {
-		if selector, ok := call.Callee.(*ast.SelectorExpression); ok {
+		if selector, ok := call.Callee.(*ast.SelectorExpression); ok && !selector.Parenthesized {
 			if value, handled, err := e.evalParentMethodCall(selector, call, env); handled {
 				return value, err
 			}
@@ -5635,40 +5954,7 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 		if err != nil {
 			return nil, err
 		}
-		fn, ok := callee.(runtime.Function)
-		if ok {
-			args, err := e.evalFunctionCallArguments(fn, call, env)
-			if err != nil {
-				return nil, err
-			}
-			if fn.ForwardThis {
-				if value, ok := env.Get("this"); ok {
-					if instance, ok := value.(*runtime.Instance); ok {
-						return e.applyFunctionWithThis(fn, args, instance)
-					}
-				}
-			}
-			return e.applyFunctionWithTypeArgs(fn, args, call.TypeArguments)
-		}
-		overloaded, ok := callee.(runtime.OverloadedFunction)
-		if ok {
-			return e.applyOverloadedFunction(overloaded.Name, overloaded.Overloads, call, env, nil, expected)
-		}
-		if class, ok := callee.(*runtime.Class); ok {
-			return e.instantiateClassFromCall(class, call, env, expected)
-		}
-		if instance, ok := callee.(*runtime.Instance); ok {
-			method, ok := lookupMethod(instance.Class, "__invoke")
-			if !ok {
-				return nil, fmt.Errorf("%s is not callable", call.Callee.String())
-			}
-			args, err := e.evalFunctionCallArguments(method, call, env)
-			if err != nil {
-				return nil, err
-			}
-			return e.applyFunctionWithThis(method, args, instance)
-		}
-		return nil, fmt.Errorf("%s is not callable", call.Callee.String())
+		return e.applyCallableValue(callee, call, env, expected)
 	}
 	if strings.EqualFold(module, "reflect") && (name == "function" || name == "class" || name == "module") {
 		return e.evalReflectLookupCall(call, env, name)
@@ -5764,15 +6050,51 @@ func (e *Evaluator) evalReflectLookupCall(call *ast.CallExpression, env *runtime
 		return nil, err
 	}
 	if len(args) != 1 {
-		return nil, fmt.Errorf("reflect.%s expects exactly one name", name)
+		return nil, fmt.Errorf("reflect.%s expects exactly one argument", name)
+	}
+	// `reflect.class` / `reflect.function` / `reflect.module` accept either
+	// a name string (legacy) or a value of the appropriate kind. Passing
+	// the value itself lets framework code work uniformly with the VM
+	// backend, which has always accepted values directly.
+	if name == "class" {
+		switch v := args[0].(type) {
+		case *runtime.Class:
+			return v, nil
+		case *runtime.Instance:
+			if v != nil && v.Class != nil {
+				return v.Class, nil
+			}
+			return runtime.Null{}, nil
+		}
+	}
+	if name == "function" {
+		switch v := args[0].(type) {
+		case runtime.Function, runtime.OverloadedFunction:
+			return v, nil
+		}
+	}
+	if name == "module" {
+		if mod, ok := args[0].(*runtime.Module); ok {
+			return mod, nil
+		}
 	}
 	targetName, ok := args[0].(runtime.String)
 	if !ok {
-		return nil, fmt.Errorf("reflect.%s name must be string", name)
+		return nil, fmt.Errorf("reflect.%s argument must be a %s value or name string", name, name)
 	}
 	value, ok, err := e.reflectLookupValue(targetName.Value, env)
 	if err != nil {
 		return nil, err
+	}
+	if !ok && name == "class" {
+		// Fall back to the cross-module class registry so framework
+		// code can resolve a class by name even when the local env
+		// doesn't have it (the user's classes live in their own
+		// module's env, but a framework helper imported into the
+		// user's program still needs to reflect on them).
+		if class, found := e.globalClasses[targetName.Value]; found {
+			return class, nil
+		}
 	}
 	if !ok {
 		return runtime.Null{}, nil
@@ -5801,6 +6123,7 @@ func (e *Evaluator) evalReflectLookupCall(call *ast.CallExpression, env *runtime
 		return nil, fmt.Errorf("unsupported reflect lookup %s", name)
 	}
 }
+
 
 func (e *Evaluator) reflectLookupValue(name string, env *runtime.Environment) (runtime.Value, bool, error) {
 	if moduleName, exportName, ok := strings.Cut(name, "."); ok {
@@ -6420,6 +6743,12 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"toBase64":   e.registryBuiltin("bytes", "toBase64"),
 			"concat":     e.registryBuiltin("bytes", "concat"),
 		},
+		"string": {
+			"fromCodePoint":  e.registryBuiltin("string", "fromCodePoint"),
+			"fromCodePoints": e.registryBuiltin("string", "fromCodePoints"),
+			"compare":        e.registryBuiltin("string", "compare"),
+			"equalsFold":     e.registryBuiltin("string", "equalsFold"),
+		},
 		"collections": {
 			"length":          collectionsLength,
 			"isEmpty":         collectionsIsEmpty,
@@ -6774,9 +7103,12 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"typeOf":           reflectTypeOf,
 			"exports":          reflectExports,
 			"fields":           reflectFields,
+			"getField":         reflectGetField,
+			"setField":         reflectSetField,
 			"methods":          reflectMethods,
 			"staticMethods":    reflectStaticMethods,
 			"parent":           reflectParent,
+			"className":        reflectClassName,
 			"interfaces":       reflectInterfaces,
 			"constructors":     reflectConstructors,
 			"typeBindings":     reflectTypeBindings,
@@ -6785,7 +7117,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"function":         reflectLookupRequiresEvaluator,
 			"class":            reflectLookupRequiresEvaluator,
 			"module":           reflectLookupRequiresEvaluator,
-			"method":           reflectMethod,
+			"method":           e.reflectMethodBound,
 			"staticMethod":     reflectStaticMethod,
 		},
 		"log": {
@@ -9466,11 +9798,73 @@ func reflectTypeOf(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 }
 
 func reflectFields(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects class", call.Callee.String())
+	}
+	// Prefer structured field metadata - matches the
+	// `reflect.parameters` shape (each entry {name, type, nullable,
+	// hasDefault}). When the value is a *runtime.Class or an
+	// instance we can read the actual Field structs; for
+	// bytecode-class or compile-time metadata we fall back to the
+	// name-only list wrapped in dicts.
+	if cls, ok := classForReflectFields(args[0]); ok && cls != nil {
+		entries := make([]runtime.Value, 0, len(cls.Fields))
+		for _, field := range cls.Fields {
+			fd := map[string]runtime.DictEntry{}
+			putDict(fd, "name", runtime.String{Value: field.Name})
+			putDict(fd, "type", runtime.String{Value: typeRefToString(field.Type)})
+			nullable := false
+			if field.Type != nil {
+				nullable = field.Type.Nullable
+			}
+			putDict(fd, "nullable", runtime.Bool{Value: nullable})
+			putDict(fd, "hasDefault", runtime.Bool{Value: field.Default != nil})
+			decs, derr := decoratorListValue(field.Decorators, "field", "")
+			if derr == nil {
+				putDict(fd, "decorators", decs)
+			}
+			entries = append(entries, runtime.Dict{Entries: fd})
+		}
+		sort.SliceStable(entries, func(i, j int) bool {
+			a := entries[i].(runtime.Dict).Entries[native.DictKey(runtime.String{Value: "name"})].Value.(runtime.String).Value
+			b := entries[j].(runtime.Dict).Entries[native.DictKey(runtime.String{Value: "name"})].Value.(runtime.String).Value
+			return a < b
+		})
+		return runtime.List{Elements: entries}, nil
+	}
 	metadata, err := reflectClassMetadataValue(call, args)
 	if err != nil {
 		return nil, err
 	}
-	return stringList(metadata.Fields), nil
+	entries := make([]runtime.Value, 0, len(metadata.Fields))
+	for _, name := range metadata.Fields {
+		fd := map[string]runtime.DictEntry{}
+		putDict(fd, "name", runtime.String{Value: name})
+		putDict(fd, "type", runtime.String{Value: "any"})
+		putDict(fd, "nullable", runtime.Bool{Value: false})
+		putDict(fd, "hasDefault", runtime.Bool{Value: false})
+		entries = append(entries, runtime.Dict{Entries: fd})
+	}
+	return runtime.List{Elements: entries}, nil
+}
+
+func classForReflectFields(v runtime.Value) (*runtime.Class, bool) {
+	switch x := v.(type) {
+	case *runtime.Class:
+		return x, true
+	case *runtime.Instance:
+		if x != nil {
+			return x.Class, true
+		}
+	}
+	return nil, false
+}
+
+func typeRefToString(t *ast.TypeRef) string {
+	if t == nil {
+		return "any"
+	}
+	return t.String()
 }
 
 func reflectMethods(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -9498,6 +9892,74 @@ func reflectParent(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 		return runtime.Null{}, nil
 	}
 	return runtime.String{Value: metadata.Parent}, nil
+}
+
+// reflectGetField reads a single field off an instance by name.
+// Returns null when the field doesn't exist on the instance's
+// class (rather than erroring) so callers driving framework-style
+// reflection don't need a separate `hasField` probe.
+func reflectGetField(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects (instance, fieldName)", call.Callee.String())
+	}
+	instance, ok := args[0].(*runtime.Instance)
+	if !ok {
+		return nil, fmt.Errorf("%s expects instance, got %s", call.Callee.String(), args[0].TypeName())
+	}
+	name, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s field name must be string", call.Callee.String())
+	}
+	if v, hit := instance.Fields[name.Value]; hit {
+		return v, nil
+	}
+	return runtime.Null{}, nil
+}
+
+// reflectSetField assigns a value to a named field on an instance.
+// Returns the same instance (allowing fluent chaining). Field
+// existence is not validated up-front: the assign succeeds and the
+// field becomes part of the instance's field map. This matches the
+// permissive shape that framework code (Gebweb's @Assert /
+// @ApiResource PATCH) needs.
+func reflectSetField(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("%s expects (instance, fieldName, value)", call.Callee.String())
+	}
+	instance, ok := args[0].(*runtime.Instance)
+	if !ok {
+		return nil, fmt.Errorf("%s expects instance, got %s", call.Callee.String(), args[0].TypeName())
+	}
+	name, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s field name must be string", call.Callee.String())
+	}
+	if instance.Fields == nil {
+		instance.Fields = map[string]runtime.Value{}
+	}
+	instance.Fields[name.Value] = args[2]
+	return instance, nil
+}
+
+// reflectClassName returns the class's own name regardless of whether
+// the argument is a class value, an instance, or a primitive. For a
+// class value `reflect.typeOf` returns the meta-string "class" - this
+// builtin returns the class's actual identifier (e.g. "UserRepo").
+// Returns null when the argument carries no class identity (closures,
+// modules, ...). Symmetric with `reflect.class(name)` which goes the
+// other way.
+func reflectClassName(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
+	}
+	metadata, err := reflectClassMetadataValue(call, args)
+	if err == nil && metadata.Name != "" {
+		return runtime.String{Value: metadata.Name}, nil
+	}
+	/* className is total: for primitives and other values without
+	 * class metadata, return the runtime type name (symmetric with
+	 * how reflect.typeOf handles instances). */
+	return runtime.String{Value: args[0].TypeName()}, nil
 }
 
 func reflectInterfaces(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -9546,13 +10008,27 @@ func reflectTypeBindings(call *ast.CallExpression, args []runtime.Value) (runtim
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects instance", call.Callee.String())
 	}
-	instance, ok := args[0].(*runtime.Instance)
-	if !ok {
-		return nil, fmt.Errorf("%s expects instance, got %s", call.Callee.String(), args[0].TypeName())
-	}
 	entries := map[string]runtime.DictEntry{}
-	for name, typeName := range instance.TypeBindings {
-		putDict(entries, name, runtime.String{Value: typeName})
+	switch v := args[0].(type) {
+	case *runtime.Instance:
+		for name, typeName := range v.TypeBindings {
+			putDict(entries, name, runtime.String{Value: typeName})
+		}
+	case runtime.List:
+		if len(v.ElementTypes) >= 1 {
+			putDict(entries, "T", runtime.String{Value: v.ElementTypes[0]})
+		}
+	case runtime.Set:
+		if len(v.ElementTypes) >= 1 {
+			putDict(entries, "T", runtime.String{Value: v.ElementTypes[0]})
+		}
+	case runtime.Dict:
+		if len(v.ElementTypes) >= 2 {
+			putDict(entries, "K", runtime.String{Value: v.ElementTypes[0]})
+			putDict(entries, "V", runtime.String{Value: v.ElementTypes[1]})
+		}
+	default:
+		return nil, fmt.Errorf("%s expects instance or generic collection, got %s", call.Callee.String(), args[0].TypeName())
 	}
 	return runtime.Dict{Entries: entries}, nil
 }
@@ -9639,6 +10115,19 @@ func reflectClassMetadataValue(call *ast.CallExpression, args []runtime.Value) (
 	switch value := args[0].(type) {
 	case *runtime.Class:
 		return classMetadataFromRuntimeClass(value), nil
+	case *runtime.Instance:
+		// Accept an instance for symmetry with the VM: framework
+		// code that holds an instance shouldn't have to recover the
+		// class from its name.
+		if value != nil && value.Class != nil {
+			return classMetadataFromRuntimeClass(value.Class), nil
+		}
+	case runtime.Error:
+		// Error-derived class instances are wrapped as runtime.Error.
+		// The evaluator-aware variant (e.errorClassMetadataValue) can
+		// follow the cross-module registry; this free function only
+		// returns the class name when nothing else is available.
+		return runtime.ClassMetadata{Name: value.Class}, nil
 	case runtime.DecoratorTarget:
 		if value.Class != nil {
 			return *value.Class, nil
@@ -9646,7 +10135,77 @@ func reflectClassMetadataValue(call *ast.CallExpression, args []runtime.Value) (
 	case runtime.BytecodeClass:
 		return classMetadataFromBytecodeClass(value), nil
 	}
+	// Built-in primitive reflection: list / dict / set / string /
+	// bytes / range expose their method table via the curated table
+	// in primitiveTypeMetadata. Last-resort lookup so interface
+	// names (passed in as strings from the compile-time path) get a
+	// chance at their proper handler upstream.
+	if md, ok := primitiveTypeMetadata(args[0]); ok {
+		return md, nil
+	}
 	return runtime.ClassMetadata{}, fmt.Errorf("%s expects class, got %s", call.Callee.String(), args[0].TypeName())
+}
+
+// primitiveTypeMetadata returns a synthetic ClassMetadata describing the
+// method surface of a built-in primitive value (list, dict, set, string,
+// bytes, range). The reflect.* API uses this so framework code can
+// introspect primitives the same way it introspects user-defined classes.
+func primitiveTypeMetadata(value runtime.Value) (runtime.ClassMetadata, bool) {
+	switch value.(type) {
+	case runtime.List:
+		return runtime.ClassMetadata{
+			Name:    "list",
+			Methods: primitiveMethodNamesFor("list"),
+		}, true
+	case runtime.Dict:
+		return runtime.ClassMetadata{
+			Name:    "dict",
+			Methods: primitiveMethodNamesFor("dict"),
+		}, true
+	case runtime.Set:
+		return runtime.ClassMetadata{
+			Name:    "set",
+			Methods: primitiveMethodNamesFor("set"),
+		}, true
+	case runtime.String:
+		return runtime.ClassMetadata{
+			Name:    "string",
+			Methods: primitiveMethodNamesFor("string"),
+		}, true
+	case runtime.Bytes:
+		return runtime.ClassMetadata{
+			Name:    "bytes",
+			Methods: primitiveMethodNamesFor("bytes"),
+		}, true
+	case runtime.Range:
+		return runtime.ClassMetadata{
+			Name:    "range",
+			Methods: primitiveMethodNamesFor("range"),
+		}, true
+	}
+	return runtime.ClassMetadata{}, false
+}
+
+// primitiveMethodNamesFor returns a sorted list of method names for a
+// primitive type. The list is curated rather than introspected from the
+// dispatch tables because some method names share an implementation and
+// some have different effective surfaces per type.
+func primitiveMethodNamesFor(typeName string) []string {
+	switch typeName {
+	case "list":
+		return []string{"append", "contains", "filter", "first", "indexOf", "insert", "isEmpty", "join", "last", "length", "map", "pop", "prepend", "push", "remove", "reverse", "set", "slice", "sort", "toList", "unshift"}
+	case "dict":
+		return []string{"contains", "entries", "get", "insert", "isEmpty", "keys", "length", "remove", "set", "values"}
+	case "set":
+		return []string{"add", "contains", "difference", "intersection", "isEmpty", "length", "remove", "toList", "union"}
+	case "string":
+		return []string{"chars", "codeAt", "contains", "endsWith", "format", "indexOf", "isEmpty", "length", "lower", "padLeft", "padRight", "replace", "split", "startsWith", "substring", "toBool", "toDecimal", "toFloat", "toInt", "trim", "trimLeft", "trimRight", "upper"}
+	case "bytes":
+		return []string{"contains", "get", "isEmpty", "length", "toBase64", "toHex", "toString"}
+	case "range":
+		return []string{"contains", "first", "isEmpty", "last", "length", "toList"}
+	}
+	return nil
 }
 
 func classMetadataFromRuntimeClass(class *runtime.Class) runtime.ClassMetadata {
@@ -9747,12 +10306,39 @@ func reflectMethod(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 		return runtime.Null{}, nil
 	}
 	if bound {
-		return boundReflectMethodFunction(class.Name+"."+name.Value, overloads, instance), nil
+		return boundReflectMethodFunction(class.Name+"."+name.Value, overloads, instance, nil), nil
 	}
 	return reflectFunctionValue(name.Value, overloads), nil
 }
 
-func boundReflectMethodFunction(label string, overloads []runtime.Function, instance *runtime.Instance) runtime.Function {
+// reflectMethodBound is the evaluator-bound variant. It captures the live
+// Evaluator so the returned bound method runs against the same module
+// loader / state instead of a fresh stub Evaluator that can't resolve
+// imported modules (gebweb.notFound, etc.).
+func (e *Evaluator) reflectMethodBound(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects class or instance and method name", call.Callee.String())
+	}
+	instance, bound := args[0].(*runtime.Instance)
+	class, err := reflectClassArg(call, args[0])
+	if err != nil {
+		return nil, err
+	}
+	name, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s method name must be string", call.Callee.String())
+	}
+	overloads, ok := class.Methods[strings.ToLower(name.Value)]
+	if !ok {
+		return runtime.Null{}, nil
+	}
+	if bound {
+		return boundReflectMethodFunction(class.Name+"."+name.Value, overloads, instance, e), nil
+	}
+	return reflectFunctionValue(name.Value, overloads), nil
+}
+
+func boundReflectMethodFunction(label string, overloads []runtime.Function, instance *runtime.Instance, host *Evaluator) runtime.Function {
 	metadataSource := runtime.Function{}
 	if len(overloads) > 0 {
 		metadataSource = overloads[0]
@@ -9769,7 +10355,11 @@ func boundReflectMethodFunction(label string, overloads []runtime.Function, inst
 			if err != nil {
 				return nil, err
 			}
-			return evaluatorForNativeMethod(method).applyFunctionWithThis(method, args, instance)
+			ev := host
+			if ev == nil {
+				ev = evaluatorForNativeMethod(method)
+			}
+			return ev.applyFunctionWithThis(method, args, instance)
 		},
 	}
 }
@@ -17022,6 +17612,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			copy(newElements, value.Elements)
 			newElements[len(value.Elements)] = args[0]
 			return runtime.List{Elements: newElements}, nil
+		case "toList":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("list.toList expects no arguments")
+			}
+			return value, nil
 		case "pop":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.pop expects no arguments")
@@ -18980,18 +19575,131 @@ func (e *Evaluator) assignSelector(expr *ast.SelectorExpression, newValue runtim
 	return fmt.Errorf("%s does not support field assignment", object.TypeName())
 }
 
+// evalRangeBuiltin implements the top-level `range(start, end[, step])`
+// shorthand, producing a list<int> inclusive of both endpoints. Negative
+// steps are allowed when start > end. Step zero is rejected.
+func (e *Evaluator) evalRangeBuiltin(call *ast.CallExpression, env *runtime.Environment) (runtime.Value, error) {
+	args, err := e.evalCallArguments(call, env)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("range expects (start, end) or (start, end, step)")
+	}
+	startBig, ok := native.IntValueToBigInt(args[0])
+	if !ok {
+		return nil, fmt.Errorf("range start must be int")
+	}
+	endBig, ok := native.IntValueToBigInt(args[1])
+	if !ok {
+		return nil, fmt.Errorf("range end must be int")
+	}
+	step := big.NewInt(1)
+	if len(args) == 3 {
+		stepBig, ok := native.IntValueToBigInt(args[2])
+		if !ok {
+			return nil, fmt.Errorf("range step must be int")
+		}
+		step = stepBig
+	} else if startBig.Cmp(endBig) > 0 {
+		step = big.NewInt(-1)
+	}
+	if step.Sign() == 0 {
+		return nil, fmt.Errorf("range step cannot be zero")
+	}
+	rng := runtime.Range{Start: new(big.Int).Set(startBig), End: new(big.Int).Set(endBig), Exclusive: false, Step: new(big.Int).Set(step)}
+	return rangeToList(rng), nil
+}
+
+// tagCollectionWithTypeRef returns a copy of the given collection
+// value with its ElementTypes field populated from the declared
+// TypeRef. Non-collection values are returned unchanged. The tag
+// covers list<T>, T[], set<T>, dict<K,V>. Untagged collections that
+// flow through this path gain a fresh tag; already-tagged ones are
+// rebound to the new annotation.
+func tagCollectionWithTypeRef(value runtime.Value, typ *ast.TypeRef) runtime.Value {
+	if typ == nil || typ.Operator != "" {
+		return value
+	}
+	switch v := value.(type) {
+	case runtime.List:
+		var tag []string
+		if typ.ListAlias && len(typ.Arguments) == 0 && typ.Name != "" && !strings.EqualFold(typ.Name, "list") {
+			tag = []string{typ.Name}
+		} else if len(typ.Arguments) > 0 {
+			tag = make([]string, 0, len(typ.Arguments))
+			for _, arg := range typ.Arguments {
+				if arg == nil {
+					tag = append(tag, "")
+					continue
+				}
+				tag = append(tag, arg.Name)
+			}
+		}
+		if tag != nil {
+			v.ElementTypes = tag
+		}
+		return v
+	case runtime.Set:
+		if len(typ.Arguments) > 0 && typ.Arguments[0] != nil {
+			v.ElementTypes = []string{typ.Arguments[0].Name}
+		}
+		return v
+	case runtime.Dict:
+		if len(typ.Arguments) >= 2 && typ.Arguments[0] != nil && typ.Arguments[1] != nil {
+			v.ElementTypes = []string{typ.Arguments[0].Name, typ.Arguments[1].Name}
+		}
+		return v
+	}
+	return value
+}
+
+// rangeToList materialises a range value as a list<int>. Shared by
+// `range()` and `Range.toList()` so both produce identical output.
+func rangeToList(rng runtime.Range) runtime.List {
+	var elements []runtime.Value
+	current := new(big.Int).Set(rng.Start)
+	step := rng.Step
+	for {
+		cmp := current.Cmp(rng.End)
+		if step.Sign() > 0 {
+			if rng.Exclusive && cmp >= 0 {
+				break
+			}
+			if !rng.Exclusive && cmp > 0 {
+				break
+			}
+		} else {
+			if rng.Exclusive && cmp <= 0 {
+				break
+			}
+			if !rng.Exclusive && cmp < 0 {
+				break
+			}
+		}
+		elements = append(elements, runtime.Int{Value: new(big.Int).Set(current)})
+		current.Add(current, step)
+	}
+	return runtime.List{Elements: elements}
+}
+
 func (e *Evaluator) evalRangeExpression(expr *ast.RangeExpression, env *runtime.Environment) (runtime.Value, error) {
 	start := big.NewInt(0)
+	var startStr *runtime.String
 	if expr.Start != nil {
 		value, err := e.evalExpression(expr.Start, env)
 		if err != nil {
 			return nil, err
 		}
-		startBig, ok := native.IntValueToBigInt(value)
-		if !ok {
-			return nil, fmt.Errorf("range start must be int")
+		if s, ok := value.(runtime.String); ok && len([]rune(s.Value)) == 1 {
+			startStr = &s
+		} else {
+			startBig, ok := native.IntValueToBigInt(value)
+			if !ok {
+				return nil, fmt.Errorf("range start must be int")
+			}
+			start = startBig
 		}
-		start = startBig
 	}
 	if expr.End == nil {
 		return nil, fmt.Errorf("open-ended ranges are not evaluated outside slices yet")
@@ -18999,6 +19707,34 @@ func (e *Evaluator) evalRangeExpression(expr *ast.RangeExpression, env *runtime.
 	endValue, err := e.evalExpression(expr.End, env)
 	if err != nil {
 		return nil, err
+	}
+	if startStr != nil {
+		// Char range: 'a'..'z' produces an eager list<string> of single
+		// character entries covering the inclusive codepoint span. The
+		// `..<` exclusive form omits the last element. Step is fixed at +1.
+		endStr, ok := endValue.(runtime.String)
+		if !ok || len([]rune(endStr.Value)) != 1 {
+			return nil, fmt.Errorf("char range end must be a single-character string")
+		}
+		startRune := []rune(startStr.Value)[0]
+		endRune := []rune(endStr.Value)[0]
+		var elements []runtime.Value
+		if startRune <= endRune {
+			for r := startRune; r <= endRune; r++ {
+				if expr.Exclusive && r == endRune {
+					break
+				}
+				elements = append(elements, runtime.String{Value: string(r)})
+			}
+		} else {
+			for r := startRune; r >= endRune; r-- {
+				if expr.Exclusive && r == endRune {
+					break
+				}
+				elements = append(elements, runtime.String{Value: string(r)})
+			}
+		}
+		return runtime.List{Elements: elements}, nil
 	}
 	endBig, ok := native.IntValueToBigInt(endValue)
 	if !ok {
@@ -19519,6 +20255,18 @@ func valueMatchesTypeRef(value runtime.Value, typ *ast.TypeRef) bool {
 			return false
 		}
 		return true
+	}
+	// Error-derived classes are wrapped as runtime.Error rather than
+	// *runtime.Instance. Walk the captured parent chain so a parameter
+	// typed `HttpException` accepts a `BadRequestError` value.
+	if errValue, ok := value.(runtime.Error); ok {
+		target := simpleTypeName(typ.Name)
+		for _, ancestor := range errValue.Parents {
+			if typeNamesEqual(ancestor, target) {
+				return true
+			}
+		}
+		return false
 	}
 	instance, ok := value.(*runtime.Instance)
 	if !ok {
@@ -20888,6 +21636,37 @@ func evalDecimalInfix(operator string, left runtime.Decimal, right runtime.Decim
 			return nil, fmt.Errorf("decimal division by zero")
 		}
 		return runtime.Decimal{Value: new(big.Rat).Quo(left.Value, right.Value)}, nil
+	case "//":
+		/* Floor division: divide, then floor. Floor toward negative
+		 * infinity, not toward zero (`-7 // 2 = -4`, not -3) so the
+		 * sign of a non-zero remainder matches the divisor. Mirrors
+		 * Python `//` and Geblang's int//int behaviour. The result
+		 * is a Decimal with an integer numerator. */
+		if right.Value.Sign() == 0 {
+			return nil, fmt.Errorf("decimal division by zero")
+		}
+		q := new(big.Rat).Quo(left.Value, right.Value)
+		num := new(big.Int).Set(q.Num())
+		den := q.Denom()
+		floored, _ := new(big.Int).QuoRem(num, den, new(big.Int))
+		if q.Sign() < 0 && new(big.Int).Mul(floored, den).Cmp(num) != 0 {
+			floored.Sub(floored, big.NewInt(1))
+		}
+		return runtime.Decimal{Value: new(big.Rat).SetInt(floored)}, nil
+	case "%":
+		if right.Value.Sign() == 0 {
+			return nil, fmt.Errorf("decimal modulo by zero")
+		}
+		q := new(big.Rat).Quo(left.Value, right.Value)
+		num := new(big.Int).Set(q.Num())
+		den := q.Denom()
+		floored, _ := new(big.Int).QuoRem(num, den, new(big.Int))
+		if q.Sign() < 0 && new(big.Int).Mul(floored, den).Cmp(num) != 0 {
+			floored.Sub(floored, big.NewInt(1))
+		}
+		floorRat := new(big.Rat).SetInt(floored)
+		product := new(big.Rat).Mul(floorRat, right.Value)
+		return runtime.Decimal{Value: new(big.Rat).Sub(left.Value, product)}, nil
 	default:
 		return nil, fmt.Errorf("unsupported decimal operator %q", operator)
 	}
@@ -20903,6 +21682,16 @@ func evalFloatInfix(operator string, left runtime.Float, right runtime.Float) (r
 		return runtime.Float{Value: left.Value * right.Value}, nil
 	case "/":
 		return runtime.Float{Value: left.Value / right.Value}, nil
+	case "//":
+		if right.Value == 0 {
+			return nil, fmt.Errorf("float division by zero")
+		}
+		return runtime.Float{Value: math.Floor(left.Value / right.Value)}, nil
+	case "%":
+		if right.Value == 0 {
+			return nil, fmt.Errorf("float modulo by zero")
+		}
+		return runtime.Float{Value: left.Value - math.Floor(left.Value/right.Value)*right.Value}, nil
 	case "**":
 		return runtime.Float{Value: math.Pow(left.Value, right.Value)}, nil
 	default:

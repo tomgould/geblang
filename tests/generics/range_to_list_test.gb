@@ -1,0 +1,53 @@
+/**
+ * @title Range / range() / char-range to list shorthand
+ * @summary 1.0.2 adds the top-level `range(start, end[, step])`
+ * builtin, `.toList()` on Range, and a char-range literal
+ * `'a'..'z'` that produces a list<string> eagerly.
+ */
+import test;
+import reflect;
+
+class RangeToListTest extends test.Test {
+    @test
+    func rangeBuiltinIsInclusive(): void {
+        let xs = range(1, 5);
+        this.assertEquals([1, 2, 3, 4, 5], xs);
+    }
+
+    @test
+    func rangeBuiltinAcceptsExplicitStep(): void {
+        let xs = range(10, 2, -2);
+        this.assertEquals([10, 8, 6, 4, 2], xs);
+    }
+
+    @test
+    func rangeBuiltinDefaultsStepToOneOrMinusOne(): void {
+        this.assertEquals([5, 4, 3, 2, 1], range(5, 1));
+        this.assertEquals([1, 2, 3], range(1, 3));
+    }
+
+    @test
+    func rangeMethodToList(): void {
+        let xs = (1..5).toList();
+        this.assertEquals([1, 2, 3, 4, 5], xs);
+    }
+
+    @test
+    func charRangeIsList(): void {
+        let xs = 'a'..'e';
+        this.assertEquals(["a", "b", "c", "d", "e"], xs);
+    }
+
+    @test
+    func charRangeExclusive(): void {
+        let xs = 'a'..<'e';
+        this.assertEquals(["a", "b", "c", "d"], xs);
+    }
+
+    @test
+    func charRangeWithToList(): void {
+        /* list.toList() is a no-op so symmetric usage works. */
+        let xs = ('a'..'c').toList();
+        this.assertEquals(["a", "b", "c"], xs);
+    }
+}

@@ -1,7 +1,9 @@
 # Geblang
 
-Geblang is an interpreted scripting language implemented in Go. The
-project is at version **1.0.1**.
+Geblang is a type-safe interpreted scripting language implemented in Go. The
+project is at version **1.0.2**. Geblang takes inspiration from both
+PHP and Python, but adds many features these languages are unable to
+offer.
 
 ## Architecture
 

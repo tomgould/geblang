@@ -352,6 +352,26 @@ io.println(b.difference(a));   # {5, 6}
 let members = a.union(b).toList();
 ```
 
+### Conversion between list and set
+
+`list as set<T>` and `set as list<T>` are explicit casts. The list-to-set
+direction deduplicates (first occurrence wins); the set-to-list direction
+materializes the elements in unspecified order (sets are unordered by design,
+so sort if you need a deterministic result).
+
+```gb
+list<int> xs = [1, 1, 2, 3, 3, 2];
+let unique = xs as set<int>;        # {1, 2, 3}
+io.println(unique.length);          # 3
+
+set<string> s = {"apple", "banana", "cherry"};
+let names = s as list<string>;      # length 3; order unspecified
+```
+
+These casts mirror `set.toList()` going the other way, and de-duplicating a
+list previously required `let s = {}; for (x in xs) s = s.add(x);` or
+`xs.uniqueBy(x => x)`. *New in 1.0.2.*
+
 ---
 
 ## `collections` Module

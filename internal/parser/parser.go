@@ -281,7 +281,23 @@ func (p *Parser) parseDecoratedStatement() ast.Statement {
 		if !p.expectPeek(token.Ident) {
 			return nil
 		}
-		decorator.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		nameToken := p.curToken
+		name := p.curToken.Literal
+		/* Dotted decorator name: `@Foo.bar` and `@Foo.bar.baz`
+		 * are valid identifiers in the decorator namespace.
+		 * Used by framework-style families like `@Assert.email` /
+		 * `@Assert.minLength(2)` where the parts before the dot
+		 * group related rules under a common prefix. The whole
+		 * dotted name is stored as a single identifier value -
+		 * decorator dispatch is by exact string match. */
+		for p.peekTokenIs(token.Dot) {
+			p.nextToken()
+			if !p.expectPeekIdentifierName() {
+				return nil
+			}
+			name = name + "." + p.curToken.Literal
+		}
+		decorator.Name = &ast.Identifier{Token: nameToken, Value: name}
 		if p.peekTokenIs(token.LParen) {
 			p.nextToken()
 			decorator.Arguments = p.parseCallArguments()
@@ -301,6 +317,12 @@ func (p *Parser) parseDecoratedStatement() ast.Statement {
 		if stmt.Doc == "" {
 			stmt.Doc = doc
 		}
+	case *ast.DeclarationStatement:
+		/* Field-level decorator: legal inside a class body but not
+		 * at the top level. The class-body parser checks this. We
+		 * stash the decorators on the DeclarationStatement for the
+		 * class-body parser to harvest into ClassStatement.FieldDecorators. */
+		stmt.Decorators = decorators
 	case *ast.ExportStatement:
 		switch inner := stmt.Statement.(type) {
 		case *ast.FunctionStatement:
@@ -314,10 +336,10 @@ func (p *Parser) parseDecoratedStatement() ast.Statement {
 				inner.Doc = doc
 			}
 		default:
-			p.errorf(p.curToken, "decorators can only be applied to functions and classes")
+			p.errorf(p.curToken, "decorators can only be applied to functions, classes, or fields")
 		}
 	default:
-		p.errorf(p.curToken, "decorators can only be applied to functions and classes")
+		p.errorf(p.curToken, "decorators can only be applied to functions, classes, or fields")
 	}
 	return stmt
 }
@@ -593,6 +615,16 @@ func (p *Parser) parseClassStatement() ast.Statement {
 		member := p.parseStatement()
 		if member != nil {
 			stmt.Members = append(stmt.Members, member)
+			/* Field decorators live on DeclarationStatement.Decorators
+			 * when parsed, but downstream consumers (reflect, the
+			 * VM's class compiler) want a tidy `field name -> decorators`
+			 * lookup on the parent class. Lift them here. */
+			if decl, ok := member.(*ast.DeclarationStatement); ok && len(decl.Decorators) > 0 && decl.Name != nil {
+				if stmt.FieldDecorators == nil {
+					stmt.FieldDecorators = map[string][]ast.Decorator{}
+				}
+				stmt.FieldDecorators[decl.Name.Value] = decl.Decorators
+			}
 		}
 	}
 	return stmt
@@ -911,6 +943,22 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 		}
 		stmt := p.parseStatement()
 		if stmt != nil {
+			/* Top-level-only declarations: `class`, `interface`, and
+			 * `enum` carry semantic state (the class table, the
+			 * runtime type registry) that only makes sense when
+			 * declared at the file or module top level. Nested
+			 * declarations - inside a function body, a loop, or any
+			 * other block - aren't currently supported; flag them
+			 * with a clear message rather than letting the analyser
+			 * fail with a confusing downstream error. */
+			switch v := stmt.(type) {
+			case *ast.ClassStatement:
+				p.errorf(v.Token, "class declaration is only allowed at the top level, not inside a block")
+			case *ast.InterfaceStatement:
+				p.errorf(v.Token, "interface declaration is only allowed at the top level, not inside a block")
+			case *ast.EnumStatement:
+				p.errorf(v.Token, "enum declaration is only allowed at the top level, not inside a block")
+			}
 			block.Statements = append(block.Statements, stmt)
 		}
 	}
@@ -975,6 +1023,12 @@ func (p *Parser) parsePrefix() ast.Expression {
 		p.nextToken()
 		expr := p.parseExpression(lowest)
 		p.expectPeek(token.RParen)
+		// `(obj.x)` followed by `(args)` should call the VALUE of
+		// obj.x, not dispatch as a method on obj. Mark the selector
+		// so the call dispatcher takes the value-then-call path.
+		if sel, ok := expr.(*ast.SelectorExpression); ok {
+			sel.Parenthesized = true
+		}
 		return expr
 	case token.LBracket:
 		return p.parseListLiteral()
@@ -1082,6 +1136,21 @@ func (p *Parser) parseDefaultInfix(left ast.Expression) ast.Expression {
 	if p.curTokenIs(token.Is) && p.peekTokenIs(token.Not) {
 		p.nextToken()
 		expr.Operator = "is not"
+	}
+	// `instanceof` accepts a TypeRef on the right (e.g. `list<int>`,
+	// `?dict<string, User>`) - not just a bare identifier. Detect the
+	// instanceof form here and parse a TypeRef instead of a regular
+	// expression, then stash the stringified TypeRef as an Identifier
+	// so the evaluator's existing instanceof dispatch handles it. The
+	// downstream `valueMatchesType` understands generic-arg syntax in
+	// the name.
+	if p.curTokenIs(token.InstanceOf) {
+		opTok := p.curToken
+		p.nextToken()
+		typ := p.parseTypeRefFromCurrent()
+		ident := &ast.Identifier{Token: opTok, Value: typ.String()}
+		expr.Right = ident
+		return expr
 	}
 	p.nextToken()
 	expr.Right = p.parseExpression(precedence)
@@ -1311,6 +1380,11 @@ func (p *Parser) parseListLiteral() ast.Expression {
 			break
 		}
 		p.nextToken()
+		/* Trailing comma: `[a, b, c,]` is legal and the dangling
+		 * `,` simply terminates the list. */
+		if p.peekTokenIs(token.RBracket) {
+			break
+		}
 	}
 	p.expectPeek(token.RBracket)
 	return lit

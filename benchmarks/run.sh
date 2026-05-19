@@ -30,8 +30,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ---- Benchmark cases (parallel arrays so we stay portable bash). ----
-CASE_NAMES=(numeric_loop recursive_fib list_pipeline)
-CASE_ARGS=("2000000"     "28"          "5000")
+CASE_NAMES=(numeric_loop recursive_fib list_pipeline string_concat dict_ops class_dispatch)
+CASE_ARGS=("2000000"     "28"          "5000"        "20000"        "10000"  "50000")
 
 # ---- CLI parsing. ----
 REPEATS=5

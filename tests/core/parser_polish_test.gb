@@ -1,0 +1,73 @@
+/**
+ * @title Parser polish (1.0.2)
+ * @summary Trailing commas in list / dict / set literals; bare
+ * `return;` in a void-returning function. Both are user-facing
+ * conveniences that align the language with what other modern
+ * languages accept.
+ */
+import test;
+
+class TrailingCommaTest extends test.Test {
+    @test
+    func listLiteralAcceptsTrailingComma(): void {
+        let a = [1, 2, 3,];
+        this.assertEquals(3, a.length());
+        this.assertEquals(3, a[2]);
+    }
+
+    @test
+    func multilineListAcceptsTrailingComma(): void {
+        let xs = [
+            "alpha",
+            "bravo",
+            "charlie",
+        ];
+        this.assertEquals(3, xs.length());
+        this.assertEquals("charlie", xs[2]);
+    }
+
+    @test
+    func dictLiteralAcceptsTrailingComma(): void {
+        dict<string, int> d = {"a": 1, "b": 2,};
+        this.assertEquals(2, d.keys().length());
+    }
+
+    @test
+    func setLiteralAcceptsTrailingComma(): void {
+        let s = {1, 2, 3,};
+        this.assertTrue(s.contains(2));
+    }
+
+    @test
+    func nestedTrailingCommas(): void {
+        let nested = [
+            [1, 2,],
+            [3, 4,],
+        ];
+        this.assertEquals(2, nested.length());
+        this.assertEquals(2, ((nested[0]) as list<any>).length());
+    }
+}
+
+class VoidReturnTest extends test.Test {
+    int counter;
+
+    func setUp(): void {
+        this.counter = 0;
+    }
+
+    func earlyExit(int n): void {
+        if (n < 0) {
+            return;
+        }
+        this.counter = n;
+    }
+
+    @test
+    func bareReturnInVoidFunction(): void {
+        this.earlyExit(-5);
+        this.assertEquals(0, this.counter);
+        this.earlyExit(7);
+        this.assertEquals(7, this.counter);
+    }
+}

@@ -1,0 +1,21 @@
+import io;
+import sys;
+
+let args = sys.args();
+int n = args.length() > 0 ? args[0].toInt() : 10000;
+let d = {};
+
+for (int i = 0; i < n; i++) {
+    let key = "k" + (i as string);
+    d[key] = i;
+}
+
+int total = 0;
+for (int i = 0; i < n; i++) {
+    let key = "k" + (i as string);
+    if (d.contains(key)) {
+        total = total + d.get(key);
+    }
+}
+
+io.println(total);

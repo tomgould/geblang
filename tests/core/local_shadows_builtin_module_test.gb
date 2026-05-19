@@ -1,0 +1,39 @@
+/**
+ * @title Local variable shadows built-in module (1.0.2)
+ * @summary When a local variable's name matches a built-in stdlib
+ * module, a `name.method(...)` call resolves to the local rather
+ * than the module. Lexical scope wins.
+ */
+import test;
+import errors;
+import json;
+
+class ShadowTest extends test.Test {
+    @test
+    func localListShadowsErrorsModule(): void {
+        /* `errors` shadows the imported `errors` module. The
+         * `.push` and `.length` calls invoke the list's methods,
+         * not the module's. */
+        let errors = [1, 2, 3];
+        errors = errors.push(4);
+        this.assertEquals(4, errors.length());
+    }
+
+    @test
+    func localStringShadowsJsonModule(): void {
+        let json = "not actually json";
+        this.assertEquals(17, json.length());
+    }
+
+    @test
+    func nestedScopeShadowsCorrectly(): void {
+        let errors = [10, 20];
+        if (errors.length() > 1) {
+            let errors = ["inner"];
+            this.assertEquals(1, errors.length());
+            this.assertEquals("inner", errors[0]);
+        }
+        /* Outer scope's `errors` is restored after the block. */
+        this.assertEquals(2, errors.length());
+    }
+}

@@ -1,0 +1,105 @@
+/**
+ * @title Reflect + instanceof + catch parity (1.0.2)
+ * @summary Reflection over classes, instances, and primitives behaves
+ * identically on the evaluator and the VM. `instanceof`, `catch`, and
+ * runtime cast walk the parent chain for error-derived classes;
+ * `reflect.class("Name")` resolves classes declared anywhere in the
+ * loaded program; `reflect.methods/fields/parent/interfaces` accept
+ * class values, instances, and built-in primitive values uniformly.
+ */
+import test;
+import reflect;
+
+class HttpException extends RuntimeError {
+    int status;
+    string detail;
+
+    func HttpException(int s, string d) {
+        parent("HTTP " + (s as string));
+        this.status = s;
+        this.detail = d;
+    }
+}
+
+class BadRequestError extends HttpException {
+    func BadRequestError(string d) { parent(400, d); }
+}
+
+class Box {
+    string label;
+    ?int count;
+}
+
+class ReflectParityTest extends test.Test {
+    @test
+    func instanceofWalksParentChain(): void {
+        let e = BadRequestError("nope");
+        this.assertTrue(e instanceof BadRequestError);
+        this.assertTrue(e instanceof HttpException);
+        this.assertTrue(e instanceof RuntimeError);
+    }
+
+    @test
+    func catchMatchesParentClass(): void {
+        let caught = false;
+        try {
+            throw BadRequestError("nope");
+        } catch (HttpException err) {
+            caught = true;
+            this.assertEquals("nope", err.detail);
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func reflectClassByName(): void {
+        let cls = reflect.class("Box");
+        this.assertTrue(cls != null);
+    }
+
+    @test
+    func reflectMethodsAcceptsInstanceAndClass(): void {
+        let b = Box();
+        let byInst = reflect.methods(b);
+        let byClass = reflect.methods(Box);
+        this.assertEquals(byInst.length(), byClass.length());
+    }
+
+    @test
+    func reflectFieldsReturnsStructuredDicts(): void {
+        let fields = reflect.fields(Box);
+        this.assertEquals(2, fields.length());
+        let count = fields[0];
+        this.assertEquals("count", count["name"]);
+        this.assertEquals("?int", count["type"]);
+        this.assertTrue(count["nullable"]);
+        let label = fields[1];
+        this.assertEquals("label", label["name"]);
+        this.assertEquals("string", label["type"]);
+        this.assertFalse(label["nullable"]);
+    }
+}
+
+class PrimitiveReflectTest extends test.Test {
+    @test
+    func reflectMethodsOnList(): void {
+        let methods = reflect.methods([1, 2, 3]);
+        this.assertTrue(methods.contains("push"));
+        this.assertTrue(methods.contains("length"));
+        this.assertTrue(methods.contains("filter"));
+    }
+
+    @test
+    func reflectMethodsOnDict(): void {
+        let methods = reflect.methods({"a": 1});
+        this.assertTrue(methods.contains("keys"));
+        this.assertTrue(methods.contains("values"));
+    }
+
+    @test
+    func reflectMethodsOnString(): void {
+        let methods = reflect.methods("abc");
+        this.assertTrue(methods.contains("upper"));
+        this.assertTrue(methods.contains("substring"));
+    }
+}

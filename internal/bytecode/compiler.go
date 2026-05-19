@@ -101,7 +101,15 @@ func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk
 			c.declareTypeAlias(alias)
 		}
 		if fn, ok := stmt.(*ast.FunctionStatement); ok {
-			c.declareFunction(fn.Name.Value)
+			index := c.declareFunction(fn.Name.Value)
+			/* Forward-call resolution: populate the function's
+			 * signature (param names/types, return type, defaults,
+			 * variadic flag) up front so a body compiled before
+			 * this declaration can still match the call site
+			 * against a real signature instead of skipping the
+			 * "uninitialised" candidate. The body itself is filled
+			 * in by compileFunctionStatement on the second pass. */
+			c.populateFunctionSignature(index, fn)
 			key := strings.ToLower(fn.Name.Value)
 			meta, err := reflectFunctionMetadataFromStatement(c, fn, "function", int64(len(c.funcs[key])-1))
 			if err != nil {
@@ -241,6 +249,14 @@ func reflectClassMetadataFromStatement(stmt *ast.ClassStatement) *runtime.ClassM
 			}
 		case *ast.FunctionStatement:
 			if member.Name == nil {
+				continue
+			}
+			// A function whose name matches the class name is the
+			// constructor - exposed via reflect.constructors rather
+			// than reflect.methods. Matches the evaluator and avoids
+			// the previous divergence where the VM included the
+			// constructor in the methods list.
+			if strings.EqualFold(member.Name.Value, stmt.Name.Value) {
 				continue
 			}
 			key := strings.ToLower(member.Name.Value)
@@ -916,6 +932,17 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 				return c.withStatementLocation(member, fmt.Errorf("bytecode compiler only supports static const and static let class declarations"))
 			}
 			class.FieldNames = append(class.FieldNames, member.Name.Value)
+			fieldType := ""
+			if member.Type != nil {
+				fieldType = member.Type.String()
+			}
+			class.FieldTypes = append(class.FieldTypes, fieldType)
+			/* Field decorators ride alongside the field at compile time
+			 * so reflect.fields can surface them at runtime without
+			 * re-reading the AST. Frameworks consume them as
+			 * metadata - they are never auto-executed on field
+			 * access or assignment. */
+			class.FieldDecorators = appendFieldDecorators(class.FieldDecorators, len(class.FieldNames)-1, member.Decorators)
 			if member.Value == nil {
 				class.FieldDefaults = append(class.FieldDefaults, -1)
 				continue
@@ -2213,6 +2240,21 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				c.emitAt(OpTypeOf, expr.Token.Line, expr.Token.Column)
 				return nil
 			}
+			if ident.Value == "range" {
+				if len(expr.Arguments) < 2 || len(expr.Arguments) > 3 {
+					return fmt.Errorf("range expects (start, end) or (start, end, step)")
+				}
+				for _, arg := range expr.Arguments {
+					if arg.Name != nil {
+						return fmt.Errorf("range does not accept named arguments")
+					}
+					if err := c.compileExpression(arg.Value); err != nil {
+						return err
+					}
+				}
+				c.emitAt(OpRange, expr.Token.Line, expr.Token.Column, int64(len(expr.Arguments)))
+				return nil
+			}
 			if isBuiltinErrorClass(ident.Value) {
 				if len(expr.Arguments) > 1 {
 					return fmt.Errorf("%s expects zero or one argument", ident.Value)
@@ -2377,6 +2419,42 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			}
 			c.emitPlantCallTypeBindings(expr, c.chunk.Functions[index].TypeParameters)
 			c.emitAt(OpCall, expr.Token.Line, expr.Token.Column, index, int64(len(orderedArgs)))
+			return nil
+		}
+		if selector, ok := expr.Callee.(*ast.SelectorExpression); ok && selector.Parenthesized {
+			/* `(obj.fn)(args)` invokes the value of obj.fn rather
+			 * than dispatching as a method call on obj. Compile
+			 * the selector as a value, push args, OpMethodCall
+			 * __invoke. */
+			if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+				return fmt.Errorf("bytecode compiler does not support spread argument %d in parenthesized callable expression", spreadIndex)
+			}
+			if err := c.compileExpression(expr.Callee); err != nil {
+				return err
+			}
+			hasNamedArgs := false
+			for _, arg := range expr.Arguments {
+				hasNamedArgs = hasNamedArgs || arg.Name != nil
+				if err := c.compileExpression(arg.Value); err != nil {
+					return err
+				}
+			}
+			nameIndex := int64(len(c.chunk.Constants))
+			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
+			if hasNamedArgs {
+				operands := []int64{nameIndex, int64(len(expr.Arguments))}
+				for _, arg := range expr.Arguments {
+					argNameIndex := int64(-1)
+					if arg.Name != nil {
+						argNameIndex = int64(len(c.chunk.Constants))
+						c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: arg.Name.Value})
+					}
+					operands = append(operands, argNameIndex)
+				}
+				c.emitAt(OpMethodCallNamed, expr.Token.Line, expr.Token.Column, operands...)
+				return nil
+			}
+			c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 			return nil
 		}
 		if selector, ok := expr.Callee.(*ast.SelectorExpression); ok {
@@ -2640,7 +2718,14 @@ func newFreeVarSet(params []ast.Parameter) *freeVarSet {
 	s := &freeVarSet{defined: map[string]bool{}, free: map[string]bool{}}
 	for _, p := range params {
 		if p.Name != nil {
-			s.defined[strings.ToLower(p.Name.Value)] = true
+			// Identifiers in Geblang are case-sensitive (locals are
+			// looked up by exact name in the enclosing scope). The
+			// scanner used to lowercase here, which silently
+			// dropped captured upvalues whose names contained
+			// uppercase letters - the closure body then emitted
+			// `OpGetLocal <outer-slot>` that, at runtime, indexed
+			// into the closure's own locals frame at the wrong slot.
+			s.defined[p.Name.Value] = true
 		}
 	}
 	return s
@@ -2665,7 +2750,7 @@ func (s *freeVarSet) scanStatement(stmt ast.Statement) {
 			s.scanExpr(stmt.Value)
 		}
 		if stmt.Name != nil {
-			s.defined[strings.ToLower(stmt.Name.Value)] = true
+			s.defined[stmt.Name.Value] = true
 		}
 	case *ast.ReturnStatement:
 		if stmt.Value != nil {
@@ -2693,11 +2778,11 @@ func (s *freeVarSet) scanStatement(stmt ast.Statement) {
 		s.scanExpr(stmt.Condition)
 		s.scanStatement(stmt.Update)
 		if stmt.VarName != nil {
-			s.defined[strings.ToLower(stmt.VarName.Value)] = true
+			s.defined[stmt.VarName.Value] = true
 		}
 		for _, v := range stmt.VarNames {
 			if v != nil {
-				s.defined[strings.ToLower(v.Value)] = true
+				s.defined[v.Value] = true
 			}
 		}
 		s.scanExpr(stmt.Iterable)
@@ -2707,7 +2792,7 @@ func (s *freeVarSet) scanStatement(stmt ast.Statement) {
 		s.scanBlock(stmt.Body)
 		for _, catch := range stmt.Catches {
 			if catch.Name != nil {
-				inner := &freeVarSet{defined: map[string]bool{strings.ToLower(catch.Name.Value): true}, free: map[string]bool{}}
+				inner := &freeVarSet{defined: map[string]bool{catch.Name.Value: true}, free: map[string]bool{}}
 				for k := range s.defined {
 					inner.defined[k] = true
 				}
@@ -2724,7 +2809,7 @@ func (s *freeVarSet) scanStatement(stmt ast.Statement) {
 		s.scanBlock(stmt.Finally)
 	case *ast.FunctionStatement:
 		if stmt.Name != nil {
-			s.defined[strings.ToLower(stmt.Name.Value)] = true
+			s.defined[stmt.Name.Value] = true
 		}
 		inner := newFreeVarSet(stmt.Parameters)
 		inner.scanBlock(stmt.Body)
@@ -2745,12 +2830,12 @@ func (s *freeVarSet) scanStatement(stmt ast.Statement) {
 		}
 	case *ast.ClassStatement:
 		if stmt.Name != nil {
-			s.defined[strings.ToLower(stmt.Name.Value)] = true
+			s.defined[stmt.Name.Value] = true
 		}
 	case *ast.WithStatement:
 		s.scanExpr(stmt.Value)
 		if stmt.Name != nil {
-			inner := &freeVarSet{defined: map[string]bool{strings.ToLower(stmt.Name.Value): true}, free: map[string]bool{}}
+			inner := &freeVarSet{defined: map[string]bool{stmt.Name.Value: true}, free: map[string]bool{}}
 			for k := range s.defined {
 				inner.defined[k] = true
 			}
@@ -2772,7 +2857,7 @@ func (s *freeVarSet) scanExpr(expr ast.Expression) {
 	}
 	switch expr := expr.(type) {
 	case *ast.Identifier:
-		name := strings.ToLower(expr.Value)
+		name := expr.Value
 		if !s.defined[name] {
 			s.free[name] = true
 		}
@@ -3068,7 +3153,7 @@ func (c *Compiler) compileReflectCall(expr *ast.CallExpression, name string) err
 		if len(expr.Arguments) != 1 {
 			return fmt.Errorf("reflect.%s expects exactly one argument", name)
 		}
-		if _, ok := expr.Arguments[0].Value.(*ast.StringLiteral); ok {
+		if literal, ok := expr.Arguments[0].Value.(*ast.StringLiteral); ok {
 			value, handled, err := c.reflectNamedTarget(expr, name)
 			if err != nil {
 				return err
@@ -3077,13 +3162,24 @@ func (c *Compiler) compileReflectCall(expr *ast.CallExpression, name string) err
 				c.emitConstant(value, expr.Token.Line, expr.Token.Column)
 				return nil
 			}
-			argc, err := c.compileReflectQualifiedLookup(expr, name)
-			if err != nil {
-				return err
+			// Qualified `module.export` form goes through the
+			// compile-time lookup helper; bare names fall through
+			// to the runtime native call so the VM's FindClassByName
+			// can resolve them across loaded modules.
+			if strings.Contains(literal.Value, ".") {
+				argc, err := c.compileReflectQualifiedLookup(expr, name)
+				if err != nil {
+					return err
+				}
+				nameIndex := int64(len(c.chunk.Constants))
+				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "reflect." + name})
+				c.emitAt(OpNativeCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(argc))
+				return nil
 			}
+			c.emitConstant(runtime.String{Value: literal.Value}, expr.Token.Line, expr.Token.Column)
 			nameIndex := int64(len(c.chunk.Constants))
 			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "reflect." + name})
-			c.emitAt(OpNativeCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(argc))
+			c.emitAt(OpNativeCall, expr.Token.Line, expr.Token.Column, nameIndex, 1)
 			return nil
 		}
 		if err := c.compileExpression(expr.Arguments[0].Value); err != nil {
@@ -3101,7 +3197,7 @@ func (c *Compiler) compileReflectCall(expr *ast.CallExpression, name string) err
 		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "reflect.module"})
 		c.emitAt(OpNativeCall, expr.Token.Line, expr.Token.Column, nameIndex, 1)
 		return nil
-	case "method", "staticMethod":
+	case "method", "staticMethod", "getField", "setField":
 		for _, arg := range expr.Arguments {
 			if err := c.compileExpression(arg.Value); err != nil {
 				return err
@@ -3111,7 +3207,7 @@ func (c *Compiler) compileReflectCall(expr *ast.CallExpression, name string) err
 		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "reflect." + name})
 		c.emitAt(OpNativeCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 		return nil
-	case "decorators", "hasDecorator", "decorator", "parameters", "returnType", "doc", "docs", "typeOf", "fields", "methods", "staticMethods", "parent", "interfaces", "constructors", "typeBindings", "interfaceMethods", "interfaceParents":
+	case "decorators", "hasDecorator", "decorator", "parameters", "returnType", "doc", "docs", "typeOf", "fields", "methods", "staticMethods", "parent", "interfaces", "className", "constructors", "typeBindings", "interfaceMethods", "interfaceParents":
 		if reflectSingleValueCall(name) && len(expr.Arguments) != 1 {
 			return fmt.Errorf("reflect.%s expects value", name)
 		}
@@ -3171,7 +3267,7 @@ func (c *Compiler) compileReflectCall(expr *ast.CallExpression, name string) err
 
 func reflectSingleValueCall(name string) bool {
 	switch name {
-	case "parameters", "returnType", "doc", "docs", "typeOf", "fields", "methods", "staticMethods", "parent", "interfaces", "constructors", "typeBindings", "interfaceMethods", "interfaceParents":
+	case "parameters", "returnType", "doc", "docs", "typeOf", "fields", "methods", "staticMethods", "parent", "interfaces", "className", "constructors", "typeBindings", "interfaceMethods", "interfaceParents":
 		return true
 	default:
 		return false
@@ -3293,7 +3389,10 @@ func (c *Compiler) reflectNamedTarget(expr *ast.CallExpression, name string) (ru
 	case "function":
 		target, ok := c.reflectFuncs[key]
 		if !ok {
-			return runtime.Null{}, true, nil
+			// Fall through to the runtime path so the VM can look
+			// up the function in another loaded module via the
+			// module loader.
+			return nil, false, nil
 		}
 		if err := validateReflectDecorators(target.Decorators); err != nil {
 			return nil, false, err
@@ -3302,7 +3401,10 @@ func (c *Compiler) reflectNamedTarget(expr *ast.CallExpression, name string) (ru
 	case "class":
 		target, ok := c.reflectClasses[key]
 		if !ok {
-			return runtime.Null{}, true, nil
+			// Fall through to the runtime path so the VM's
+			// FindClassByName can resolve classes declared in
+			// other loaded modules.
+			return nil, false, nil
 		}
 		if err := validateReflectDecorators(target.Decorators); err != nil {
 			return nil, false, err
@@ -4185,6 +4287,33 @@ func (c *Compiler) declareFunction(name string) int64 {
 	return index
 }
 
+// populateFunctionSignature fills in the parameter / return type
+// metadata for a function declared but not yet compiled. Callers
+// that depend on signature-based overload resolution (notably the
+// forward-call lookup in selectFunctionIndicesCall) read this
+// metadata; the function body is compiled later by
+// compileFunctionStatement which overwrites everything except the
+// reserved index.
+func (c *Compiler) populateFunctionSignature(index int64, fn *ast.FunctionStatement) {
+	info := &c.chunk.Functions[index]
+	info.ParamNames = make([]string, 0, len(fn.Parameters))
+	info.ParamTypes = make([]string, 0, len(fn.Parameters))
+	info.DefaultConstants = make([]int64, 0, len(fn.Parameters))
+	for _, param := range fn.Parameters {
+		info.ParamNames = append(info.ParamNames, param.Name.Value)
+		if param.Type != nil {
+			info.ParamTypes = append(info.ParamTypes, param.Type.String())
+		} else {
+			info.ParamTypes = append(info.ParamTypes, "")
+		}
+		info.DefaultConstants = append(info.DefaultConstants, -1)
+		if param.Variadic {
+			info.Variadic = true
+		}
+	}
+	info.ReturnType = c.bytecodeReturnType(fn.ReturnType)
+}
+
 func (c *Compiler) nextFunctionIndex(name string) int64 {
 	key := strings.ToLower(name)
 	indices := c.funcs[key]
@@ -4569,6 +4698,30 @@ func typeNameFromExpression(expr ast.Expression) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("expected type name, got %s", expr.String())
+}
+
+// appendFieldDecorators grows the parallel FieldDecorators slice up
+// to the given field index (filling intermediate slots with nil) and
+// stores the metadata derived from the AST decorators. Keeps the
+// slice length aligned with FieldNames so the encoder writes a
+// matching number of entries. Argument-decoding errors are silently
+// ignored to keep field declarations parseable even when the user
+// hasn't yet introduced the constants their decorator args
+// reference; the runtime simply sees an empty decorator list for
+// that field.
+func appendFieldDecorators(existing [][]runtime.DecoratorMetadata, fieldIndex int, decorators []ast.Decorator) [][]runtime.DecoratorMetadata {
+	for len(existing) <= fieldIndex {
+		existing = append(existing, nil)
+	}
+	if len(decorators) == 0 {
+		return existing
+	}
+	metas, err := decoratorsMetadata(decorators, "field", 0)
+	if err != nil {
+		return existing
+	}
+	existing[fieldIndex] = metas
+	return existing
 }
 
 func constantValueFromExpression(expr ast.Expression) (runtime.Value, error) {

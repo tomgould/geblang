@@ -140,6 +140,10 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"fromString": {}, "toString": {}, "fromHex": {}, "toHex": {},
 		"fromBase64": {}, "toBase64": {}, "concat": {},
 	},
+	"string": {
+		"fromCodePoint": {}, "fromCodePoints": {},
+		"compare": {}, "equalsFold": {},
+	},
 	"compress": {
 		"gzip": {}, "gunzip": {},
 	},

@@ -15,7 +15,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(48)
+	Version = uint16(50)
 )
 
 type Op byte
@@ -194,6 +194,14 @@ const (
 	// already bound, making explicit-args strictly override
 	// inferred-from-arg bindings.
 	OpPlantCallTypeBindings
+	// OpRange implements the top-level `range(start, end[, step])`
+	// builtin. The single operand is the argument count (2 or 3).
+	// Pops that many integer-valued operands from the stack and
+	// pushes a `list<int>` containing the inclusive sequence. With
+	// 2 args the step defaults to 1 (or -1 when start > end); with
+	// 3 args the explicit step is used. Step zero is a runtime
+	// error.
+	OpRange
 )
 
 type Instruction struct {
@@ -288,6 +296,16 @@ type ClassInfo struct {
 	TypeParameters           []string
 	TypeParamConstraintExprs []string // parallel to TypeParameters; "" if no constraint
 	FieldNames               []string
+	// FieldTypes parallels FieldNames - the declared type string of
+	// each field, or "" when untyped. Populated at compile time so
+	// reflect.fields can report types without re-reading the AST.
+	FieldTypes               []string
+	// FieldDecorators parallels FieldNames - the metadata for any
+	// @-prefixed annotations on the field declaration (e.g.
+	// `@Assert.email`). Empty per field by default. Populated at
+	// compile time; consumed by `reflect.fields` so frameworks can
+	// drive validation / serialization off the field annotations.
+	FieldDecorators          [][]runtime.DecoratorMetadata
 	FieldDefaults            []int64
 	ConstructorIndices       []int64
 	// DestructorIndex is the function index of `func ~ClassName()`,
@@ -441,6 +459,12 @@ func Encode(chunk Chunk) ([]byte, error) {
 			out = binary.BigEndian.AppendUint16(out, uint16(len(name)))
 			out = append(out, []byte(name)...)
 			out = binary.BigEndian.AppendUint64(out, uint64(class.FieldDefaults[i]))
+			fieldType := ""
+			if i < len(class.FieldTypes) {
+				fieldType = class.FieldTypes[i]
+			}
+			out = binary.BigEndian.AppendUint16(out, uint16(len(fieldType)))
+			out = append(out, []byte(fieldType)...)
 		}
 		out = binary.BigEndian.AppendUint16(out, uint16(len(class.ConstructorIndices)))
 		for _, index := range class.ConstructorIndices {
@@ -488,6 +512,15 @@ func Encode(chunk Chunk) ([]byte, error) {
 		out, err = appendDecoratorMetadataMap(out, class.StaticDecorators)
 		if err != nil {
 			return nil, err
+		}
+		/* Per-field decorators, parallel to FieldNames. Length is
+		 * either 0 (no field has decorators) or len(FieldNames). */
+		out = binary.BigEndian.AppendUint16(out, uint16(len(class.FieldDecorators)))
+		for _, decs := range class.FieldDecorators {
+			out, err = appendDecoratorMetadata(out, decs)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	out = binary.BigEndian.AppendUint32(out, uint32(len(chunk.Interfaces)))
@@ -640,9 +673,11 @@ func Decode(data []byte) (Chunk, error) {
 		fieldCount := int(reader.u16())
 		class.FieldNames = make([]string, 0, fieldCount)
 		class.FieldDefaults = make([]int64, 0, fieldCount)
+		class.FieldTypes = make([]string, 0, fieldCount)
 		for j := 0; j < fieldCount; j++ {
 			class.FieldNames = append(class.FieldNames, string(reader.read(int(reader.u16()))))
 			class.FieldDefaults = append(class.FieldDefaults, int64(reader.u64()))
+			class.FieldTypes = append(class.FieldTypes, string(reader.read(int(reader.u16()))))
 		}
 		constructorCount := int(reader.u16())
 		class.ConstructorIndices = make([]int64, 0, constructorCount)
@@ -682,6 +717,13 @@ func Decode(data []byte) (Chunk, error) {
 		class.Decorators = reader.decoratorMetadata()
 		class.MethodDecorators = reader.decoratorMetadataMap()
 		class.StaticDecorators = reader.decoratorMetadataMap()
+		fieldDecCount := int(reader.u16())
+		if fieldDecCount > 0 {
+			class.FieldDecorators = make([][]runtime.DecoratorMetadata, 0, fieldDecCount)
+			for j := 0; j < fieldDecCount; j++ {
+				class.FieldDecorators = append(class.FieldDecorators, reader.decoratorMetadata())
+			}
+		}
 		chunk.Classes = append(chunk.Classes, class)
 	}
 	interfaceCount := int(reader.u32())
@@ -949,7 +991,7 @@ func appendDecoratorMetadataMap(out []byte, items map[string][]runtime.Decorator
 
 func appendMetadataValue(out []byte, value runtime.Value) ([]byte, error) {
 	switch value := value.(type) {
-	case runtime.Null, runtime.Bool, runtime.Int, runtime.String, runtime.Decimal, runtime.Float:
+	case runtime.Null, runtime.Bool, runtime.SmallInt, runtime.Int, runtime.String, runtime.Decimal, runtime.Float:
 		return appendConstant(out, value)
 	case runtime.List:
 		out = append(out, 7)

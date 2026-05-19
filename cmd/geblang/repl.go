@@ -923,7 +923,14 @@ func replInsertSemicolons(source string) string {
 			token.RParen, token.RBrace, token.RBracket,
 			token.Inc, token.Dec,
 			token.Return, token.Break, token.Continue,
-			token.Null, token.True, token.False, token.This:
+			token.Null, token.True, token.False, token.This,
+			// `>` and `>>` close generic-type-argument lists in 1.0.1+
+			// expression forms like `Box<int>()` and 1.0.2's
+			// `xs instanceof list<int>`. Treating them as statement-
+			// enders lets the user type the line without a trailing
+			// semicolon. The edge case `a > b` typed across two REPL
+			// lines stops working, but that's not idiomatic REPL use.
+			token.GT, token.RShift:
 			return true
 		}
 		return false

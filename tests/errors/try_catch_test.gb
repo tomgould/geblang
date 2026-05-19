@@ -77,4 +77,43 @@ class TryCatchTest extends test.Test {
         }
         this.assertTrue(rethrown);
     }
+
+    @test
+    func getMessageAndGetClassOnBuiltin(): void {
+        /* Java/PHP-style accessor methods on built-in error values.
+         * Pre-1.0.2 only `.message` worked; `e.getMessage()` was
+         * "X has no method getMessage". */
+        try {
+            throw RuntimeError("explicit boom");
+        } catch (RuntimeError e) {
+            this.assertEquals("explicit boom", e.message);
+            this.assertEquals("explicit boom", e.getMessage());
+            this.assertEquals("RuntimeError", e.getClass());
+        }
+    }
+
+    @test
+    func getMessageOnUserDerivedError(): void {
+        /* User-defined error subclasses inherit getMessage() / getClass()
+         * through the same built-in dispatch path. */
+        try {
+            throw AppError("user-derived");
+        } catch (AppError e) {
+            this.assertEquals("user-derived", e.getMessage());
+            this.assertEquals("AppError", e.getClass());
+        }
+    }
+
+    @test
+    func castFailureIsCatchable(): void {
+        /* A failed `x as Y` is a catchable RuntimeError. Pre-1.0.2 the
+         * VM let it escape as an uncatchable "bytecode runtime error".
+         * list->int has no defined cast on either backend. */
+        try {
+            let n = [1, 2, 3] as int;
+            this.fail("cast should have thrown");
+        } catch (RuntimeError e) {
+            this.assertEquals("cannot cast list to int", e.getMessage());
+        }
+    }
 }

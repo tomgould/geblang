@@ -1,0 +1,66 @@
+/**
+ * @title Cross-chunk reflect.fields preserves decorators (1.0.2)
+ * @summary An instance handed to code in a different chunk still
+ * reports its class's field decorators through reflect.fields.
+ * The originating chunk's `@Groups` / `@Assert` annotations ride
+ * along on the instance's runtime.Class.Fields so framework code
+ * in another module sees the same metadata the declaring module
+ * does.
+ */
+import test;
+import reflect;
+
+class Tagged {
+    @Groups("read", "admin") string id;
+    @Assert.email string email;
+    string updatedAt;
+}
+
+func observerInSomeOtherScope(any value): list<string> {
+    list<string> taggedNames = [];
+    for (entry in reflect.fields(value)) {
+        let f = entry as dict<string, any>;
+        if (!f.contains("decorators")) {
+            continue;
+        }
+        if ((f["decorators"] as list<any>).length() > 0) {
+            taggedNames = taggedNames.push(f["name"] as string);
+        }
+    }
+    return taggedNames;
+}
+
+class CrossChunkFieldsTest extends test.Test {
+    @test
+    func fieldsListSurvivesAcrossFunctionCalls(): void {
+        let t = Tagged();
+        t.id = "x";
+        t.email = "ada@example.com";
+        t.updatedAt = "2025";
+        /* observerInSomeOtherScope only sees the instance via its
+         * `any` parameter - no static class reference. The field
+         * decorators must still be visible. */
+        let names = observerInSomeOtherScope(t);
+        this.assertEquals(2, names.length());
+        this.assertTrue(names.contains("id"));
+        this.assertTrue(names.contains("email"));
+    }
+
+    @test
+    func decoratorArgsTravelWithTheInstance(): void {
+        let t = Tagged();
+        for (entry in reflect.fields(t)) {
+            let f = entry as dict<string, any>;
+            if ((f["name"] as string) != "id") {
+                continue;
+            }
+            let decs = f["decorators"] as list<any>;
+            this.assertEquals(1, decs.length());
+            let d = decs[0] as dict<string, any>;
+            this.assertEquals("Groups", d["name"]);
+            let args = d["args"] as list<any>;
+            this.assertEquals("read", args[0]);
+            this.assertEquals("admin", args[1]);
+        }
+    }
+}

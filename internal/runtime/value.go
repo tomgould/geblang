@@ -198,6 +198,11 @@ func (v TemplateEngine) Inspect() string  { return "<template.Engine " + v.Dir +
 type List struct {
 	Elements []Value
 	Frozen   bool
+	// ElementTypes is the optional declared element-type tag attached
+	// when the list flows through a typed-declaration boundary
+	// (`list<int> xs = ...`). nil for untagged lists. Mutating methods
+	// propagate the tag through; reflect.typeBindings reads it.
+	ElementTypes []string
 }
 
 func (v List) TypeName() string { return "list" }
@@ -212,6 +217,9 @@ func (v List) Inspect() string {
 type Dict struct {
 	Entries map[string]DictEntry
 	Frozen  bool
+	// ElementTypes mirrors List.ElementTypes for dicts. When set, the
+	// slice has two entries: [keyType, valueType] for `dict<K, V>`.
+	ElementTypes []string
 }
 
 func (v Dict) TypeName() string { return "dict" }
@@ -225,6 +233,9 @@ type DictEntry struct {
 type Set struct {
 	Elements map[string]SetEntry
 	Frozen   bool
+	// ElementTypes mirrors List.ElementTypes for sets. When set, the
+	// slice has one entry: [elementType] for `set<T>`.
+	ElementTypes []string
 }
 
 func (v Set) TypeName() string { return "set" }
@@ -721,6 +732,11 @@ type Error struct {
 	Message    string
 	StackTrace string
 	Fields     map[string]Value
+	// Parents captures the parent class chain (immediate parent first,
+	// "Error" last for the built-in chain) so cross-module `instanceof`
+	// / catch on error-derived classes can walk past the chunk
+	// boundary without re-looking up the source module's class table.
+	Parents []string
 }
 
 func (v Error) TypeName() string { return v.Class }
@@ -774,7 +790,14 @@ func IsBuiltinTypeName(name string) bool {
 
 type Field struct {
 	Name    string
+	Type    *ast.TypeRef
 	Default ast.Expression
+	// Decorators is the list of @-prefixed annotations applied to
+	// the field declaration inside a class body. They are pure
+	// metadata - the runtime never executes them automatically;
+	// frameworks read them via `reflect.fields(cls)` to drive
+	// validation, serialization, etc.
+	Decorators []ast.Decorator
 }
 
 type Class struct {

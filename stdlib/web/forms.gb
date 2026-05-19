@@ -45,11 +45,11 @@ export func hasFieldError(dict<string, any> result, string field): bool {
 
 ## Returns the first validation error for a field, or an empty string.
 export func firstFieldError(dict<string, any> result, string field): string {
-    let errors = fieldErrors(result, field);
-    if (errors.length() == 0) {
+    let messages = fieldErrors(result, field);
+    if (messages.length() == 0) {
         return "";
     }
-    return errors[0] as string;
+    return messages[0] as string;
 }
 
 ## Builds an HTML hidden input for a CSRF token value.

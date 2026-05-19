@@ -1,0 +1,39 @@
+import io;
+import sys;
+
+class Counter {
+    int value;
+
+    func Counter(int start) {
+        this.value = start;
+    }
+
+    func step(int delta): int {
+        this.value = this.value + delta;
+        return this.value;
+    }
+
+    func double(): int {
+        this.value = this.value * 2;
+        return this.value;
+    }
+}
+
+let args = sys.args();
+int n = args.length() > 0 ? args[0].toInt() : 50000;
+
+let c = Counter(0);
+int sum = 0;
+
+for (int i = 0; i < n; i++) {
+    if (i % 100 == 0) {
+        /* Reset periodically so the value stays inside a 64-bit
+         * int across implementations (PHP doesn't auto-promote). */
+        c.value = i;
+        sum = sum + c.double();
+    } else {
+        sum = sum + c.step(1);
+    }
+}
+
+io.println(sum);

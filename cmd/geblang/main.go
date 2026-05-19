@@ -22,7 +22,7 @@ import (
 	"geblang/internal/semantic"
 )
 
-const version = "1.0.1"
+const version = "1.0.2"
 const bannerString = "Geblang Version %s, ©2026 David Gebler.\n==========================================\n"
 
 type executionMode int
@@ -1450,6 +1450,8 @@ func runScript(sourcePath string, scriptArgs []string, source []byte, program *a
 		if err == nil {
 			traceExecution(trace, "vm", "")
 			loader := newBytecodeModuleLoader(stdout, []string{filepath.Dir(sourcePath)})
+			loader.mainChunk = chunk
+			loader.hasMainChunk = true
 			stateful := evaluator.NewWithArgsAndModulePaths(stdout, scriptArgs, []string{filepath.Dir(sourcePath)})
 			defer stateful.Cleanup()
 			loader.stateful = stateful
@@ -1738,7 +1740,10 @@ func runTestFile(path string, tags []string, verbose bool) (int64, int64, error)
 		return 0, 0, err
 	}
 	var out strings.Builder
-	result, err := evaluator.New(&out).Eval(program)
+	// Pass the script's directory as a module path so the resolver
+	// can walk up to find a project's geblang.yaml when the test
+	// lives inside a non-stdlib package (e.g. gebweb/tests/).
+	result, err := evaluator.NewWithArgsAndModulePaths(&out, nil, []string{filepath.Dir(path)}).Eval(program)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1758,9 +1763,17 @@ func parseAndAnalyze(source string) (*ast.Program, error) {
 	if diagnostics := semantic.New().Analyze(program); len(diagnostics) > 0 {
 		messages := make([]string, 0, len(diagnostics))
 		for _, diagnostic := range diagnostics {
+			/* Warnings are advisory; only hard errors block
+			 * compilation. The user-facing `geblang check` command
+			 * reports both via its own pretty-printer. */
+			if diagnostic.Severity != semantic.SeverityError {
+				continue
+			}
 			messages = append(messages, diagnostic.Message)
 		}
-		return nil, fmt.Errorf("%s", strings.Join(messages, "\n"))
+		if len(messages) > 0 {
+			return nil, fmt.Errorf("%s", strings.Join(messages, "\n"))
+		}
 	}
 	return program, nil
 }
@@ -1888,6 +1901,11 @@ type bytecodeModuleLoader struct {
 	globals     map[string][]runtime.Value
 	decorators  map[string]bytecode.FunctionDecoratorState
 	loading     map[string]bool
+	// mainChunk holds the entry-point chunk so cross-module reflect
+	// lookups (e.g. a stdlib module calling reflect.class("UserDTO"))
+	// can resolve classes declared in the user script.
+	mainChunk    bytecode.Chunk
+	hasMainChunk bool
 }
 
 func newBytecodeModuleLoader(stdout io.Writer, modulePaths []string) *bytecodeModuleLoader {
@@ -2005,9 +2023,18 @@ func (l *bytecodeModuleLoader) CallModuleClosure(closure runtime.BytecodeClosure
 }
 
 func (l *bytecodeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value) (runtime.Value, error) {
-	chunk, ok := l.chunks[class.Module]
-	if !ok {
-		return nil, fmt.Errorf("module %s is not loaded", class.Module)
+	var chunk bytecode.Chunk
+	if class.Module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("construct %s: main chunk is not registered", class.Name)
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunks[class.Module]
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", class.Module)
+		}
+		chunk = c
 	}
 	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
 	vm.SetModuleName(class.Module)
@@ -2016,6 +2043,57 @@ func (l *bytecodeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass,
 	vm.RestoreGlobals(l.globals[class.Module])
 	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
 	return vm.ConstructClass(class.Index, args)
+}
+
+// ConstructorsForModuleClass evaluates `reflect.constructors(class)`
+// against the chunk that declared the class.
+func (l *bytecodeModuleLoader) ConstructorsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error) {
+	var chunk bytecode.Chunk
+	if class.Module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("reflect.constructors %s: main chunk is not registered", class.Name)
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunks[class.Module]
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", class.Module)
+		}
+		chunk = c
+	}
+	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
+	vm.SetModuleName(class.Module)
+	vm.SetModulePaths(l.modulePaths)
+	vm.SetStatefulNativeCaller(l.stateful)
+	vm.RestoreGlobals(l.globals[class.Module])
+	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
+	return vm.ReflectConstructorsForChunkClass(class)
+}
+
+// DeserializeModuleClass picks the right chunk for a class returned
+// from another module (or the main program) and runs the local
+// deserialize path on a sub-VM bound to that chunk.
+func (l *bytecodeModuleLoader) DeserializeModuleClass(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, error) {
+	var chunk bytecode.Chunk
+	if class.Module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("deserialize %s: main chunk is not registered", class.Name)
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunks[class.Module]
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", class.Module)
+		}
+		chunk = c
+	}
+	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
+	vm.SetModuleName(class.Module)
+	vm.SetModulePaths(l.modulePaths)
+	vm.SetStatefulNativeCaller(l.stateful)
+	vm.RestoreGlobals(l.globals[class.Module])
+	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
+	return vm.DeserializeIntoChunkClass(class, value)
 }
 
 func (l *bytecodeModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value) (runtime.Value, error) {
@@ -2044,6 +2122,69 @@ func (l *bytecodeModuleLoader) CallModuleMethod(module string, className string,
 	vm.RestoreGlobals(l.globals[module])
 	vm.RestoreFunctionDecoratorState(l.decorators[module])
 	return vm.CallMethod(instance, methodName, args)
+}
+
+// FindFunctionByName scans every loaded module's chunk for an
+// exported function by name. Returns nil when no match.
+func (l *bytecodeModuleLoader) FindFunctionByName(name string) (runtime.Value, bool) {
+	for moduleName, module := range l.modules {
+		if module == nil {
+			continue
+		}
+		if value, ok := module.Exports[name]; ok {
+			switch v := value.(type) {
+			case runtime.Function, runtime.OverloadedFunction, runtime.BytecodeFunction, runtime.DecoratorTarget:
+				_ = moduleName
+				return v, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// FindClassByName scans every loaded module's chunk for a class with
+// the given bare name and returns a BytecodeClass value bound to that
+// chunk. Used by reflect.class(name) so framework helpers can resolve
+// a user class without needing the originating module on import.
+func (l *bytecodeModuleLoader) FindClassByName(name string) (runtime.Value, bool) {
+	key := strings.ToLower(name)
+	for moduleName, chunk := range l.chunks {
+		for idx, classInfo := range chunk.Classes {
+			if strings.EqualFold(classInfo.Name, name) || strings.ToLower(classInfo.Name) == key {
+				return runtime.BytecodeClass{
+					Name:             classInfo.Name,
+					Doc:              classInfo.Doc,
+					Index:            int64(idx),
+					Module:           moduleName,
+					Parent:           classInfo.ParentName,
+					Fields:           append([]string(nil), classInfo.FieldNames...),
+					Interfaces:       append([]string(nil), classInfo.Implements...),
+					Decorators:       classInfo.Decorators,
+					MethodDecorators: classInfo.MethodDecorators,
+					StaticDecorators: classInfo.StaticDecorators,
+				}, true
+			}
+		}
+	}
+	if l.hasMainChunk {
+		for idx, classInfo := range l.mainChunk.Classes {
+			if strings.EqualFold(classInfo.Name, name) || strings.ToLower(classInfo.Name) == key {
+				return runtime.BytecodeClass{
+					Name:             classInfo.Name,
+					Doc:              classInfo.Doc,
+					Index:            int64(idx),
+					Module:           "",
+					Parent:           classInfo.ParentName,
+					Fields:           append([]string(nil), classInfo.FieldNames...),
+					Interfaces:       append([]string(nil), classInfo.Implements...),
+					Decorators:       classInfo.Decorators,
+					MethodDecorators: classInfo.MethodDecorators,
+					StaticDecorators: classInfo.StaticDecorators,
+				}, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func bytecodeCacheRoot() string {

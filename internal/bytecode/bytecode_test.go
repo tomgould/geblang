@@ -218,6 +218,22 @@ func (l fakeModuleLoader) CallModuleMethod(module string, className string, meth
 	return runtime.Null{}, fmt.Errorf("unexpected module method call %s.%s", className, methodName)
 }
 
+func (l fakeModuleLoader) FindClassByName(name string) (runtime.Value, bool) {
+	return nil, false
+}
+
+func (l fakeModuleLoader) FindFunctionByName(name string) (runtime.Value, bool) {
+	return nil, false
+}
+
+func (l fakeModuleLoader) DeserializeModuleClass(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, error) {
+	return nil, fmt.Errorf("module %s is not loaded", class.Module)
+}
+
+func (l fakeModuleLoader) ConstructorsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error) {
+	return nil, fmt.Errorf("module %s is not loaded", class.Module)
+}
+
 func TestVMRunsStatefulNativeBridge(t *testing.T) {
 	source := []byte(`import io;
 import metrics;
@@ -511,8 +527,8 @@ io.println(reflect.returnType(reflect.function("util.index")));
 let namedClass = reflect.decorators(reflect.class("util.Controller"));
 io.println(namedClass[0]["name"]);
 io.println(namedClass[0]["namedArgs"]["name"]);
-io.println(reflect.fields(reflect.class("util.Controller"))[0]);
-io.println(reflect.fields(reflect.class("util.Controller"))[1]);
+io.println(reflect.fields(reflect.class("util.Controller"))[0]["name"]);
+io.println(reflect.fields(reflect.class("util.Controller"))[1]["name"]);
 io.println(reflect.methods(reflect.class("util.Controller"))[0]);
 io.println(reflect.staticMethods(reflect.class("util.Controller"))[0]);
 io.println(reflect.parent(reflect.class("util.Controller")) == null);
@@ -2682,7 +2698,10 @@ io.println(-(factor ** 2.0f));
 	if err := bytecode.NewVM(decoded, &out).Run(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if out.String() != "2.0000000000\ntrue\n1.5000000000\n2\n2.2500000000\n3\n1.5\n-2.25\n" {
+	/* `5.5 // 2.0` is decimal//decimal -> decimal (same-kind rule;
+	 * see release notes for 1.0.2). The `5.5f % 2.0f` produces a
+	 * float since both operands are float. */
+	if out.String() != "2.0000000000\ntrue\n1.5000000000\n2.0000000000\n2.2500000000\n3\n1.5\n-2.25\n" {
 		t.Fatalf("output: got %q", out.String())
 	}
 }

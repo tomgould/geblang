@@ -325,6 +325,128 @@ class CachedUsers {
 }
 ```
 
+## Decorators
+
+Decorators are `@`-prefixed annotations applied to classes, functions,
+methods, or fields. They come in two flavours depending on where you
+put them, and the two flavours are doing very different things — this
+section explains both.
+
+### Behavioural decorators on functions, methods, and classes
+
+A decorator applied to a `func` or `class` declaration whose name
+resolves to a function in scope **wraps the target**. The target value
+is passed to the decorator at definition time, and the decorator's
+return value replaces it. Use this to add cross-cutting behaviour like
+logging, caching, retry, or timing.
+
+```gb
+func log(callable fn): callable {
+    return func(...args) {
+        io.println("calling", reflect.className(fn));
+        return fn(...args);
+    };
+}
+
+@log
+func greet(string name): string {
+    return "hi, " + name;
+}
+```
+
+Calling `greet("Ada")` invokes the wrapped value: the log line prints
+first, then the underlying body runs. Multiple decorators stack in
+source order — the topmost decorator wraps the inner wrapped value
+last.
+
+### Annotation-only (metadata) decorators
+
+A decorator whose name does **not** resolve to a function in scope is
+treated as **pure metadata**. The runtime does not execute it — the
+name and any arguments are recorded on the target so reflection can
+read them back. This is the form frameworks use to drive
+configuration-by-annotation:
+
+```gb
+@Get("/users/{id}")
+@Summary("Fetch one user")
+func getUser(string id): User { ... }
+```
+
+`@Get` and `@Summary` are not functions; nothing happens at definition
+time. A web framework reads them later via
+`reflect.decorators(getUser)`.
+
+Dotted names like `@Assert.email` or `@Foo.bar.baz` are valid and
+parse as a single composite identifier. The dot is part of the name —
+dispatch is by exact string match. Use this to group related
+annotations under a common prefix.
+
+### Field-level decorators
+
+Decorators on a field declaration **are always annotation-only**.
+There is no value to wrap (a field is not a callable), and the runtime
+does not intercept field reads or writes. They exist exclusively for
+reflective consumption.
+
+```gb
+class CreateUserDTO {
+    @Assert.email
+    string email;
+
+    @Assert.minLength(2)
+    @Assert.maxLength(64)
+    string name;
+}
+```
+
+`reflect.fields(CreateUserDTO)` returns one entry per field. When a
+field has annotations, the entry includes a `decorators` key — a list
+of `{name, args, namedArgs, ...}` dicts. Frameworks like Gebweb read
+these to drive validation, serialisation filters, ORM hints, OpenAPI
+schema enrichment, etc.
+
+**When do field decorators run?** Never automatically. They are
+*static* metadata: parsed once at class compile time and frozen onto
+the class definition. The runtime never executes a field decorator
+on its own — assigning or reading the field always proceeds without
+consulting the annotation list. Anything dynamic happens because
+*some piece of code* (your framework, your test harness, your code)
+reads the decorators via reflection and decides what to do.
+
+**What can a field decorator's arguments be?** Literal values
+(strings, ints, floats, decimals, bools, null) and literal
+list / dict / set composites built from those. Names from scope are
+not resolved at field-decorator time; the value must be expressible
+as a constant. This keeps the metadata stable and serialisable into
+the compiled chunk.
+
+```gb
+class Item {
+    @Assert.range(1, 100)
+    @Groups("read", "write", "admin")
+    int quantity;
+}
+```
+
+`@Assert.range(1, 100)` → metadata `{name: "Assert.range", args: [1, 100]}`.
+`@Groups("read", "write", "admin")` → metadata
+`{name: "Groups", args: ["read", "write", "admin"]}`.
+
+### Reading decorator metadata
+
+| Call | Returns |
+| --- | --- |
+| `reflect.decorators(target)` | List of `{name, args, namedArgs, line, column}` dicts. |
+| `reflect.hasDecorator(target, name)` | Bool — `true` when at least one decorator with that name is present. |
+| `reflect.decorator(target, name)` | First decorator dict with that name, or `null`. |
+| `reflect.fields(class)` | List of field dicts; each has a `decorators` key when at least one annotation is present. |
+
+`target` is either a class value, a function/method value, or a class
+instance (in which case the call delegates to the instance's class).
+Names match exactly — `@Assert.email` is the name `"Assert.email"`,
+not `"Assert"` with a sub-key.
+
 ## Magic Methods
 
 Magic methods are ordinary methods with reserved names. They let a class opt

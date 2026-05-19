@@ -1,0 +1,54 @@
+/**
+ * @title Forward function references (1.0.2)
+ * @summary A function in a file can call another function declared
+ * later in the same file. The bytecode compiler's pre-pass records
+ * each function's signature so call sites compiled before the
+ * declaration can still match parameters and return types.
+ */
+import test;
+
+func caller(): bool {
+    return callee(7);
+}
+
+func callee(int x): bool {
+    return x > 0;
+}
+
+func recursivePair(int n): int {
+    if (n <= 0) {
+        return 0;
+    }
+    return n + helperReturnsInt(n);
+}
+
+func helperReturnsInt(int n): int {
+    return n - 1;
+}
+
+class ForwardRefTest extends test.Test {
+    @test
+    func plainForwardCall(): void {
+        this.assertTrue(caller());
+    }
+
+    @test
+    func forwardCallInsideArithmetic(): void {
+        this.assertEquals(9, recursivePair(5));
+    }
+
+    @test
+    func mutualForwardCallsResolve(): void {
+        /* Both directions: `a` declared first, `b` later; `c`
+         * declared later, calling `a` via `b`. */
+        this.assertEquals(15, chainStart(5));
+    }
+}
+
+func chainStart(int n): int {
+    return chainAdd(n) * 3;
+}
+
+func chainAdd(int n): int {
+    return n;
+}

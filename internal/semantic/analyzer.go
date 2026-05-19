@@ -85,6 +85,55 @@ type typeParam struct {
 	constraint typeInfo
 }
 
+// builtinModuleNames is the set of names that resolve to a built-in
+// stdlib module. Declaring a local variable with any of these names
+// is legal (lexical scope: the local wins at the resolution site),
+// but the analyzer still surfaces a warning so a reader skimming
+// the code isn't misled by `json.parse(x)` on a shadowed local.
+//
+// Common parameter names like `args`, `path`, and `name` are
+// intentionally NOT in the list - they collide too often with
+// idiomatic Geblang variable naming to be useful warnings, and
+// the runtime resolution rule eliminates the actual bug surface.
+var builtinModuleNames = map[string]bool{
+	"io": true, "sys": true, "process": true, "async": true,
+	"json": true, "xml": true, "toml": true, "yaml": true, "csv": true,
+	"collections": true, "secrets": true, "random": true,
+	"schema": true, "serde": true, "metrics": true,
+	"trace": true, "profile": true, "crypt": true,
+	"encoding": true, "compress": true, "template": true,
+	"re": true, "markdown": true, "datetime": true, "uuid": true,
+	"dotenv": true, "cli": true, "http": true,
+	"websocket": true, "smtp": true, "db": true,
+	"reflect": true, "log": true,
+	"watch": true, "errors": true, "freeze": true,
+}
+
+// checkBuiltinModuleShadow emits a warning when `name` would shadow
+// a built-in stdlib module. We skip primitive-typed declarations
+// (`string path`, `int errors` etc.) where the user is plainly not
+// using the name as a module reference - the warning is reserved
+// for collection / class / any-typed shadows where a `.method()`
+// dispatch on the shadowed name would surface as the confusing
+// "X is not a module" runtime error.
+func (a *Analyzer) checkBuiltinModuleShadow(name *ast.Identifier, declaredType *ast.TypeRef) {
+	if name == nil || name.Value == "" {
+		return
+	}
+	if !builtinModuleNames[name.Value] {
+		return
+	}
+	if declaredType != nil {
+		switch strings.ToLower(declaredType.Name) {
+		case "string", "int", "float", "decimal", "bool", "bytes":
+			return
+		}
+	}
+	a.warningAt(name.Token,
+		"%q shadows the built-in stdlib module %q; identifier resolution may pick the module unexpectedly - rename the local",
+		name.Value, name.Value)
+}
+
 func New() *Analyzer {
 	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, aliases: map[string]typeInfo{}}
 }
@@ -346,6 +395,13 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		a.declare(stmt.Name.Value, typeInfo{name: "func", known: true})
 		a.pushScope()
 		for _, param := range stmt.Parameters {
+			/* Parameter names are scoped to one function body and
+			 * tend to use common labels like `args`, `path`, `io`
+			 * intentionally. The shadowing diagnostic for those
+			 * would create more noise than signal - reserved for
+			 * top-level / class-level declarations where the
+			 * confusion is more likely (`let errors = [...]`
+			 * followed by `errors.push(...)`). */
 			a.declare(param.Name.Value, a.typeInfoFromRef(param.Type))
 			if param.Default != nil {
 				a.checkAssignable(param.Type, param.Default, fmt.Sprintf("cannot use %s default for %s parameter %s", a.expressionTypeName(param.Default).display(), param.Type.String(), param.Name.Value))
@@ -437,6 +493,7 @@ func (a *Analyzer) analyzeBlockWithNarrowing(block *ast.BlockStatement, fn *ast.
 }
 
 func (a *Analyzer) analyzeDeclaration(stmt *ast.DeclarationStatement) {
+	a.checkBuiltinModuleShadow(stmt.Name, stmt.Type)
 	var declared typeInfo
 	if stmt.Type != nil {
 		declared = a.typeInfoFromRef(stmt.Type)
@@ -616,7 +673,15 @@ func (a *Analyzer) analyzeReturn(stmt *ast.ReturnStatement, fn *ast.FunctionStat
 		return
 	}
 	if stmt.Value == nil {
-		if !fn.ReturnType.Nullable && !strings.EqualFold(fn.ReturnType.Name, "any") {
+		/* Bare `return;` is always legal in a void function -
+		 * there's nothing to assign, the early-exit just terminates
+		 * the function body. For non-void returns, bare return is
+		 * legal when the return type is nullable or `any`.
+		 * Otherwise it's an error: the caller would observe a null
+		 * where it expected a concrete value. */
+		if !fn.ReturnType.Nullable &&
+			!strings.EqualFold(fn.ReturnType.Name, "any") &&
+			!strings.EqualFold(fn.ReturnType.Name, "void") {
 			a.errorAt(stmt.Token, "cannot return null from %s returning %s", fn.Name.Value, fn.ReturnType.String())
 		}
 		return

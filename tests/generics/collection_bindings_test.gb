@@ -1,0 +1,52 @@
+/**
+ * @title Tagged built-in collections (1.0.2)
+ * @summary list<T>, dict<K,V>, set<T> values flowing through a typed
+ * declaration boundary gain reified bindings: `reflect.typeBindings`
+ * returns them, and `instanceof list<T>` consults them invariantly.
+ * Untagged collections fall back to per-element checks.
+ */
+import test;
+import reflect;
+
+class CollectionBindingsTest extends test.Test {
+    @test
+    func typedListIsTagged(): void {
+        let list<int> xs = [1, 2, 3];
+        this.assertEquals({"T": "int"}, reflect.typeBindings(xs));
+    }
+
+    @test
+    func untaggedListReturnsEmpty(): void {
+        let xs = [1, 2, 3];
+        this.assertEquals({}, reflect.typeBindings(xs));
+    }
+
+    @test
+    func typedDictIsTagged(): void {
+        let dict<string, int> d = {"a": 1, "b": 2};
+        let b = reflect.typeBindings(d);
+        this.assertEquals("string", b["K"]);
+        this.assertEquals("int", b["V"]);
+    }
+
+    @test
+    func instanceofTaggedList(): void {
+        let list<int> xs = [1, 2, 3];
+        this.assertTrue(xs instanceof list<int>);
+        this.assertFalse(xs instanceof list<string>);
+    }
+
+    @test
+    func instanceofUntaggedListWalksElements(): void {
+        /* Untagged: structural check by element type. */
+        this.assertTrue([1, 2, 3] instanceof list<int>);
+        this.assertFalse([1, 2, 3] instanceof list<string>);
+    }
+
+    @test
+    func instanceofTaggedDict(): void {
+        let dict<string, int> d = {"a": 1};
+        this.assertTrue(d instanceof dict<string, int>);
+        this.assertFalse(d instanceof dict<string, string>);
+    }
+}
