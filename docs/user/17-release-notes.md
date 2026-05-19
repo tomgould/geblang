@@ -6,6 +6,23 @@ Small parity / ergonomics fixes uncovered while extending Gebweb.
 
 ### Bug fixes
 
+- **`geblang check` accepts `import string;`.** The CLI's
+  native-module allowlist was missing the `string` module, so files
+  using `string.fromCodePoint(...)` / `string.compare(...)` failed
+  the check pass with `cannot resolve import string` even though
+  both backends registered the module.
+
+- **Cross-module `implements` compiles to bytecode.** A class
+  declaring `implements mod.Interface<T>` (e.g.
+  `implements repository.Repository<Widget>`) previously errored
+  with `bytecode compiler interface ... is not declared` and fell
+  back to the evaluator. The compiler now accepts dotted interface
+  refs under `implements` clauses and interface `extends` clauses,
+  mirroring the existing parent-class case; the VM strips module
+  prefixes when matching stored interface names against `instanceof`
+  queries. New parity test `TestParityCrossModuleImplements`; new
+  language test `tests/classes/cross_module_interface_test.gb`.
+
 - **`func` value casts to `callable` on the evaluator.** The
   evaluator's CastExpression handler matched the value's
   `TypeName()` ("func") against the target ("callable") and

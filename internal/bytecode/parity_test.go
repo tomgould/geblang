@@ -6870,6 +6870,94 @@ io.println(wrap(userFn));
 `, "caught 404: missing widget\n")
 }
 
+// TestParityCrossModuleImplements guards a VM-only regression where the
+// bytecode compiler rejected `class C implements mod.Iface { ... }` for
+// any interface declared in a different module - including
+// `gebweb.repository.Repository<T>`, the canonical case that motivated
+// the fix. The evaluator's `resolveTypeValue` already walked imports;
+// the compiler's local-only `c.interfaces` lookup did not, mirroring
+// the parent-class case that was already allowed at compiler.go:891.
+// Verifies `instanceof` matches against the dotted name AND against the
+// trailing identifier on both backends.
+func TestParityCrossModuleImplements(t *testing.T) {
+	dir := t.TempDir()
+	donorModule := filepath.Join(dir, "iface_donor.gb")
+	if err := os.WriteFile(donorModule, []byte(`module iface_donor;
+
+export interface Pingable {
+    func ping(): string;
+}
+
+export interface Countable {
+    func count(): int;
+}
+`), 0o644); err != nil {
+		t.Fatalf("write module: %v", err)
+	}
+
+	source := `import io;
+import iface_donor as donor;
+
+class Pinger implements donor.Pingable {
+    func ping(): string { return "ok"; }
+}
+
+class Tally implements donor.Pingable, donor.Countable {
+    int n;
+    func Tally(int start) { this.n = start; }
+    func ping(): string { return "tally"; }
+    func count(): int { this.n = this.n + 1; return this.n; }
+}
+
+let p = Pinger();
+io.println(p.ping());
+io.println(p instanceof donor.Pingable);
+io.println(p instanceof Pingable);
+io.println(p instanceof donor.Countable);
+
+let t = Tally(0);
+io.println(t.ping());
+io.println(t.count());
+io.println(t instanceof donor.Pingable);
+io.println(t instanceof donor.Countable);
+`
+
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	want := "ok\ntrue\ntrue\nfalse\ntally\n1\ntrue\ntrue\n"
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: got %q, want %q", evOut.String(), want)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: got %q, want %q", vmOut.String(), want)
+	}
+}
+
 // TestParityCastWidensToParentClass guards a VM-only regression where the
 // `as` operator rejected widening an error-derived value (or instance)
 // to a parent class declared in another module. Surfaced while writing

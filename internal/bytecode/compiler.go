@@ -903,7 +903,9 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 	}
 	for _, ifaceRef := range stmt.Implements {
 		if _, ok := c.interfaces[strings.ToLower(ifaceRef.Name)]; !ok {
-			return fmt.Errorf("bytecode compiler interface %s is not declared", ifaceRef.Name)
+			if !strings.Contains(ifaceRef.Name, ".") {
+				return fmt.Errorf("bytecode compiler interface %s is not declared", ifaceRef.Name)
+			}
 		}
 		class.Implements = append(class.Implements, ifaceRef.Name)
 	}
@@ -1040,7 +1042,9 @@ func (c *Compiler) compileInterfaceStatement(stmt *ast.InterfaceStatement) error
 	iface.Methods = iface.Methods[:0]
 	for _, parent := range stmt.Parents {
 		if _, ok := c.interfaces[strings.ToLower(parent.Name)]; !ok {
-			return fmt.Errorf("bytecode compiler parent interface %s is not declared", parent.Name)
+			if !strings.Contains(parent.Name, ".") {
+				return fmt.Errorf("bytecode compiler parent interface %s is not declared", parent.Name)
+			}
 		}
 		iface.Parents = append(iface.Parents, parent.Name)
 	}

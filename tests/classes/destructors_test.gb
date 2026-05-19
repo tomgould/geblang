@@ -7,7 +7,6 @@
  *          clears the destroyed state).
  */
 import test;
-import io;
 
 class Counter {
     static int destroyed = 0;

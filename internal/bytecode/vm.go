@@ -10615,7 +10615,11 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 }
 
 func (vm *VM) interfaceMatches(name string, target string) bool {
-	if strings.EqualFold(name, target) {
+	/* Stored interface names may be module-qualified (e.g.
+	 * "repository.Repository") for cross-module `implements` refs;
+	 * the caller already strips the prefix from `target`, so match
+	 * the stored name's trailing identifier too. */
+	if strings.EqualFold(stripModulePrefix(name), target) {
 		return true
 	}
 	for _, iface := range vm.chunk.Interfaces {

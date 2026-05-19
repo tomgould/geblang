@@ -1,0 +1,14 @@
+module iface_donor;
+
+/**
+ * Helper module for the cross-module interface test. Declares two
+ * exported interfaces a sibling test file imports and implements.
+ */
+
+export interface Pingable {
+    func ping(): string;
+}
+
+export interface Countable {
+    func count(): int;
+}

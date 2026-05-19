@@ -5,7 +5,6 @@
  * `'a'..'z'` that produces a list<string> eagerly.
  */
 import test;
-import reflect;
 
 class RangeToListTest extends test.Test {
     @test

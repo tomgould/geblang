@@ -1,0 +1,76 @@
+/**
+ * @title Cross-module `implements` parses and dispatches
+ * @summary A class can `implements moduleAlias.Interface<T>` against
+ * an interface declared in another module. The reference parses, the
+ * compiler accepts the dotted name, runtime `instanceof` matches by
+ * trailing identifier on both backends.
+ */
+import test;
+import iface_donor as donor;
+
+class Pinger implements donor.Pingable {
+    string label;
+
+    func Pinger(string label) {
+        this.label = label;
+    }
+
+    func ping(): string {
+        return "ping:" + this.label;
+    }
+}
+
+class TallyCounter implements donor.Pingable, donor.Countable {
+    int n;
+
+    func TallyCounter(int start) {
+        this.n = start;
+    }
+
+    func ping(): string {
+        return "tally";
+    }
+
+    func count(): int {
+        this.n = this.n + 1;
+        return this.n;
+    }
+}
+
+class CrossModuleInterfaceTest extends test.Test {
+    @test
+    func directInstanceOfMatchesByLocalName(): void {
+        let p = Pinger("a");
+        this.assertTrue(p instanceof donor.Pingable);
+    }
+
+    @test
+    func instanceOfMatchesByBareName(): void {
+        /* The compiler stores "donor.Pingable" / "iface_donor.Pingable",
+         * but `instanceof Pingable` strips the prefix at runtime. */
+        let p = Pinger("b");
+        this.assertTrue(p instanceof Pingable);
+    }
+
+    @test
+    func methodDispatchWorks(): void {
+        let p = Pinger("c");
+        this.assertEquals("ping:c", p.ping());
+    }
+
+    @test
+    func multipleInterfacesBothMatch(): void {
+        let t = TallyCounter(0);
+        this.assertTrue(t instanceof donor.Pingable);
+        this.assertTrue(t instanceof donor.Countable);
+        this.assertEquals("tally", t.ping());
+        this.assertEquals(1, t.count());
+        this.assertEquals(2, t.count());
+    }
+
+    @test
+    func nonMatchingClassIsRejected(): void {
+        let p = Pinger("d");
+        this.assertFalse(p instanceof donor.Countable);
+    }
+}

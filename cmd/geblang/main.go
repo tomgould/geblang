@@ -1037,6 +1037,7 @@ var nativeImportModules = map[string]struct{}{
 	"secrets":     {},
 	"serde":       {},
 	"smtp":        {},
+	"string":      {},
 	"sys":         {},
 	"template":    {},
 	"test":        {},
