@@ -4390,9 +4390,24 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 			}
 		}
 	}
-	// Pre-populate type bindings from the declaration annotation when available (e.g.
-	// Box<int> b = Box(...)); this takes priority over inference from constructor args.
-	if len(declared) > 0 && declared[0] != nil {
+	// Pre-populate type bindings from the call site's explicit type arguments
+	// (e.g. `Repository<Dog>(...)`); failing that, fall back to the declared
+	// LHS annotation (e.g. `Box<int> b = Box(...)`). Either path takes
+	// priority over inference from constructor args, which fills in any
+	// remaining bindings further down.
+	if len(call.TypeArguments) > 0 && len(class.TypeParameters) > 0 {
+		if instance.TypeBindings == nil {
+			instance.TypeBindings = map[string]string{}
+		}
+		for i, arg := range call.TypeArguments {
+			if i >= len(class.TypeParameters) {
+				break
+			}
+			if arg != nil && arg.Operator == "" && arg.Name != "" {
+				instance.TypeBindings[class.TypeParameters[i]] = arg.Name
+			}
+		}
+	} else if len(declared) > 0 && declared[0] != nil {
 		exp := declared[0]
 		if exp.Operator == "" && len(exp.Arguments) > 0 && len(class.TypeParameters) > 0 {
 			if instance.TypeBindings == nil {
@@ -5633,7 +5648,7 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 					}
 				}
 			}
-			return e.applyFunction(fn, args)
+			return e.applyFunctionWithTypeArgs(fn, args, call.TypeArguments)
 		}
 		overloaded, ok := callee.(runtime.OverloadedFunction)
 		if ok {
@@ -19120,7 +19135,24 @@ func (e *Evaluator) applyOverloadedFunction(label string, overloads []runtime.Fu
 			return nil, err
 		}
 	}
-	return e.applyFunctionWithThis(matches[0], matchedArgs[0], this)
+	chosen := matches[0]
+	if len(call.TypeArguments) > 0 && len(chosen.TypeParameters) > 0 {
+		merged := map[string]string{}
+		for k, v := range chosen.TypeBindings {
+			merged[k] = v
+		}
+		for i, t := range call.TypeArguments {
+			if i >= len(chosen.TypeParameters) {
+				break
+			}
+			if t == nil || t.Operator != "" || t.Name == "" {
+				continue
+			}
+			merged[chosen.TypeParameters[i]] = t.Name
+		}
+		chosen.TypeBindings = merged
+	}
+	return e.applyFunctionWithThis(chosen, matchedArgs[0], this)
 }
 
 // overloadParamTypeHints returns a per-position expected TypeRef when every
@@ -19483,6 +19515,9 @@ func valueMatchesTypeRef(value runtime.Value, typ *ast.TypeRef) bool {
 		return ok
 	}
 	if typeNamesEqual(value.TypeName(), typ.Name) {
+		if instance, ok := value.(*runtime.Instance); ok && !instanceMatchesTypeArgs(instance, typ) {
+			return false
+		}
 		return true
 	}
 	instance, ok := value.(*runtime.Instance)
@@ -19491,10 +19526,53 @@ func valueMatchesTypeRef(value runtime.Value, typ *ast.TypeRef) bool {
 	}
 	for class := instance.Class.Parent; class != nil; class = class.Parent {
 		if typeNamesEqual(class.Name, typ.Name) {
+			if !instanceMatchesTypeArgs(instance, typ) {
+				return false
+			}
 			return true
 		}
 	}
 	return classImplementsInterface(instance.Class, simpleTypeName(typ.Name))
+}
+
+// instanceMatchesTypeArgs enforces invariance on the type arguments of a
+// reified generic class instance. When the parameter type carries explicit
+// arguments (e.g. `Box<Base>`) the instance's `TypeBindings` must match
+// each argument exactly - a `Box<Sub>` is NOT a `Box<Base>` even though
+// `Sub extends Base`, because mutating methods on the parameter could
+// otherwise insert a sibling `Base` subtype that violates the original
+// container's declared element type.
+//
+// When the parameter type carries no arguments, or the instance has no
+// recorded bindings (raw polymorphic construction), the check passes -
+// invariance only fires when both sides explicitly carry type arguments.
+func instanceMatchesTypeArgs(instance *runtime.Instance, typ *ast.TypeRef) bool {
+	if instance == nil || typ == nil || len(typ.Arguments) == 0 {
+		return true
+	}
+	if instance.Class == nil || len(instance.Class.TypeParameters) == 0 {
+		return true
+	}
+	if len(instance.TypeBindings) == 0 {
+		return true
+	}
+	for i, arg := range typ.Arguments {
+		if i >= len(instance.Class.TypeParameters) {
+			break
+		}
+		if arg == nil || arg.Operator != "" || arg.Name == "" {
+			continue
+		}
+		paramName := instance.Class.TypeParameters[i]
+		bound, ok := instance.TypeBindings[paramName]
+		if !ok || bound == "" {
+			continue
+		}
+		if !typeNamesEqual(bound, arg.Name) {
+			return false
+		}
+	}
+	return true
 }
 
 func simpleTypeName(name string) string {
@@ -19518,6 +19596,10 @@ func isGeneratorTypeName(name string) bool {
 
 // descriptiveTypeName returns a type name including element types where detectable,
 // e.g. "list<string>" instead of "list", "dict<string,int>" instead of "dict".
+// For reified user-defined generic class instances it also unspools the
+// recorded TypeBindings - "Container<Sub>" rather than the bare "Container" -
+// so error messages about invariant-parameter mismatches surface the
+// caller's actual binding rather than just the class name.
 func descriptiveTypeName(value runtime.Value) string {
 	switch v := value.(type) {
 	case runtime.List:
@@ -19535,6 +19617,20 @@ func descriptiveTypeName(value runtime.Value) string {
 			return "dict<" + entry.Key.TypeName() + "," + entry.Value.TypeName() + ">"
 		}
 		return "dict"
+	case *runtime.Instance:
+		if v == nil || v.Class == nil || len(v.Class.TypeParameters) == 0 || len(v.TypeBindings) == 0 {
+			return value.TypeName()
+		}
+		parts := make([]string, 0, len(v.Class.TypeParameters))
+		for _, p := range v.Class.TypeParameters {
+			if bound, ok := v.TypeBindings[p]; ok && bound != "" {
+				parts = append(parts, bound)
+			}
+		}
+		if len(parts) == 0 {
+			return value.TypeName()
+		}
+		return v.Class.Name + "<" + strings.Join(parts, ", ") + ">"
 	}
 	return value.TypeName()
 }
@@ -19758,6 +19854,36 @@ func (e *Evaluator) evalCallArgumentsWithHints(call *ast.CallExpression, env *ru
 
 func (e *Evaluator) applyFunction(fn runtime.Function, args []runtime.Value) (runtime.Value, error) {
 	return e.applyFunctionWithThis(fn, args, nil)
+}
+
+// applyFunctionWithTypeArgs runs a generic function with type-parameter
+// bindings pre-seeded from the call site's explicit `<TypeArgs>` clause.
+// These bindings take strict priority over the per-call inference loop in
+// applyFunctionWithThisSync: an `assertIs<int>(...)` call binds T to int
+// regardless of what the argument's runtime type is, and the parameter
+// type check then resolves T to int through the planted callEnv binding.
+// When the call site has no explicit type arguments, falls through to the
+// normal inference path.
+func (e *Evaluator) applyFunctionWithTypeArgs(fn runtime.Function, args []runtime.Value, typeArgs []*ast.TypeRef) (runtime.Value, error) {
+	if len(typeArgs) == 0 || len(fn.TypeParameters) == 0 {
+		return e.applyFunction(fn, args)
+	}
+	merged := map[string]string{}
+	for k, v := range fn.TypeBindings {
+		merged[k] = v
+	}
+	for i, t := range typeArgs {
+		if i >= len(fn.TypeParameters) {
+			break
+		}
+		if t == nil || t.Operator != "" || t.Name == "" {
+			continue
+		}
+		merged[fn.TypeParameters[i]] = t.Name
+	}
+	clone := fn
+	clone.TypeBindings = merged
+	return e.applyFunction(clone, args)
 }
 
 func (e *Evaluator) applyFunctionWithThis(fn runtime.Function, args []runtime.Value, this *runtime.Instance) (runtime.Value, error) {

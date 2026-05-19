@@ -6,7 +6,7 @@ Geblang is built from source. Choose a build path before you start:
 
 | Path | Tools required |
 |---|---|
-| Local Go build | Go 1.22.2 or newer (matching `go.mod`), `make`, Git |
+| Local Go build | Go 1.26.3 or newer (matching `go.mod`), `make`, Git |
 | Docker build | Docker, `make`, Git |
 
 You only need one of these, not both. The Go path gives the fastest build and

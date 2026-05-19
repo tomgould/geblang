@@ -247,6 +247,15 @@
         ],
         "description": "Anonymous function whose T resolves to the outer generic frame"
     },
+    "Reified type test": {
+        "prefix": "typetest",
+        "body": [
+            "func ${1:isType}<${2:T}>(any ${3:value}): bool {",
+            "\treturn ${3:value} instanceof ${2:T};",
+            "}"
+        ],
+        "description": "Reified runtime type test - call as fn<int>(x) and the body sees T = int"
+    },
     "functools idioms": {
         "prefix": "functools",
         "body": [

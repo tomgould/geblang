@@ -313,13 +313,26 @@ erased. This means `instanceof T` works inside generic functions and methods,
 and framework code can inspect actual bound types with `reflect.typeBindings`:
 
 ```gb
-func assertIs<T>(T value): bool {
+func assertIs<T>(any value): bool {
     return value instanceof T;
 }
 
 io.println(assertIs<string>("hello"));   # true
 io.println(assertIs<int>("hello"));      # false
 ```
+
+The parameter is `any value` because the function's purpose is to *test*
+the value's type against T at runtime. T is bound from the explicit
+`<int>` / `<string>` at the call site, and `instanceof T` consults that
+binding inside the body.
+
+> **Strict binding.** Explicit type arguments on a generic call replace T
+> in every position of the signature - parameters, return type, and the
+> body - just like in Kotlin, Swift, Rust, and C#. If you write
+> `func id<T>(T value): T { return value; }` then `id<int>("hi")` is a
+> type error (T is int; the string argument doesn't satisfy T). When you
+> want a function that accepts any value but tests its type, use `any` on
+> the parameter as `assertIs` does above.
 
 Type bindings flow through call chains. When you call a method on a generic
 class instance, the method sees the concrete binding that was established when
@@ -344,12 +357,12 @@ io.println(t.isCorrectType(42));        # false
 
 `reflect.typeBindings(instance)` returns a dict mapping each type parameter
 name to its concrete bound type. This is how frameworks discover what types a
-repository, container, or validator is parameterized with:
+container, validator, or wrapper is parameterized with:
 
 ```gb
 import reflect;
 
-class Repository<T> {
+class Container<T> {
     list<T> items = [];
 
     func add(T item): void {
@@ -357,8 +370,8 @@ class Repository<T> {
     }
 }
 
-let repo = Repository<User>();
-io.println(reflect.typeBindings(repo));   # {"T": <Type User>}
+let c = Container<string>();
+io.println(reflect.typeBindings(c));   # {"T": <Type string>}
 ```
 
 ### Type inference
@@ -379,8 +392,36 @@ For classes, specify the type parameter at construction when inference is not
 possible from the constructor arguments:
 
 ```gb
-let empty = Repository<User>();   # T cannot be inferred from an empty constructor
+let empty = Box<int>();   # T cannot be inferred from an empty constructor
 ```
+
+### Invariance
+
+User-defined generic class types are **invariant** in their type parameters.
+Even when `Sub extends Base`, a `Box<Sub>` is *not* assignable to a
+`Box<Base>` parameter or typed variable - the analyzer rejects it at compile
+time, and the runtime rejects it at the function-parameter boundary when the
+caller's reified bindings disagree with the callee's declared bindings:
+
+```gb
+class Base {}
+class Sub extends Base {}
+class Box<T> { func Box() {} }
+
+Box<Base> b = Box<Sub>();   # static error: cannot assign Box<Sub> to Box<Base>
+
+func consume(Box<Base> b): void {}
+consume(Box<Sub>());        # runtime error: consume expects Box<Base> for parameter 'b'
+```
+
+This is the standard invariance rule. Without it, a function declared with
+`Box<Base>` could be called with a `Box<Sub>` and then mutate the box with a
+sibling subtype, leaving the original `Box<Sub>` containing values that
+violate its declared element type. Invariance closes that hole.
+
+When the value is constructed without explicit type arguments (so its
+reified bindings are inferred rather than pinned), the runtime accepts
+the call - the bindings inherit from the parameter type at that point.
 
 ### Container types
 

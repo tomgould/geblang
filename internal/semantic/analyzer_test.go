@@ -619,3 +619,55 @@ func TestAnalyzerRejectsDelOfUnknownIdentifier(t *testing.T) {
 		t.Fatalf("expected del unknown-identifier diagnostic, got: %v", diagnostics)
 	}
 }
+
+// TestAnalyzerRejectsInvariantGenericAssignment verifies that the analyzer
+// treats user-defined generic classes as INVARIANT in their type parameters.
+// Even when Sub extends Base, Container<Sub> is not assignable to
+// Container<Base>: that's the standard invariance rule for generics, and it
+// prevents the classic unsoundness where a Container<Sub> is widened to
+// Container<Base> and then mutated with a sibling Base subtype.
+func TestAnalyzerRejectsInvariantGenericAssignment(t *testing.T) {
+	input := `class Base {}
+class Sub extends Base {}
+class Container<T> { func Container() {} }
+Container<Base> c = Container<Sub>();
+`
+	diagnostics := analyzeInput(t, input)
+	found := false
+	for _, d := range diagnostics {
+		if strings.Contains(d.Message, "cannot assign Container<Sub> to Container<Base>") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected invariance diagnostic, got: %v", diagnostics)
+	}
+}
+
+// TestAnalyzerAcceptsExactGenericMatch verifies invariance does not
+// over-reject: Container<Sub> assigned to Container<Sub> is fine.
+func TestAnalyzerAcceptsExactGenericMatch(t *testing.T) {
+	input := `class Sub {}
+class Container<T> { func Container() {} }
+Container<Sub> c = Container<Sub>();
+`
+	diagnostics := analyzeInput(t, input)
+	if len(diagnostics) != 0 {
+		t.Fatalf("expected no diagnostics, got: %v", diagnostics)
+	}
+}
+
+// TestAnalyzerAcceptsRawGenericAssignment verifies that when the actual value
+// carries no explicit type arguments (raw construction with inference), the
+// assignment to a parameterised target is allowed at compile time - the
+// runtime check enforces invariance once the bindings are reified.
+func TestAnalyzerAcceptsRawGenericAssignment(t *testing.T) {
+	input := `class Sub {}
+class Container<T> { func Container() {} }
+Container<Sub> c = Container();
+`
+	diagnostics := analyzeInput(t, input)
+	if len(diagnostics) != 0 {
+		t.Fatalf("expected no diagnostics, got: %v", diagnostics)
+	}
+}

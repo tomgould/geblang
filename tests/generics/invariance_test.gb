@@ -1,0 +1,86 @@
+/**
+ * @title Generic invariance test
+ * @summary User-defined generic class types are invariant in their type
+ * parameters. Container<Sub> is not assignable to Container<Base> even
+ * when Sub extends Base. Explicit type arguments at the call site bind
+ * T strictly, both for class construction and for generic function
+ * calls. The runtime invariance error includes the reified bindings of
+ * the offending value.
+ */
+import test;
+
+class Base {
+    int n;
+    func Base(int n) { this.n = n; }
+}
+class Sub extends Base {
+    func Sub(int n) { parent(n); }
+}
+
+class Container<T> {
+    list<T> items;
+    func Container() { this.items = []; }
+    func add(T item): void { this.items = this.items.push(item); }
+}
+
+func consume(Container<Base> c): void {
+    c.add(Base(0));
+}
+
+func identity<T>(T value): T { return value; }
+
+func assertIs<T>(any value): bool { return value instanceof T; }
+
+class InvarianceTest extends test.Test {
+    @test
+    func explicitTypeArgsPinClassBindings(): void {
+        let c = Container<Sub>();
+        c.add(Sub(1));
+        this.assertEquals(1, c.items.length());
+    }
+
+    @test
+    func runtimeRejectsVariantContainerArg(): void {
+        let subs = Container<Sub>();
+        let threw = false;
+        let message = "";
+        try {
+            consume(subs);
+        } catch (RuntimeError e) {
+            threw = true;
+            message = e.message;
+        }
+        this.assertTrue(threw);
+        /* The error message includes the reified bindings, not just the
+         * bare class name. */
+        this.assertTrue(message.contains("Container<Sub>"));
+        this.assertTrue(message.contains("Container<Base>"));
+    }
+
+    @test
+    func runtimeAcceptsExactMatch(): void {
+        let bases = Container<Base>();
+        bases.add(Base(1));
+        consume(bases);
+        this.assertEquals(2, bases.items.length());
+    }
+
+    @test
+    func explicitTypeArgsBindFunctionT(): void {
+        /* Explicit <T> at the call site overrides what arg-inference
+         * would produce. assertIs<int>("hello") returns false because
+         * T=int from the explicit, even though the argument is a string. */
+        this.assertTrue(assertIs<string>("hello"));
+        this.assertFalse(assertIs<int>("hello"));
+        this.assertTrue(assertIs<int>(42));
+        this.assertFalse(assertIs<string>(42));
+    }
+
+    @test
+    func explicitGenericCallParsesAndDispatches(): void {
+        /* Pre-1.0.1 this form did not parse - `<` and `>` were eaten
+         * as comparison operators. */
+        this.assertEquals("hi", identity<string>("hi"));
+        this.assertEquals(7, identity<int>(7));
+    }
+}

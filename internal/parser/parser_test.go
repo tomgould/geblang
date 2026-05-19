@@ -403,3 +403,98 @@ func TestParserParsesWithStatement(t *testing.T) {
 		}
 	}
 }
+
+func TestParserGenericCallExpression(t *testing.T) {
+	cases := []struct {
+		name        string
+		src         string
+		typeArgs    []string
+		argCount    int
+		expectIdent string
+	}{
+		{
+			name:        "function with explicit type arg",
+			src:         `assertIs<string>("hello");`,
+			typeArgs:    []string{"string"},
+			argCount:    1,
+			expectIdent: "assertIs",
+		},
+		{
+			name:        "class instantiation with explicit type arg, no args",
+			src:         `Box<int>();`,
+			typeArgs:    []string{"int"},
+			argCount:    0,
+			expectIdent: "Box",
+		},
+		{
+			name:        "class instantiation with nested generic arg",
+			src:         `Box<list<int>>();`,
+			typeArgs:    []string{"list"},
+			argCount:    0,
+			expectIdent: "Box",
+		},
+		{
+			name:        "two type args",
+			src:         `pair<string, int>(1, 2);`,
+			typeArgs:    []string{"string", "int"},
+			argCount:    2,
+			expectIdent: "pair",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := parser.New(lexer.New(c.src))
+			prog := p.ParseProgram()
+			if errs := p.Errors(); len(errs) != 0 {
+				t.Fatalf("parser errors: %v", errs)
+			}
+			if len(prog.Statements) != 1 {
+				t.Fatalf("statement count: got %d, want 1", len(prog.Statements))
+			}
+			es, ok := prog.Statements[0].(*ast.ExpressionStatement)
+			if !ok {
+				t.Fatalf("got %T, want *ast.ExpressionStatement", prog.Statements[0])
+			}
+			call, ok := es.Expression.(*ast.CallExpression)
+			if !ok {
+				t.Fatalf("got %T, want *ast.CallExpression", es.Expression)
+			}
+			if len(call.TypeArguments) != len(c.typeArgs) {
+				t.Fatalf("type arg count: got %d, want %d", len(call.TypeArguments), len(c.typeArgs))
+			}
+			for i, want := range c.typeArgs {
+				if call.TypeArguments[i].Name != want {
+					t.Errorf("type arg %d: got %q, want %q", i, call.TypeArguments[i].Name, want)
+				}
+			}
+			if len(call.Arguments) != c.argCount {
+				t.Fatalf("call arg count: got %d, want %d", len(call.Arguments), c.argCount)
+			}
+			ident, ok := call.Callee.(*ast.Identifier)
+			if !ok {
+				t.Fatalf("callee: got %T, want *ast.Identifier", call.Callee)
+			}
+			if ident.Value != c.expectIdent {
+				t.Errorf("callee name: got %q, want %q", ident.Value, c.expectIdent)
+			}
+		})
+	}
+}
+
+func TestParserLessThanComparisonStillParses(t *testing.T) {
+	cases := []string{
+		`let a = x < y;`,
+		`if (count < 10) { }`,
+		`let r = a < b > c;`,
+	}
+	for _, src := range cases {
+		p := parser.New(lexer.New(src))
+		prog := p.ParseProgram()
+		if errs := p.Errors(); len(errs) != 0 {
+			t.Fatalf("input %q: parser errors: %v", src, errs)
+		}
+		if len(prog.Statements) == 0 {
+			t.Fatalf("input %q: no statements parsed", src)
+		}
+	}
+}

@@ -698,9 +698,15 @@ type CallArgument struct {
 }
 
 type CallExpression struct {
-	Token     token.Token
-	Callee    Expression
-	Arguments []CallArgument
+	Token token.Token
+	// TypeArguments are the explicit generic type arguments written between
+	// the callee and the argument list, e.g. `Box<int>(...)` or
+	// `assertIs<string>("hi")`. nil when no explicit `<...>` clause is
+	// present (the call may still be a call to a generic function/class —
+	// inference fills in the bindings).
+	TypeArguments []*TypeRef
+	Callee        Expression
+	Arguments     []CallArgument
 }
 
 func (*CallExpression) expressionNode()        {}
@@ -714,7 +720,15 @@ func (e *CallExpression) String() string {
 			args = append(args, arg.Value.String())
 		}
 	}
-	return e.Callee.String() + "(" + strings.Join(args, ", ") + ")"
+	typeArgs := ""
+	if len(e.TypeArguments) > 0 {
+		parts := make([]string, 0, len(e.TypeArguments))
+		for _, t := range e.TypeArguments {
+			parts = append(parts, t.String())
+		}
+		typeArgs = "<" + strings.Join(parts, ", ") + ">"
+	}
+	return e.Callee.String() + typeArgs + "(" + strings.Join(args, ", ") + ")"
 }
 
 type IndexExpression struct {

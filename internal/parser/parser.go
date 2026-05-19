@@ -1011,6 +1011,11 @@ func (p *Parser) parseInfix(left ast.Expression) ast.Expression {
 		return p.parseCallExpression(left)
 	case token.LBracket:
 		return p.parseIndexExpression(left)
+	case token.LT:
+		if canBeGenericCallCallee(left) && p.looksLikeGenericCallTypeArgs() {
+			return p.parseGenericCall(left)
+		}
+		return p.parseDefaultInfix(left)
 	case token.Assign:
 		expr := &ast.AssignmentExpression{Token: p.curToken, Left: left}
 		p.nextToken()
@@ -1064,19 +1069,100 @@ func (p *Parser) parseInfix(left ast.Expression) ast.Expression {
 	case token.NullCoalesceAssign:
 		return p.parseCompoundAssignment(left, token.NullCoalesce, "??")
 	default:
-		expr := &ast.InfixExpression{Token: p.curToken, Left: left, Operator: p.curToken.Literal}
-		precedence := p.curPrecedence()
-		if p.curTokenIs(token.Power) {
-			precedence--
-		}
-		if p.curTokenIs(token.Is) && p.peekTokenIs(token.Not) {
-			p.nextToken()
-			expr.Operator = "is not"
-		}
-		p.nextToken()
-		expr.Right = p.parseExpression(precedence)
-		return expr
+		return p.parseDefaultInfix(left)
 	}
+}
+
+func (p *Parser) parseDefaultInfix(left ast.Expression) ast.Expression {
+	expr := &ast.InfixExpression{Token: p.curToken, Left: left, Operator: p.curToken.Literal}
+	precedence := p.curPrecedence()
+	if p.curTokenIs(token.Power) {
+		precedence--
+	}
+	if p.curTokenIs(token.Is) && p.peekTokenIs(token.Not) {
+		p.nextToken()
+		expr.Operator = "is not"
+	}
+	p.nextToken()
+	expr.Right = p.parseExpression(precedence)
+	return expr
+}
+
+// canBeGenericCallCallee reports whether the given expression is one that may
+// legitimately precede an explicit type-argument list in a call - bare
+// identifiers (`assertIs<int>(x)`, `Box<string>()`) and selectors
+// (`module.fn<T>(x)`). Other expression forms keep the original less-than
+// interpretation.
+func canBeGenericCallCallee(expr ast.Expression) bool {
+	switch expr.(type) {
+	case *ast.Identifier, *ast.SelectorExpression:
+		return true
+	default:
+		return false
+	}
+}
+
+// looksLikeGenericCallTypeArgs returns true when p.curToken is `<` and the
+// tokens that follow form a syntactically-shaped generic type-argument list
+// closing with `>` (or `>>` for a single nested level) immediately followed
+// by `(`. The lookahead is structural - it only inspects token kinds, never
+// invokes the actual TypeRef parser - so it must over-reject rather than
+// over-accept. When this returns false the caller falls back to the regular
+// less-than infix path so chained comparisons keep working.
+func (p *Parser) looksLikeGenericCallTypeArgs() bool {
+	if !p.curTokenIs(token.LT) {
+		return false
+	}
+	// p.curToken sits at p.position-2 in the lexed token slice; the token
+	// immediately following `<` is at p.position-1 (the current peek). Walk
+	// forward from there, tracking nesting depth so nested generic
+	// arguments like `Box<list<int>>(...)` close correctly.
+	idx := p.position - 1
+	depth := 1
+	for idx < len(p.tokens) && depth > 0 {
+		tok := p.tokens[idx].Type
+		switch tok {
+		case token.LT:
+			depth++
+		case token.GT:
+			depth--
+			if depth == 0 {
+				idx++
+				return idx < len(p.tokens) && p.tokens[idx].Type == token.LParen
+			}
+		case token.RShift:
+			// `>>` closes two nested levels at once. At depth=1 a `>>` is
+			// not a generic-call closer (it would over-close); bail and
+			// let the standard infix path handle it.
+			if depth < 2 {
+				return false
+			}
+			depth -= 2
+			if depth == 0 {
+				idx++
+				return idx < len(p.tokens) && p.tokens[idx].Type == token.LParen
+			}
+		case token.Ident, token.Bool, token.TypeKw,
+			token.Comma, token.Dot, token.Question,
+			token.LBracket, token.RBracket,
+			token.BitOr, token.BitAnd:
+			// Tokens that legitimately appear inside a TypeRef list.
+		default:
+			return false
+		}
+		idx++
+	}
+	return false
+}
+
+func (p *Parser) parseGenericCall(callee ast.Expression) ast.Expression {
+	typeArgs := p.parseTypeArgumentsFromCurrent()
+	if !p.expectPeek(token.LParen) {
+		return callee
+	}
+	expr := &ast.CallExpression{Token: p.curToken, Callee: callee, TypeArguments: typeArgs}
+	expr.Arguments = p.parseCallArguments()
+	return expr
 }
 
 func (p *Parser) parseTernaryExpression(left ast.Expression) ast.Expression {
@@ -1610,8 +1696,16 @@ func (p *Parser) parseTypeRefFromCurrent() *ast.TypeRef {
 }
 
 func (p *Parser) parseTypeArguments() []*ast.TypeRef {
-	args := []*ast.TypeRef{}
 	p.nextToken()
+	return p.parseTypeArgumentsFromCurrent()
+}
+
+// parseTypeArgumentsFromCurrent parses a generic argument list when p.curToken
+// already sits on the opening `<`. Used by the generic-call disambiguation in
+// parseInfix where the surrounding parseExpression loop has already advanced
+// onto the `<` token.
+func (p *Parser) parseTypeArgumentsFromCurrent() []*ast.TypeRef {
+	args := []*ast.TypeRef{}
 	for {
 		p.nextToken()
 		args = append(args, p.parseTypeRefFromCurrent())

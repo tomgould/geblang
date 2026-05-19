@@ -1694,6 +1694,37 @@ func (vm *VM) Run() (err error) {
 					instance.TypeBindings[paramName.Value] = typeName.Value
 				}
 			}
+		case OpPlantCallTypeBindings:
+			// Stages explicit `<TypeArgs>` from a generic function call's
+			// `name<T>(args)` syntax into vm.pendingTypeBindings; the next
+			// OpCall sees these alongside any closure-inherited bindings
+			// and seeds inferTypeBindingsFromLocals with them, giving
+			// explicit args strict priority over arg-inferred bindings.
+			// Operands match OpSetTypeBindings: [count, pName1Idx,
+			// tName1Idx, pName2Idx, tName2Idx, ...].
+			if len(instruction.Operands) < 1 {
+				return vm.runtimeError(instruction, "OpPlantCallTypeBindings: missing operands")
+			}
+			count := int(instruction.Operands[0])
+			if len(instruction.Operands) < 1+count*2 {
+				return vm.runtimeError(instruction, "OpPlantCallTypeBindings: operand count mismatch")
+			}
+			if count > 0 && vm.pendingTypeBindings == nil {
+				vm.pendingTypeBindings = map[string]string{}
+			}
+			for j := 0; j < count; j++ {
+				pIdx := instruction.Operands[1+j*2]
+				tIdx := instruction.Operands[2+j*2]
+				if int(pIdx) >= len(vm.chunk.Constants) || int(tIdx) >= len(vm.chunk.Constants) {
+					return vm.runtimeError(instruction, "OpPlantCallTypeBindings: constant index out of range")
+				}
+				paramName, pOK := vm.chunk.Constants[pIdx].(runtime.String)
+				typeName, tOK := vm.chunk.Constants[tIdx].(runtime.String)
+				if !pOK || !tOK {
+					return vm.runtimeError(instruction, "OpPlantCallTypeBindings: constants must be strings")
+				}
+				vm.pendingTypeBindings[paramName.Value] = typeName.Value
+			}
 		default:
 			return vm.runtimeError(instruction, "unknown opcode %d", instruction.Op)
 		}
@@ -4082,6 +4113,19 @@ func (vm *VM) matchVMValueToTypeSpec(typeParams map[string]bool, value runtime.V
 func (vm *VM) inferTypeBindingsFromLocals(function FunctionInfo) map[string]string {
 	typeParamSet := function.typeParamSet
 	typeBindings := map[string]string{}
+	// Seed with any explicit `<TypeArgs>` planted by OpPlantCallTypeBindings
+	// before the matching OpCall. Inference's "skip if already exists" checks
+	// below then leave these alone, giving explicit args strict priority
+	// over types inferred from argument values. The pending map is consumed
+	// here so a subsequent call without explicit args doesn't inherit them.
+	if len(vm.pendingTypeBindings) > 0 {
+		for k, v := range vm.pendingTypeBindings {
+			if typeParamSet[strings.ToLower(k)] {
+				typeBindings[k] = v
+			}
+		}
+		vm.pendingTypeBindings = nil
+	}
 	for i, paramType := range function.ParamTypes {
 		if i >= len(function.ParamSlots) {
 			break
@@ -4381,8 +4425,12 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	}
 	// If this call inherited type bindings from a closure value (lambda
 	// or generic-function-as-reference captured from an outer generic
-	// frame), merge them into the new frame so the body's instanceof T
-	// checks and inner OpMakeClosure captures see the correct bindings.
+	// frame) OR from OpPlantCallTypeBindings staging explicit `<TypeArgs>`,
+	// merge them into the new frame so the body's instanceof T checks and
+	// inner OpMakeClosure captures see the correct bindings. Pending
+	// bindings are consumed here; the closure-inheritance path uses
+	// save/restore semantics around its caller so the restore still sees
+	// the original prev value regardless of this clear.
 	if len(vm.pendingTypeBindings) > 0 && len(vm.frames) > 0 {
 		frame := &vm.frames[len(vm.frames)-1]
 		if frame.typeBindings == nil {
@@ -4393,6 +4441,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 				frame.typeBindings[k] = v
 			}
 		}
+		vm.pendingTypeBindings = nil
 	}
 	return int(function.Entry) - 1, nil
 }
@@ -7959,7 +8008,7 @@ func shiftInstructionOperands(instruction *Instruction, instructionShift int, co
 				instruction.Operands[i] += int64(constantShift)
 			}
 		}
-	case OpSetTypeBindings:
+	case OpSetTypeBindings, OpPlantCallTypeBindings:
 		// Operands: [count, pIdx1, tIdx1, pIdx2, tIdx2, ...] — all indices from 1 onward are constant indices.
 		for i := 1; i < len(instruction.Operands); i++ {
 			if instruction.Operands[i] >= 0 {
@@ -8137,7 +8186,11 @@ func (vm *VM) runtimeArgumentsMatch(function FunctionInfo, args []runtime.Value,
 }
 
 // descriptiveRuntimeTypeName returns a type name that includes element type info where detectable,
-// e.g. "list<string>" instead of "list".
+// e.g. "list<string>" instead of "list". For reified user-defined generic
+// class instances it also unspools the recorded TypeBindings -
+// "Container<Sub>" rather than the bare "Container" - so error messages
+// about invariant-parameter mismatches surface the caller's actual
+// binding rather than just the class name.
 func (vm *VM) descriptiveRuntimeTypeName(value runtime.Value) string {
 	switch v := value.(type) {
 	case runtime.List:
@@ -8155,6 +8208,20 @@ func (vm *VM) descriptiveRuntimeTypeName(value runtime.Value) string {
 			return "dict<" + entry.Key.TypeName() + "," + entry.Value.TypeName() + ">"
 		}
 		return "dict"
+	case *runtime.Instance:
+		if v == nil || v.Class == nil || len(v.Class.TypeParameters) == 0 || len(v.TypeBindings) == 0 {
+			return value.TypeName()
+		}
+		parts := make([]string, 0, len(v.Class.TypeParameters))
+		for _, p := range v.Class.TypeParameters {
+			if bound, ok := v.TypeBindings[p]; ok && bound != "" {
+				parts = append(parts, bound)
+			}
+		}
+		if len(parts) == 0 {
+			return value.TypeName()
+		}
+		return v.Class.Name + "<" + strings.Join(parts, ", ") + ">"
 	}
 	return value.TypeName()
 }
@@ -8350,6 +8417,33 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 					return false
 				}
 				if !typeParams[valSpec.baseLower] && !vm.matchValueToTypeSpec(typeParams, entry.Value, valSpec) {
+					return false
+				}
+			}
+		}
+	default:
+		// Reified user-defined generic class instance: enforce invariance
+		// on the bound type parameters. A typed parameter declared as
+		// `Box<Base>` must NOT accept a `Box<Sub>` value, because
+		// mutating methods on the parameter could otherwise insert a
+		// sibling `Base` subtype that violates the original container's
+		// declared element type (the same unsoundness that motivates
+		// invariance in Kotlin/Java).
+		if instance, ok := value.(*runtime.Instance); ok && instance.Class != nil &&
+			len(instance.Class.TypeParameters) > 0 && len(instance.TypeBindings) > 0 {
+			for i, argSpec := range spec.args {
+				if i >= len(instance.Class.TypeParameters) {
+					break
+				}
+				if typeParams[argSpec.baseLower] || argSpec.baseLower == "" || argSpec.kind == vmTypeAny {
+					continue
+				}
+				paramName := instance.Class.TypeParameters[i]
+				bound, ok := instance.TypeBindings[paramName]
+				if !ok || bound == "" {
+					continue
+				}
+				if !strings.EqualFold(bound, argSpec.base) {
 					return false
 				}
 			}

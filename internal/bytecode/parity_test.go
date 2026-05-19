@@ -6004,3 +6004,165 @@ io.println(p.y == q.y);
 `, "10\n20\ntrue\ntrue\n")
 }
 
+
+// TestParityExplicitGenericCallSyntax verifies that the call form
+// `Identifier<Type>(args)` is recognised by the parser, threaded through the
+// compiler, and produces equivalent output on both the evaluator and the VM.
+// Before this was supported the parser misread the `<` as the less-than
+// operator and the call evaluated as a chained comparison.
+func TestParityExplicitGenericCallSyntax(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+
+class Box<T> {
+    func Box() {}
+}
+
+let b = Box<string>();
+io.println(typeof(b) == Box);
+io.println(reflect.typeBindings(b)["T"]);
+`, "true\nstring\n")
+}
+
+// TestParityExplicitGenericCallOnFunction verifies the same call form on a
+// generic free-standing function. Previously this parsed as a chained
+// less-than comparison and crashed at runtime. The explicit binding here
+// agrees with the inferred binding; the explicit-binding-overrides-inference
+// case is covered by the class-construction parity test above.
+func TestParityExplicitGenericCallOnFunction(t *testing.T) {
+	runParity(t, `import io;
+
+func identity<T>(T value): T {
+    return value;
+}
+
+io.println(identity<string>("hello"));
+io.println(identity<int>(42));
+`, "hello\n42\n")
+}
+
+// TestParityGenericInvarianceRejectsMismatch verifies that both backends reject
+// passing a generic instance whose reified bindings disagree with the
+// parameter's declared bindings. The unsoundness this guards against is the
+// classic one: widening Container<Sub> to Container<Base> and then having the
+// callee insert a sibling Base subtype.
+func TestParityGenericInvarianceRejectsMismatch(t *testing.T) {
+	source := `class Base {}
+class Sub extends Base {}
+class Container<T> { func Container() {} }
+func consume(Container<Base> c): void {}
+
+let sub = Container<Sub>();
+consume(sub);
+`
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	// Evaluator must reject the call at runtime.
+	var evOut bytes.Buffer
+	_, evErr := evaluator.New(&evOut).Eval(program)
+	if evErr == nil {
+		t.Fatalf("evaluator: expected runtime error, got nil")
+	}
+	if !strings.Contains(evErr.Error(), "Container<Base>") {
+		t.Fatalf("evaluator error did not mention parameter type: %v", evErr)
+	}
+
+	// VM must also reject.
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	var vmOut bytes.Buffer
+	vmErr := bytecode.NewVM(chunk, &vmOut).Run()
+	if vmErr == nil {
+		t.Fatalf("vm: expected runtime error, got nil")
+	}
+	if !strings.Contains(vmErr.Error(), "Container<Base>") {
+		t.Fatalf("vm error did not mention parameter type: %v", vmErr)
+	}
+}
+
+// TestParityGenericInvarianceAcceptsExactMatch verifies the runtime check
+// does NOT over-reject: when the caller's reified bindings exactly match the
+// parameter's declared bindings, the call goes through normally.
+func TestParityGenericInvarianceAcceptsExactMatch(t *testing.T) {
+	runParity(t, `import io;
+class Base {}
+class Container<T> { func Container() {} }
+func consume(Container<Base> c): void {
+    io.println("ok");
+}
+
+let bases = Container<Base>();
+consume(bases);
+`, "ok\n")
+}
+
+// TestParityExplicitTypeArgOverridesInference verifies that an explicit
+// `<TypeArgs>` clause on a generic function call binds T to the explicit
+// type and the function body sees that binding, even when the arg's
+// actual runtime type differs. This is the reified-type-test pattern -
+// the function takes `any` so the parameter accepts any value, and `T`
+// is used purely for the runtime check inside the body.
+func TestParityExplicitTypeArgOverridesInference(t *testing.T) {
+	runParity(t, `import io;
+
+func assertIs<T>(any value): bool {
+    return value instanceof T;
+}
+
+io.println(assertIs<string>("hello"));
+io.println(assertIs<int>("hello"));
+io.println(assertIs<int>(42));
+io.println(assertIs<string>(42));
+`, "true\nfalse\ntrue\nfalse\n")
+}
+
+// TestParityVarianceErrorMessageIncludesReifiedBindings verifies that when
+// a generic-class invariance violation is detected at runtime, both the
+// evaluator and the VM include the offending value's reified type
+// arguments in the "got X" segment of the error message, not just the
+// bare class name. Before this was fixed the message read "got Container",
+// which was unhelpful for diagnosing variance bugs - "got Container<Sub>"
+// makes the mismatch immediately obvious.
+func TestParityVarianceErrorMessageIncludesReifiedBindings(t *testing.T) {
+	source := `class Base {}
+class Sub extends Base {}
+class Container<T> { func Container() {} }
+func use(Container<Base> c): void {}
+
+let sub = Container<Sub>();
+use(sub);
+`
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	var evOut bytes.Buffer
+	_, evErr := evaluator.New(&evOut).Eval(program)
+	if evErr == nil {
+		t.Fatalf("evaluator: expected runtime error, got nil")
+	}
+	if !strings.Contains(evErr.Error(), "got Container<Sub>") {
+		t.Fatalf("evaluator error did not mention reified Container<Sub>: %v", evErr)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	var vmOut bytes.Buffer
+	vmErr := bytecode.NewVM(chunk, &vmOut).Run()
+	if vmErr == nil {
+		t.Fatalf("vm: expected runtime error, got nil")
+	}
+	if !strings.Contains(vmErr.Error(), "got Container<Sub>") {
+		t.Fatalf("vm error did not mention reified Container<Sub>: %v", vmErr)
+	}
+}

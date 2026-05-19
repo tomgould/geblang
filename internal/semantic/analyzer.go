@@ -606,7 +606,7 @@ func (a *Analyzer) checkValueAgainstType(target typeInfo, expr ast.Expression, m
 		a.errorAt(tok, "%s", message)
 		return
 	}
-	if !a.isAssignableType(target.name, actual.name) {
+	if !a.isAssignable(target, actual) {
 		a.errorAt(tok, "%s", message)
 	}
 }
@@ -649,6 +649,10 @@ func (a *Analyzer) checkAssignable(target *ast.TypeRef, expr ast.Expression, mes
 	if target.ListAlias || targetInfo.name == "list" {
 		if actual.name != "list" {
 			a.errorf("%s", message)
+			return
+		}
+		if len(targetInfo.args) > 0 && len(actual.args) > 0 && !a.isAssignable(targetInfo, actual) {
+			a.errorf("%s", message)
 		}
 		return
 	}
@@ -656,7 +660,7 @@ func (a *Analyzer) checkAssignable(target *ast.TypeRef, expr ast.Expression, mes
 		a.errorf("%s", message)
 		return
 	}
-	if !a.isAssignableType(targetInfo.name, actual.name) {
+	if !a.isAssignable(targetInfo, actual) {
 		a.errorf("%s", message)
 	}
 }
@@ -824,7 +828,7 @@ func (a *Analyzer) callArgumentsCompatible(args, parameters []typeInfo) bool {
 		if !parameters[i].nullable && arg.nullable {
 			return false
 		}
-		if parameters[i].name != "any" && !a.isAssignableType(parameters[i].name, arg.name) {
+		if parameters[i].name != "any" && !a.isAssignable(parameters[i], arg) {
 			return false
 		}
 	}
@@ -841,7 +845,7 @@ func (a *Analyzer) returnTypeCompatible(expected, actual typeInfo) bool {
 	if !expected.nullable && actual.nullable {
 		return false
 	}
-	return a.isAssignableType(expected.name, actual.name)
+	return a.isAssignable(expected, actual)
 }
 
 func (a *Analyzer) analyzeExpression(expr ast.Expression) {
@@ -937,7 +941,7 @@ func (a *Analyzer) analyzeAssignment(expr *ast.AssignmentExpression) {
 		}
 		return
 	}
-	if target.name != "any" && !isNumericLiteralWidening(target.name, expr.Value) && !a.isAssignableType(target.name, actual.name) {
+	if target.name != "any" && !isNumericLiteralWidening(target.name, expr.Value) && !a.isAssignable(target, actual) {
 		a.errorf("cannot assign %s to %s %s", actual.display(), target.display(), ident.Value)
 	}
 }
@@ -1091,7 +1095,14 @@ func (a *Analyzer) expressionTypeName(expr ast.Expression) typeInfo {
 	case *ast.CallExpression:
 		if ident, ok := expr.Callee.(*ast.Identifier); ok {
 			if _, ok := a.classes[ident.Value]; ok {
-				return typeInfo{name: ident.Value, known: true}
+				info := typeInfo{name: ident.Value, known: true}
+				if len(expr.TypeArguments) > 0 {
+					info.args = make([]typeInfo, 0, len(expr.TypeArguments))
+					for _, arg := range expr.TypeArguments {
+						info.args = append(info.args, a.typeInfoFromRef(arg))
+					}
+				}
+				return info
 			}
 		}
 		return typeInfo{}
@@ -1286,7 +1297,50 @@ func sameTypeInfo(left, right typeInfo) bool {
 	if !left.known || !right.known {
 		return !left.known && !right.known
 	}
-	return left.name == right.name && left.nullable == right.nullable
+	if left.name != right.name || left.nullable != right.nullable {
+		return false
+	}
+	if len(left.args) != len(right.args) {
+		return false
+	}
+	for i := range left.args {
+		if !sameTypeInfo(left.args[i], right.args[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// isAssignable extends isAssignableType with generic-argument invariance.
+// When the target carries explicit type arguments (e.g. `Box<Base>` or
+// `list<int>`), each argument position must be the *exact* same type as
+// the actual's corresponding argument - not a subtype. This is the standard
+// invariance rule for generics: it prevents the classic unsoundness where
+// a `Box<Sub>` is passed where a `Box<Base>` is expected and a sibling
+// `Base` subtype then gets written into the box.
+//
+// When the actual value has no type arguments (e.g. a raw class instance whose
+// reified bindings are still polymorphic), the check passes - invariance only
+// applies when both sides explicitly carry args.
+func (a *Analyzer) isAssignable(target, actual typeInfo) bool {
+	if !a.isAssignableType(target.name, actual.name) {
+		return false
+	}
+	if len(target.args) == 0 {
+		return true
+	}
+	if len(actual.args) == 0 {
+		return true
+	}
+	if len(target.args) != len(actual.args) {
+		return false
+	}
+	for i := range target.args {
+		if !sameTypeInfo(target.args[i], actual.args[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *Analyzer) typeInfoFromRef(ref *ast.TypeRef) typeInfo {

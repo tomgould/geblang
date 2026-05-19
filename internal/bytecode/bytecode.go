@@ -182,6 +182,18 @@ const (
 	// slot. Use-after-del is rejected by the semantic analyzer;
 	// the runtime check exists only as a defensive backstop.
 	OpDel
+	// OpPlantCallTypeBindings is emitted immediately before OpCall
+	// when a generic function is called with an explicit
+	// `<TypeArgs>` clause. Operands are [count, paramName1Idx,
+	// typeName1Idx, paramName2Idx, typeName2Idx, ...] - constant
+	// indices into the chunk's string pool. The handler merges
+	// these bindings into `vm.pendingTypeBindings`; the following
+	// OpCall drains pendingTypeBindings into the new frame's
+	// typeBindings (reusing the closure-inheritance path). The
+	// per-call inference loop then skips type-parameter names
+	// already bound, making explicit-args strictly override
+	// inferred-from-arg bindings.
+	OpPlantCallTypeBindings
 )
 
 type Instruction struct {

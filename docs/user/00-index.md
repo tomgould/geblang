@@ -240,7 +240,7 @@ it once, filtering on `value % 5 == 0` and summing the matches.
 
 `numeric_loop` runs a counted `for` loop two million times with a
 small if/else and integer arithmetic in the body. For loops where
-the compiler can tell the variables stay as integers, we put
+the compiler can tell the variables stay as integers, I put
 serious effort into making the body cheap, and the benchmark
 reflects that.
 

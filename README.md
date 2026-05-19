@@ -1,7 +1,7 @@
 # Geblang
 
 Geblang is an interpreted scripting language implemented in Go. The
-project is at version **1.0.0**.
+project is at version **1.0.1**.
 
 ## Architecture
 

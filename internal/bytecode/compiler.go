@@ -2275,6 +2275,33 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					}
 				}
 				c.emitAt(OpConstructClass, expr.Token.Line, expr.Token.Column, classIndex, int64(len(orderedArgs)))
+				// Explicit type arguments on the call site (e.g. `Container<T>(...)`)
+				// pin the reified bindings on the freshly-constructed instance, so
+				// runtime invariance checks against a typed parameter see the
+				// caller's intent rather than only those bindings inferred from
+				// constructor argument types.
+				if len(expr.TypeArguments) > 0 && len(classInfo.TypeParameters) > 0 {
+					operands := []int64{0}
+					count := int64(0)
+					for i, arg := range expr.TypeArguments {
+						if i >= len(classInfo.TypeParameters) {
+							break
+						}
+						if arg == nil || arg.Operator != "" || arg.Name == "" {
+							continue
+						}
+						paramNameIdx := int64(len(c.chunk.Constants))
+						c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: classInfo.TypeParameters[i]})
+						typeNameIdx := int64(len(c.chunk.Constants))
+						c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: arg.Name})
+						operands = append(operands, paramNameIdx, typeNameIdx)
+						count++
+					}
+					if count > 0 {
+						operands[0] = count
+						c.emitAt(OpSetTypeBindings, expr.Token.Line, expr.Token.Column, operands...)
+					}
+				}
 				return nil
 			}
 			if resolved, ok := c.resolveName(ident.Value); ok {
@@ -2348,6 +2375,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			if err := c.compileOrderedArguments(c.chunk.Functions[index], orderedArgs, 0, expr.Token.Line, expr.Token.Column); err != nil {
 				return err
 			}
+			c.emitPlantCallTypeBindings(expr, c.chunk.Functions[index].TypeParameters)
 			c.emitAt(OpCall, expr.Token.Line, expr.Token.Column, index, int64(len(orderedArgs)))
 			return nil
 		}
@@ -3372,6 +3400,41 @@ func validateReflectDecorators(decorators []runtime.DecoratorMetadata) error {
 		}
 	}
 	return nil
+}
+
+// emitPlantCallTypeBindings emits an OpPlantCallTypeBindings instruction
+// for a CallExpression whose explicit `<TypeArgs>` clause should pin the
+// callee's type parameters before the matching OpCall consumes them.
+// No instruction is emitted when there are no explicit type args, the
+// callee declares no type parameters, or none of the args produce a
+// usable binding. The order of operands mirrors OpSetTypeBindings so
+// the runtime handler can be shared in spirit with the class-instance
+// path.
+func (c *Compiler) emitPlantCallTypeBindings(expr *ast.CallExpression, typeParameters []string) {
+	if len(expr.TypeArguments) == 0 || len(typeParameters) == 0 {
+		return
+	}
+	operands := []int64{0}
+	count := int64(0)
+	for i, arg := range expr.TypeArguments {
+		if i >= len(typeParameters) {
+			break
+		}
+		if arg == nil || arg.Operator != "" || arg.Name == "" {
+			continue
+		}
+		paramNameIdx := int64(len(c.chunk.Constants))
+		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: typeParameters[i]})
+		typeNameIdx := int64(len(c.chunk.Constants))
+		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: arg.Name})
+		operands = append(operands, paramNameIdx, typeNameIdx)
+		count++
+	}
+	if count == 0 {
+		return
+	}
+	operands[0] = count
+	c.emitAt(OpPlantCallTypeBindings, expr.Token.Line, expr.Token.Column, operands...)
 }
 
 func expressionLocation(expr ast.Expression) (int, int) {
