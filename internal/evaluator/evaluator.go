@@ -2223,7 +2223,19 @@ func valueMatchesType(value runtime.Value, typeName string) bool {
 				return true
 			}
 		}
+		// Fall through: an instance with an `__invoke` method matches
+		// the `callable` family even when its class isn't named callable.
+		if isCallableTypeName(typeName) && runtime.IsCallableValue(value) {
+			return true
+		}
 		return false
+	}
+	// `func` / `callable` / `function` all match any callable runtime value
+	// (Function, OverloadedFunction, BytecodeFunction, decorated targets).
+	// This keeps `as callable` symmetrical with parameter-type matching
+	// and with the VM's cast path, both of which already accept funcs.
+	if isCallableTypeName(typeName) && runtime.IsCallableValue(value) {
+		return true
 	}
 	return typeNamesEqual(value.TypeName(), typeName)
 }

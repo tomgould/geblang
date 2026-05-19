@@ -25,7 +25,7 @@ build path for Geblang itself, no additional tools are needed.
 ## Getting The Source
 
 ```sh
-git clone https://github.com/geblang/geblang.git
+git clone https://github.com/dwgebler/geblang.git
 cd geblang
 ```
 

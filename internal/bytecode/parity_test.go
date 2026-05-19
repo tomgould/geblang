@@ -6473,6 +6473,25 @@ io.println(materialized.length);
 `, "5\nhello\n8\nrésumé\n3\n3\n")
 }
 
+// TestParityFuncAsCallable guards that a function value casts to
+// `callable` / `func` / `function` on both backends. Pre-1.0.3 the
+// evaluator's castValue rejected the cast with "cannot cast func
+// to callable" while the VM accepted it (via the value's TypeName
+// being "func", which matches the target). Both backends now
+// route through `runtime.IsCallableValue` for the callable family.
+func TestParityFuncAsCallable(t *testing.T) {
+	runParity(t, `import io;
+
+let f = func(int n): int { return n + 1; };
+let c = f as callable;
+io.println(c(5));
+
+any g = func(string s): string { return s + "!"; };
+let c2 = g as callable;
+io.println(c2("hi"));
+`, "6\nhi!\n")
+}
+
 // TestParityNullAsNullableType guards `null as ?T` working on
 // both backends. The evaluator's cast path used to drop the
 // nullable bit from the target TypeRef before calling castValue,

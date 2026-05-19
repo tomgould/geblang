@@ -70,6 +70,36 @@ class NullableCastBox {
     func NullableCastBox(int x) { this.x = x; }
 }
 
+class FuncAsCallableTest extends test.Test {
+    @test
+    func castsAFunctionLiteralToCallable(): void {
+        let f = func(int n): int { return n + 1; };
+        let c = f as callable;
+        this.assertEquals(6, c(5));
+    }
+
+    @test
+    func castsAnyTypedFunctionValueToCallable(): void {
+        /* Pre-1.0.3 the evaluator rejected `any-as-callable` for
+         * function values with "cannot cast func to callable" while
+         * the VM accepted it. Both backends should now match. */
+        any g = func(string s): string { return s + "!"; };
+        let c = g as callable;
+        this.assertEquals("hi!", c("hi"));
+    }
+
+    @test
+    func castsFunctionToFuncAndFunctionAliases(): void {
+        /* The `callable` family covers `func`, `callable`, and
+         * `function` aliases — all three are accepted on cast. */
+        let f = func(): int { return 42; };
+        let a = f as callable;
+        let b = f as func;
+        this.assertEquals(42, a());
+        this.assertEquals(42, b());
+    }
+}
+
 class NullableCastTest extends test.Test {
     @test
     func nullAsNullablePrimitive(): void {

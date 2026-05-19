@@ -22,7 +22,7 @@ import (
 	"geblang/internal/semantic"
 )
 
-const version = "1.0.2"
+const version = "1.0.3"
 const bannerString = "Geblang Version %s, ©2026 David Gebler.\n==========================================\n"
 
 type executionMode int
