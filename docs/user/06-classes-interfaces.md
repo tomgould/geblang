@@ -329,7 +329,7 @@ class CachedUsers {
 
 Decorators are `@`-prefixed annotations applied to classes, functions,
 methods, or fields. They come in two flavours depending on where you
-put them, and the two flavours are doing very different things — this
+put them, and the two flavours are doing very different things. This
 section explains both.
 
 ### Behavioural decorators on functions, methods, and classes
@@ -356,13 +356,13 @@ func greet(string name): string {
 
 Calling `greet("Ada")` invokes the wrapped value: the log line prints
 first, then the underlying body runs. Multiple decorators stack in
-source order — the topmost decorator wraps the inner wrapped value
+source order. The topmost decorator wraps the inner wrapped value
 last.
 
 ### Annotation-only (metadata) decorators
 
 A decorator whose name does **not** resolve to a function in scope is
-treated as **pure metadata**. The runtime does not execute it — the
+treated as **pure metadata**. The runtime does not execute it. The
 name and any arguments are recorded on the target so reflection can
 read them back. This is the form frameworks use to drive
 configuration-by-annotation:
@@ -378,8 +378,8 @@ time. A web framework reads them later via
 `reflect.decorators(getUser)`.
 
 Dotted names like `@Assert.email` or `@Foo.bar.baz` are valid and
-parse as a single composite identifier. The dot is part of the name —
-dispatch is by exact string match. Use this to group related
+parse as a single composite identifier. The dot is part of the name,
+so dispatch is by exact string match. Use this to group related
 annotations under a common prefix.
 
 ### Field-level decorators
@@ -401,7 +401,7 @@ class CreateUserDTO {
 ```
 
 `reflect.fields(CreateUserDTO)` returns one entry per field. When a
-field has annotations, the entry includes a `decorators` key — a list
+field has annotations, the entry includes a `decorators` key: a list
 of `{name, args, namedArgs, ...}` dicts. Frameworks like Gebweb read
 these to drive validation, serialisation filters, ORM hints, OpenAPI
 schema enrichment, etc.
@@ -409,7 +409,7 @@ schema enrichment, etc.
 **When do field decorators run?** Never automatically. They are
 *static* metadata: parsed once at class compile time and frozen onto
 the class definition. The runtime never executes a field decorator
-on its own — assigning or reading the field always proceeds without
+on its own. Assigning or reading the field always proceeds without
 consulting the annotation list. Anything dynamic happens because
 *some piece of code* (your framework, your test harness, your code)
 reads the decorators via reflection and decides what to do.
@@ -438,13 +438,13 @@ class Item {
 | Call | Returns |
 | --- | --- |
 | `reflect.decorators(target)` | List of `{name, args, namedArgs, line, column}` dicts. |
-| `reflect.hasDecorator(target, name)` | Bool — `true` when at least one decorator with that name is present. |
+| `reflect.hasDecorator(target, name)` | Bool. `true` when at least one decorator with that name is present. |
 | `reflect.decorator(target, name)` | First decorator dict with that name, or `null`. |
 | `reflect.fields(class)` | List of field dicts; each has a `decorators` key when at least one annotation is present. |
 
 `target` is either a class value, a function/method value, or a class
 instance (in which case the call delegates to the instance's class).
-Names match exactly — `@Assert.email` is the name `"Assert.email"`,
+Names match exactly: `@Assert.email` is the name `"Assert.email"`,
 not `"Assert"` with a sub-key.
 
 ## Magic Methods
@@ -554,6 +554,54 @@ io.println(total == Money(750));
 Operator methods should return the type users expect from the operator.
 Comparison and equality methods must return `bool`; arithmetic methods should
 usually return the same domain type.
+
+## Cast Overloading
+
+A class can control how its instances respond to `as TYPE` casts by
+defining a cast dunder for each target primitive:
+
+- `__string(): string` for `as string`
+- `__int(): int` for `as int`
+- `__float(): float` for `as float`
+- `__bool(): bool` for `as bool`
+- `__decimal(): decimal` for `as decimal`
+- `__bytes(): bytes` for `as bytes`
+
+Each dunder must declare the matching return type. The semantic
+analyzer rejects mismatches at compile time, and the runtime checks
+the actual returned value as a defensive backstop.
+
+```gb
+class Money {
+    int cents;
+
+    func Money(int cents) {
+        this.cents = cents;
+    }
+
+    func __string(): string {
+        return "$" + (this.cents as string);
+    }
+
+    func __int(): int {
+        return this.cents;
+    }
+
+    func __bool(): bool {
+        return this.cents != 0;
+    }
+}
+
+let m = Money(550);
+io.println(m as string);   # $550
+io.println(m as int);      # 550
+io.println(m as bool);     # true
+io.println(Money(0) as bool);  # false
+```
+
+When the class does not define a dunder for the target primitive, the
+default cast logic runs (errors when the conversion is undefined for
+the receiver's type).
 
 ## Destructors
 

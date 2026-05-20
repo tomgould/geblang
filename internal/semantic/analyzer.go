@@ -144,6 +144,7 @@ func (a *Analyzer) Analyze(program *ast.Program) []Diagnostic {
 	a.validateClassOverloads()
 	a.validateInterfaceOverloads()
 	a.validateInterfaceImplementations()
+	a.validateCastDunderReturns(program.Statements)
 	isModule := fileIsModule(program.Statements)
 	seenInit := false
 	for _, stmt := range program.Statements {
@@ -328,6 +329,54 @@ func (a *Analyzer) collectTypeDeclarations(stmts []ast.Statement) {
 				info.methods[key] = append(info.methods[key], methodInfo)
 			}
 			a.interfaces[info.name] = info
+		}
+	}
+}
+
+// castDunderExpectedReturn returns the declared-return-type a cast
+// dunder must use. Empty when the method name is not a cast dunder.
+func castDunderExpectedReturn(name string) string {
+	switch name {
+	case "__string":
+		return "string"
+	case "__int":
+		return "int"
+	case "__float":
+		return "float"
+	case "__bool":
+		return "bool"
+	case "__decimal":
+		return "decimal"
+	case "__bytes":
+		return "bytes"
+	}
+	return ""
+}
+
+// validateCastDunderReturns rejects classes that declare a cast
+// dunder (__string, __int, ...) with the wrong return type.
+func (a *Analyzer) validateCastDunderReturns(stmts []ast.Statement) {
+	for _, stmt := range stmts {
+		class, ok := stmt.(*ast.ClassStatement)
+		if !ok {
+			continue
+		}
+		for _, member := range class.Members {
+			fn, ok := member.(*ast.FunctionStatement)
+			if !ok || fn.Static {
+				continue
+			}
+			expected := castDunderExpectedReturn(fn.Name.Value)
+			if expected == "" {
+				continue
+			}
+			actual := ""
+			if fn.ReturnType != nil {
+				actual = fn.ReturnType.Name
+			}
+			if !strings.EqualFold(actual, expected) {
+				a.errorAt(fn.Token, "%s.%s must declare return type %s, got %q", class.Name.Value, fn.Name.Value, expected, actual)
+			}
 		}
 	}
 }

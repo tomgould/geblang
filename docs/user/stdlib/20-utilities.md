@@ -49,7 +49,7 @@ try {
 }
 ```
 
-### `.copy()` — mutable shallow copy
+### `.copy()`: mutable shallow copy
 
 All collection types support a `.copy()` method that returns an unfrozen
 shallow copy, even when the original is frozen:
@@ -59,7 +59,7 @@ import freeze;
 
 let frozen = freeze.shallow([1, 2, 3]);
 let mutable = frozen.copy();
-mutable[0] = 99;   # ok — mutable is a new, unfrozen list
+mutable[0] = 99;   # ok (mutable is a new, unfrozen list)
 ```
 
 ### `const` auto-freeze
@@ -288,7 +288,7 @@ Import: `import random;`
 
 The `random` module is a seedable PRNG suitable for simulation, sampling,
 shuffling, procedural generation, fuzz inputs, and tests where
-reproducibility matters. **It is not cryptographically secure** — for
+reproducibility matters. **It is not cryptographically secure**. For
 security tokens, session IDs, salts, OTPs, and anything an attacker
 shouldn't be able to predict, use the `secrets` module instead (see
 `12-security`).

@@ -1,0 +1,57 @@
+/**
+ * @title Empty-container parameter defaults
+ * @summary `dict opts = {}` and `list xs = []`-shaped parameter
+ * defaults compile to bytecode directly (previously routed through
+ * the evaluator). Each call without the argument gets a FRESH empty
+ * container - mutating the default in one call does not leak into
+ * the next.
+ */
+import test;
+
+func optsLength(dict<string, any> opts = {}): int {
+    return opts.length();
+}
+
+func listLength(list<int> xs = []): int {
+    return xs.length();
+}
+
+/* Mutates the default - exercises the clone-on-fill behaviour. */
+func incrCount(dict<string, int> d = {}): int {
+    d["count"] = (d["count"] ?? 0) + 1;
+    return d["count"];
+}
+
+func appendNinety(list<int> xs = []): int {
+    xs = xs.push(99);
+    return xs.length();
+}
+
+class EmptyContainerDefaultsTest extends test.Test {
+    @test
+    func dictDefaultIsEmpty(): void {
+        this.assertEquals(0, optsLength());
+        this.assertEquals(2, optsLength({"a": 1, "b": 2}));
+    }
+
+    @test
+    func listDefaultIsEmpty(): void {
+        this.assertEquals(0, listLength());
+        this.assertEquals(3, listLength([1, 2, 3]));
+    }
+
+    @test
+    func mutableDictDefaultIsolatedAcrossCalls(): void {
+        /* Each call sees a fresh empty dict; mutating one default
+         * never leaks into the next. */
+        this.assertEquals(1, incrCount());
+        this.assertEquals(1, incrCount());
+        this.assertEquals(1, incrCount());
+    }
+
+    @test
+    func listDefaultIsolatedAcrossCalls(): void {
+        this.assertEquals(1, appendNinety());
+        this.assertEquals(1, appendNinety());
+    }
+}

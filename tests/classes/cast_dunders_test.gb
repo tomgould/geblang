@@ -1,0 +1,56 @@
+/**
+ * @title Cast-overload dunders
+ * @summary Classes can define __string / __int / __float / __bool /
+ * __decimal / __bytes to control their `as TYPE` conversion. The
+ * declared return type must match the dunder's target; the semantic
+ * analyzer rejects mismatches at compile time.
+ */
+import test;
+
+class Money {
+    int cents;
+
+    func Money(int cents) {
+        this.cents = cents;
+    }
+
+    func __string(): string {
+        return "$" + (this.cents as string);
+    }
+
+    func __int(): int {
+        return this.cents;
+    }
+
+    func __bool(): bool {
+        return this.cents != 0;
+    }
+}
+
+class CastDundersTest extends test.Test {
+    @test
+    func stringDunderRuns(): void {
+        let m = Money(550);
+        this.assertEquals("$550", m as string);
+    }
+
+    @test
+    func intDunderRuns(): void {
+        let m = Money(550);
+        this.assertEquals(550, m as int);
+    }
+
+    @test
+    func boolDunderRuns(): void {
+        this.assertEquals(true, Money(1) as bool);
+        this.assertEquals(false, Money(0) as bool);
+    }
+
+    @test
+    func dunderOnlyFiresForUserClass(): void {
+        /* Casting a plain int through `as string` still uses the
+         * built-in conversion, not any dunder. */
+        let n = 42;
+        this.assertEquals("42", n as string);
+    }
+}

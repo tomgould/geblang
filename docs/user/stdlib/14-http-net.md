@@ -116,7 +116,7 @@ let c = http.newClient({"headers": {"User-Agent": "MyApp/2.0"}});
 
 Network errors are always retried up to `retries`. When all attempts are
 exhausted, the last response (or the last network error) is returned to
-the caller — no exception is thrown.
+the caller; no exception is thrown.
 
 ```gb
 let client = http.newClient({"timeoutMs": 5000});

@@ -129,7 +129,7 @@ Cast with `as int`, `as decimal`, `as float`, `as bool` where needed. Also new i
 
 ```gb
 let b = "résumé" as bytes;
-io.println(b.length);     # 8 — two two-byte runes plus four ASCII
+io.println(b.length);     # 8 (two two-byte runes plus four ASCII)
 io.println(b as string);  # résumé
 ```
 

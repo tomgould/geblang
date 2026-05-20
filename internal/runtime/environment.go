@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"sort"
+	"sync"
 )
 
 type Binding struct {
@@ -10,7 +11,11 @@ type Binding struct {
 	Constant bool
 }
 
+// Environment is the evaluator's lexical scope. The mutex guards
+// concurrent access from async goroutines that share a closure
+// environment with the parent evaluator.
 type Environment struct {
+	mu           sync.RWMutex
 	store        map[string]Binding
 	typeBindings map[string]string
 	outer        *Environment
@@ -25,6 +30,8 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 }
 
 func (e *Environment) Define(name string, value Value, constant bool) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if _, exists := e.store[name]; exists {
 		return fmt.Errorf("%q is already declared in this scope", name)
 	}
@@ -36,6 +43,8 @@ func (e *Environment) Define(name string, value Value, constant bool) error {
 }
 
 func (e *Environment) DefineFunction(name string, fn Function) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if binding, exists := e.store[name]; exists {
 		switch value := binding.Value.(type) {
 		case Function:
@@ -54,26 +63,35 @@ func (e *Environment) DefineFunction(name string, fn Function) error {
 }
 
 func (e *Environment) Assign(name string, value Value) error {
+	e.mu.Lock()
 	if binding, exists := e.store[name]; exists {
 		if binding.Constant {
+			e.mu.Unlock()
 			return fmt.Errorf("cannot assign to constant %q", name)
 		}
 		binding.Value = value
 		e.store[name] = binding
+		e.mu.Unlock()
 		return nil
 	}
-	if e.outer != nil {
-		return e.outer.Assign(name, value)
+	outer := e.outer
+	e.mu.Unlock()
+	if outer != nil {
+		return outer.Assign(name, value)
 	}
 	return fmt.Errorf("%q is not declared", name)
 }
 
 func (e *Environment) Get(name string) (Value, bool) {
+	e.mu.RLock()
 	if binding, exists := e.store[name]; exists {
+		e.mu.RUnlock()
 		return binding.Value, true
 	}
-	if e.outer != nil {
-		return e.outer.Get(name)
+	outer := e.outer
+	e.mu.RUnlock()
+	if outer != nil {
+		return outer.Get(name)
 	}
 	return nil, false
 }
@@ -83,20 +101,26 @@ func (e *Environment) Get(name string) (Value, bool) {
 // Used by `del x` to retire a binding after its destructor has
 // fired.
 func (e *Environment) Delete(name string) bool {
+	e.mu.Lock()
 	if _, exists := e.store[name]; exists {
 		delete(e.store, name)
 		if e.typeBindings != nil {
 			delete(e.typeBindings, name)
 		}
+		e.mu.Unlock()
 		return true
 	}
-	if e.outer != nil {
-		return e.outer.Delete(name)
+	outer := e.outer
+	e.mu.Unlock()
+	if outer != nil {
+		return outer.Delete(name)
 	}
 	return false
 }
 
 func (e *Environment) DefineTypeBinding(name, typeName string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.typeBindings == nil {
 		e.typeBindings = map[string]string{}
 	}
@@ -109,13 +133,17 @@ func (e *Environment) GetTypeBinding(name string) (string, bool) {
 	if e == nil {
 		return "", false
 	}
+	e.mu.RLock()
 	if e.typeBindings != nil {
 		if t, ok := e.typeBindings[name]; ok {
+			e.mu.RUnlock()
 			return t, true
 		}
 	}
-	if e.outer != nil {
-		return e.outer.GetTypeBinding(name)
+	outer := e.outer
+	e.mu.RUnlock()
+	if outer != nil {
+		return outer.GetTypeBinding(name)
 	}
 	return "", false
 }
@@ -130,6 +158,7 @@ func (e *Environment) TypeBindingNames() []string {
 	seen := map[string]struct{}{}
 	var names []string
 	for env := e; env != nil; env = env.outer {
+		env.mu.RLock()
 		for name := range env.typeBindings {
 			if _, dup := seen[name]; dup {
 				continue
@@ -137,11 +166,14 @@ func (e *Environment) TypeBindingNames() []string {
 			seen[name] = struct{}{}
 			names = append(names, name)
 		}
+		env.mu.RUnlock()
 	}
 	return names
 }
 
 func (e *Environment) Names() []string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	names := make([]string, 0, len(e.store))
 	for name := range e.store {
 		names = append(names, name)
@@ -154,6 +186,7 @@ func (e *Environment) VisibleNames() []string {
 	seen := map[string]bool{}
 	var names []string
 	for env := e; env != nil; env = env.outer {
+		env.mu.RLock()
 		for name := range env.store {
 			if seen[name] {
 				continue
@@ -161,6 +194,7 @@ func (e *Environment) VisibleNames() []string {
 			seen[name] = true
 			names = append(names, name)
 		}
+		env.mu.RUnlock()
 	}
 	sort.Strings(names)
 	return names

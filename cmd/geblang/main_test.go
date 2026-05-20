@@ -1398,8 +1398,13 @@ func TestRunScriptVMStrictRejectsUnsupportedBytecode(t *testing.T) {
 		}
 	}()
 	sourcePath := filepath.Join(dir, "strict.gb")
-	source := []byte(`static func staticUtil() {
-    return "value";
+	/* Non-literal class field defaults are still routed through the
+	 * evaluator, so `--vm-strict` must reject this rather than fall
+	 * back. (`static func` used to be in this slot but the compiler
+	 * now lowers it directly.) */
+	source := []byte(`func compute(): int { return 42; }
+class Foo {
+    int x = compute();
 }
 `)
 	program, err := parseAndAnalyze(string(source))
@@ -1415,7 +1420,7 @@ func TestRunScriptVMStrictRejectsUnsupportedBytecode(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit code: got %d", code)
 	}
-	if !strings.Contains(err.Error(), "line 1:8: bytecode compiler does not support") {
+	if !strings.Contains(err.Error(), "line 3:5: bytecode compiler only supports literal class field defaults") {
 		t.Fatalf("error: got %v", err)
 	}
 }
@@ -2399,5 +2404,82 @@ export func message(): string {
 	}
 	if got := string(out); !strings.Contains(got, "vendor-ok") {
 		t.Fatalf("expected vendored dependency output, got: %q", got)
+	}
+}
+
+// TestReplInsertSemicolonsRespectsNesting guards a regression where
+// multi-line container literals (lists of dicts, parenthesised expressions
+// broken across lines, ...) had a `;` injected mid-literal because the
+// line-ending token (`}`, `]`) is a statement-ender at the lexer level.
+// The injector now tracks bracket nesting and only inserts at depth 0.
+func TestReplInsertSemicolonsRespectsNesting(t *testing.T) {
+	/* Each input ends in a newline because the REPL prompt loop
+	 * always feeds the line that way; the injector only runs at
+	 * `\n` boundaries. */
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "list of dicts spanning lines (the reported bug)",
+			in: "let rows = [\n" +
+				"    {\"name\": \"Alice\", \"role\": \"admin\"},\n" +
+				"    {\"name\": \"Bob\",   \"role\": \"viewer\"}\n" +
+				"];\n",
+			want: "let rows = [\n" +
+				"    {\"name\": \"Alice\", \"role\": \"admin\"},\n" +
+				"    {\"name\": \"Bob\",   \"role\": \"viewer\"}\n" +
+				"];\n",
+		},
+		{
+			name: "function body still gets trailing semicolon",
+			in: "func greet(): string {\n" +
+				"    return \"hi\"\n" +
+				"}\n",
+			want: "func greet(): string {\n" +
+				"    return \"hi\";\n" +
+				"};\n",
+		},
+		{
+			name: "multi-line function call args",
+			in: "foo(\n" +
+				"    1,\n" +
+				"    2,\n" +
+				"    3\n" +
+				")\n",
+			want: "foo(\n" +
+				"    1,\n" +
+				"    2,\n" +
+				"    3\n" +
+				");\n",
+		},
+		{
+			name: "nested list of dicts with trailing element on its own line",
+			in: "let data = [\n" +
+				"    {\"a\": 1},\n" +
+				"    {\"b\": [\n" +
+				"        {\"c\": 2}\n" +
+				"    ]}\n" +
+				"];\n",
+			want: "let data = [\n" +
+				"    {\"a\": 1},\n" +
+				"    {\"b\": [\n" +
+				"        {\"c\": 2}\n" +
+				"    ]}\n" +
+				"];\n",
+		},
+		{
+			name: "as-bool cast at end of REPL line",
+			in:   "1 as bool\n",
+			want: "1 as bool;\n",
+		},
+	}
+	for _, tc := range cases {
+		got := replInsertSemicolons(tc.in)
+		if got != tc.want {
+			t.Errorf("%s:\n  input:\n%s\n  got:\n%s\n  want:\n%s",
+				tc.name, tc.in, got, tc.want)
+		}
 	}
 }

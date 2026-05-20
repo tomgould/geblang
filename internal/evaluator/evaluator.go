@@ -500,8 +500,8 @@ func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []st
 	// convert.go's __serialize__ dispatch) can call class
 	// methods. Latest-writer-wins; both backends populate this
 	// at startup. See bytecode.NewVM for the VM counterpart.
-	native.InstanceInvoker = e.invokeInstanceMethod
-	native.ClassDeserializer = e.deserializeIntoClass
+	native.SetInstanceInvoker(e.invokeInstanceMethod)
+	native.SetClassDeserializer(e.deserializeIntoClass)
 	return e
 }
 
@@ -2031,6 +2031,18 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		// conversions when the chain doesn't match.
 		if e.valueMatchesType(value, target.Name) {
 			return value, nil
+		}
+		if instance, ok := value.(*runtime.Instance); ok {
+			if dunder := castDunderName(target.Name); dunder != "" {
+				if result, handled, err := e.invokeInstanceMethod(instance, dunder, nil); err != nil {
+					return nil, err
+				} else if handled {
+					if err := checkCastDunderReturn(target.Name, result); err != nil {
+						return nil, thrownError{value: e.withTrace(runtime.Error{Class: "RuntimeError", Message: err.Error()})}
+					}
+					return result, nil
+				}
+			}
 		}
 		return castValue(value, target.Name)
 	case *ast.FunctionLiteral:
@@ -5073,6 +5085,57 @@ func typeNameFromExpression(expr ast.Expression) (string, error) {
 	return "", fmt.Errorf("expected type name, got %s", expr.String())
 }
 
+func castDunderName(target string) string {
+	switch strings.ToLower(strings.TrimPrefix(target, "?")) {
+	case "string":
+		return "__string"
+	case "int":
+		return "__int"
+	case "float":
+		return "__float"
+	case "bool":
+		return "__bool"
+	case "decimal":
+		return "__decimal"
+	case "bytes":
+		return "__bytes"
+	}
+	return ""
+}
+
+func checkCastDunderReturn(target string, value runtime.Value) error {
+	want := strings.ToLower(strings.TrimPrefix(target, "?"))
+	switch want {
+	case "string":
+		if _, ok := value.(runtime.String); !ok {
+			return fmt.Errorf("__string must return string, got %s", value.TypeName())
+		}
+	case "int":
+		switch value.(type) {
+		case runtime.SmallInt, runtime.Int:
+		default:
+			return fmt.Errorf("__int must return int, got %s", value.TypeName())
+		}
+	case "float":
+		if _, ok := value.(runtime.Float); !ok {
+			return fmt.Errorf("__float must return float, got %s", value.TypeName())
+		}
+	case "bool":
+		if _, ok := value.(runtime.Bool); !ok {
+			return fmt.Errorf("__bool must return bool, got %s", value.TypeName())
+		}
+	case "decimal":
+		if _, ok := value.(runtime.Decimal); !ok {
+			return fmt.Errorf("__decimal must return decimal, got %s", value.TypeName())
+		}
+	case "bytes":
+		if _, ok := value.(runtime.Bytes); !ok {
+			return fmt.Errorf("__bytes must return bytes, got %s", value.TypeName())
+		}
+	}
+	return nil
+}
+
 func castValue(value runtime.Value, target string) (runtime.Value, error) {
 	if valueMatchesType(value, target) {
 		return value, nil
@@ -6736,6 +6799,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"race":    asyncRace,
 			"timeout": asyncTimeout,
 			"cancel":  asyncCancel,
+			"token":   asyncToken,
 		},
 		"json": {
 			"parse":            e.registryBuiltin("json", "parse"),
@@ -8370,34 +8434,79 @@ func stripANSI(text string) string {
 
 func cliTable(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) < 1 || len(args) > 2 {
-		return nil, fmt.Errorf("%s expects rows and optional headers", call.Callee.String())
+		return nil, fmt.Errorf("%s expects rows and optional options", call.Callee.String())
 	}
 	rows, ok := args[0].(runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s rows must be list", call.Callee.String())
 	}
+	columns := []string{}
 	headers := []string{}
+	separator := "  "
 	if len(args) == 2 {
-		headerList, ok := args[1].(runtime.List)
-		if !ok {
-			return nil, fmt.Errorf("%s headers must be list<string>", call.Callee.String())
-		}
-		for _, header := range headerList.Elements {
-			value, ok := header.(runtime.String)
-			if !ok {
-				return nil, fmt.Errorf("%s headers must be list<string>", call.Callee.String())
+		switch opts := args[1].(type) {
+		case runtime.List:
+			/* Backwards-compatible legacy form: bare list of header
+			 * strings. Columns are inferred from the row dict keys. */
+			for _, header := range opts.Elements {
+				value, ok := header.(runtime.String)
+				if !ok {
+					return nil, fmt.Errorf("%s headers must be list<string>", call.Callee.String())
+				}
+				headers = append(headers, value.Value)
 			}
-			headers = append(headers, value.Value)
+			columns = append([]string(nil), headers...)
+		case runtime.Dict:
+			/* Documented form: an options dict with `columns`,
+			 * `headers`, `separator`. All keys are optional. */
+			if value, ok := dictField(opts, "columns"); ok {
+				list, ok := value.(runtime.List)
+				if !ok {
+					return nil, fmt.Errorf("%s options.columns must be list<string>", call.Callee.String())
+				}
+				for _, item := range list.Elements {
+					s, ok := item.(runtime.String)
+					if !ok {
+						return nil, fmt.Errorf("%s options.columns must be list<string>", call.Callee.String())
+					}
+					columns = append(columns, s.Value)
+				}
+			}
+			if value, ok := dictField(opts, "headers"); ok {
+				list, ok := value.(runtime.List)
+				if !ok {
+					return nil, fmt.Errorf("%s options.headers must be list<string>", call.Callee.String())
+				}
+				for _, item := range list.Elements {
+					s, ok := item.(runtime.String)
+					if !ok {
+						return nil, fmt.Errorf("%s options.headers must be list<string>", call.Callee.String())
+					}
+					headers = append(headers, s.Value)
+				}
+			}
+			if value, ok := dictField(opts, "separator"); ok {
+				s, ok := value.(runtime.String)
+				if !ok {
+					return nil, fmt.Errorf("%s options.separator must be string", call.Callee.String())
+				}
+				separator = s.Value
+			}
+		default:
+			return nil, fmt.Errorf("%s second argument must be list<string> or options dict", call.Callee.String())
 		}
 	}
-	tableRows, inferred, err := cliTableRows(rows, headers)
+	tableRows, inferred, err := cliTableRows(rows, columns)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", call.Callee.String(), err)
 	}
-	if len(headers) == 0 {
-		headers = inferred
+	if len(columns) == 0 {
+		columns = inferred
 	}
-	return runtime.String{Value: renderTable(headers, tableRows)}, nil
+	if len(headers) == 0 {
+		headers = columns
+	}
+	return runtime.String{Value: renderTableWithSeparator(headers, tableRows, separator)}, nil
 }
 
 func cliTableRows(rows runtime.List, headers []string) ([][]string, []string, error) {
@@ -8435,6 +8544,10 @@ func cliTableRows(rows runtime.List, headers []string) ([][]string, []string, er
 }
 
 func renderTable(headers []string, rows [][]string) string {
+	return renderTableWithSeparator(headers, rows, "  ")
+}
+
+func renderTableWithSeparator(headers []string, rows [][]string, separator string) string {
 	widths := []int{}
 	if len(headers) > 0 {
 		widths = make([]int, len(headers))
@@ -8454,23 +8567,23 @@ func renderTable(headers []string, rows [][]string) string {
 	}
 	var out strings.Builder
 	if len(headers) > 0 {
-		writeTableRow(&out, headers, widths)
-		separator := make([]string, len(widths))
+		writeTableRow(&out, headers, widths, separator)
+		dashes := make([]string, len(widths))
 		for i, width := range widths {
-			separator[i] = strings.Repeat("-", width)
+			dashes[i] = strings.Repeat("-", width)
 		}
-		writeTableRow(&out, separator, widths)
+		writeTableRow(&out, dashes, widths, separator)
 	}
 	for _, row := range rows {
-		writeTableRow(&out, row, widths)
+		writeTableRow(&out, row, widths, separator)
 	}
 	return strings.TrimRight(out.String(), "\n")
 }
 
-func writeTableRow(out *strings.Builder, row []string, widths []int) {
+func writeTableRow(out *strings.Builder, row []string, widths []int, separator string) {
 	for i, width := range widths {
 		if i > 0 {
-			out.WriteString("  ")
+			out.WriteString(separator)
 		}
 		value := ""
 		if i < len(row) {
@@ -15730,6 +15843,17 @@ func (e *Evaluator) asyncRun(call *ast.CallExpression, args []runtime.Value) (ru
 	return e.startAsyncFunction(fn, nil, nil), nil
 }
 
+// asyncToken returns a fresh uncompleted Task whose only purpose is
+// to carry a cancellation signal. Lets concurrent code share a
+// cancellation point without mutating instance fields across
+// goroutines.
+func asyncToken(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("%s takes no arguments", call.Callee.String())
+	}
+	return runtime.NewTask(), nil
+}
+
 func asyncSleep(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects one argument (milliseconds)", call.Callee.String())
@@ -21027,12 +21151,15 @@ func (e *Evaluator) lazyGenerator(fn runtime.Function, args []runtime.Value, thi
 	closed := false
 	return runtime.NewClosableGenerator(func() (runtime.Value, bool, error) {
 		start.Do(func() {
+			// Construct the child evaluator on the parent goroutine to keep
+			// concurrent generator starts race-clean on package-level
+			// native callbacks.
+			child := e.childForCallback()
+			runner := fn
+			runner.IsGenerator = false
+			child.pushYieldChannel(items, doneCh)
 			go func() {
 				defer close(items)
-				child := e.childForCallback()
-				runner := fn
-				runner.IsGenerator = false
-				child.pushYieldChannel(items, doneCh)
 				defer child.popYieldFrame()
 				value, err := child.applyFunctionWithThisSync(runner, args, this)
 				if err != nil {
@@ -21073,8 +21200,11 @@ func (e *Evaluator) lazyGenerator(fn runtime.Function, args []runtime.Value, thi
 
 func (e *Evaluator) startAsyncFunction(fn runtime.Function, args []runtime.Value, this *runtime.Instance) *runtime.Task {
 	task := runtime.NewTask()
+	// Build the child evaluator on the parent's goroutine; spawning it
+	// inside the goroutine races with parallel async calls on writes to
+	// package-level native callbacks (InstanceInvoker, ClassDeserializer).
+	child := e.childForCallback()
 	go func() {
-		child := e.childForCallback()
 		value, err := child.applyFunctionWithThisSync(fn, args, this)
 		if exit, ok := value.(exitValue); ok && err == nil {
 			err = fmt.Errorf("async function attempted to exit with code %d", exit.code)

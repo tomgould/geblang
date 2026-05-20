@@ -15,7 +15,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(50)
+	Version = uint16(53)
 )
 
 type Op byte
@@ -202,6 +202,22 @@ const (
 	// 3 args the explicit step is used. Step zero is a runtime
 	// error.
 	OpRange
+	// OpAddString is the type-specialised string-concat opcode the
+	// compiler emits when it can prove both operands of `+` are
+	// statically typed `string`. The handler does a direct
+	// `runtime.String.Value` concat with no method-dispatch detour
+	// and no type switch. Mirrors the `OpAddInt` family for ints.
+	OpAddString
+	// OpCallResolvedMethod skips classInfo / lookupMethodLower /
+	// selectRuntimeFunction when the compiler proved the receiver's
+	// class statically. Operands [functionIndex, argc]; stack
+	// [receiver, arg0, ..., argN-1].
+	OpCallResolvedMethod
+	// OpAddStringConst {literalConstantIndex}: pops the dynamic
+	// left operand, concatenates it with chunk.Constants[idx] (the
+	// baked-in literal), pushes the result. Emitted for the
+	// `acc + "x"` pattern.
+	OpAddStringConst
 )
 
 type Instruction struct {
@@ -281,6 +297,9 @@ type FunctionInfo struct {
 	Decorators        []runtime.DecoratorMetadata
 	paramTypeSpecs    []vmTypeSpec
 	typeParamSet      map[string]bool
+	// False when every ParamTypes entry is "" or "any"; lets call
+	// entry skip the validation walk for dynamically-typed funcs.
+	requiresParamValidation bool
 }
 
 type ClassInfo struct {
@@ -868,6 +887,25 @@ func appendConstant(out []byte, value runtime.Value) ([]byte, error) {
 			return nil, err
 		}
 		return out, nil
+	case runtime.Dict:
+		/* Only empty dicts reach the constant pool today, via
+		 * `dict opts = {}` defaults. Encode just the empty marker;
+		 * non-empty constant dicts would need element serialisation
+		 * that the compiler doesn't emit. */
+		if len(value.Entries) != 0 {
+			return nil, fmt.Errorf("unsupported bytecode constant: non-empty dict literal")
+		}
+		return append(out, 10), nil
+	case runtime.List:
+		if len(value.Elements) != 0 {
+			return nil, fmt.Errorf("unsupported bytecode constant: non-empty list literal")
+		}
+		return append(out, 11), nil
+	case runtime.Set:
+		if len(value.Elements) != 0 {
+			return nil, fmt.Errorf("unsupported bytecode constant: non-empty set literal")
+		}
+		return append(out, 12), nil
 	default:
 		return nil, fmt.Errorf("unsupported bytecode constant %s", value.TypeName())
 	}
@@ -1163,6 +1201,12 @@ func (r *byteReader) constant() runtime.Value {
 			MethodDecorators: r.decoratorMetadataMap(),
 			StaticDecorators: r.decoratorMetadataMap(),
 		}
+	case 10:
+		return runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	case 11:
+		return runtime.List{Elements: nil}
+	case 12:
+		return runtime.Set{Elements: map[string]runtime.SetEntry{}}
 	default:
 		if r.err == nil {
 			r.err = fmt.Errorf("unknown constant tag %d", tag)

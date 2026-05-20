@@ -91,9 +91,14 @@ func TestEncodeDecodeChunk(t *testing.T) {
 }
 
 func TestCompileUnsupportedFeatureReportsStatementLocation(t *testing.T) {
-	source := []byte(`
-static func staticUtil() {
-    return "value";
+	/* Non-literal class field defaults are one of the parity
+	 * fallbacks the bytecode pipeline still routes through the
+	 * evaluator. This test guards that the rejection carries an
+	 * accurate source line+column so the fallback reporter can
+	 * blame the right statement. */
+	source := []byte(`func compute(): int { return 42; }
+class Foo {
+    int x = compute();
 }
 `)
 	program := parseProgram(t, string(source))
@@ -101,8 +106,25 @@ static func staticUtil() {
 	if err == nil {
 		t.Fatal("expected compile error")
 	}
-	if !strings.Contains(err.Error(), "line 2:8: bytecode compiler does not support static functions yet") {
+	if !strings.Contains(err.Error(), "literal class field defaults") {
 		t.Fatalf("error: got %v", err)
+	}
+}
+
+// TestCompileAllowsStaticFunctions verifies the lifted compiler
+// parity gap: `static func` declarations now compile to bytecode
+// directly. Previously they bailed out as a parity error and the
+// CLI fell back to the evaluator.
+func TestCompileAllowsStaticFunctions(t *testing.T) {
+	source := []byte(`class Foo {
+    static func greet(string name): string {
+        return "hello " + name;
+    }
+}
+`)
+	program := parseProgram(t, string(source))
+	if _, err := bytecode.Compile(program, source, "test"); err != nil {
+		t.Fatalf("compile: %v", err)
 	}
 }
 

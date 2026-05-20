@@ -19,28 +19,27 @@ import async;
 ## await t.wait();
 ## ```
 export class Timer {
-    int ms;
-    func cb;
     Task task;
-    bool fired;
+    Task stopper;
 
     func Timer(int ms, func cb) {
-        this.ms = ms;
-        this.cb = cb;
-        this.fired = false;
-        this.task = async.run(func(): any {
-            async.await(async.sleep(this.ms));
-            if (!this.task.cancelled) {
-                this.fired = true;
-                let fn = this.cb;
-                fn();
+        let stopper = async.token();
+        this.stopper = stopper;
+        let msLocal = ms;
+        let cbLocal = cb;
+        this.task = async.run(func(): bool {
+            async.await(async.sleep(msLocal));
+            if (stopper.cancelled) {
+                return false;
             }
-            return null;
+            cbLocal();
+            return true;
         });
     }
 
     ## Cancels the timer. If it has not yet fired, the callback will not run.
     func cancel(): void {
+        this.stopper.cancel();
         this.task.cancel();
     }
 
@@ -51,7 +50,10 @@ export class Timer {
 
     ## True once the callback has run (false if cancelled before firing).
     func didFire(): bool {
-        return this.fired;
+        if (!this.task.done()) {
+            return false;
+        }
+        return !this.stopper.cancelled;
     }
 }
 
@@ -73,40 +75,37 @@ export class Timer {
 ## io.println("fired " + (ticker.ticks() as string) + " times");
 ## ```
 export class Ticker {
-    int ms;
-    func cb;
     Task task;
-    int count;
-    bool stopped;
+    Task stopper;
 
     func Ticker(int ms, func cb) {
-        this.ms = ms;
-        this.cb = cb;
-        this.count = 0;
-        this.stopped = false;
-        this.task = async.run(func(): any {
-            while (!this.stopped) {
-                async.await(async.sleep(this.ms));
-                if (this.stopped || this.task.cancelled) {
+        let stopper = async.token();
+        this.stopper = stopper;
+        let msLocal = ms;
+        let cbLocal = cb;
+        this.task = async.run(func(): int {
+            int count = 0;
+            while (!stopper.cancelled) {
+                async.await(async.sleep(msLocal));
+                if (stopper.cancelled) {
                     break;
                 }
-                this.count = this.count + 1;
-                let fn = this.cb;
-                fn();
+                count = count + 1;
+                cbLocal();
             }
-            return null;
+            return count;
         });
     }
 
     ## Stops the ticker. Any in-flight tick completes; no further ticks fire.
     func stop(): void {
-        this.stopped = true;
-        this.task.cancel();
+        this.stopper.cancel();
     }
 
-    ## How many times the callback has run so far.
+    ## How many times the callback has run so far. Blocks until the
+    ## ticker's in-flight sleep finishes after stop().
     func ticks(): int {
-        return this.count;
+        return async.await(this.task) as int;
     }
 
     ## Returns a Task that resolves once the ticker is stopped.

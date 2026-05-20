@@ -1,0 +1,100 @@
+/**
+ * @title VM hot-path fast paths preserve behaviour
+ * @summary Tier 1 1.0.4 perf work added three fast paths to the VM
+ * - `OpAdd` string+string, single-overload method dispatch, and a
+ * string/int dict-key shortcut. The optimisations should be
+ * invisible to user code; this file documents the observable
+ * contracts that any future refactor of those paths must preserve.
+ */
+import test;
+
+class Counter {
+    int value;
+    func Counter(int start) { this.value = start; }
+    func step(int delta): int {
+        this.value = this.value + delta;
+        return this.value;
+    }
+}
+
+class Base {
+    func describe(): string { return "base"; }
+}
+
+class Child extends Base { }
+
+class Adder {
+    int n;
+    func Adder(int n) { this.n = n; }
+    /* User `__add` magic method on the LEFT operand must still
+     * be invoked even after the string + string fast path in
+     * OpAdd. */
+    func __add(int other): int { return this.n + other; }
+}
+
+class StringHotPathTest extends test.Test {
+    @test
+    func stringPlusStringConcatenates(): void {
+        this.assertEquals("hello world", "hello " + "world");
+        this.assertEquals("", "" + "");
+        this.assertEquals("abc", "a" + "" + "b" + "c");
+    }
+
+    @test
+    func userClassWithMagicAddStillDispatches(): void {
+        let a = Adder(10);
+        this.assertEquals(15, a + 5);
+    }
+}
+
+class SingleOverloadDispatchTest extends test.Test {
+    @test
+    func methodResolvesAndExecutes(): void {
+        let c = Counter(0);
+        this.assertEquals(1, c.step(1));
+        this.assertEquals(6, c.step(5));
+    }
+
+    @test
+    func parentMethodDispatchesViaChild(): void {
+        this.assertEquals("base", Child().describe());
+    }
+}
+
+class DictKeyFastPathTest extends test.Test {
+    @test
+    func stringKeysWorkAcrossIndexAndMethods(): void {
+        dict<string, int> d = {};
+        for (int i = 0; i < 5; i++) {
+            let k = "k" + (i as string);
+            d[k] = i;
+        }
+        this.assertEquals(5, d.length());
+        this.assertEquals(0, d.get("k0"));
+        this.assertEquals(4, d["k4"]);
+        this.assertTrue(d.contains("k2"));
+        this.assertFalse(d.contains("missing"));
+    }
+
+    @test
+    func intKeysWorkAlongsideStringKeys(): void {
+        dict<int, string> ints = {1: "one", 2: "two", 3: "three"};
+        this.assertEquals("two", ints.get(2));
+        this.assertTrue(ints.contains(3));
+        this.assertFalse(ints.contains(99));
+    }
+
+    @test
+    func mixedKeyTypesFallThroughToCanonical(): void {
+        dict<any, int> mixed = {};
+        mixed["k"] = 1;
+        mixed[42] = 2;
+        mixed[true] = 3;
+        /* Types collapse to distinct dict-key strings; mixed keys
+         * round-trip the same as single-type maps. */
+        this.assertEquals(3, mixed.length());
+        this.assertTrue(mixed.contains("k"));
+        this.assertTrue(mixed.contains(42));
+        this.assertTrue(mixed.contains(true));
+    }
+}

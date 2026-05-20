@@ -906,15 +906,38 @@ func replBracket(open, close string, parts []string, depth int) string {
 // replInsertSemicolons inserts semicolons before newlines that follow
 // statement-ending tokens, mirroring Go's ASI rule. This lets REPL users omit
 // trailing semicolons without changing the script-mode requirement.
+//
+// Semicolons are NOT inserted when the line-ending token is still nested
+// inside an outer `(` or `[`. Those always introduce a single expression
+// (call args, list literal, indexing), so injecting `;` mid-expression is
+// always wrong. Braces (`{`) are deliberately NOT tracked here because
+// they straddle two cases - block-`{` (function/if/for bodies, where we
+// DO want internal semicolons) and dict-`{` (where we don't). Inner
+// closing `}` for a dict literal isn't a problem in practice because
+// dicts don't contain statement-shaped lines that end on stmt-ender
+// tokens at the dict-brace depth.
 func replInsertSemicolons(source string) string {
 	l := lexer.New(source)
-	lastOnLine := map[int]token.Type{}
+	type lineInfo struct {
+		last  token.Type
+		depth int
+	}
+	lastOnLine := map[int]lineInfo{}
+	depth := 0
 	for {
 		tok := l.NextToken()
 		if tok.Type == token.EOF {
 			break
 		}
-		lastOnLine[tok.Line] = tok.Type
+		switch tok.Type {
+		case token.LParen, token.LBracket:
+			depth++
+		case token.RParen, token.RBracket:
+			if depth > 0 {
+				depth--
+			}
+		}
+		lastOnLine[tok.Line] = lineInfo{last: tok.Type, depth: depth}
 	}
 	isStmtEnd := func(t token.Type) bool {
 		switch t {
@@ -924,6 +947,10 @@ func replInsertSemicolons(source string) string {
 			token.Inc, token.Dec,
 			token.Return, token.Break, token.Continue,
 			token.Null, token.True, token.False, token.This,
+			// `bool` is the only type-name that lexes as a keyword
+			// (string/int/float/decimal/bytes are Idents). Treat it
+			// as a stmt-ender so `x as bool` works at the REPL.
+			token.Bool,
 			// `>` and `>>` close generic-type-argument lists in 1.0.1+
 			// expression forms like `Box<int>()` and 1.0.2's
 			// `xs instanceof list<int>`. Treating them as statement-
@@ -938,8 +965,11 @@ func replInsertSemicolons(source string) string {
 	var out strings.Builder
 	curLine := 1
 	for _, r := range source {
-		if r == '\n' && isStmtEnd(lastOnLine[curLine]) {
-			out.WriteByte(';')
+		if r == '\n' {
+			info := lastOnLine[curLine]
+			if isStmtEnd(info.last) && info.depth == 0 {
+				out.WriteByte(';')
+			}
 		}
 		if r == '\n' {
 			curLine++

@@ -77,6 +77,20 @@ type VM struct {
 	// in the dispatch loop - cache the resolved ClassInfo so the
 	// hot path is a single direct read.
 	classInfoNameCache map[string]ClassInfo
+	// methodLookupCache is a single-slot cache for the most-recent
+	// `lookupMethodLower` result. A tight loop calling one method on
+	// one class - the class_dispatch benchmark's
+	// `Counter.step` x 50k - hits this on every call after the first
+	// and skips the `classInfo.Methods` map access entirely. The
+	// cache uses pointer-equality on the indices slice to detect
+	// hits without copying.
+	methodLookupClass   string
+	methodLookupName    string
+	methodLookupIndices []int64
+	methodLookupValid   bool
+	// False when chunk has no decorators/async/generators; lets
+	// vm.call skip the three per-call probes for those features.
+	requiresCallSitePolymorphism bool
 }
 
 type ModuleLoader interface {
@@ -282,16 +296,21 @@ func NewVM(chunk Chunk, stdout io.Writer) *VM {
 		globalSize = 256
 	}
 	localSize := int(chunk.TopLevelLocalCount)
-	vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), locals: make([]runtime.VMValue, localSize), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 64), defers: initialDefers, classIndex: classIndex, natives: native.NewBuiltinRegistry(), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, typeSpecCache: map[string]vmTypeSpec{}}
+	// Detach Functions so prepareFunctionTypeMetadata can mutate the
+	// per-VM metadata (typeParamSet, paramTypeSpecs, etc.) without
+	// racing concurrent VMs that share the same source chunk.
+	chunk.Functions = append([]FunctionInfo(nil), chunk.Functions...)
+	vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), locals: make([]runtime.VMValue, localSize), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: classIndex, natives: native.NewBuiltinRegistry(), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, typeSpecCache: map[string]vmTypeSpec{}}
 	vm.prepareFunctionTypeMetadata()
+	vm.prewarmLocalsPool()
 	// Register an InstanceInvoker so native code (e.g.
 	// convert.go's __serialize__ dispatch) can call class
 	// methods. Latest-writer-wins is intentional: when both
 	// backends initialize in the same process, only one is
 	// actively running serialization through native code at a
 	// time.
-	native.InstanceInvoker = vm.invokeInstanceMethod
-	native.ClassDeserializer = vm.deserializeIntoClass
+	native.SetInstanceInvoker(vm.invokeInstanceMethod)
+	native.SetClassDeserializer(vm.deserializeIntoClass)
 	return vm
 }
 
@@ -506,9 +525,14 @@ func (vm *VM) RestoreFunctionDecoratorState(state FunctionDecoratorState) {
 }
 
 func (vm *VM) prepareFunctionTypeMetadata() {
+	hasCallSitePolymorphism := false
 	for i := range vm.chunk.Functions {
 		function := &vm.chunk.Functions[i]
 		function.typeParamSet = functionTypeParameterSetOrNil(*function)
+		function.requiresParamValidation = functionRequiresParamValidation(*function)
+		if function.Async || function.IsGenerator || len(function.Decorators) > 0 {
+			hasCallSitePolymorphism = true
+		}
 		if len(function.ParamTypes) == 0 {
 			continue
 		}
@@ -519,6 +543,15 @@ func (vm *VM) prepareFunctionTypeMetadata() {
 			}
 		}
 	}
+	if !hasCallSitePolymorphism {
+		for _, classInfo := range vm.chunk.Classes {
+			if len(classInfo.Decorators) > 0 || len(classInfo.MethodDecorators) > 0 {
+				hasCallSitePolymorphism = true
+				break
+			}
+		}
+	}
+	vm.requiresCallSitePolymorphism = hasCallSitePolymorphism
 	for _, instruction := range vm.chunk.Instructions {
 		if instruction.Op != OpTypeAssert || len(instruction.Operands) != 1 {
 			continue
@@ -535,6 +568,24 @@ func (vm *VM) prepareFunctionTypeMetadata() {
 			vm.typeAssertSpecs = map[int64]vmTypeSpec{}
 		}
 		vm.typeAssertSpecs[constIdx] = vm.typeSpec(typeStr.Value)
+	}
+}
+
+// prewarmLocalsPool seeds vm.localsFree with one buffer per distinct
+// function LocalCount so the first call into each function shape hits
+// the pool instead of allocating a fresh slice.
+func (vm *VM) prewarmLocalsPool() {
+	seen := map[int64]struct{}{}
+	for _, fn := range vm.chunk.Functions {
+		if fn.LocalCount <= 0 {
+			continue
+		}
+		if _, dup := seen[fn.LocalCount]; dup {
+			continue
+		}
+		seen[fn.LocalCount] = struct{}{}
+		buf := make([]runtime.VMValue, fn.LocalCount)
+		vm.localsFree = append(vm.localsFree, buf[:0])
 	}
 }
 
@@ -629,6 +680,55 @@ func (vm *VM) Run() (err error) {
 				vm.push(value)
 			}
 		case OpAdd:
+			nextIP, err := vm.add(instruction, ip)
+			if err != nil {
+				return err
+			}
+			ip = nextIP
+		case OpAddStringConst:
+			n := len(vm.stack)
+			if n < 1 {
+				return vm.runtimeError(instruction, "stack underflow")
+			}
+			constIdx := instruction.Operands[0]
+			if constIdx < 0 || int(constIdx) >= len(vm.chunk.Constants) {
+				return vm.runtimeError(instruction, "constant index out of range")
+			}
+			litVal, ok := vm.chunk.Constants[constIdx].(runtime.String)
+			if !ok {
+				return vm.runtimeError(instruction, "OpAddStringConst literal must be string")
+			}
+			leftVM := vm.stack[n-1]
+			if leftVM.Kind == runtime.VMKindBoxed {
+				if l, lok := leftVM.Boxed.(runtime.String); lok {
+					vm.stack[n-1] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: l.Value + litVal.Value}}
+					continue
+				}
+			}
+			// Defer to generic OpAdd if the static-type proof missed.
+			vm.pushVM(runtime.VMValueFromValue(litVal))
+			nextIP, err := vm.add(instruction, ip)
+			if err != nil {
+				return err
+			}
+			ip = nextIP
+		case OpAddString:
+			n := len(vm.stack)
+			if n < 2 {
+				return vm.runtimeError(instruction, "stack underflow")
+			}
+			leftVM := vm.stack[n-2]
+			rightVM := vm.stack[n-1]
+			if leftVM.Kind == runtime.VMKindBoxed && rightVM.Kind == runtime.VMKindBoxed {
+				if l, lok := leftVM.Boxed.(runtime.String); lok {
+					if r, rok := rightVM.Boxed.(runtime.String); rok {
+						vm.stack[n-2] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: l.Value + r.Value}}
+						vm.stack = vm.stack[:n-1]
+						continue
+					}
+				}
+			}
+			// Untyped local can carry a non-string at runtime; defer to vm.add.
 			nextIP, err := vm.add(instruction, ip)
 			if err != nil {
 				return err
@@ -1137,6 +1237,12 @@ func (vm *VM) Run() (err error) {
 			ip = nextIP
 		case OpMethodCall:
 			nextIP, err := vm.methodCall(instruction, ip)
+			if err != nil {
+				return err
+			}
+			ip = nextIP
+		case OpCallResolvedMethod:
+			nextIP, err := vm.callResolvedMethod(instruction, ip)
 			if err != nil {
 				return err
 			}
@@ -3169,6 +3275,18 @@ func (vm *VM) add(instruction Instruction, ip int) (int, error) {
 	if err != nil {
 		return 0, vm.runtimeError(instruction, "%s", err.Error())
 	}
+	/* Fast path: string + string. The built-in `string` type has no
+	 * __add__ magic method, so the method-dispatch detour through
+	 * `callBinaryOperatorMethod` is wasted work on every string
+	 * concat. Only short-circuit when BOTH operands are strings;
+	 * `string + user_with___radd__` still needs to flow through the
+	 * method dispatch. */
+	if l, ok := left.(runtime.String); ok {
+		if r, ok := right.(runtime.String); ok {
+			vm.push(runtime.String{Value: l.Value + r.Value})
+			return ip, nil
+		}
+	}
 	if nextIP, handled, err := vm.callBinaryOperatorMethod(instruction, ip, left, right); handled || err != nil {
 		return nextIP, err
 	}
@@ -3234,7 +3352,7 @@ func (vm *VM) index(instruction Instruction) error {
 		}
 		vm.push(runtime.NewInt64(int64(value.Value[i])))
 	case runtime.Dict:
-		entry, ok := value.Entries[native.DictKey(index)]
+		entry, ok := value.Entries[dictKeyFor(index)]
 		if !ok {
 			vm.push(runtime.Null{})
 			return nil
@@ -3279,7 +3397,7 @@ func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 		if value.Frozen {
 			return vm.throwTyped(instruction, ip, "ImmutableError", "cannot modify frozen dict")
 		}
-		value.Entries[native.DictKey(index)] = runtime.DictEntry{Key: index, Value: newValue}
+		value.Entries[dictKeyFor(index)] = runtime.DictEntry{Key: index, Value: newValue}
 	default:
 		return 0, vm.runtimeError(instruction, "%s does not support index assignment", left.TypeName())
 	}
@@ -3987,6 +4105,15 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 		return 0, vm.runtimeError(instruction, "function index out of range")
 	}
 	function := vm.chunk.Functions[index]
+	if !vm.requiresCallSitePolymorphism {
+		n := len(vm.stack)
+		if int(argc) > n {
+			return 0, vm.runtimeError(instruction, "stack underflow")
+		}
+		stackArgs := vm.stack[n-int(argc) : n]
+		vm.stack = vm.stack[:n-int(argc)]
+		return vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
+	}
 	decorated, hasDecorated := vm.decoratedFuncs[index]
 	if !hasDecorated || vm.rawFunctionCalls[index] {
 		if !function.Async || vm.syncMode {
@@ -3995,12 +4122,6 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 				if int(argc) > n {
 					return 0, vm.runtimeError(instruction, "stack underflow")
 				}
-				// Borrow the args slice from the VM stack rather than
-				// allocating a fresh []runtime.Value and converting
-				// each VMValue through the interface boxing.
-				// startFunctionVMValue copies the args into locals
-				// before consuming any more stack space, so the slice
-				// alias stays valid for the duration of the call.
 				stackArgs := vm.stack[n-int(argc) : n]
 				vm.stack = vm.stack[:n-int(argc)]
 				return vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
@@ -4042,11 +4163,36 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 
 func (vm *VM) startAsyncFunction(index int64, args []runtime.Value) *runtime.Task {
 	task := runtime.NewTask()
+	// Snapshot parent VM state into a private worker before spawning the
+	// goroutine; the worker touches no parent fields after this point.
+	worker := vm.spawnAsyncWorker()
 	go func() {
-		result, err := vm.CallFunction(index, args)
+		result, err := worker.CallFunction(index, args)
 		task.Complete(result, err)
 	}()
 	return task
+}
+
+// spawnAsyncWorker constructs a worker VM holding snapshots of the parent's
+// mutable state (globals, decorator maps, etc.). The caller must spawn its
+// goroutine AFTER this returns so the snapshot copies are happen-before
+// the worker's reads.
+func (parent *VM) spawnAsyncWorker() *VM {
+	worker := NewVMWithModuleLoader(parent.chunk, parent.stdout, parent.moduleLoader)
+	worker.restoreGlobalsVM(parent.globals)
+	worker.SetModuleName(parent.moduleName)
+	worker.SetModulePaths(parent.modulePaths)
+	if parent.statefulNative != nil {
+		worker.SetStatefulNativeCaller(parent.statefulNative)
+	}
+	worker.syncMode = true
+	worker.forwardThis = parent.forwardThis
+	worker.decoratedFuncs = copyRuntimeValueMap(parent.decoratedFuncs)
+	worker.decoratedClasses = copyRuntimeValueMap(parent.decoratedClasses)
+	worker.decoratorsApplied = true
+	worker.rawFunctionCalls = copyBoolMap(parent.rawFunctionCalls)
+	worker.methodReceiverFuncs = copyBoolMap(parent.methodReceiverFuncs)
+	return worker
 }
 
 func (vm *VM) lazyGenerator(index int64, args []runtime.Value) *runtime.Generator {
@@ -4058,25 +4204,12 @@ func (vm *VM) lazyGenerator(index int64, args []runtime.Value) *runtime.Generato
 	var pendingErr error
 	return runtime.NewClosableGenerator(func() (runtime.Value, bool, error) {
 		start.Do(func() {
+			callVM := vm.spawnAsyncWorker()
+			callVM.generatorExecution = true
+			callVM.generatorYield = items
+			callVM.generatorDone = doneCh
 			go func() {
 				defer close(items)
-				callVM := NewVMWithModuleLoader(vm.chunk, vm.stdout, vm.moduleLoader)
-				callVM.restoreGlobalsVM(vm.globals)
-				callVM.SetModuleName(vm.moduleName)
-				callVM.SetModulePaths(vm.modulePaths)
-				if vm.statefulNative != nil {
-					callVM.SetStatefulNativeCaller(vm.statefulNative)
-				}
-				callVM.syncMode = true
-				callVM.forwardThis = vm.forwardThis
-				callVM.decoratedFuncs = copyRuntimeValueMap(vm.decoratedFuncs)
-				callVM.decoratedClasses = copyRuntimeValueMap(vm.decoratedClasses)
-				callVM.decoratorsApplied = true
-				callVM.rawFunctionCalls = copyBoolMap(vm.rawFunctionCalls)
-				callVM.methodReceiverFuncs = vm.methodReceiverFuncs
-				callVM.generatorExecution = true
-				callVM.generatorYield = items
-				callVM.generatorDone = doneCh
 				if _, err := callVM.CallFunction(index, args); err != nil {
 					select {
 					case items <- vmGeneratorItem{err: err}:
@@ -4115,25 +4248,12 @@ func (vm *VM) lazyClosureGenerator(closure runtime.BytecodeClosure, args []runti
 	var pendingErr error
 	return runtime.NewClosableGenerator(func() (runtime.Value, bool, error) {
 		start.Do(func() {
+			callVM := vm.spawnAsyncWorker()
+			callVM.generatorExecution = true
+			callVM.generatorYield = items
+			callVM.generatorDone = doneCh
 			go func() {
 				defer close(items)
-				callVM := NewVMWithModuleLoader(vm.chunk, vm.stdout, vm.moduleLoader)
-				callVM.restoreGlobalsVM(vm.globals)
-				callVM.SetModuleName(vm.moduleName)
-				callVM.SetModulePaths(vm.modulePaths)
-				if vm.statefulNative != nil {
-					callVM.SetStatefulNativeCaller(vm.statefulNative)
-				}
-				callVM.syncMode = true
-				callVM.forwardThis = vm.forwardThis
-				callVM.decoratedFuncs = copyRuntimeValueMap(vm.decoratedFuncs)
-				callVM.decoratedClasses = copyRuntimeValueMap(vm.decoratedClasses)
-				callVM.decoratorsApplied = true
-				callVM.rawFunctionCalls = copyBoolMap(vm.rawFunctionCalls)
-				callVM.methodReceiverFuncs = vm.methodReceiverFuncs
-				callVM.generatorExecution = true
-				callVM.generatorYield = items
-				callVM.generatorDone = doneCh
 				if _, err := callVM.callCallable(closure, args); err != nil {
 					select {
 					case items <- vmGeneratorItem{err: err}:
@@ -4169,8 +4289,14 @@ func (vm *VM) startAsyncCallable(fn runtime.Value, args []runtime.Value) *runtim
 
 func (vm *VM) startAsyncCallableWithForwardThis(fn runtime.Value, args []runtime.Value, receiver *runtime.Instance) *runtime.Task {
 	task := runtime.NewTask()
+	// Snapshot parent state into a private worker; the goroutine touches
+	// only the worker, not the parent VM.
+	worker := vm.spawnAsyncWorker()
+	if receiver != nil {
+		worker.forwardThis = receiver
+	}
 	go func() {
-		result, err := vm.callCallableWithForwardThis(fn, args, receiver)
+		result, err := worker.callCallable(fn, args)
 		task.Complete(result, err)
 	}()
 	return task
@@ -4238,10 +4364,9 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function Fun
 		return vm.startFunctionWithValidation(instruction, ip, function, args, returnOverride, true)
 	}
 
-	// Type validation, inline against VMValues. For the most common case
-	// of an `int`-typed parameter receiving a SmallInt argument, we skip
-	// the spec lookup entirely and just check the value's Kind tag.
-	if len(function.ParamTypes) > 0 {
+	// Type validation, inline against VMValues. Skips the spec lookup
+	// when a typed-int param meets a SmallInt arg (the dominant case).
+	if function.requiresParamValidation {
 		typeParams := function.typeParamSet
 		specs := function.paramTypeSpecs
 		for i := 0; i < paramCount; i++ {
@@ -4512,10 +4637,10 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 			if defaultIndex < 0 || int(defaultIndex) >= len(vm.chunk.Constants) {
 				return 0, vm.runtimeError(instruction, "default argument constant out of range")
 			}
-			args[i] = vm.chunk.Constants[defaultIndex]
+			args[i] = cloneContainerDefault(vm.chunk.Constants[defaultIndex])
 		}
 	}
-	if validateTypes {
+	if validateTypes && function.requiresParamValidation {
 		// Enforce parameter type annotations (skip the bundled variadic slot).
 		typeParams := function.typeParamSet
 		inherited := vm.pendingTypeBindings
@@ -5043,7 +5168,10 @@ func (vm *VM) initializeFields(instruction Instruction, instance *runtime.Instan
 			if defaultIndex < 0 || int(defaultIndex) >= len(vm.chunk.Constants) {
 				return vm.runtimeError(instruction, "field default constant out of range")
 			}
-			value = vm.chunk.Constants[defaultIndex]
+			/* Clone container defaults so each new instance gets a
+			 * fresh empty dict/list/set. Sharing across instances
+			 * is the Python-style mutable-default trap. */
+			value = cloneContainerDefault(vm.chunk.Constants[defaultIndex])
 		}
 		instance.Fields[field] = value
 	}
@@ -6814,10 +6942,10 @@ func (vm *VM) collectionsNativeCall(fn string, args []runtime.Value) (runtime.Va
 			}
 			return runtime.Bool{Value: false}, nil
 		case runtime.Dict:
-			_, ok := v.Entries[native.DictKey(args[1])]
+			_, ok := v.Entries[dictKeyFor(args[1])]
 			return runtime.Bool{Value: ok}, nil
 		case runtime.Set:
-			_, ok := v.Elements[native.DictKey(args[1])]
+			_, ok := v.Elements[dictKeyFor(args[1])]
 			return runtime.Bool{Value: ok}, nil
 		case runtime.String:
 			sub, ok := args[1].(runtime.String)
@@ -8615,7 +8743,7 @@ func copyStringInt64SliceMap(values map[string][]int64) map[string][]int64 {
 
 func shiftInstructionOperands(instruction *Instruction, instructionShift int, constantShift int) {
 	switch instruction.Op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpCatch, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpCatch, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst:
 		for i := range instruction.Operands {
 			if isConstantOperand(instruction.Op, i) && instruction.Operands[i] >= 0 {
 				instruction.Operands[i] += int64(constantShift)
@@ -8646,7 +8774,7 @@ func shiftInstructionOperands(instruction *Instruction, instructionShift int, co
 
 func isConstantOperand(op Op, index int) bool {
 	switch op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpGetField, OpSetField, OpMethodCall, OpMethodCallSpread, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpGetField, OpSetField, OpMethodCall, OpMethodCallSpread, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst:
 		return index == 0
 	case OpNativeCallNamed:
 		return index == 0 || index >= 2
@@ -8867,6 +8995,17 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 			vm.push(value)
 			return ip, nil
 		}
+		if dunder := castDunderName(target); dunder != "" {
+			if result, handled, err := vm.invokeInstanceMethod(instance, dunder, nil); err != nil {
+				return 0, vm.runtimeError(instruction, "%s", err.Error())
+			} else if handled {
+				if err := checkCastDunderReturn(target, result); err != nil {
+					return vm.throwTyped(instruction, ip, "RuntimeError", err.Error())
+				}
+				vm.push(result)
+				return ip, nil
+			}
+		}
 	}
 	cast, err := castValue(value, target)
 	if err != nil {
@@ -8880,6 +9019,28 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 }
 
 func (vm *VM) selectRuntimeFunction(instruction Instruction, name string, indices []int64, args []runtime.Value, paramOffset int) (int64, error) {
+	/* Fast path: most classes declare a single overload per method.
+	 * Skip the slice allocation + post-loop "ambiguous" check and
+	 * just verify arity + types directly on the lone candidate. */
+	if len(indices) == 1 {
+		index := indices[0]
+		if index < 0 || int(index) >= len(vm.chunk.Functions) {
+			return 0, vm.runtimeError(instruction, "method index out of range")
+		}
+		function := vm.chunk.Functions[index]
+		required := len(function.ParamSlots)
+		for required > paramOffset && required <= len(function.DefaultConstants) && function.DefaultConstants[required-1] >= 0 {
+			required--
+		}
+		provided := len(args) + paramOffset
+		if provided < required || provided > len(function.ParamSlots) {
+			return 0, vm.runtimeError(instruction, "no matching overload for %s", name)
+		}
+		if !vm.runtimeArgumentsMatch(function, args, paramOffset) {
+			return 0, vm.runtimeError(instruction, "no matching overload for %s", name)
+		}
+		return index, nil
+	}
 	matches := []int64{}
 	for _, index := range indices {
 		if index < 0 || int(index) >= len(vm.chunk.Functions) {
@@ -9378,6 +9539,39 @@ func (vm *VM) methodCallSpread(instruction Instruction, ip int) (int, error) {
 	return vm.methodCall(rebuilt, ip)
 }
 
+// callResolvedMethod skips classInfo/methodLookup/overload-selection
+// when the compiler proved the receiver's class statically.
+func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
+	if len(instruction.Operands) != 2 {
+		return 0, vm.runtimeError(instruction, "resolved method call has invalid operands")
+	}
+	functionIndex := instruction.Operands[0]
+	argc := int(instruction.Operands[1])
+	if functionIndex < 0 || int(functionIndex) >= len(vm.chunk.Functions) {
+		return 0, vm.runtimeError(instruction, "function index out of range")
+	}
+	n := len(vm.stack)
+	if argc+1 > n {
+		return 0, vm.runtimeError(instruction, "stack underflow")
+	}
+	base := n - argc - 1
+	callArgs := make([]runtime.Value, argc+1)
+	for i := 0; i <= argc; i++ {
+		callArgs[i] = vm.stack[base+i].ToValue()
+	}
+	vm.stack = vm.stack[:base]
+	instance, ok := callArgs[0].(*runtime.Instance)
+	if !ok {
+		return 0, vm.runtimeError(instruction, "resolved method receiver is not an instance, got %s", callArgs[0].TypeName())
+	}
+	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], callArgs, nil)
+	if err != nil {
+		return 0, err
+	}
+	vm.inheritInstanceTypeBindings(instance)
+	return nextIP, nil
+}
+
 func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 2 {
 		return 0, vm.runtimeError(instruction, "method call instruction has invalid operands")
@@ -9391,18 +9585,21 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if !ok {
 		return 0, vm.runtimeError(instruction, "method name constant must be string")
 	}
-	args := make([]runtime.Value, argc)
+	// slots[0]=receiver, slots[1:]=args — one alloc instead of two.
+	slots := make([]runtime.Value, argc+1)
 	for i := argc - 1; i >= 0; i-- {
 		value, err := vm.pop()
 		if err != nil {
 			return 0, vm.runtimeError(instruction, "%s", err.Error())
 		}
-		args[i] = value
+		slots[i+1] = value
 	}
 	receiver, err := vm.pop()
 	if err != nil {
 		return 0, vm.runtimeError(instruction, "%s", err.Error())
 	}
+	slots[0] = receiver
+	args := slots[1:]
 	if target, ok := receiver.(runtime.DecoratorTarget); ok {
 		if nameValue.Value != "__invoke" {
 			return 0, vm.runtimeError(instruction, "reflect target has no method %s", nameValue.Value)
@@ -9505,8 +9702,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			vm.push(result)
 			return ip, nil
 		}
-		callArgs := append([]runtime.Value{instance}, args...)
-		nextIP, err := vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], callArgs, nil)
+		nextIP, err := vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], slots, nil)
 		if err != nil {
 			return 0, err
 		}
@@ -9986,12 +10182,28 @@ func (vm *VM) lookupMethod(classInfo ClassInfo, name string) ([]int64, bool) {
 // lookupMethodLower is the cache-friendly entry point: callers that
 // already have the lowercased method name pass it directly so the
 // dispatch loop avoids repeated strings.ToLower(...) on every call.
+// A single-slot cache short-circuits repeated lookups on the same
+// (class, method) pair (the common hot-loop case).
 func (vm *VM) lookupMethodLower(classInfo ClassInfo, lowered string) ([]int64, bool) {
+	if vm.methodLookupValid && vm.methodLookupName == lowered && vm.methodLookupClass == classInfo.Name {
+		return vm.methodLookupIndices, true
+	}
+	indices, ok := vm.lookupMethodLowerUncached(classInfo, lowered)
+	if ok {
+		vm.methodLookupClass = classInfo.Name
+		vm.methodLookupName = lowered
+		vm.methodLookupIndices = indices
+		vm.methodLookupValid = true
+	}
+	return indices, ok
+}
+
+func (vm *VM) lookupMethodLowerUncached(classInfo ClassInfo, lowered string) ([]int64, bool) {
 	if indices, ok := classInfo.Methods[lowered]; ok {
 		return indices, true
 	}
 	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.chunk.Classes) {
-		return vm.lookupMethodLower(vm.chunk.Classes[classInfo.ParentIndex], lowered)
+		return vm.lookupMethodLowerUncached(vm.chunk.Classes[classInfo.ParentIndex], lowered)
 	}
 	return nil, false
 }
@@ -10027,6 +10239,39 @@ func (vm *VM) classMatches(classInfo ClassInfo, target string) bool {
 	return false
 }
 
+// cloneContainerDefault returns a fresh copy of a mutable container
+// value used as a function-parameter default. Sharing the same dict
+// or set across calls would let one call's mutations leak into a
+// later call (the Python "mutable default argument" trap). Empty
+// containers (the common case for `dict opts = {}` / `list xs = []` /
+// `set s = set()`) clone in constant time; non-container values are
+// returned as-is. Lists are technically immutable in Geblang (push
+// returns a new list), but the clone is cheap and defensive.
+func cloneContainerDefault(v runtime.Value) runtime.Value {
+	switch val := v.(type) {
+	case runtime.Dict:
+		cloned := make(map[string]runtime.DictEntry, len(val.Entries))
+		for k, entry := range val.Entries {
+			cloned[k] = entry
+		}
+		return runtime.Dict{Entries: cloned}
+	case runtime.Set:
+		cloned := make(map[string]runtime.SetEntry, len(val.Elements))
+		for k, entry := range val.Elements {
+			cloned[k] = entry
+		}
+		return runtime.Set{Elements: cloned}
+	case runtime.List:
+		if len(val.Elements) == 0 {
+			return runtime.List{Elements: nil}
+		}
+		cloned := make([]runtime.Value, len(val.Elements))
+		copy(cloned, val.Elements)
+		return runtime.List{Elements: cloned}
+	}
+	return v
+}
+
 // stripModulePrefix returns the trailing identifier of a possibly
 // qualified type name. "mod.Sub" -> "Sub"; "Sub" -> "Sub". Matches
 // `simpleTypeName` in the evaluator.
@@ -10035,6 +10280,25 @@ func stripModulePrefix(typeName string) string {
 		return typeName[dot+1:]
 	}
 	return typeName
+}
+
+// dictKeyFor is a fast-path wrapper around native.DictKey for the
+// dict / set hot paths. User code keys dicts overwhelmingly by
+// string or small integer; both build their canonical key string
+// without any allocation beyond the result, while
+// `native.DictKey` dispatches through a type switch that also
+// handles composite keys recursively. This helper inlines those
+// two common cases and falls through to the canonical
+// implementation for everything else; the Go compiler can inline
+// the wrapper itself when the call site has a known key shape.
+func dictKeyFor(value runtime.Value) string {
+	switch v := value.(type) {
+	case runtime.String:
+		return "string:" + strconv.Quote(v.Value)
+	case runtime.SmallInt:
+		return "int:" + strconv.FormatInt(v.Value, 10)
+	}
+	return native.DictKey(value)
 }
 
 // runtimeInterfacesForClass builds the runtime.Class.Implements slice
@@ -11307,7 +11571,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return value.Elements[i], nil
 		case runtime.Dict:
-			entry, ok := value.Entries[native.DictKey(args[0])]
+			entry, ok := value.Entries[dictKeyFor(args[0])]
 			if !ok {
 				return runtime.Null{}, nil
 			}
@@ -12402,6 +12666,62 @@ func (vm *VM) constantStringAt(instruction Instruction, index int64, message str
 		return "", vm.runtimeError(instruction, "%s", message)
 	}
 	return stringValue.Value, nil
+}
+
+// castDunderName returns the dunder method name a class can define
+// to control its `as TARGET` conversion. Empty string means no
+// dunder is recognised for that target.
+func castDunderName(target string) string {
+	switch strings.ToLower(strings.TrimPrefix(target, "?")) {
+	case "string":
+		return "__string"
+	case "int":
+		return "__int"
+	case "float":
+		return "__float"
+	case "bool":
+		return "__bool"
+	case "decimal":
+		return "__decimal"
+	case "bytes":
+		return "__bytes"
+	}
+	return ""
+}
+
+// checkCastDunderReturn validates that a cast dunder produced a
+// value compatible with the target type.
+func checkCastDunderReturn(target string, value runtime.Value) error {
+	want := strings.ToLower(strings.TrimPrefix(target, "?"))
+	switch want {
+	case "string":
+		if _, ok := value.(runtime.String); !ok {
+			return fmt.Errorf("__string must return string, got %s", value.TypeName())
+		}
+	case "int":
+		switch value.(type) {
+		case runtime.SmallInt, runtime.Int:
+		default:
+			return fmt.Errorf("__int must return int, got %s", value.TypeName())
+		}
+	case "float":
+		if _, ok := value.(runtime.Float); !ok {
+			return fmt.Errorf("__float must return float, got %s", value.TypeName())
+		}
+	case "bool":
+		if _, ok := value.(runtime.Bool); !ok {
+			return fmt.Errorf("__bool must return bool, got %s", value.TypeName())
+		}
+	case "decimal":
+		if _, ok := value.(runtime.Decimal); !ok {
+			return fmt.Errorf("__decimal must return decimal, got %s", value.TypeName())
+		}
+	case "bytes":
+		if _, ok := value.(runtime.Bytes); !ok {
+			return fmt.Errorf("__bytes must return bytes, got %s", value.TypeName())
+		}
+	}
+	return nil
 }
 
 func castValue(value runtime.Value, target string) (runtime.Value, error) {

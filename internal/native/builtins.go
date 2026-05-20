@@ -3718,10 +3718,11 @@ func isClassValue(value runtime.Value) bool {
 // ClassDeserializer. Returns an error when no backend has
 // registered one.
 func deserializeIntoClass(class runtime.Value, value runtime.Value) (runtime.Value, error) {
-	if ClassDeserializer == nil {
+	fn := GetClassDeserializer()
+	if fn == nil {
 		return nil, fmt.Errorf("class deserialization is unavailable: no active interpreter")
 	}
-	return ClassDeserializer(class, value)
+	return fn(class, value)
 }
 
 func singleBytes(args []runtime.Value, label string) ([]byte, error) {

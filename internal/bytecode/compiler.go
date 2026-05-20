@@ -737,9 +737,12 @@ func (c *Compiler) currentClassTypeParamConstraintExprs() []string {
 }
 
 func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name string, receiverName string, prologue func() error) error {
-	if stmt.Static {
-		return fmt.Errorf("bytecode compiler does not support static functions yet")
-	}
+	/* Static methods compile through the same body pipeline as regular
+	 * methods - they just skip the implicit `this` receiver. The
+	 * caller is responsible for passing `receiverName = ""` for
+	 * statics, and for registering the resulting function index
+	 * under `class.StaticMethods` rather than `class.Methods` (see
+	 * compileClassStatement). */
 	index := c.nextFunctionIndex(name)
 	skipJump := c.emitJump(OpJump, stmt.Token.Line, stmt.Token.Column)
 	entry := int64(len(c.chunk.Instructions))
@@ -2029,6 +2032,23 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			return c.compileNullCoalesceExpression(expr)
 		}
 		bothInt := c.staticIntExpr(expr.Left) && c.staticIntExpr(expr.Right)
+		bothString := !bothInt && expr.Operator == "+" && c.staticStringExpr(expr.Left) && c.staticStringExpr(expr.Right)
+		// `acc + "literal"` (the common string-builder pattern): bake
+		// the literal's constant index into a specialised opcode so
+		// the runtime only pops one operand instead of two.
+		if bothString {
+			if rightLit, ok := expr.Right.(*ast.StringLiteral); ok {
+				if !isStringLiteral(expr.Left) {
+					if err := c.compileExpression(expr.Left); err != nil {
+						return err
+					}
+					constIdx := int64(len(c.chunk.Constants))
+					c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: rightLit.Value})
+					c.emitAt(OpAddStringConst, expr.Token.Line, expr.Token.Column, constIdx)
+					return nil
+				}
+			}
+		}
 		if err := c.compileExpression(expr.Left); err != nil {
 			return err
 		}
@@ -2039,6 +2059,8 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		case "+":
 			if bothInt {
 				c.emitAt(OpAddInt, expr.Token.Line, expr.Token.Column)
+			} else if bothString {
+				c.emitAt(OpAddString, expr.Token.Line, expr.Token.Column)
 			} else {
 				c.emitAt(OpAdd, expr.Token.Line, expr.Token.Column)
 			}
@@ -2431,7 +2453,24 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			 * the selector as a value, push args, OpMethodCall
 			 * __invoke. */
 			if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
-				return fmt.Errorf("bytecode compiler does not support spread argument %d in parenthesized callable expression", spreadIndex)
+				if err := c.compileExpression(expr.Callee); err != nil {
+					return err
+				}
+				for _, arg := range expr.Arguments[:spreadIndex] {
+					if arg.Name != nil {
+						return fmt.Errorf("named arguments are not supported with spread on a callable value")
+					}
+					if err := c.compileExpression(arg.Value); err != nil {
+						return err
+					}
+				}
+				if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+					return err
+				}
+				nameIndex := int64(len(c.chunk.Constants))
+				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
+				c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, nameIndex, int64(spreadIndex))
+				return nil
 			}
 			if err := c.compileExpression(expr.Callee); err != nil {
 				return err
@@ -2554,6 +2593,27 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					}
 				}
 			}
+			hasNamedMethodArgs := false
+			for _, arg := range expr.Arguments {
+				if arg.Name != nil {
+					hasNamedMethodArgs = true
+					break
+				}
+			}
+			if !selector.Optional && !hasNamedMethodArgs {
+				if fnIndex, ok := c.staticallyResolveMethodCall(selector, expr.Arguments); ok {
+					if err := c.compileExpression(selector.Object); err != nil {
+						return err
+					}
+					for _, arg := range expr.Arguments {
+						if err := c.compileExpression(arg.Value); err != nil {
+							return err
+						}
+					}
+					c.emitAt(OpCallResolvedMethod, expr.Token.Line, expr.Token.Column, fnIndex, int64(len(expr.Arguments)))
+					return nil
+				}
+			}
 			if err := c.compileExpression(selector.Object); err != nil {
 				return err
 			}
@@ -2561,9 +2621,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			if selector.Optional {
 				optionalJump = c.emitJump(OpOptionalChain, expr.Token.Line, expr.Token.Column)
 			}
-			hasNamedMethodArgs := false
 			for _, arg := range expr.Arguments {
-				hasNamedMethodArgs = hasNamedMethodArgs || arg.Name != nil
 				if err := c.compileExpression(arg.Value); err != nil {
 					return err
 				}
@@ -2593,7 +2651,24 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			return nil
 		}
 		if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
-			return fmt.Errorf("bytecode compiler does not support spread argument %d in complex callable expression", spreadIndex)
+			if err := c.compileExpression(expr.Callee); err != nil {
+				return err
+			}
+			for _, arg := range expr.Arguments[:spreadIndex] {
+				if arg.Name != nil {
+					return fmt.Errorf("named arguments are not supported with spread on a callable value")
+				}
+				if err := c.compileExpression(arg.Value); err != nil {
+					return err
+				}
+			}
+			if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+				return err
+			}
+			nameIndex := int64(len(c.chunk.Constants))
+			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "__invoke"})
+			c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, nameIndex, int64(spreadIndex))
+			return nil
 		}
 		if err := c.compileExpression(expr.Callee); err != nil {
 			return err
@@ -4073,6 +4148,86 @@ func functionTypeParameterSetOrNil(function FunctionInfo) map[string]bool {
 	return functionTypeParameterSet(function)
 }
 
+// staticallyResolveMethodCall returns the chunk-function index when
+// the receiver's class is known statically, the named method
+// resolves to a single non-decorated/non-async/non-generator
+// overload, and no subclass overrides it.
+func (c *Compiler) staticallyResolveMethodCall(selector *ast.SelectorExpression, args []ast.CallArgument) (int64, bool) {
+	typeName := c.expressionStaticType(selector.Object)
+	if typeName == "" {
+		return 0, false
+	}
+	classIndex, ok := c.classes[strings.ToLower(typeName)]
+	if !ok {
+		return 0, false
+	}
+	classInfo := c.chunk.Classes[classIndex]
+	if len(classInfo.TypeParameters) > 0 {
+		return 0, false
+	}
+	methodName := selector.Name.Value
+	indices, ok := classInfo.Methods[strings.ToLower(methodName)]
+	if !ok || len(indices) != 1 {
+		return 0, false
+	}
+	if c.classHasSubclassOverriding(classIndex, methodName) {
+		return 0, false
+	}
+	fnIndex := indices[0]
+	if fnIndex < 0 || int(fnIndex) >= len(c.chunk.Functions) {
+		return 0, false
+	}
+	fn := c.chunk.Functions[fnIndex]
+	if fn.Async || fn.IsGenerator || len(fn.Decorators) > 0 || fn.Variadic {
+		return 0, false
+	}
+	if len(args) != len(fn.ParamSlots)-1 {
+		return 0, false
+	}
+	if decorators, hasDecorators := classInfo.MethodDecorators[strings.ToLower(methodName)]; hasDecorators && len(decorators) > 0 {
+		return 0, false
+	}
+	return fnIndex, true
+}
+
+func (c *Compiler) classHasSubclassOverriding(classIndex int64, methodName string) bool {
+	lowered := strings.ToLower(methodName)
+	for i := range c.chunk.Classes {
+		if int64(i) == classIndex {
+			continue
+		}
+		sub := c.chunk.Classes[i]
+		for ancestor := sub.ParentIndex; ancestor >= 0 && int(ancestor) < len(c.chunk.Classes); {
+			if ancestor == classIndex {
+				if _, hasMethod := sub.Methods[lowered]; hasMethod {
+					return true
+				}
+				break
+			}
+			ancestor = c.chunk.Classes[ancestor].ParentIndex
+		}
+	}
+	return false
+}
+
+func isStringLiteral(expr ast.Expression) bool {
+	_, ok := expr.(*ast.StringLiteral)
+	return ok
+}
+
+func functionRequiresParamValidation(function FunctionInfo) bool {
+	for _, typ := range function.ParamTypes {
+		if typ == "" {
+			continue
+		}
+		if strings.EqualFold(typ, "any") {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func (c *Compiler) staticClassAssignable(target string, actual string) bool {
 	classIndex, ok := c.classes[strings.ToLower(actual)]
 	if !ok {
@@ -4643,6 +4798,26 @@ func (c *Compiler) staticIntExpr(expr ast.Expression) bool {
 	return false
 }
 
+// staticStringExpr reports whether expr is provably of static type
+// `string` at compile time. Used to decide whether to emit OpAddString
+// for `string + string`, mirroring staticIntExpr for the int arith
+// opcodes. Nested concatenations like `"a" + b + "c"` produce a static
+// string when every leaf is statically typed.
+func (c *Compiler) staticStringExpr(expr ast.Expression) bool {
+	switch e := expr.(type) {
+	case *ast.StringLiteral:
+		return true
+	case *ast.Identifier:
+		b, ok := c.resolveName(e.Value)
+		return ok && b.typ == "string"
+	case *ast.InfixExpression:
+		if e.Operator == "+" {
+			return c.staticStringExpr(e.Left) && c.staticStringExpr(e.Right)
+		}
+	}
+	return false
+}
+
 // canonicalModule returns the canonical native-module path that `name`
 // resolves to. For an alias registered at `import` time (e.g.
 // `import path as natpath`), returns the canonical path ("path"). For
@@ -4756,6 +4931,23 @@ func constantValueFromExpression(expr ast.Expression) (runtime.Value, error) {
 			return runtime.Bool{Value: value}, nil
 		case nil:
 			return runtime.Null{}, nil
+		}
+	case *ast.ListLiteral:
+		/* Accept the empty list literal as a default. Non-empty
+		 * lists need runtime expression evaluation (each element
+		 * could be an arbitrary expression). Empty lists are safe
+		 * because the VM clones on default-fill to avoid the
+		 * Python-style mutable-default trap. */
+		if len(expr.Elements) == 0 {
+			return runtime.List{Elements: nil}, nil
+		}
+	case *ast.SetLiteral:
+		if len(expr.Elements) == 0 {
+			return runtime.Set{Elements: map[string]runtime.SetEntry{}}, nil
+		}
+	case *ast.DictLiteral:
+		if len(expr.Entries) == 0 {
+			return runtime.Dict{Entries: map[string]runtime.DictEntry{}}, nil
 		}
 	}
 	return nil, fmt.Errorf("bytecode compiler only supports literal default function parameters")

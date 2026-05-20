@@ -86,9 +86,9 @@ import, but executable behavior should live in `main`.
 
 A file that opens with `module name;` is a **module file** and is held to a
 stricter shape than a script: only declarative statements are allowed at the
-top level. Anything that performs work — a function call, an `if`, a `for`,
-an assignment to an existing binding — must live inside an `init { ... }`
-block.
+top level. Anything that performs work, such as a function call, an `if`, a
+`for`, or an assignment to an existing binding, must live inside an
+`init { ... }` block.
 
 Allowed at the top level of a module:
 
@@ -105,8 +105,8 @@ Allowed at the top level of a module:
 | `class` / `interface` / `enum` declaration | `class Tag { ... }`                     |
 | `init { ... }` block (at most one)        | see below                                |
 
-Anything else — `io.println("loaded");`, `if (cond) { ... }`, `[a, b] = ...`
-— is rejected by `geblang check` with a diagnostic like
+Anything else (`io.println("loaded");`, `if (cond) { ... }`, `[a, b] = ...`)
+is rejected by `geblang check` with a diagnostic like
 `free-standing top-level expression is not allowed in a module file; wrap
 imperative setup in an init { ... } block`.
 
@@ -115,7 +115,7 @@ top of the file, a caller should see what the module declares (`const`, `func`,
 `class`) and what setup runs on import (`init`). Hiding `io.println("loaded")`
 between two declarations partway down the file is exactly the
 load-order-as-execution-order trap that Python and PHP have to warn about in
-style guides; we prevent it at the parser level.
+style guides; Geblang prevents it at the parser level.
 
 ```gb
 module app.ids;

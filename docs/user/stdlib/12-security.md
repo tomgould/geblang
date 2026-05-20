@@ -494,7 +494,7 @@ let otp = secrets.randomInt(100000, 999999);   # 6-digit OTP
 let die = secrets.randomInt(1, 6);             # fair die roll
 ```
 
-### `random` vs `secrets` — which one do I use?
+### `random` vs `secrets`: which one do I use?
 
 Geblang ships two random number modules. Use the right one for the job:
 

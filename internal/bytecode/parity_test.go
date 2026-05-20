@@ -6870,6 +6870,226 @@ io.println(wrap(userFn));
 `, "caught 404: missing widget\n")
 }
 
+// TestParitySingleOverloadMethodDispatch guards an `OpAdd`-style
+// fast-path on the VM's `selectRuntimeFunction` for methods that
+// have exactly one declared overload. Most user classes hit this
+// case on every dispatch (50000+ times on the `class_dispatch`
+// benchmark); the fast path skips the matches-slice allocation +
+// the post-loop "ambiguous overload" check. Behaviour is unchanged.
+func TestParitySingleOverloadMethodDispatch(t *testing.T) {
+	runParity(t, `import io;
+
+class Counter {
+    int value;
+    func Counter(int start) { this.value = start; }
+    func step(int delta): int {
+        this.value = this.value + delta;
+        return this.value;
+    }
+}
+
+let c = Counter(0);
+io.println(c.step(1));
+io.println(c.step(5));
+io.println(c.step(-2));
+
+/* Single-overload methods on inheriting classes still dispatch
+ * correctly; the parent's method runs when the child doesn't
+ * redeclare it. */
+class Base { func name(): string { return "base"; } }
+class Child extends Base { }
+io.println(Child().name());
+`, "1\n6\n4\nbase\n")
+}
+
+// TestParityDictKeyFastPath guards the VM's `dictKeyFor` helper
+// (a fast-path wrapper around native.DictKey for the common String
+// and SmallInt key types). Hot dict ops (`dict[k]`, `dict.get`,
+// `dict.contains`) use it; mixed key types still produce the
+// canonical key string via native.DictKey.
+func TestParityDictKeyFastPath(t *testing.T) {
+	runParity(t, `import io;
+
+dict<string, int> d = {};
+for (int i = 0; i < 5; i++) {
+    let k = "k" + (i as string);
+    d[k] = i;
+}
+for (int i = 0; i < 5; i++) {
+    let k = "k" + (i as string);
+    io.println(d.contains(k));
+    io.println(d.get(k));
+}
+
+dict<int, string> ints = {1: "one", 2: "two"};
+io.println(ints.contains(1));
+io.println(ints.get(2));
+
+dict<any, int> mixed = {};
+mixed["k"] = 1;
+mixed[42] = 2;
+mixed[true] = 3;
+io.println(mixed.contains("k"));
+io.println(mixed.contains(42));
+io.println(mixed.contains(true));
+io.println(mixed.length());
+`, "true\n0\ntrue\n1\ntrue\n2\ntrue\n3\ntrue\n4\ntrue\ntwo\ntrue\ntrue\ntrue\n3\n")
+}
+
+// TestParityOpAddStringStaticTyping guards the compile-time
+// `OpAddString` specialisation: when both operands of `+` are
+// statically typed `string`, the compiler emits a type-specialised
+// opcode that skips the runtime type switch + magic-method dispatch.
+// Verifies the static-string detection works through identifiers,
+// literals, and nested concatenations.
+func TestParityOpAddStringStaticTyping(t *testing.T) {
+	runParity(t, `import io;
+
+string a = "hello";
+string b = " ";
+string c = "world";
+io.println(a + b + c);
+io.println("foo" + "bar");
+
+func greet(string name): string {
+    return "hi " + name;
+}
+io.println(greet("ada"));
+
+/* Untyped local with a string value still flows through the
+ * generic OpAdd; the specialiser only fires for STATICALLY typed
+ * operands. Both backends produce the same output regardless. */
+let s = "x";
+io.println(s + "y");
+`, "hello world\nfoobar\nhi ada\nxy\n")
+}
+
+// TestParityMethodLookupCache guards the single-slot method-lookup
+// cache the VM uses to skip the `classInfo.Methods` map access on
+// the second-and-later dispatches to the same method on the same
+// class. A tight loop calling `Counter.step` repeatedly hits the
+// cache after the first call. Switching to a different method on
+// the same class refills the cache; calls to the parent's method
+// continue to walk the parent chain on a miss.
+func TestParityMethodLookupCache(t *testing.T) {
+	runParity(t, `import io;
+
+class Counter {
+    int value;
+    func Counter() { this.value = 0; }
+    func step(int n): int { this.value = this.value + n; return this.value; }
+    func double(): int { this.value = this.value * 2; return this.value; }
+}
+
+let c = Counter();
+for (int i = 0; i < 5; i++) {
+    c.step(1);
+}
+io.println(c.value);
+io.println(c.double());
+io.println(c.step(10));
+
+class Base {
+    func tag(): string { return "base"; }
+}
+class Child extends Base { }
+let ch = Child();
+io.println(ch.tag());
+io.println(ch.tag());
+io.println(ch.tag());
+`, "5\n10\n20\nbase\nbase\nbase\n")
+}
+
+// TestParityEmptyContainerDefaults guards the lifted compiler parity
+// gap: `dict opts = {}`, `list xs = []`, and `set s = set()`-shaped
+// parameter defaults now compile directly to bytecode. Empty
+// containers go into the constant pool and the VM clones at fill
+// time so each call sees a fresh empty container - avoiding the
+// Python-style mutable-default shared-state trap.
+func TestParityEmptyContainerDefaults(t *testing.T) {
+	runParity(t, `import io;
+
+func use_opts(dict<string, any> opts = {}): int { return opts.length(); }
+func use_list(list<int> xs = []): int { return xs.length(); }
+
+io.println(use_opts());
+io.println(use_opts({"a": 1, "b": 2}));
+io.println(use_list());
+io.println(use_list([1, 2, 3]));
+
+/* Mutable-default isolation: each call without args sees a fresh
+ * empty dict, NOT the same instance accumulating state. */
+func incr(dict<string, int> d = {}): int {
+    d["n"] = (d["n"] ?? 0) + 1;
+    return d["n"];
+}
+io.println(incr());
+io.println(incr());
+io.println(incr());
+`, "0\n2\n0\n3\n1\n1\n1\n")
+}
+
+// TestParityStaticFunctionLifted guards the lifted compiler parity
+// gap: `static func` declarations now compile directly to bytecode
+// instead of falling back to the evaluator. Static methods can be
+// called via `ClassName.method(...)`; static-const class members
+// (a 1.0.2-era feature) work alongside them.
+func TestParityStaticFunctionLifted(t *testing.T) {
+	runParity(t, `import io;
+
+class Counter {
+    static const VERSION = "1.0";
+
+    static func make(int start): Counter {
+        let c = Counter();
+        c.value = start;
+        return c;
+    }
+
+    int value;
+    func Counter() { this.value = 0; }
+
+    func double(): int { this.value = this.value * 2; return this.value; }
+}
+
+let c = Counter.make(7);
+io.println(c.double());
+io.println(Counter.VERSION);
+
+class Registry {
+    static func register(string name): string { return "registered:" + name; }
+}
+
+io.println(Registry.register("widget"));
+`, "14\n1.0\nregistered:widget\n")
+}
+
+// TestParityStringAddFastPath guards an `OpAdd` reorder in the VM:
+// `string + string` is fast-pathed before the binary-operator-method
+// detour (`callBinaryOperatorMethod` does nothing useful when the
+// left operand is a `runtime.String` since the built-in string type
+// has no `__add` magic method). Verifies the common path AND that an
+// instance with `__add` on the LEFT still routes through method
+// dispatch (the fast path only matches when both operands are
+// strings).
+func TestParityStringAddFastPath(t *testing.T) {
+	runParity(t, `import io;
+
+io.println("hello " + "world");
+io.println("" + "x");
+io.println("a" + "" + "b" + "c");
+
+class Adder {
+    int n;
+    func Adder(int n) { this.n = n; }
+    func __add(int other): int { return this.n + other; }
+}
+
+let a = Adder(10);
+io.println(a + 5);
+`, "hello world\nx\nabc\n15\n")
+}
+
 // TestParityUserClassNamedTaskNoCollision guards an evaluator-only
 // regression where a user class named `Task` was unconditionally
 // rejected by the overload / parameter type-matcher: the evaluator
@@ -7189,4 +7409,114 @@ io.println(c.get("/"));
 io.println(c.send("POST", {"k": 1}));
 io.println(c.send("PUT", "raw body"));
 `, "99\n99\n99\n")
+}
+
+// TestParityCallableSpread guards the lifted compiler parity gap:
+// spread arguments on a callable VALUE (parenthesized selector
+// expression like `(obj.fn)(...args)`, or any complex callable
+// expression like `arr[i](...args)` or `getFn()(...args)`) used to
+// route to the evaluator. The VM now compiles both forms directly,
+// emitting OpMethodCallSpread with `__invoke`.
+func TestParityCallableSpread(t *testing.T) {
+	runParity(t, `import io;
+
+class Holder {
+    callable adder;
+    func Holder() {
+        this.adder = func(int a, int b, int c): int { return a + b + c; };
+    }
+}
+
+let h = Holder();
+let args = [1, 2, 3];
+/* parenthesized selector callable spread */
+io.println((h.adder)(...args));
+
+/* complex callable spread: indexed list element */
+let fns = [func(int a, int b): int { return a * b; }];
+io.println(fns[0](...[4, 5]));
+
+/* complex callable spread: function-call result */
+func getMul(): callable {
+    return func(int a, int b, int c): int { return a * b * c; };
+}
+io.println(getMul()(...[2, 3, 4]));
+`, "6\n20\n24\n")
+}
+
+// TestParityCallResolvedMethod exercises the OpCallResolvedMethod
+// specialised opcode the compiler emits when the receiver's class is
+// statically known and the method resolves to a single non-decorated
+// overload with no subclass overrides.
+func TestParityCallResolvedMethod(t *testing.T) {
+	runParity(t, `import io;
+
+class Counter {
+    int value;
+    func Counter(int start) {
+        this.value = start;
+    }
+    func step(int delta): int {
+        this.value = this.value + delta;
+        return this.value;
+    }
+    func double(): int {
+        this.value = this.value * 2;
+        return this.value;
+    }
+}
+
+let c = Counter(10);
+io.println(c.step(5));    /* 15 */
+io.println(c.step(7));    /* 22 */
+io.println(c.double());   /* 44 */
+io.println(c.step(-4));   /* 40 */
+`, "15\n22\n44\n40\n")
+}
+
+// TestParityAddStringConst exercises the OpAddStringConst opcode
+// emitted when one operand of `+` is a static string literal.
+func TestParityAddStringConst(t *testing.T) {
+	runParity(t, `import io;
+
+string acc = "";
+for (int i = 0; i < 5; i++) {
+    if (i % 3 == 0) {
+        acc = acc + "a";
+    } else if (i % 2 == 0) {
+        acc = acc + "bc";
+    } else {
+        acc = acc + "1";
+    }
+}
+io.println(acc);
+`, "a1bcabc\n")
+}
+
+// TestParityCastDunders exercises __string/__int/__float/__bool/__decimal/__bytes
+// cast-overload dunders. Both backends call the dunder when the
+// receiver is an instance and the target is a built-in primitive.
+func TestParityCastDunders(t *testing.T) {
+	runParity(t, `import io;
+
+class Box {
+    int n;
+    func Box(int n) { this.n = n; }
+    func __string(): string { return "Box(" + (this.n as string) + ")"; }
+    func __int(): int { return this.n; }
+    func __float(): float { return (this.n as float); }
+    func __bool(): bool { return this.n != 0; }
+    func __decimal(): decimal { return (this.n as decimal); }
+    func __bytes(): bytes { return ("Box(" + (this.n as string) + ")") as bytes; }
+}
+
+let b = Box(42);
+io.println(b as string);
+io.println(b as int);
+io.println(b as float);
+io.println(b as bool);
+io.println(b as decimal);
+io.println((b as bytes) as string);
+io.println(Box(0) as bool);
+`, "Box(42)\n42\n42\ntrue\n42.0000000000\nBox(42)\nfalse\n")
 }

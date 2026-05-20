@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"geblang/internal/runtime"
@@ -17,40 +18,60 @@ import (
 	yamllib "gopkg.in/yaml.v3"
 )
 
-// InstanceInvoker bridges convert.go (and other native code that
-// needs to call back into the running interpreter) to the
-// evaluator/VM. Each backend populates this slot at startup with a
-// callback that resolves a method on an instance's class
-// (including parents) and calls it. The bool return is false when
-// the class has no such method - the caller falls through to a
-// default behavior. Conversion paths use this to dispatch
-// __serialize__ when classes define it.
-var InstanceInvoker func(instance *runtime.Instance, method string, args []runtime.Value) (runtime.Value, bool, error)
+// InstanceInvokerFunc is the callback shape each backend installs so
+// native code (convert.go etc.) can dispatch a method on a class
+// instance. False return means the class has no such method.
+type InstanceInvokerFunc func(instance *runtime.Instance, method string, args []runtime.Value) (runtime.Value, bool, error)
 
-// ClassDeserializer converts a parsed value (dict/list/scalar)
-// into an instance of the given class. The backend implements the
-// policy:
-//
-//  1. If the class has a static __deserialize__(value) method,
-//     invoke it and return its result.
-//  2. Otherwise, expect `value` to be a Dict and call the
-//     constructor positionally, matching dict keys to constructor
-//     parameter names.
-//
-// `class` is a runtime.Class (evaluator) or runtime.BytecodeClass
-// (VM). Both backends populate this slot at startup;
-// latest-writer-wins.
-var ClassDeserializer func(class runtime.Value, value runtime.Value) (runtime.Value, error)
+// ClassDeserializerFunc is the callback shape each backend installs
+// to turn a parsed value into a class instance.
+type ClassDeserializerFunc func(class runtime.Value, value runtime.Value) (runtime.Value, error)
+
+type instanceInvokerCell struct{ fn InstanceInvokerFunc }
+type classDeserializerCell struct{ fn ClassDeserializerFunc }
+
+var (
+	instanceInvokerPtr   atomic.Pointer[instanceInvokerCell]
+	classDeserializerPtr atomic.Pointer[classDeserializerCell]
+)
+
+// SetInstanceInvoker installs the active backend's instance invoker.
+// Safe to call concurrently with other backends starting up.
+func SetInstanceInvoker(fn InstanceInvokerFunc) {
+	instanceInvokerPtr.Store(&instanceInvokerCell{fn: fn})
+}
+
+// GetInstanceInvoker returns the currently installed invoker, or nil.
+func GetInstanceInvoker() InstanceInvokerFunc {
+	if c := instanceInvokerPtr.Load(); c != nil {
+		return c.fn
+	}
+	return nil
+}
+
+// SetClassDeserializer installs the active backend's class deserializer.
+func SetClassDeserializer(fn ClassDeserializerFunc) {
+	classDeserializerPtr.Store(&classDeserializerCell{fn: fn})
+}
+
+// GetClassDeserializer returns the currently installed deserializer, or nil.
+func GetClassDeserializer() ClassDeserializerFunc {
+	if c := classDeserializerPtr.Load(); c != nil {
+		return c.fn
+	}
+	return nil
+}
 
 // invokeInstanceSerialize calls __serialize__ on the instance if
 // the class defines it. Returns (result, true, nil) when invoked,
 // (nil, false, nil) when the class has no hook, (nil, false, err)
 // on error.
 func invokeInstanceSerialize(instance *runtime.Instance) (runtime.Value, bool, error) {
-	if InstanceInvoker == nil {
+	fn := GetInstanceInvoker()
+	if fn == nil {
 		return nil, false, nil
 	}
-	return InstanceInvoker(instance, "__serialize__", nil)
+	return fn(instance, "__serialize__", nil)
 }
 
 // instanceToSerializable converts a class instance to a

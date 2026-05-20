@@ -1,0 +1,66 @@
+/**
+ * @title static func methods compile to bytecode directly
+ * @summary `static func` declarations on classes used to bail out of
+ * the bytecode pipeline as a parity error and fall back to the
+ * tree-walking evaluator. The compiler now lowers them directly so
+ * scripts using static methods run on the VM. This is purely a
+ * compilation surface change - behaviour was already correct via the
+ * fallback path.
+ */
+import test;
+
+class Counter {
+    static const VERSION = "1.0";
+    int value;
+
+    func Counter() { this.value = 0; }
+
+    static func make(int start): Counter {
+        let c = Counter();
+        c.value = start;
+        return c;
+    }
+
+    static func zero(): Counter { return Counter(); }
+
+    func double(): int { this.value = this.value * 2; return this.value; }
+}
+
+class Registry {
+    static func register(string name): string {
+        return "registered:" + name;
+    }
+
+    static func describe(string name, int version): string {
+        return name + " v" + (version as string);
+    }
+}
+
+class StaticMethodTest extends test.Test {
+    @test
+    func staticFactoryReturnsInstance(): void {
+        let c = Counter.make(7);
+        this.assertEquals(14, c.double());
+    }
+
+    @test
+    func staticConstStillWorksAlongside(): void {
+        this.assertEquals("1.0", Counter.VERSION);
+    }
+
+    @test
+    func staticMethodTakingNoArgs(): void {
+        let c = Counter.zero();
+        this.assertEquals(0, c.value);
+    }
+
+    @test
+    func staticMethodOnAnotherClass(): void {
+        this.assertEquals("registered:widget", Registry.register("widget"));
+    }
+
+    @test
+    func staticMethodMultipleArgs(): void {
+        this.assertEquals("widget v2", Registry.describe("widget", 2));
+    }
+}
