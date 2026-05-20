@@ -1,6 +1,6 @@
 # Release Notes
 
-## 1.0.4 (unreleased)
+## 1.0.4
 
 Bytecode VM hot-path performance + a lifted compiler parity gap,
 on top of the type-matcher fixes that surfaced building the Gebweb
@@ -75,28 +75,8 @@ Tasks example app.
   `class_dispatch`-shaped workload) hit the cache on >99% of
   calls and skip the map lookup entirely.
 
-Bench impact (median ms, before → after Tier 1 + Tier 2,
-over 3 runs):
-
-| Bench | Before | After | Δ |
-|-------|-------:|------:|--:|
-| numeric_loop   | 131 | 129 |  -2% |
-| recursive_fib  |  89 |  85 |  -4% |
-| list_pipeline  |  13 |   9 | -31% |
-| string_concat  |  84 |  70 | -17% |
-| dict_ops       |  24 |  19 | -21% |
-| class_dispatch |  47 |  38 | -19% |
-
 Geblang is now faster than Python on `numeric_loop`,
 `list_pipeline`, and `dict_ops`; competitive on the rest.
-
-New parity tests `TestParityStringAddFastPath`,
-`TestParitySingleOverloadMethodDispatch`,
-`TestParityDictKeyFastPath`, `TestParityOpAddStringStaticTyping`,
-`TestParityMethodLookupCache`; new language test
-`tests/core/vm_hot_path_test.gb`.
-
-Tier A follow-up (`vm.go` + `bytecode.go`):
 
 - **`OpAddString` writes the result VMValue directly into the
   stack slot**, mirroring the `OpAddInt`-family inline write. The
@@ -247,10 +227,8 @@ Tier A follow-up (`vm.go` + `bytecode.go`):
   nullability on the separate `spec.nullable` flag, so a
   `?UserClass` parameter accepts a `UserClass` instance again.
 
-New parity test `TestParityUserClassNamedTaskNoCollision`; new
-language test `tests/classes/user_class_named_task_test.gb`.
 
-## 1.0.3 (unreleased)
+## 1.0.3
 
 Small parity / ergonomics fixes uncovered while extending Gebweb.
 
