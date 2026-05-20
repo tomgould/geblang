@@ -959,6 +959,10 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 			class.FieldDefaults = append(class.FieldDefaults, int64(len(c.chunk.Constants)))
 			c.chunk.Constants = append(c.chunk.Constants, value)
 		case *ast.FunctionStatement:
+			// Flush field metadata into chunk.Classes before compiling
+			// methods so staticIntExpr / staticStringExpr can resolve
+			// `this.field` against the up-to-date class info.
+			c.chunk.Classes[index] = class
 			functionName := stmt.Name.Value + "." + member.Name.Value
 			compiledMember := *member
 			compiledMember.Static = false
@@ -3671,6 +3675,18 @@ func (c *Compiler) compileAssignmentExpression(expr *ast.AssignmentExpression) e
 				return nil
 			}
 		}
+		if resolved.typ == "string" {
+			if lit, ok := selfStringConstAppendAssignment(left.Value, expr.Value); ok {
+				constIdx := int64(len(c.chunk.Constants))
+				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: lit})
+				op := OpAppendStringConst
+				if resolved.kind == "global" {
+					op = OpAppendGlobalStringConst
+				}
+				c.emitAt(op, expr.Token.Line, expr.Token.Column, resolved.slot, constIdx)
+				return nil
+			}
+		}
 		if err := c.compileExpression(expr.Value); err != nil {
 			return err
 		}
@@ -4213,6 +4229,26 @@ func (c *Compiler) classHasSubclassOverriding(classIndex int64, methodName strin
 func isStringLiteral(expr ast.Expression) bool {
 	_, ok := expr.(*ast.StringLiteral)
 	return ok
+}
+
+// selfStringConstAppendAssignment detects `name = name + "literal"`
+// where both reads of `name` refer to the same identifier and the
+// right operand of `+` is a string literal. Returns the literal's
+// raw value on a match.
+func selfStringConstAppendAssignment(name string, value ast.Expression) (string, bool) {
+	infix, ok := value.(*ast.InfixExpression)
+	if !ok || infix.Operator != "+" {
+		return "", false
+	}
+	leftIdent, ok := infix.Left.(*ast.Identifier)
+	if !ok || !strings.EqualFold(leftIdent.Value, name) {
+		return "", false
+	}
+	lit, ok := infix.Right.(*ast.StringLiteral)
+	if !ok {
+		return "", false
+	}
+	return lit.Value, true
 }
 
 func functionRequiresParamValidation(function FunctionInfo) bool {
@@ -4794,6 +4830,101 @@ func (c *Compiler) staticIntExpr(expr ast.Expression) bool {
 		if e.Operator == "-" {
 			return c.staticIntExpr(e.Right)
 		}
+	case *ast.CallExpression:
+		return c.callExprReturnsType(e, "int")
+	case *ast.CastExpression:
+		return strings.EqualFold(c.bytecodeTypeName(e.Type), "int")
+	case *ast.SelectorExpression:
+		return c.selectorReturnsType(e, "int")
+	}
+	return false
+}
+
+// selectorReturnsType reports whether `obj.field` resolves to a class
+// field whose declared type matches `want`. Lets staticIntExpr (and
+// friends) propagate int/string/bool through `this.fieldname` access
+// inside methods of typed classes.
+func (c *Compiler) selectorReturnsType(sel *ast.SelectorExpression, want string) bool {
+	typeName := c.staticReceiverType(sel.Object)
+	if typeName == "" {
+		return false
+	}
+	classIndex, ok := c.classes[strings.ToLower(typeName)]
+	if !ok {
+		return false
+	}
+	classInfo := c.chunk.Classes[classIndex]
+	for i, name := range classInfo.FieldNames {
+		if strings.EqualFold(name, sel.Name.Value) {
+			if i < len(classInfo.FieldTypes) {
+				return strings.EqualFold(classInfo.FieldTypes[i], want)
+			}
+			return false
+		}
+	}
+	return false
+}
+
+// staticReceiverType returns the class name of `expr` when it can be
+// determined at compile time. Handles plain identifiers (via
+// expressionStaticType) and the `this` keyword (via the enclosing
+// class stack).
+func (c *Compiler) staticReceiverType(expr ast.Expression) string {
+	if ident, ok := expr.(*ast.Identifier); ok && strings.EqualFold(ident.Value, "this") {
+		if len(c.classStack) == 0 {
+			return ""
+		}
+		idx := c.classStack[len(c.classStack)-1]
+		if idx < 0 || int(idx) >= len(c.chunk.Classes) {
+			return ""
+		}
+		return c.chunk.Classes[idx].Name
+	}
+	return c.expressionStaticType(expr)
+}
+
+// callExprReturnsType reports whether a call to `e` is provably of the
+// given return type. Handles direct-name function calls and
+// `this.method()` / `typedReceiver.method()` style method calls.
+func (c *Compiler) callExprReturnsType(e *ast.CallExpression, want string) bool {
+	if ident, ok := e.Callee.(*ast.Identifier); ok {
+		indices, found := c.funcs[strings.ToLower(ident.Value)]
+		if !found || len(indices) == 0 {
+			return false
+		}
+		for _, idx := range indices {
+			if idx < 0 || int(idx) >= len(c.chunk.Functions) {
+				return false
+			}
+			if !strings.EqualFold(c.chunk.Functions[idx].ReturnType, want) {
+				return false
+			}
+		}
+		return true
+	}
+	if sel, ok := e.Callee.(*ast.SelectorExpression); ok {
+		typeName := c.expressionStaticType(sel.Object)
+		if typeName == "" {
+			return false
+		}
+		classIndex, ok := c.classes[strings.ToLower(typeName)]
+		if !ok {
+			return false
+		}
+		classInfo := c.chunk.Classes[classIndex]
+		indices, ok := classInfo.Methods[strings.ToLower(sel.Name.Value)]
+		if !ok || len(indices) == 0 {
+			return false
+		}
+		for _, idx := range indices {
+			if idx < 0 || int(idx) >= len(c.chunk.Functions) {
+				return false
+			}
+			if !strings.EqualFold(c.chunk.Functions[idx].ReturnType, want) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }
@@ -4814,6 +4945,12 @@ func (c *Compiler) staticStringExpr(expr ast.Expression) bool {
 		if e.Operator == "+" {
 			return c.staticStringExpr(e.Left) && c.staticStringExpr(e.Right)
 		}
+	case *ast.CallExpression:
+		return c.callExprReturnsType(e, "string")
+	case *ast.SelectorExpression:
+		return c.selectorReturnsType(e, "string")
+	case *ast.CastExpression:
+		return strings.EqualFold(c.bytecodeTypeName(e.Type), "string")
 	}
 	return false
 }

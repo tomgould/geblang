@@ -2,10 +2,6 @@
 
 ## 1.0.4
 
-Bytecode VM hot-path performance + a lifted compiler parity gap,
-on top of the type-matcher fixes that surfaced building the Gebweb
-Tasks example app.
-
 ### Language features
 
 - **Cast overloading via dunder methods.** A class can now control
@@ -38,134 +34,43 @@ Tasks example app.
 
 ### Performance
 
-- **`OpAdd` string fast-path** (`vm.go:add`). The dispatcher used
-  to call `callBinaryOperatorMethod` first on every add, including
-  the common `string + string` case where the built-in `string`
-  type has no `__add` magic method. The runtime.String check now
-  short-circuits at the top of `OpAdd` when both operands are
-  strings; the method-dispatch detour is preserved for class
-  instances on the left.
+Profile-guided round (Geblang's own `profiler.snapshot()` /
+`profiler.delta()` plus Go's pprof on `recursive_fib`,
+`string_concat`, `class_dispatch`):
 
-- **Single-overload method dispatch shortcut**
-  (`vm.go:selectRuntimeFunction`). Most user classes declare a
-  single overload per method. The dispatcher now skips the
-  matches-slice allocation + post-loop "ambiguous overload" check
-  for `len(indices) == 1`, going straight to arity + type
-  validation on the lone candidate. Behaviour is unchanged.
+- **Static-type propagation through function calls and class
+  fields.** `staticIntExpr` / `staticStringExpr` now recurse into
+  `CallExpression` (when every matching overload declares the
+  target return type) and `SelectorExpression` (when the receiver
+  is `this` or a typed class instance and the named field is
+  declared with the target type). Required flushing
+  `class.FieldNames` / `class.FieldTypes` into `chunk.Classes`
+  before compiling each method body so field metadata is visible
+  during method compilation. Profile shows `vm.add` disappearing
+  from `recursive_fib` (was 10.26% of CPU) and `class_dispatch`
+  hot paths; replaced by the inline-handled `OpAddInt` family.
 
-- **String-key dict fast path** (`vm.go:dictKeyFor`). A new helper
-  inlines `runtime.String` and `runtime.SmallInt` key conversion
-  (the 99% case) and falls through to `native.DictKey` for
-  composite keys. Wired into the hot dict ops: index get/set,
-  `dict.contains`, `dict.get`, and the `set` membership check.
+- **Fused string-append peephole.** `local = local + "literal"`
+  and `global = global + "literal"` now compile to a single
+  `OpAppendStringConst` / `OpAppendGlobalStringConst` instead of
+  the three-opcode sequence `OpGetLocal`/`OpAddStringConst`/
+  `OpSetLocal`. Bytecode chunk format version bumped 53 → 54.
 
-- **Compile-time `OpAddString` opcode** (`compiler.go` +
-  `vm.go`). When the compiler can prove both operands of `+` are
-  statically typed `string` (via `staticStringExpr` mirroring the
-  existing `staticIntExpr`), it emits a specialised `OpAddString`
-  opcode that runs the concat inline with no type switch or
-  method-dispatch detour. Mirrors the existing `OpAddInt` family
-  for ints. Bytecode chunk format version bumped 50 → 51.
+- **REPL accepts `1 as bool`.** The REPL's auto-semicolon-insertion
+  treated only identifier / numeric-literal stmt-end tokens as
+  triggering insertion. `bool` is the only type name that lexes as
+  a keyword (string/int/float/decimal/bytes lex as `Ident`), so
+  `as bool` at the end of a REPL line gave `expected ;, got EOF`.
+  `Bool` is now in the stmt-end set.
 
-- **Method-pointer lookup cache** (`vm.go:lookupMethodLower`).
-  A single-slot cache keyed by (class name, lowered method name)
-  short-circuits the `classInfo.Methods` Go-map access on the
-  second-and-later dispatches to the same method on the same
-  class. Tight loops calling one method on one class (every
-  `class_dispatch`-shaped workload) hit the cache on >99% of
-  calls and skip the map lookup entirely.
+### Tooling
 
-Geblang is now faster than Python on `numeric_loop`,
-`list_pipeline`, and `dict_ops`; competitive on the rest.
-
-- **`OpAddString` writes the result VMValue directly into the
-  stack slot**, mirroring the `OpAddInt`-family inline write. The
-  handler reads operands from `vm.stack[n-2]` / `vm.stack[n-1]`
-  without calling `vm.pop()`/`vm.push()`, so the interface
-  materialise + function call overhead drops out. The interface
-  box for the result `runtime.String` is unchanged and dominates
-  the per-iteration cost; closing that gap is the job of B2
-  (VMKindString variant on VMValue), planned next.
-
-- **Per-call type-validation loop is now skipped for functions
-  whose params are entirely empty / `any`-typed.** A new
-  `FunctionInfo.requiresParamValidation` bool is precomputed at
-  chunk-load time (in `prepareFunctionTypeMetadata`); both the
-  fast and slow call paths short-circuit the whole validation
-  walk when it's false.
-
-- **Inline-cache experiment on `OpMethodCall` / `OpMethodCallNamed`
-  did NOT ship.** A per-instruction class-pointer cache was
-  implemented, measured, and reverted: the existing VM-global
-  `methodLookupClass/Name/Indices` single-slot cache already hits
-  >99% on the monomorphic call sites the `class_dispatch` bench
-  exercises, so the per-call bounds check and cache compares the
-  inline cache added cost more than they saved. Documented as a
-  future candidate when a polymorphic-call benchmark exists.
-
-- **`VMKindString` variant on `VMValue` did NOT ship.** A new kind
-  was added with an inline `Str string` field so `OpAddString`
-  could skip the interface-box heap allocation per push. Grew
-  `VMValue` from 32 B to 48 B (+50 %), which regressed
-  `string_concat` (69 → 82 ms), `dict_ops` (18 → 23 ms),
-  `class_dispatch` (37 → 42 ms), and `recursive_fib` (85 → 95 ms)
-  via worse cache locality on the stack/locals/globals slices.
-  Reverted. The runtime.String interface box remains the dominant
-  per-iteration cost on `string_concat`; closing it cleanly needs
-  either a smarter VMValue layout (e.g. unsafe-overlay onto the
-  existing Boxed field) or compile-time string interning that
-  reduces the alloc rate enough to make the GC pressure go away.
-
-### Parity
-
-- **Empty-container defaults compile to bytecode directly.** Parameter
-  and class-field defaults of the form `dict opts = {}` and
-  `list xs = []` previously routed through the evaluator
-  (`compiler.go:4757` rejected anything beyond primitive literals).
-  The compiler now accepts empty `DictLiteral`, `ListLiteral`, and
-  `SetLiteral` as defaults; the runtime constant pool gets three
-  new tags (10/11/12) for the empty containers. To avoid the
-  Python-style mutable-default trap, the VM clones the container
-  at fill time via a new `cloneContainerDefault` helper, so each
-  call (or new class instance) sees a fresh empty container.
-  Non-empty container defaults (e.g. `list xs = [1, 2, 3]`) still
-  fall back to the evaluator - lifting those needs full
-  expression evaluation at call time, which is a bigger
-  restructuring of the calling convention. Bytecode chunk format
-  version bumped 51 → 52. New parity test
-  `TestParityEmptyContainerDefaults`; new language test
-  `tests/functions/empty_container_defaults_test.gb`.
-
-- **`static func` methods compile to bytecode directly.** Previously
-  any class with a `static func` declaration tripped the
-  `compiler.go:741` "does not support static functions yet" parity
-  error and the CLI fell back to the tree-walking evaluator. The
-  parity error reflected an incomplete implementation, not a real
-  constraint: the runtime infrastructure for static methods
-  (`class.StaticMethods`, `OpCallStaticMethod`, `OpGetStaticValue`)
-  was already in place. The compiler now lowers static method
-  bodies through the same pipeline as regular methods (skipping
-  the implicit `this` receiver), so scripts using static methods
-  (including every `@ApiResource` entity in Gebweb that carries
-  `static func repositoryClass()`) now run purely on the VM.
-  New parity test `TestParityStaticFunctionLifted`; new language
-  test `tests/classes/static_methods_test.gb`. Two pre-existing
-  Go tests that asserted the static-func rejection were updated
-  to use non-literal class field defaults as their canonical
-  "still-unsupported" feature.
-
-- **Spread arguments on a callable VALUE compile to bytecode
-  directly.** Two compiler.go sites used to reject spread on
-  callable values: parenthesized-selector callable expressions
-  (`(obj.fn)(...args)`, line 2440) and complex callable
-  expressions (`fns[i](...args)`, `getFn()(...args)`, line
-  2602). Both forms now emit the same `OpMethodCallSpread`
-  with the `__invoke` method name that the existing
-  identifier-callable spread path uses. Static args before the
-  spread are supported (`(h.adder)(1, ...rest)`); named args
-  mixed with spread are rejected at compile time as before.
-  New parity test `TestParityCallableSpread`; new language
-  test `tests/functions/callable_spread_test.gb`.
+- **`profiler.delta` / `memory` / `peak` / `cpu` return dicts that
+  are usable from Geblang.** They previously returned
+  `*runtime.Dict` (pointer); the VM's index handler only matches
+  `runtime.Dict` by value, so `d["elapsed_ms"]` raised "dict is
+  not indexable". Now returns `runtime.Dict` directly; the docs
+  example actually works.
 
 ### Bug fixes
 
@@ -226,7 +131,6 @@ Geblang is now faster than Python on `numeric_loop`,
   the `?` from `spec.base` at parse time and carries the
   nullability on the separate `spec.nullable` flag, so a
   `?UserClass` parameter accepts a `UserClass` instance again.
-
 
 ## 1.0.3
 

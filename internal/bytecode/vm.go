@@ -685,6 +685,47 @@ func (vm *VM) Run() (err error) {
 				return err
 			}
 			ip = nextIP
+		case OpAppendStringConst, OpAppendGlobalStringConst:
+			slot := instruction.Operands[0]
+			constIdx := instruction.Operands[1]
+			if constIdx < 0 || int(constIdx) >= len(vm.chunk.Constants) {
+				return vm.runtimeError(instruction, "constant index out of range")
+			}
+			litVal, ok := vm.chunk.Constants[constIdx].(runtime.String)
+			if !ok {
+				return vm.runtimeError(instruction, "literal must be string")
+			}
+			var target []runtime.VMValue
+			if instruction.Op == OpAppendStringConst {
+				target = vm.locals
+			} else {
+				target = vm.globals
+			}
+			if int(slot) >= len(target) {
+				return vm.runtimeError(instruction, "slot out of range")
+			}
+			cur := target[slot]
+			if cur.Kind == runtime.VMKindBoxed {
+				if l, lok := cur.Boxed.(runtime.String); lok {
+					next := runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: l.Value + litVal.Value}}
+					target[slot] = next
+					vm.pushVM(next)
+					continue
+				}
+			}
+			vm.pushVM(cur)
+			vm.pushVM(runtime.VMValueFromValue(litVal))
+			nextIP, err := vm.add(instruction, ip)
+			if err != nil {
+				return err
+			}
+			result, perr := vm.popVM()
+			if perr != nil {
+				return vm.runtimeError(instruction, "%s", perr.Error())
+			}
+			target[slot] = result
+			vm.pushVM(result)
+			ip = nextIP
 		case OpAddStringConst:
 			n := len(vm.stack)
 			if n < 1 {
@@ -8743,7 +8784,7 @@ func copyStringInt64SliceMap(values map[string][]int64) map[string][]int64 {
 
 func shiftInstructionOperands(instruction *Instruction, instructionShift int, constantShift int) {
 	switch instruction.Op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpCatch, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpCatch, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst:
 		for i := range instruction.Operands {
 			if isConstantOperand(instruction.Op, i) && instruction.Operands[i] >= 0 {
 				instruction.Operands[i] += int64(constantShift)
@@ -8776,6 +8817,8 @@ func isConstantOperand(op Op, index int) bool {
 	switch op {
 	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpGetField, OpSetField, OpMethodCall, OpMethodCallSpread, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst:
 		return index == 0
+	case OpAppendStringConst, OpAppendGlobalStringConst:
+		return index == 1
 	case OpNativeCallNamed:
 		return index == 0 || index >= 2
 	case OpCallParentMethod:

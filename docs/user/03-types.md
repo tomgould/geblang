@@ -20,6 +20,11 @@ Collection types:
 - `dict<K, V>`
 - `set<T>`
 
+See [stdlib/08-collections](stdlib/08-collections.md) for the full
+list of methods on each (`length`, `push`, `pop`, `slice`, `map`,
+`filter`, `reduce`, `keys`, `values`, `items`, `add`, `union`,
+`difference`, etc.) along with examples.
+
 Runtime and framework types include `Type`, `Task<T>`, `generator<T>`,
 `iterable<T>`, classes, interfaces, and enums.
 

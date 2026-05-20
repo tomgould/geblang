@@ -194,6 +194,53 @@ io.println(nums.all(func(int x): bool { return x > 0; }));  # true
 io.println(nums.count(func(int x): bool { return x % 2 == 0; })); # 3
 ```
 
+### Keyed Functional Helpers
+
+These methods take a key/predicate function and operate on lists directly. Each
+is also available as a top-level helper in the `collections` module (e.g.
+`collections.sortBy(xs, fn)`); the instance form and the module form are
+interchangeable.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `sortBy(fn)` | `list<T>` | New list sorted by the key `fn` returns for each element |
+| `minBy(fn)` | `T\|null` | Element with the smallest key; `null` if empty |
+| `maxBy(fn)` | `T\|null` | Element with the largest key; `null` if empty |
+| `topBy(fn, n)` | `list<T>` | Top `n` elements by key (descending) |
+| `topK(n)` | `list<T>` | Top `n` elements by natural ordering |
+| `bottomK(n)` | `list<T>` | Bottom `n` elements by natural ordering |
+| `sumBy(fn)` | `int\|decimal` | Sum of the numeric key for each element |
+| `averageBy(fn)` | `decimal` | Mean of the numeric key |
+| `frequencies()` | `dict<any, int>` | Count of each distinct value |
+| `mode()` | `T\|null` | Most-frequent element |
+| `indexBy(fn)` | `dict<any, T>` | Dict keyed by `fn(element)` (latest wins on collision) |
+| `containsBy(fn)` | `bool` | `true` when any element matches `fn` |
+| `differenceBy(other, fn)` | `list<T>` | Elements whose key isn't in `other`'s keys |
+| `intersectionBy(other, fn)` | `list<T>` | Elements whose key is in both lists |
+| `zipWith(other, fn)` | `list<U>` | Pairwise combine via `fn(a, b)` |
+| `binarySearch(value)` | `int` | Index of `value` in a sorted list; `-1` if absent |
+| `lowerBound(value)` | `int` | First insertion index keeping a sorted list sorted |
+| `upperBound(value)` | `int` | Last insertion index keeping a sorted list sorted |
+| `take(n)` | `list<T>` | First `n` elements (returns the whole list if `n > length`) |
+| `lazyMap(fn)` | `iterable<U>` | Like `map` but produces an iterable; the work happens on iteration |
+| `lazyFilter(fn)` | `iterable<T>` | Like `filter` but lazy |
+
+```gb
+import io;
+
+list<dict<string, any>> users = [
+    {"name": "Ada",   "age": 36},
+    {"name": "Grace", "age": 85},
+    {"name": "Alan",  "age": 41},
+];
+
+let oldest = users.maxBy(func(dict<string, any> u): int { return u["age"] as int; });
+io.println(oldest["name"]);   # Grace
+
+let by_age = users.sortBy(func(dict<string, any> u): int { return u["age"] as int; });
+io.println(by_age[0]["name"]); # Ada
+```
+
 ### Grouping, Chunking, And Partitioning
 
 | Method | Returns | Description |

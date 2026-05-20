@@ -15,7 +15,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(53)
+	Version = uint16(54)
 )
 
 type Op byte
@@ -218,6 +218,14 @@ const (
 	// baked-in literal), pushes the result. Emitted for the
 	// `acc + "x"` pattern.
 	OpAddStringConst
+	// OpAppendStringConst {localSlot, literalConstantIndex}: reads
+	// the local at slot, concatenates with chunk.Constants[idx],
+	// writes back to the same slot. Fused form of
+	// `local = local + "literal"`.
+	OpAppendStringConst
+	// OpAppendGlobalStringConst {globalSlot, literalConstantIndex}:
+	// global-slot variant of OpAppendStringConst.
+	OpAppendGlobalStringConst
 )
 
 type Instruction struct {

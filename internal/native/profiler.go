@@ -44,7 +44,7 @@ func registerProfiler(r *Registry) {
 		if len(args) < 1 {
 			return nil, fmt.Errorf("profiler.delta expects one argument")
 		}
-		snap, ok := args[0].(*runtime.Dict)
+		snap, ok := args[0].(runtime.Dict)
 		if !ok {
 			return nil, fmt.Errorf("profiler.delta expects a snapshot dict")
 		}
@@ -103,16 +103,16 @@ func registerProfiler(r *Registry) {
 	})
 }
 
-func profilerDict(fields map[string]runtime.Value) *runtime.Dict {
+func profilerDict(fields map[string]runtime.Value) runtime.Dict {
 	entries := make(map[string]runtime.DictEntry, len(fields))
 	for k, v := range fields {
 		key := runtime.String{Value: k}
 		entries[DictKey(key)] = runtime.DictEntry{Key: key, Value: v}
 	}
-	return &runtime.Dict{Entries: entries}
+	return runtime.Dict{Entries: entries}
 }
 
-func profilerInt64(d *runtime.Dict, key string) int64 {
+func profilerInt64(d runtime.Dict, key string) int64 {
 	k := runtime.String{Value: key}
 	e, ok := d.Entries[DictKey(k)]
 	if !ok {
