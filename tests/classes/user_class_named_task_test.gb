@@ -1,0 +1,70 @@
+/**
+ * @title User class named `Task` doesn't collide with the runtime Task
+ * @summary The evaluator's overload / parameter type-matcher used to
+ * intercept any parameter declared `Task` and require the value to be
+ * a `*runtime.Task` (the async Task primitive), rejecting any user
+ * class with the same name. A user-declared `Task` class now matches
+ * its own instances on both backends.
+ */
+import test;
+
+class Task {
+    string id;
+    string title;
+
+    func Task() {
+        this.id = "";
+        this.title = "";
+    }
+}
+
+class Store {
+    list<Task> items;
+
+    func Store() {
+        this.items = [];
+    }
+
+    /* Parameter typed `Task` - the colliding name with the built-in
+     * async Task. Must match a user-class Task instance. */
+    func add(Task t): Task {
+        this.items = this.items.push(t);
+        return t;
+    }
+
+    /* Nullable parameter: `?Task` must also match. */
+    func adopt(?Task t): bool {
+        if (t == null) { return false; }
+        this.add(t as Task);
+        return true;
+    }
+}
+
+class UserClassNamedTaskTest extends test.Test {
+    @test
+    func addBindsTaskParameter(): void {
+        let s = Store();
+        let t = Task();
+        t.id = "t-1";
+        t.title = "draft";
+        let saved = s.add(t);
+        this.assertEquals("draft", saved.title);
+        this.assertEquals(1, s.items.length());
+    }
+
+    @test
+    func nullableTaskAcceptsInstanceAndNull(): void {
+        let s = Store();
+        let t = Task();
+        t.id = "t-2";
+        this.assertTrue(s.adopt(t));
+        this.assertFalse(s.adopt(null));
+        this.assertEquals(1, s.items.length());
+    }
+
+    @test
+    func instanceOfChecksAgainstUserClass(): void {
+        let t = Task();
+        this.assertTrue(t instanceof Task);
+    }
+}

@@ -6870,6 +6870,48 @@ io.println(wrap(userFn));
 `, "caught 404: missing widget\n")
 }
 
+// TestParityUserClassNamedTaskNoCollision guards an evaluator-only
+// regression where a user class named `Task` was unconditionally
+// rejected by the overload / parameter type-matcher: the evaluator
+// short-circuited on `typeName == "Task"` and required the value to
+// be a *runtime.Task (the async Task primitive). User-declared Task
+// classes now match their own instances. The VM was already correct
+// because its type-name dispatch routes through `vmTypeKindForBase`
+// and never hard-codes the `Task` string.
+// Surfaced building the gebweb Tasks example app, where every CRUD
+// handler called `repo.save(Task entity)`.
+func TestParityUserClassNamedTaskNoCollision(t *testing.T) {
+	runParity(t, `import io;
+
+class Task {
+    string id;
+    string title;
+    func Task() { this.id = ""; this.title = ""; }
+}
+
+class Store {
+    list<Task> items;
+    func Store() { this.items = []; }
+    func add(Task t): Task { this.items = this.items.push(t); return t; }
+    func adopt(?Task t): bool {
+        if (t == null) { return false; }
+        this.add(t as Task);
+        return true;
+    }
+}
+
+let s = Store();
+let t = Task();
+t.id = "t-1";
+t.title = "hello";
+io.println(s.add(t).title);
+io.println(s.adopt(t));
+io.println(s.adopt(null));
+io.println(s.items.length());
+io.println(t instanceof Task);
+`, "hello\ntrue\nfalse\n2\ntrue\n")
+}
+
 // TestParityWebParseMultipart guards the new `web.parseMultipart` native:
 // both backends parse a `multipart/form-data` body into a
 // `{fields, files}` dict, where each file is `{filename, contentType,

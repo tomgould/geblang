@@ -1,5 +1,30 @@
 # Release Notes
 
+## 1.0.4 (unreleased)
+
+Two evaluator / VM type-matcher fixes that surfaced while building
+the Gebweb Tasks example app.
+
+### Bug fixes
+
+- **User class named `Task` no longer collides with the runtime
+  async Task.** Evaluator-only: the overload / parameter matcher
+  short-circuited on `typeName == "Task"` and rejected any value
+  that wasn't `*runtime.Task`. A user-declared `class Task { ... }`
+  therefore failed every dispatch (`no matching overload for
+  repo.save`). The matcher now falls through to user-class matching
+  when the value isn't the async primitive.
+
+- **`?UserClass` parameter matching on the VM.** The VM's type-spec
+  parser kept the leading `?` on `spec.base`, so the user-class
+  comparison `value.TypeName() == spec.base` always failed for any
+  nullable parameter typed as a user class (e.g. `?AuthConfig`,
+  `?Task`). Strips the `?` from `spec.base` at parse time; the
+  separate `spec.nullable` flag still carries the nullability.
+
+New parity test `TestParityUserClassNamedTaskNoCollision`; new
+language test `tests/classes/user_class_named_task_test.gb`.
+
 ## 1.0.3 (unreleased)
 
 Small parity / ergonomics fixes uncovered while extending Gebweb.

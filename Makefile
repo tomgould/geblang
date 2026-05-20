@@ -1,4 +1,4 @@
-.PHONY: test test-go test-lang check-lang build build-with-path install bench bench-docker run repl check doctor cache-stats clean fmt docs docker-build compose-build vscode-build vscode-install vscode-install-wsl vscode-install-native
+.PHONY: all test test-go test-lang check-lang build build-with-path install bench bench-docker run repl check doctor cache-stats clean fmt docs docker-build compose-build vscode-build vscode-install vscode-install-wsl vscode-install-native
 
 BINARY ?= geblang
 GO ?= go
@@ -11,6 +11,18 @@ DOCKER_IMAGE ?= geblang-build
 DOCKER_CONTAINER ?= geblang-build-artifacts
 VSCODE_IMAGE ?= geblang-vscode-artifacts
 VSCODE_CONTAINER ?= geblang-vscode-build-artifacts
+
+# Full local build: run all tests, install the binary, regenerate
+# the docs site, build + install the VS Code extension, then run the
+# benchmark suite. Each step is a separate sub-make invocation so a
+# failure aborts the chain.
+all:
+	$(MAKE) test
+	$(MAKE) install
+	$(MAKE) docs
+	$(MAKE) vscode-build
+	$(MAKE) vscode-install
+	$(MAKE) bench
 
 test: test-go test-lang
 

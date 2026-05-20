@@ -20386,8 +20386,14 @@ func valueMatchesTypeRef(value runtime.Value, typ *ast.TypeRef) bool {
 		return value.TypeName() == "dict"
 	}
 	if typeName == "Task" {
-		_, ok := value.(*runtime.Task)
-		return ok
+		if _, ok := value.(*runtime.Task); ok {
+			return true
+		}
+		/* Not the runtime async Task. Fall through so a user-defined
+		 * class named `Task` still matches its own instance. The
+		 * built-in runtime Task is reachable only through `async`-
+		 * returning callsites, so masking a user class with this
+		 * name would otherwise reject every dispatch. */
 	}
 	if isCallableTypeName(typeName) {
 		return runtime.IsCallableValue(value)

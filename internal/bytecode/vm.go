@@ -9093,7 +9093,11 @@ func parseVMTypeSpec(typ string) vmTypeSpec {
 	baseTyp, innerTyp, hasInner := parseTypeStr(raw)
 	base := strings.TrimSpace(baseTyp)
 	nullable := strings.HasPrefix(base, "?")
-	baseLower := strings.ToLower(strings.TrimPrefix(base, "?"))
+	/* Strip the leading `?` from `base` so callers comparing it to a
+	 * value's TypeName / class name don't have to handle the nullable
+	 * sigil themselves. The `nullable` flag carries that bit. */
+	base = strings.TrimPrefix(base, "?")
+	baseLower := strings.ToLower(base)
 	spec := vmTypeSpec{
 		raw:       raw,
 		base:      base,
