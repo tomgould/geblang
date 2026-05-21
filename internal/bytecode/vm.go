@@ -88,6 +88,12 @@ type VM struct {
 	methodLookupName    string
 	methodLookupIndices []int64
 	methodLookupValid   bool
+	fieldLookupClass     *runtime.Class
+	fieldLookupName      string
+	fieldLookupOnClass   bool
+	fieldLookupHasGetMag bool
+	fieldLookupHasSetMag bool
+	fieldLookupValid     bool
 	// False when chunk has no decorators/async/generators; lets
 	// vm.call skip the three per-call probes for those features.
 	requiresCallSitePolymorphism bool
@@ -2702,18 +2708,34 @@ func (vm *VM) catchException(instruction Instruction, ip int) (int, error) {
 }
 
 func (vm *VM) binaryNumeric(instruction Instruction, ip int) (int, error) {
-	right, err := vm.pop()
+	right, err := vm.popVM()
 	if err != nil {
 		return 0, vm.runtimeError(instruction, "%s", err.Error())
 	}
-	left, err := vm.pop()
+	left, err := vm.popVM()
 	if err != nil {
 		return 0, vm.runtimeError(instruction, "%s", err.Error())
 	}
-	if nextIP, handled, err := vm.callBinaryOperatorMethod(instruction, ip, left, right); handled || err != nil {
+	if left.Kind == runtime.VMKindSmallInt && right.Kind == runtime.VMKindSmallInt {
+		if err := vm.smallIntBinary(instruction, left.I64, right.I64); err != nil {
+			return 0, err
+		}
+		return ip, nil
+	}
+	if left.Kind == runtime.VMKindFloat && right.Kind == runtime.VMKindFloat {
+		l, _ := left.AsFloat()
+		r, _ := right.AsFloat()
+		if err := vm.floatBinary(instruction, runtime.Float{Value: l}, runtime.Float{Value: r}); err != nil {
+			return 0, err
+		}
+		return ip, nil
+	}
+	leftV := left.ToValue()
+	rightV := right.ToValue()
+	if nextIP, handled, err := vm.callBinaryOperatorMethod(instruction, ip, leftV, rightV); handled || err != nil {
 		return nextIP, err
 	}
-	if err := vm.binaryNumericValues(instruction, left, right); err != nil {
+	if err := vm.binaryNumericValues(instruction, leftV, rightV); err != nil {
 		return 0, err
 	}
 	return ip, nil
@@ -3365,38 +3387,51 @@ func decimalPow(base *big.Rat, exponent *big.Rat) (*big.Rat, error) {
 }
 
 func (vm *VM) add(instruction Instruction, ip int) (int, error) {
-	right, err := vm.pop()
+	right, err := vm.popVM()
 	if err != nil {
 		return 0, vm.runtimeError(instruction, "%s", err.Error())
 	}
-	left, err := vm.pop()
+	left, err := vm.popVM()
 	if err != nil {
 		return 0, vm.runtimeError(instruction, "%s", err.Error())
 	}
-	/* Fast path: string + string. The built-in `string` type has no
-	 * __add__ magic method, so the method-dispatch detour through
-	 * `callBinaryOperatorMethod` is wasted work on every string
-	 * concat. Only short-circuit when BOTH operands are strings;
-	 * `string + user_with___radd__` still needs to flow through the
-	 * method dispatch. */
-	if l, ok := left.(runtime.String); ok {
-		if r, ok := right.(runtime.String); ok {
+	if left.Kind == runtime.VMKindSmallInt && right.Kind == runtime.VMKindSmallInt {
+		result := left.I64 + right.I64
+		if (left.I64^result)&(right.I64^result) >= 0 {
+			vm.pushVM(runtime.VMValueSmallInt(result))
+			return ip, nil
+		}
+		vm.pushVM(runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.Int{Value: new(big.Int).Add(big.NewInt(left.I64), big.NewInt(right.I64))}})
+		return ip, nil
+	}
+	if left.Kind == runtime.VMKindFloat && right.Kind == runtime.VMKindFloat {
+		l, _ := left.AsFloat()
+		r, _ := right.AsFloat()
+		vm.pushVM(runtime.VMValueFloat(l + r))
+		return ip, nil
+	}
+	leftV := left.ToValue()
+	rightV := right.ToValue()
+	// String fast path: skip the method-dispatch detour because the
+	// built-in `string` has no __add__ overload.
+	if l, ok := leftV.(runtime.String); ok {
+		if r, ok := rightV.(runtime.String); ok {
 			vm.push(runtime.String{Value: l.Value + r.Value})
 			return ip, nil
 		}
 	}
-	if nextIP, handled, err := vm.callBinaryOperatorMethod(instruction, ip, left, right); handled || err != nil {
+	if nextIP, handled, err := vm.callBinaryOperatorMethod(instruction, ip, leftV, rightV); handled || err != nil {
 		return nextIP, err
 	}
-	if l, ok := left.(runtime.String); ok {
-		r, ok := right.(runtime.String)
+	if l, ok := leftV.(runtime.String); ok {
+		r, ok := rightV.(runtime.String)
 		if !ok {
 			return 0, vm.runtimeError(instruction, "right operand must be string")
 		}
 		vm.push(runtime.String{Value: l.Value + r.Value})
 		return ip, nil
 	}
-	if err := vm.binaryNumericValues(instruction, left, right); err != nil {
+	if err := vm.binaryNumericValues(instruction, leftV, rightV); err != nil {
 		return 0, err
 	}
 	return ip, nil
@@ -5383,23 +5418,52 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 		}
 		return 0, vm.runtimeError(instruction, "%s has no field %s", receiver.TypeName(), name)
 	}
-	value, ok := instance.Fields[name]
-	if !ok {
-		classInfo, ok := vm.classInfo(instance.Class.Name)
-		if !ok {
-			return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
-		}
-		if indices, ok := vm.lookupMethod(classInfo, "__get"); ok {
-			functionIndex, err := vm.selectRuntimeFunction(instruction, "__get", indices, []runtime.Value{runtime.String{Value: name}}, 1)
-			if err != nil {
-				return 0, err
-			}
-			return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}}, nil)
-		}
-		return 0, vm.runtimeError(instruction, "%s has no field %s", instance.Class.Name, name)
+	if value, ok := instance.Fields[name]; ok {
+		vm.cacheFieldShape(instance.Class, name, true)
+		vm.push(value)
+		return ip, nil
 	}
-	vm.push(value)
-	return ip, nil
+	if vm.fieldLookupValid && vm.fieldLookupClass == instance.Class && vm.fieldLookupName == name {
+		if !vm.fieldLookupHasGetMag {
+			return 0, vm.runtimeError(instruction, "%s has no field %s", instance.Class.Name, name)
+		}
+	}
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if !ok {
+		return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
+	}
+	indices, hasGet := vm.lookupMethod(classInfo, "__get")
+	vm.cacheFieldShapeFull(instance.Class, name, false, hasGet, classInfo)
+	if hasGet {
+		functionIndex, err := vm.selectRuntimeFunction(instruction, "__get", indices, []runtime.Value{runtime.String{Value: name}}, 1)
+		if err != nil {
+			return 0, err
+		}
+		return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}}, nil)
+	}
+	return 0, vm.runtimeError(instruction, "%s has no field %s", instance.Class.Name, name)
+}
+
+func (vm *VM) cacheFieldShape(class *runtime.Class, name string, onClass bool) {
+	if vm.fieldLookupValid && vm.fieldLookupClass == class && vm.fieldLookupName == name && vm.fieldLookupOnClass == onClass {
+		return
+	}
+	vm.fieldLookupClass = class
+	vm.fieldLookupName = name
+	vm.fieldLookupOnClass = onClass
+	vm.fieldLookupHasGetMag = false
+	vm.fieldLookupHasSetMag = false
+	vm.fieldLookupValid = true
+}
+
+func (vm *VM) cacheFieldShapeFull(class *runtime.Class, name string, onClass, hasGet bool, classInfo ClassInfo) {
+	_, hasSet := vm.lookupMethod(classInfo, "__set")
+	vm.fieldLookupClass = class
+	vm.fieldLookupName = name
+	vm.fieldLookupOnClass = onClass
+	vm.fieldLookupHasGetMag = hasGet
+	vm.fieldLookupHasSetMag = hasSet
+	vm.fieldLookupValid = true
 }
 
 func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
@@ -5422,18 +5486,30 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 	if instance.Frozen {
 		return vm.throwTyped(instruction, ip, "ImmutableError", "cannot modify frozen instance of "+instance.Class.Name)
 	}
-	if _, ok := instance.Fields[name]; !ok {
-		classInfo, ok := vm.classInfo(instance.Class.Name)
-		if !ok {
-			return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
+	if vm.fieldLookupValid && vm.fieldLookupClass == instance.Class && vm.fieldLookupName == name && vm.fieldLookupOnClass {
+		instance.Fields[name] = value
+		vm.push(value)
+		return ip, nil
+	}
+	if _, ok := instance.Fields[name]; ok {
+		vm.cacheFieldShape(instance.Class, name, true)
+		instance.Fields[name] = value
+		vm.push(value)
+		return ip, nil
+	}
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if !ok {
+		return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
+	}
+	indices, hasSet := vm.lookupMethod(classInfo, "__set")
+	vm.cacheFieldShapeFull(instance.Class, name, false, false, classInfo)
+	vm.fieldLookupHasSetMag = hasSet
+	if hasSet {
+		functionIndex, err := vm.selectRuntimeFunction(instruction, "__set", indices, []runtime.Value{runtime.String{Value: name}, value}, 1)
+		if err != nil {
+			return 0, err
 		}
-		if indices, ok := vm.lookupMethod(classInfo, "__set"); ok {
-			functionIndex, err := vm.selectRuntimeFunction(instruction, "__set", indices, []runtime.Value{runtime.String{Value: name}, value}, 1)
-			if err != nil {
-				return 0, err
-			}
-			return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}, value}, value)
-		}
+		return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}, value}, value)
 	}
 	instance.Fields[name] = value
 	vm.push(value)

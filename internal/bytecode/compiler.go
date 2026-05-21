@@ -2068,6 +2068,13 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		if expr.Operator == "??" {
 			return c.compileNullCoalesceExpression(expr)
 		}
+		if folded, ok, err := foldConstantBinary(expr.Operator, expr.Left, expr.Right); ok {
+			if err != nil {
+				return fmt.Errorf("%d:%d: %s", expr.Token.Line, expr.Token.Column, err.Error())
+			}
+			c.emitConstant(folded, expr.Token.Line, expr.Token.Column)
+			return nil
+		}
 		bothInt := c.staticIntExpr(expr.Left) && c.staticIntExpr(expr.Right)
 		bothString := !bothInt && expr.Operator == "+" && c.staticStringExpr(expr.Left) && c.staticStringExpr(expr.Right)
 		// `acc + "literal"` (the common string-builder pattern): bake
@@ -4400,6 +4407,178 @@ func (c *Compiler) emitConstant(value runtime.Value, line int, column int) {
 	index := int64(len(c.chunk.Constants))
 	c.chunk.Constants = append(c.chunk.Constants, value)
 	c.emitAt(OpConstant, line, column, index)
+}
+
+func foldConstantBinary(op string, left, right ast.Expression) (runtime.Value, bool, error) {
+	if lInt, ok := intLiteralValue(left); ok {
+		if rInt, ok := intLiteralValue(right); ok {
+			return foldIntInt(op, lInt, rInt)
+		}
+		if rFloat, ok := floatLiteralValue(right); ok {
+			return foldFloatFloat(op, float64(lInt), rFloat)
+		}
+	}
+	if lFloat, ok := floatLiteralValue(left); ok {
+		if rFloat, ok := floatLiteralValue(right); ok {
+			return foldFloatFloat(op, lFloat, rFloat)
+		}
+		if rInt, ok := intLiteralValue(right); ok {
+			return foldFloatFloat(op, lFloat, float64(rInt))
+		}
+	}
+	if lStr, ok := stringLiteralValue(left); ok {
+		if rStr, ok := stringLiteralValue(right); ok {
+			return foldStringString(op, lStr, rStr)
+		}
+	}
+	if lBool, ok := boolLiteralValue(left); ok {
+		if rBool, ok := boolLiteralValue(right); ok {
+			return foldBoolBool(op, lBool, rBool)
+		}
+	}
+	return nil, false, nil
+}
+
+func intLiteralValue(expr ast.Expression) (int64, bool) {
+	lit, ok := expr.(*ast.IntegerLiteral)
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(lit.Value, 0, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func floatLiteralValue(expr ast.Expression) (float64, bool) {
+	lit, ok := expr.(*ast.FloatLiteral)
+	if !ok {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(lit.Value, 64)
+	if err != nil {
+		return 0, false
+	}
+	return f, true
+}
+
+func stringLiteralValue(expr ast.Expression) (string, bool) {
+	lit, ok := expr.(*ast.StringLiteral)
+	if !ok || lit.Triple {
+		return "", false
+	}
+	return lit.Value, true
+}
+
+func boolLiteralValue(expr ast.Expression) (bool, bool) {
+	lit, ok := expr.(*ast.Literal)
+	if !ok {
+		return false, false
+	}
+	b, ok := lit.Value.(bool)
+	if !ok {
+		return false, false
+	}
+	return b, true
+}
+
+func foldIntInt(op string, l, r int64) (runtime.Value, bool, error) {
+	switch op {
+	case "+":
+		return runtime.NewInt64(l + r), true, nil
+	case "-":
+		return runtime.NewInt64(l - r), true, nil
+	case "*":
+		return runtime.NewInt64(l * r), true, nil
+	case "//":
+		if r == 0 {
+			return nil, true, fmt.Errorf("integer division by zero")
+		}
+		// Floor semantics: Go's `/` truncates toward zero.
+		q := l / r
+		if (l^r) < 0 && q*r != l {
+			q--
+		}
+		return runtime.NewInt64(q), true, nil
+	case "%":
+		if r == 0 {
+			return nil, true, fmt.Errorf("modulo by zero")
+		}
+		// Floor semantics: sign of result follows divisor.
+		m := l % r
+		if m != 0 && (m^r) < 0 {
+			m += r
+		}
+		return runtime.NewInt64(m), true, nil
+	case "==":
+		return runtime.Bool{Value: l == r}, true, nil
+	case "!=":
+		return runtime.Bool{Value: l != r}, true, nil
+	case "<":
+		return runtime.Bool{Value: l < r}, true, nil
+	case "<=":
+		return runtime.Bool{Value: l <= r}, true, nil
+	case ">":
+		return runtime.Bool{Value: l > r}, true, nil
+	case ">=":
+		return runtime.Bool{Value: l >= r}, true, nil
+	}
+	return nil, false, nil
+}
+
+func foldFloatFloat(op string, l, r float64) (runtime.Value, bool, error) {
+	switch op {
+	case "+":
+		return runtime.Float{Value: l + r}, true, nil
+	case "-":
+		return runtime.Float{Value: l - r}, true, nil
+	case "*":
+		return runtime.Float{Value: l * r}, true, nil
+	case "==":
+		return runtime.Bool{Value: l == r}, true, nil
+	case "!=":
+		return runtime.Bool{Value: l != r}, true, nil
+	case "<":
+		return runtime.Bool{Value: l < r}, true, nil
+	case "<=":
+		return runtime.Bool{Value: l <= r}, true, nil
+	case ">":
+		return runtime.Bool{Value: l > r}, true, nil
+	case ">=":
+		return runtime.Bool{Value: l >= r}, true, nil
+	}
+	return nil, false, nil
+}
+
+func foldStringString(op string, l, r string) (runtime.Value, bool, error) {
+	switch op {
+	case "+":
+		return runtime.String{Value: l + r}, true, nil
+	case "==":
+		return runtime.Bool{Value: l == r}, true, nil
+	case "!=":
+		return runtime.Bool{Value: l != r}, true, nil
+	case "<":
+		return runtime.Bool{Value: l < r}, true, nil
+	case "<=":
+		return runtime.Bool{Value: l <= r}, true, nil
+	case ">":
+		return runtime.Bool{Value: l > r}, true, nil
+	case ">=":
+		return runtime.Bool{Value: l >= r}, true, nil
+	}
+	return nil, false, nil
+}
+
+func foldBoolBool(op string, l, r bool) (runtime.Value, bool, error) {
+	switch op {
+	case "==":
+		return runtime.Bool{Value: l == r}, true, nil
+	case "!=":
+		return runtime.Bool{Value: l != r}, true, nil
+	}
+	return nil, false, nil
 }
 
 func (c *Compiler) emit(op Op, operands ...int64) {

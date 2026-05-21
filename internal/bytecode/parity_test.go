@@ -7523,6 +7523,89 @@ io.println(acc);
 `, "ababababab\nabababababababababab\n")
 }
 
+func TestParityConstantFolding(t *testing.T) {
+	runParity(t, `import io;
+
+io.println(3 + 5);
+io.println(2 * 10);
+io.println(20 - 4);
+io.println(13 // 5);
+io.println(-7 // 3);
+io.println(7 % -3);
+io.println(5 == 5);
+io.println(5 == 6);
+io.println(2 < 3);
+io.println(1.5 + 2.5);
+io.println(2.0 * 3.5);
+io.println(0.5 < 1.0);
+io.println("foo" + "bar");
+io.println("a" == "b");
+io.println(true == true);
+io.println(true != false);
+`, "8\n20\n16\n2\n-3\n-2\ntrue\nfalse\ntrue\n4.0000000000\n7.0000000000\ntrue\nfoobar\nfalse\ntrue\ntrue\n")
+}
+
+func TestParityFieldLookupCacheAcrossClasses(t *testing.T) {
+	runParity(t, `import io;
+
+class A {
+    int x;
+    func A(int x) { this.x = x; }
+}
+
+class B {
+    int x;
+    func B(int x) { this.x = x; }
+}
+
+let a = A(1);
+let b = B(2);
+for (int i = 0; i < 50; i++) {
+    a.x = a.x + 1;
+    b.x = b.x + 10;
+}
+io.println(a.x);
+io.println(b.x);
+`, "51\n502\n")
+}
+
+func TestParityFieldLookupCacheWithGetMagic(t *testing.T) {
+	runParity(t, `import io;
+
+class WithGet {
+    int n;
+    func WithGet(int n) { this.n = n; }
+    func __get(string name): int {
+        return this.n * 100;
+    }
+}
+
+let w = WithGet(3);
+io.println(w.n);
+io.println(w.dynamic);
+io.println(w.other);
+`, "3\n300\n300\n")
+}
+
+func TestParityFieldLookupCacheWithSetMagic(t *testing.T) {
+	runParity(t, `import io;
+
+class WithSet {
+    dict<string, any> extras;
+    func WithSet() { this.extras = {}; }
+    func __set(string name, any value): void {
+        this.extras[name] = value;
+    }
+}
+
+let w = WithSet();
+w.foo = 1;
+w.bar = 2;
+io.println(w.extras["foo"]);
+io.println(w.extras["bar"]);
+`, "1\n2\n")
+}
+
 func TestParityStringAccumulatorEscapesAssignment(t *testing.T) {
 	runParity(t, `import io;
 

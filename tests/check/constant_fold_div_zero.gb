@@ -1,0 +1,7 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag constant-folded integer division by zero.
+ * The compiler evaluates literal `// 0` at compile time and surfaces it as a
+ * type-level error rather than letting it fail at runtime.
+ */
+let x = 5 // 0;
