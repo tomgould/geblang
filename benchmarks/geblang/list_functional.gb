@@ -1,0 +1,18 @@
+import io;
+import sys;
+import collections;
+
+let args = sys.args();
+int n = args.length() > 0 ? args[0].toInt() : 10000;
+
+list<int> items = [];
+for (int i = 0; i < n; i++) {
+    items = items.push(i);
+}
+
+# Filter -> map -> reduce chain.
+let evens = collections.filter(items, func(int x): bool { return x % 2 == 0; });
+let squared = collections.map(evens, func(int x): int { return x * x; });
+int total = collections.reduce(squared, func(int a, int b): int { return a + b; }, 0);
+
+io.println(total);

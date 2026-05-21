@@ -145,6 +145,27 @@ io.println(math.isNaN(42.0f)); # false
 io.println(inf > 1e308f);      # true
 ```
 
+### Statistics
+
+Aggregate stats over a numeric list. `percentile` / `quantile` use R's
+type-7 linear-interpolation algorithm - the most common default
+across numpy, pandas, R, and Excel.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `math.median(xs)` | `float` | 50th percentile, equivalent to `math.quantile(xs, 0.5f)`. |
+| `math.percentile(xs, p)` | `float` | p-th percentile, `p` in `[0, 100]`. |
+| `math.quantile(xs, q)` | `float` | q-quantile, `q` in `[0, 1]`. |
+| `math.mode(xs)` | `float` | Most-frequent value; ties broken by lowest value (deterministic). |
+
+```gb
+let xs = [0, 10, 20, 30, 40];
+io.println(math.median(xs));            # 20
+io.println(math.percentile(xs, 25));    # 10
+io.println(math.percentile(xs, 75));    # 30
+io.println(math.mode([1, 1, 2, 2, 3])); # 1
+```
+
 ---
 
 ## Datetime

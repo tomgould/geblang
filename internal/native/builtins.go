@@ -30,6 +30,7 @@ import (
 	pathlib "path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +60,7 @@ func NewBuiltinRegistry() *Registry {
 	r := NewRegistry()
 	registerMath(r)
 	registerJSON(r)
+	registerCSV(r)
 	registerXML(r)
 	registerTOML(r)
 	registerYAML(r)
@@ -290,6 +292,124 @@ func registerMath(r *Registry) {
 		}
 		return runtime.Bool{Value: math.IsInf(v, 0)}, nil
 	})
+	r.Register("math", "median", func(args []runtime.Value) (runtime.Value, error) {
+		nums, err := mathNumericList(args, "math.median")
+		if err != nil {
+			return nil, err
+		}
+		if len(nums) == 0 {
+			return nil, fmt.Errorf("math.median: list must not be empty")
+		}
+		return runtime.Float{Value: mathQuantile(nums, 0.5)}, nil
+	})
+	r.Register("math", "percentile", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("math.percentile expects (list, p)")
+		}
+		nums, err := mathNumericListSingle(args[0], "math.percentile")
+		if err != nil {
+			return nil, err
+		}
+		if len(nums) == 0 {
+			return nil, fmt.Errorf("math.percentile: list must not be empty")
+		}
+		p, err := FloatLike(args[1])
+		if err != nil {
+			return nil, fmt.Errorf("math.percentile: p must be numeric: %v", err)
+		}
+		if p < 0 || p > 100 {
+			return nil, fmt.Errorf("math.percentile: p must be in [0, 100]")
+		}
+		return runtime.Float{Value: mathQuantile(nums, p/100)}, nil
+	})
+	r.Register("math", "quantile", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("math.quantile expects (list, q)")
+		}
+		nums, err := mathNumericListSingle(args[0], "math.quantile")
+		if err != nil {
+			return nil, err
+		}
+		if len(nums) == 0 {
+			return nil, fmt.Errorf("math.quantile: list must not be empty")
+		}
+		q, err := FloatLike(args[1])
+		if err != nil {
+			return nil, fmt.Errorf("math.quantile: q must be numeric: %v", err)
+		}
+		if q < 0 || q > 1 {
+			return nil, fmt.Errorf("math.quantile: q must be in [0, 1]")
+		}
+		return runtime.Float{Value: mathQuantile(nums, q)}, nil
+	})
+	r.Register("math", "mode", func(args []runtime.Value) (runtime.Value, error) {
+		nums, err := mathNumericList(args, "math.mode")
+		if err != nil {
+			return nil, err
+		}
+		if len(nums) == 0 {
+			return nil, fmt.Errorf("math.mode: list must not be empty")
+		}
+		// Count occurrences; ties broken by lowest value (deterministic).
+		counts := map[float64]int{}
+		for _, v := range nums {
+			counts[v]++
+		}
+		best := nums[0]
+		bestCount := 0
+		for v, c := range counts {
+			if c > bestCount || (c == bestCount && v < best) {
+				best = v
+				bestCount = c
+			}
+		}
+		return runtime.Float{Value: best}, nil
+	})
+}
+
+func mathNumericList(args []runtime.Value, label string) ([]float64, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects a single list argument", label)
+	}
+	return mathNumericListSingle(args[0], label)
+}
+
+func mathNumericListSingle(v runtime.Value, label string) ([]float64, error) {
+	list, ok := v.(runtime.List)
+	if !ok {
+		return nil, fmt.Errorf("%s: argument must be a list", label)
+	}
+	nums := make([]float64, len(list.Elements))
+	for i, elem := range list.Elements {
+		f, err := FloatLike(elem)
+		if err != nil {
+			return nil, fmt.Errorf("%s: list element %d: %v", label, i, err)
+		}
+		nums[i] = f
+	}
+	return nums, nil
+}
+
+// mathQuantile computes the q-quantile (q in [0, 1]) using R's type-7
+// linear-interpolation algorithm — the most common default across
+// numpy, pandas, R, Excel.
+func mathQuantile(nums []float64, q float64) float64 {
+	sorted := append([]float64(nil), nums...)
+	sort.Float64s(sorted)
+	if q <= 0 {
+		return sorted[0]
+	}
+	if q >= 1 {
+		return sorted[len(sorted)-1]
+	}
+	pos := q * float64(len(sorted)-1)
+	lo := int(pos)
+	hi := lo + 1
+	if hi >= len(sorted) {
+		return sorted[len(sorted)-1]
+	}
+	frac := pos - float64(lo)
+	return sorted[lo] + frac*(sorted[hi]-sorted[lo])
 }
 
 func registerJSON(r *Registry) {
@@ -308,17 +428,11 @@ func registerJSON(r *Registry) {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("json.stringify expects exactly one argument")
 		}
-		encoded, err := ValueToJSON(args[0])
+		out, err := EncodeJSONValue(args[0])
 		if err != nil {
 			return nil, err
 		}
-		var out bytes.Buffer
-		encoder := json.NewEncoder(&out)
-		encoder.SetEscapeHTML(false)
-		if err := encoder.Encode(encoded); err != nil {
-			return nil, err
-		}
-		return runtime.String{Value: strings.TrimSuffix(out.String(), "\n")}, nil
+		return runtime.String{Value: out}, nil
 	})
 	r.Register("json", "validate", func(args []runtime.Value) (runtime.Value, error) {
 		text, err := singleString(args, "json.validate")
@@ -3095,6 +3209,45 @@ func reMatchDict(re *regexp.Regexp, match []string) runtime.Dict {
 	return runtime.Dict{Entries: entries}
 }
 
+// regexCache memoises compiled patterns across re.* calls. Tight
+// loops calling re.test / re.find with the same pattern (regex_match
+// bench) used to recompile per call.
+var (
+	regexCacheMu sync.Mutex
+	regexCache   = map[string]*regexp.Regexp{}
+)
+
+const regexCacheMaxEntries = 256
+
+// CompileCachedRegex exposes the package-internal regex cache to other
+// packages that want the same compile-once behaviour.
+func CompileCachedRegex(pattern string) (*regexp.Regexp, error) {
+	return compileCachedRegex(pattern)
+}
+
+func compileCachedRegex(pattern string) (*regexp.Regexp, error) {
+	regexCacheMu.Lock()
+	re, ok := regexCache[pattern]
+	regexCacheMu.Unlock()
+	if ok {
+		return re, nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+	regexCacheMu.Lock()
+	if len(regexCache) >= regexCacheMaxEntries {
+		for k := range regexCache {
+			delete(regexCache, k)
+			break
+		}
+	}
+	regexCache[pattern] = re
+	regexCacheMu.Unlock()
+	return re, nil
+}
+
 func registerRe(r *Registry) {
 	twoStrings := func(args []runtime.Value, label string) (string, string, error) {
 		if len(args) != 2 {
@@ -3113,7 +3266,7 @@ func registerRe(r *Registry) {
 		if err != nil {
 			return nil, err
 		}
-		re, err := regexp.Compile(pattern)
+		re, err := compileCachedRegex(pattern)
 		if err != nil {
 			return nil, fmt.Errorf("re.test: invalid pattern: %v", err)
 		}
@@ -3124,7 +3277,7 @@ func registerRe(r *Registry) {
 		if err != nil {
 			return nil, err
 		}
-		re, err := regexp.Compile(pattern)
+		re, err := compileCachedRegex(pattern)
 		if err != nil {
 			return nil, fmt.Errorf("re.find: invalid pattern: %v", err)
 		}
@@ -3139,7 +3292,7 @@ func registerRe(r *Registry) {
 		if err != nil {
 			return nil, err
 		}
-		re, err := regexp.Compile(pattern)
+		re, err := compileCachedRegex(pattern)
 		if err != nil {
 			return nil, fmt.Errorf("re.findAll: invalid pattern: %v", err)
 		}
@@ -3155,7 +3308,7 @@ func registerRe(r *Registry) {
 		if err != nil {
 			return nil, err
 		}
-		re, err := regexp.Compile(pattern)
+		re, err := compileCachedRegex(pattern)
 		if err != nil {
 			return nil, fmt.Errorf("re.match: invalid pattern: %v", err)
 		}
@@ -3170,7 +3323,7 @@ func registerRe(r *Registry) {
 		if err != nil {
 			return nil, err
 		}
-		re, err := regexp.Compile(pattern)
+		re, err := compileCachedRegex(pattern)
 		if err != nil {
 			return nil, fmt.Errorf("re.matchAll: invalid pattern: %v", err)
 		}
@@ -3191,7 +3344,7 @@ func registerRe(r *Registry) {
 		if !ok1 || !ok2 || !ok3 {
 			return nil, fmt.Errorf("re.replace arguments must be strings")
 		}
-		re, err := regexp.Compile(pattern.Value)
+		re, err := compileCachedRegex(pattern.Value)
 		if err != nil {
 			return nil, fmt.Errorf("re.replace: invalid pattern: %v", err)
 		}
@@ -3202,7 +3355,7 @@ func registerRe(r *Registry) {
 		if err != nil {
 			return nil, err
 		}
-		re, err := regexp.Compile(pattern)
+		re, err := compileCachedRegex(pattern)
 		if err != nil {
 			return nil, fmt.Errorf("re.split: invalid pattern: %v", err)
 		}

@@ -164,7 +164,7 @@ make vscode-install
 This copies the VSIX to `C:\Windows\Temp\` and passes that path to `code`,
 avoiding the *"UNC host 'wsl.localhost' access is not allowed"* error that
 occurs when VS Code tries to open a VSIX from a `\\wsl.localhost\` path
-directly. Never use the VS Code GUI's *Extensions → Install from VSIX…* dialog
+directly. Never use the VS Code GUI's *Extensions to Install from VSIX…* dialog
 to navigate to a file inside WSL  -  use the command above instead.
 
 **Windows (native):**

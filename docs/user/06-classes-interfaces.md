@@ -429,8 +429,8 @@ class Item {
 }
 ```
 
-`@Assert.range(1, 100)` → metadata `{name: "Assert.range", args: [1, 100]}`.
-`@Groups("read", "write", "admin")` → metadata
+`@Assert.range(1, 100)` to metadata `{name: "Assert.range", args: [1, 100]}`.
+`@Groups("read", "write", "admin")` to metadata
 `{name: "Groups", args: ["read", "write", "admin"]}`.
 
 ### Reading decorator metadata

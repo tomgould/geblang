@@ -112,23 +112,31 @@ The same conventions apply to `yaml.parseAs`, `toml.parseAs`, and
 
 ## CSV
 
-Import `csv` for streaming CSV reading. `io.readCSV` and `io.writeCSV`
-handle small in-memory files.
+Import `csv` for both in-memory parsing and streaming.
 
-- `reader(source)` - incremental pull reader
-- `stream(source, handler)` - push-based streaming with a callback per row
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `csv.parse(text, options?)` | `list<list<string>>` | Parses CSV text into a list of rows; each row is a list of cell strings. Options: `delimiter` (single char), `trimSpace` (bool). |
+| `csv.parseDict(text, options?)` | `list<dict<string, string>>` | Parses CSV text using the first row as headers; returns a list of dicts keyed by header name. Same options. |
+| `csv.stringify(rows, options?)` | `string` | Serialises a list-of-lists into CSV text. Options: `delimiter`. |
+| `csv.reader(source)` | `CsvReader` | Returns an incremental pull reader over a file / bytes / string source. Use `.hasNext()`, `.next()`, `.close()`. |
+| `csv.stream(source, handler)` | `void` | Push-based streaming with one callback per row. |
 
 ```gb
 import csv;
 import io;
 
-# Small file - whole-file convenience
-let rows = io.readCSV("data.csv");   # list<list<string>>
-for (row in rows) {
-    io.println(row[0] + ": " + row[1]);
-}
+# In-memory parse / stringify.
+let rows = csv.parse("name,age\nAda,37\nGrace,55");
+io.println(rows[1][0]); # Ada
 
-# Large file - streaming
+let dicts = csv.parseDict("name,age\nAda,37\nGrace,55");
+io.println(dicts[0]["age"]); # 37
+
+# Custom delimiter + trimSpace.
+let semi = csv.parse("a; b; c\n1; 2; 3", {"delimiter": ";", "trimSpace": true});
+
+# Large file - streaming.
 csv.stream(io.open("large.csv", "r"), func(row): void {
     io.println(row[0]);
 });
@@ -210,7 +218,7 @@ if (result["valid"] as bool) {
 |-----------------|-----------------|-----------------------------------------------------|
 | `type`          | any             | `"string"`, `"number"`, `"bool"`, `"object"`, `"array"`, `"null"` |
 | `required`      | object          | list of required property names                     |
-| `properties`    | object          | map of property name → sub-schema                   |
+| `properties`    | object          | map of property name to sub-schema                   |
 | `items`         | array           | sub-schema applied to each element                  |
 | `minimum`       | number          | inclusive lower bound                               |
 | `maximum`       | number          | inclusive upper bound                               |

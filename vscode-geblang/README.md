@@ -28,7 +28,7 @@ Visual Studio Code extension for [Geblang](https://github.com/dgebler/geblang).
   `schedtimer`, `schedticker`.
 - Workspace tasks template at `vscode-geblang/templates/tasks.json` that
   wires `geblang check`, `geblang test`, and `geblang run` into VS Code's
-  Problems panel and Tasks: Run Task menu — copy it into your workspace's
+  Problems panel and Tasks: Run Task menu - copy it into your workspace's
   `.vscode/tasks.json` to enable
 
 ## Requirements

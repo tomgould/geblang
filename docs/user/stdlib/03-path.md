@@ -91,6 +91,7 @@ volumes.
 ```gb
 let configs = path.glob("config/*.yaml");
 let texts = path.glob("*.txt");
+let all = path.glob("src/**/*.gb");
 ```
 
 Supported wildcards:
@@ -100,9 +101,12 @@ Supported wildcards:
 | `*` | Any sequence of non-separator characters |
 | `?` | Any single non-separator character |
 | `[abc]` | Character class |
+| `**` | Zero or more path segments (Python-style recursive match) |
 
-Recursive `**` is not supported by the underlying platform glob. Use
-`io.walkDir` for recursive traversal:
+Recursive `**` walks the tree under the static prefix and matches the
+trailing segment against the suffix. The result is sorted for
+deterministic output. Use `io.walkDir` if you need entry metadata
+(size / modtime) rather than just paths:
 
 ```gb
 for (entry in io.walkDir("src")) {

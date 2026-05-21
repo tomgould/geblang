@@ -268,7 +268,7 @@ def handle_call(fn, args, kwargs):
         image_bytes = args[0]           # bytes
         width       = kwargs["width"]   # int
         result = do_resize(image_bytes, width)
-        return result   # bytes → binary frame
+        return result   # bytes to binary frame
 
     raise ValueError(f"unknown function: {fn}")
 ```
@@ -339,12 +339,12 @@ const gebext = require("./gebext");
 async function handler(fn, args, kwargs) {
     if (fn === "echo") {
         // args[0] is a Buffer - gebext decoded the slot marker
-        return args[0];                // Buffer → binary frame
+        return args[0];                // Buffer to binary frame
     }
     if (fn === "composite") {
         const image = args[0];         // Buffer
         const mask  = args[1];         // Buffer
-        return composite(image, mask); // Buffer → binary frame
+        return composite(image, mask); // Buffer to binary frame
     }
     throw new Error(`unknown function: ${fn}`);
 }

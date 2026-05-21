@@ -1,0 +1,58 @@
+/**
+ * @title CSV stdlib test
+ * @summary csv.parse, csv.parseDict, csv.stringify (in-memory).
+ */
+import test;
+import csv;
+
+class CSVTest extends test.Test {
+    @test
+    func parseSimple(): void {
+        let rows = csv.parse("a,b,c\n1,2,3\n4,5,6");
+        this.assertEquals(3, rows.length);
+        this.assertEquals("a", rows[0][0]);
+        this.assertEquals("5", rows[2][1]);
+    }
+
+    @test
+    func parseDictReadsHeaders(): void {
+        let rows = csv.parseDict("name,age\nAda,37\nGrace,55");
+        this.assertEquals(2, rows.length);
+        this.assertEquals("Ada", rows[0]["name"]);
+        this.assertEquals("55", rows[1]["age"]);
+    }
+
+    @test
+    func parseCustomDelimiter(): void {
+        let rows = csv.parse("a;b;c\n1;2;3", {"delimiter": ";"});
+        this.assertEquals("3", rows[1][2]);
+    }
+
+    @test
+    func parseTrimSpace(): void {
+        let rows = csv.parse("a, b, c\n1, 2, 3", {"trimSpace": true});
+        this.assertEquals("b", rows[0][1]);
+        this.assertEquals("3", rows[1][2]);
+    }
+
+    @test
+    func stringifyRoundtrips(): void {
+        let original = [["name", "age"], ["Ada", "37"], ["Grace", "55"]];
+        let text = csv.stringify(original);
+        let parsed = csv.parse(text);
+        this.assertEquals(3, parsed.length);
+        this.assertEquals("Ada", parsed[1][0]);
+    }
+
+    @test
+    func emptyInput(): void {
+        let rows = csv.parse("");
+        this.assertEquals(0, rows.length);
+    }
+
+    @test
+    func parseDictEmptyAfterHeader(): void {
+        let rows = csv.parseDict("name,age");
+        this.assertEquals(0, rows.length);
+    }
+}

@@ -161,9 +161,30 @@ For *timing-attack-safe* string equality (HMAC verification, token comparison, e
 
 ---
 
+### Regex string-method variants
+
+Three convenience methods route through the `re` module without
+requiring the `import re`:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `splitRegex(pattern)` | `list<string>` | Split by a regex pattern. |
+| `replaceRegex(pattern, replacement)` | `string` | Replace every regex match. `$1` / `$2` capture-group references work in the replacement. |
+| `matchesRegex(pattern)` | `bool` | True when the string contains a match. |
+
+```gb
+let parts = "foo, bar; baz".splitRegex("[,;] *");          # ["foo","bar","baz"]
+let normalised = "John Smith".replaceRegex("(\\w+) (\\w+)", "$2, $1"); # "Smith, John"
+let ok = "foo123".matchesRegex("[a-z]+[0-9]+");            # true
+```
+
+The pattern compile cache (introduced in 1.0.5 for the `re` module)
+applies here too, so repeated calls with the same pattern skip the
+recompile.
+
 ## Builder: `strings.StringBuilder`
 
-Import `strings`. `StringBuilder` is a builder-backed accumulator. Use it for tight loops that append many fragments — internally a single `strings.Builder` grows amortised O(n) instead of the O(n²) cost of repeated `acc = acc + fragment` allocating a fresh string every iteration.
+Import `strings`. `StringBuilder` is a builder-backed accumulator. Use it for tight loops that append many fragments - internally a single `strings.Builder` grows amortised O(n) instead of the O(n²) cost of repeated `acc = acc + fragment` allocating a fresh string every iteration.
 
 ```gb
 import strings;
@@ -196,7 +217,7 @@ string acc = "";
 for (int i = 0; i < 10000; i++) {
     acc = acc + "x";          # compiler emits builder-backed append
 }
-io.println(acc.length());     # 10000 — acc materialises here
+io.println(acc.length());     # 10000 - acc materialises here
 ```
 
 Reach for the explicit `StringBuilder` when the auto-rewrite doesn't apply: dynamic (non-literal) RHS, accumulator written through a class field, or when you want chained writes (`sb.append("a").append("b")`).

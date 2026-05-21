@@ -103,7 +103,7 @@ log.info("user.login", {"user_id": id, "ip": req.remoteAddr});
 ```
 
 Pipe stdout straight into your platform's log collector
-(stdout/stderr → Cloud Logging / Loki / Datadog / Elastic).
+(stdout/stderr to Cloud Logging / Loki / Datadog / Elastic).
 
 ### Tracing And Metrics
 
@@ -187,7 +187,7 @@ doWork();
 io.println("took " + (time.elapsed(t) as string) + "ms");
 ```
 
-A 3-5× repeat is usually enough to filter noise; if you need
+A 3-5x repeat is usually enough to filter noise; if you need
 statistically robust numbers, lean on `benchmarks/run.py` which already
 does a 7-run median across geblang/python/php for comparison.
 

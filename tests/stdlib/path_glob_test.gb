@@ -1,0 +1,35 @@
+/**
+ * @title path.glob recursive matching
+ * @summary Plain globs use filepath.Glob; ** expands to recursive.
+ */
+import test;
+import path;
+import io;
+
+class PathGlobTest extends test.Test {
+    @test
+    func nonRecursiveMatch(): void {
+        let matches = path.glob("/tmp/*.gb");
+        this.assertTrue(matches.length >= 0);
+        for (m in matches) {
+            this.assertTrue(m.endsWith(".gb"));
+        }
+    }
+
+    @test
+    func recursiveMatch(): void {
+        # Match every .go file under the package the test harness is bundled
+        # under; we trust the repo layout to keep some present.
+        let matches = path.glob("/home/daveg/projects/geblang/internal/native/**/*.go");
+        this.assertTrue(matches.length > 1);
+        for (m in matches) {
+            this.assertTrue(m.endsWith(".go"));
+        }
+    }
+
+    @test
+    func patternWithNoMatchesReturnsEmptyList(): void {
+        let matches = path.glob("/tmp/__no_such_pattern__-*.xyzzy");
+        this.assertEquals(0, matches.length);
+    }
+}

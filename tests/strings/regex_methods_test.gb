@@ -1,0 +1,53 @@
+/**
+ * @title string regex methods
+ * @summary splitRegex / replaceRegex / matchesRegex.
+ */
+import test;
+
+class RegexStringMethodsTest extends test.Test {
+    @test
+    func splitRegex(): void {
+        let parts = "foo, bar; baz".splitRegex("[,;] *");
+        this.assertEquals(["foo", "bar", "baz"], parts);
+    }
+
+    @test
+    func splitRegexNoMatch(): void {
+        let parts = "single".splitRegex(",");
+        this.assertEquals(["single"], parts);
+    }
+
+    @test
+    func replaceRegex(): void {
+        let out = "hello 1 world 22 done".replaceRegex("[0-9]+", "#");
+        this.assertEquals("hello # world # done", out);
+    }
+
+    @test
+    func replaceRegexWithBackreference(): void {
+        # Go regexp supports $1 syntax.
+        let out = "John Smith".replaceRegex("(\\w+) (\\w+)", "$2, $1");
+        this.assertEquals("Smith, John", out);
+    }
+
+    @test
+    func matchesRegexTrue(): void {
+        this.assertTrue("foo123".matchesRegex("[a-z]+[0-9]+"));
+    }
+
+    @test
+    func matchesRegexFalse(): void {
+        this.assertFalse("foo".matchesRegex("[0-9]+"));
+    }
+
+    @test
+    func invalidPatternRaises(): void {
+        let caught = false;
+        try {
+            "x".splitRegex("(unclosed");
+        } catch (RuntimeError e) {
+            caught = true;
+        }
+        this.assertTrue(caught);
+    }
+}

@@ -94,6 +94,17 @@ type VM struct {
 	fieldLookupHasGetMag bool
 	fieldLookupHasSetMag bool
 	fieldLookupValid     bool
+	// Re-entry knobs used by callBytecodeInline to host a nested
+	// function invocation on the same VM without rebuilding the chunk.
+	runEntryIP         int
+	runInlineExitDepth int // -1 = top-level (exit on OpReturn with frames==0); >=0 = inline (exit when frames drops to this)
+	runSuppressCleanup bool
+	// Tracks whether Run() is currently executing the dispatch loop on
+	// this goroutine. callBytecodeInline relies on this being true so
+	// that native callbacks fired from a different goroutine (e.g. a
+	// stateful native module's async hook) take the runWrapper path
+	// instead of mutating shared state.
+	inDispatchLoop bool
 	// False when chunk has no decorators/async/generators; lets
 	// vm.call skip the three per-call probes for those features.
 	requiresCallSitePolymorphism bool
@@ -306,7 +317,7 @@ func NewVM(chunk Chunk, stdout io.Writer) *VM {
 	// per-VM metadata (typeParamSet, paramTypeSpecs, etc.) without
 	// racing concurrent VMs that share the same source chunk.
 	chunk.Functions = append([]FunctionInfo(nil), chunk.Functions...)
-	vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), locals: make([]runtime.VMValue, localSize), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: classIndex, natives: native.NewBuiltinRegistry(), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, typeSpecCache: map[string]vmTypeSpec{}}
+	vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), locals: make([]runtime.VMValue, localSize), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: classIndex, natives: native.NewBuiltinRegistry(), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
 	vm.prepareFunctionTypeMetadata()
 	vm.prewarmLocalsPool()
 	// Register an InstanceInvoker so native code (e.g.
@@ -642,23 +653,29 @@ func (vm *VM) SetMaxCallDepth(limit int) {
 }
 
 func (vm *VM) Run() (err error) {
-	// Mirror the evaluator's behaviour: after a script finishes
-	// (success, exit, or runtime error) drain the destructor
-	// registry so end-of-lifetime cleanup is deterministic.
-	defer func() {
-		cleanupErr := vm.Cleanup()
-		if err == nil && cleanupErr != nil {
-			err = cleanupErr
+	if !vm.runSuppressCleanup {
+		// Mirror the evaluator's behaviour: after a script finishes
+		// (success, exit, or runtime error) drain the destructor
+		// registry so end-of-lifetime cleanup is deterministic.
+		defer func() {
+			cleanupErr := vm.Cleanup()
+			if err == nil && cleanupErr != nil {
+				err = cleanupErr
+			}
+		}()
+		if err := vm.ensureCallableDecorators(); err != nil {
+			return err
 		}
-	}()
-	if err := vm.ensureCallableDecorators(); err != nil {
-		return err
 	}
+	inlineExitDepth := vm.runInlineExitDepth
+	oldInDispatch := vm.inDispatchLoop
+	vm.inDispatchLoop = true
+	defer func() { vm.inDispatchLoop = oldInDispatch }()
 	// Hoist instructions slice into a local so each iteration reads from
 	// a stable register-resident pointer instead of dereferencing
 	// vm.chunk.Instructions through the VM struct on every fetch.
 	instructions := vm.chunk.Instructions
-	for ip := 0; ip < len(instructions); ip++ {
+	for ip := vm.runEntryIP; ip < len(instructions); ip++ {
 		instruction := instructions[ip]
 		switch instruction.Op {
 		case OpNoop:
@@ -1785,6 +1802,9 @@ func (vm *VM) Run() (err error) {
 			// straight back without converting through runtime.Value.
 			if returnOverride == nil && !isErrorClass && !isImmutableClass && !negateReturn && !isDestructibleConstructor {
 				vm.pushVM(valueVM)
+				if inlineExitDepth >= 0 && len(vm.frames) <= inlineExitDepth {
+					return nil
+				}
 				ip = returnIP
 				continue
 			}
@@ -1830,6 +1850,9 @@ func (vm *VM) Run() (err error) {
 				value = runtime.Bool{Value: !boolValue.Value}
 			}
 			vm.push(value)
+			if inlineExitDepth >= 0 && len(vm.frames) <= inlineExitDepth {
+				return nil
+			}
 			ip = returnIP
 		case OpYield:
 			value, err := vm.pop()
@@ -7016,14 +7039,18 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value) runtime.Value {
 		return runtime.Function{
 			Name: callable.Name,
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-				return vm.callCallable(callable, args)
+				// Wrapped bridges can fire from arbitrary goroutines
+				// (http handlers, websocket events). Take the slow
+				// runWrapper path so a fresh chunk + sub-VM isolates
+				// state.
+				return vm.callCallableSlow(callable, args)
 			},
 		}
 	case runtime.BytecodeClosure:
 		return runtime.Function{
 			Name: callable.Name,
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-				return vm.callCallable(callable, args)
+				return vm.callCallableSlow(callable, args)
 			},
 		}
 	case runtime.List:
@@ -7702,6 +7729,75 @@ func valuesCompare(left, right runtime.Value) (int, error) {
 	return native.NumericCompare(left, right)
 }
 
+// callBytecodeInline invokes a bytecode function on the current VM without
+// rebuilding the chunk. Used as the fast path for callCallable when the
+// target is a BytecodeFunction or no-upvalue BytecodeClosure in the same
+// module. Returns the function's return value and pops it off the stack.
+func (vm *VM) callBytecodeInline(funcIndex int64, args []runtime.Value) (runtime.Value, error) {
+	if funcIndex < 0 || int(funcIndex) >= len(vm.chunk.Functions) {
+		return nil, fmt.Errorf("function index out of range")
+	}
+	function := vm.chunk.Functions[funcIndex]
+	if function.IsGenerator || function.Async {
+		return nil, fmt.Errorf("inline call does not support generator/async functions")
+	}
+	baseline := len(vm.frames)
+	stackArgs := make([]runtime.VMValue, len(args))
+	for i, a := range args {
+		stackArgs[i] = runtime.VMValueFromValue(a)
+	}
+	// runDefers shrinks vm.defers before iterating its actions, so
+	// when an action lands here the slice is one slot short of the
+	// frame-stack invariant startFunctionVMValue relies on. Restore
+	// it for the inline call and snap back to the caller's expected
+	// length when Run() returns so the parent runDefers iteration
+	// can't read stale slots.
+	savedDefersLen := len(vm.defers)
+	oldEntryIP := vm.runEntryIP
+	oldExitDepth := vm.runInlineExitDepth
+	oldSuppress := vm.runSuppressCleanup
+	defer func() {
+		if len(vm.defers) > savedDefersLen {
+			for i := savedDefersLen; i < len(vm.defers); i++ {
+				vm.defers[i] = vm.defers[i][:0]
+			}
+			vm.defers = vm.defers[:savedDefersLen]
+		}
+		vm.runEntryIP = oldEntryIP
+		vm.runInlineExitDepth = oldExitDepth
+		vm.runSuppressCleanup = oldSuppress
+	}()
+	nextIP, err := vm.startFunctionVMValue(Instruction{}, 0, function, stackArgs, nil)
+	if err != nil {
+		return nil, err
+	}
+	// startFunctionVMValue returns Entry-1 to compensate for the dispatch
+	// loop's ip++ after the calling instruction. We're entering the loop
+	// fresh, so increment to the actual function entry.
+	vm.runEntryIP = nextIP + 1
+	vm.runInlineExitDepth = baseline
+	vm.runSuppressCleanup = true
+	if err := vm.Run(); err != nil {
+		return nil, err
+	}
+	result, err := vm.popVM()
+	if err != nil {
+		return nil, err
+	}
+	return result.ToValue(), nil
+}
+
+// callCallableSlow mirrors callCallable but disables the
+// callBytecodeInline fast path. Used by stateful native bridges where
+// the callback can fire on a different goroutine than the VM dispatch
+// loop and inline state mutations would race.
+func (vm *VM) callCallableSlow(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	old := vm.inDispatchLoop
+	vm.inDispatchLoop = false
+	defer func() { vm.inDispatchLoop = old }()
+	return vm.callCallable(fn, args)
+}
+
 func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
 	switch f := fn.(type) {
 	case runtime.Function:
@@ -7732,6 +7828,9 @@ func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Valu
 			}
 			return vm.CallFunctionRaw(f.Index, args)
 		}
+		if vm.inDispatchLoop && !vm.requiresCallSitePolymorphism {
+			return vm.callBytecodeInline(f.Index, args)
+		}
 		return vm.CallFunction(f.Index, args)
 	case runtime.BytecodeClosure:
 		if f.Module != "" && f.Module != vm.moduleName {
@@ -7739,6 +7838,9 @@ func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Valu
 				return nil, fmt.Errorf("bytecode module loader is not configured")
 			}
 			return vm.moduleLoader.CallModuleClosure(f, vm.wrapStatefulNativeArgs(args))
+		}
+		if vm.inDispatchLoop && len(f.Upvalues) == 0 && f.TypeBindings == nil && !vm.requiresCallSitePolymorphism {
+			return vm.callBytecodeInline(f.FunctionIndex, args)
 		}
 		constants := make([]runtime.Value, 0, len(args)+2)
 		constants = append(constants, f)
@@ -11246,6 +11348,51 @@ func (vm *VM) dictCollectionsMethod(graph runtime.Dict, name string, args []runt
 	return nil, false, nil
 }
 
+func primitiveReSplit(patternArg runtime.Value, text string) (runtime.Value, error) {
+	pattern, ok := patternArg.(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("regex pattern must be string")
+	}
+	re, err := native.CompileCachedRegex(pattern.Value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex pattern: %v", err)
+	}
+	parts := re.Split(text, -1)
+	out := make([]runtime.Value, len(parts))
+	for i, p := range parts {
+		out[i] = runtime.String{Value: p}
+	}
+	return runtime.List{Elements: out}, nil
+}
+
+func primitiveReReplace(patternArg runtime.Value, text string, replArg runtime.Value) (runtime.Value, error) {
+	pattern, ok := patternArg.(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("regex pattern must be string")
+	}
+	repl, ok := replArg.(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("regex replacement must be string")
+	}
+	re, err := native.CompileCachedRegex(pattern.Value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex pattern: %v", err)
+	}
+	return runtime.String{Value: re.ReplaceAllString(text, repl.Value)}, nil
+}
+
+func primitiveReMatches(patternArg runtime.Value, text string) (runtime.Value, error) {
+	pattern, ok := patternArg.(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("regex pattern must be string")
+	}
+	re, err := native.CompileCachedRegex(pattern.Value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex pattern: %v", err)
+	}
+	return runtime.Bool{Value: re.MatchString(text)}, nil
+}
+
 func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) (runtime.Value, error) {
 	switch strings.ToLower(name) {
 	case "toint", "todecimal", "tofloat", "tobool":
@@ -11559,6 +11706,33 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 		}
 		return runtime.String{Value: strings.Replace(value.Value, oldValue.Value, newValue.Value, count)}, nil
+	case "splitregex":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("string.splitRegex expects one argument")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method splitRegex", receiver.TypeName())
+		}
+		return primitiveReSplit(args[0], value.Value)
+	case "replaceregex":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("string.replaceRegex expects (pattern, replacement)")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method replaceRegex", receiver.TypeName())
+		}
+		return primitiveReReplace(args[0], value.Value, args[1])
+	case "matchesregex":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("string.matchesRegex expects one argument")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method matchesRegex", receiver.TypeName())
+		}
+		return primitiveReMatches(args[0], value.Value)
 	case "split":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("string.split expects one argument")

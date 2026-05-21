@@ -6840,8 +6840,11 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"stream":           e.yamlStream,
 		},
 		"csv": {
-			"reader": e.csvReader,
-			"stream": e.csvStream,
+			"reader":    e.csvReader,
+			"stream":    e.csvStream,
+			"parse":     e.registryBuiltin("csv", "parse"),
+			"parseDict": e.registryBuiltin("csv", "parseDict"),
+			"stringify": e.registryBuiltin("csv", "stringify"),
 		},
 		"bytes": {
 			"fromString": e.registryBuiltin("bytes", "fromString"),
@@ -7291,10 +7294,14 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"sign":  e.registryBuiltin("math", "sign"),
 			"cbrt":  e.registryBuiltin("math", "cbrt"),
 			"hypot": e.registryBuiltin("math", "hypot"),
-			"inf":   e.registryBuiltin("math", "inf"),
-			"nan":   e.registryBuiltin("math", "nan"),
-			"isNaN": e.registryBuiltin("math", "isNaN"),
-			"isInf": e.registryBuiltin("math", "isInf"),
+			"inf":        e.registryBuiltin("math", "inf"),
+			"nan":        e.registryBuiltin("math", "nan"),
+			"isNaN":      e.registryBuiltin("math", "isNaN"),
+			"isInf":      e.registryBuiltin("math", "isInf"),
+			"median":     e.registryBuiltin("math", "median"),
+			"percentile": e.registryBuiltin("math", "percentile"),
+			"quantile":   e.registryBuiltin("math", "quantile"),
+			"mode":       e.registryBuiltin("math", "mode"),
 		},
 		"errors": {
 			"new":           e.registryBuiltin("errors", "new"),
@@ -9387,7 +9394,7 @@ func pathGlob(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 	if err != nil {
 		return nil, err
 	}
-	matches, err := filepath.Glob(pattern)
+	matches, err := globRecursive(pattern)
 	if err != nil {
 		return nil, err
 	}
@@ -9396,6 +9403,65 @@ func pathGlob(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 		values[i] = runtime.String{Value: m}
 	}
 	return runtime.List{Elements: values}, nil
+}
+
+// globRecursive extends filepath.Glob with Python-style `**` to match
+// zero or more path segments. Paths containing `**` are split into
+// prefix / suffix; each candidate under the prefix that satisfies the
+// reduced pattern is included.
+func globRecursive(pattern string) ([]string, error) {
+	if !strings.Contains(pattern, "**") {
+		return filepath.Glob(pattern)
+	}
+	// Find the longest static prefix (no glob meta) up to the first **.
+	idx := strings.Index(pattern, "**")
+	prefix := pattern[:idx]
+	suffix := strings.TrimPrefix(pattern[idx+2:], "/")
+	root := prefix
+	if root == "" {
+		root = "."
+	} else if strings.HasSuffix(root, "/") {
+		root = root[:len(root)-1]
+	} else {
+		// pattern like "a**b" — anchor the walk at the parent dir of
+		// `prefix` and treat the rest as a per-name suffix.
+		parent := filepath.Dir(root)
+		if parent == "" {
+			parent = "."
+		}
+		root = parent
+	}
+	var matches []string
+	err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel := p
+		if prefix != "" {
+			if !strings.HasPrefix(p, strings.TrimSuffix(prefix, "/")) {
+				return nil
+			}
+			rel = strings.TrimPrefix(p, strings.TrimSuffix(prefix, "/"))
+			rel = strings.TrimPrefix(rel, "/")
+		}
+		if suffix == "" {
+			matches = append(matches, p)
+			return nil
+		}
+		ok, err := filepath.Match(suffix, filepath.Base(rel))
+		if err != nil {
+			return err
+		}
+		if ok {
+			matches = append(matches, p)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(matches)
+	return matches, nil
 }
 
 func watchSnapshot(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -18981,6 +19047,21 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				out = append(out, runtime.String{Value: part})
 			}
 			return runtime.List{Elements: out}, nil
+		case "splitRegex":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("string.splitRegex expects one argument")
+			}
+			return e.natives.Call("re", "split", []runtime.Value{args[0], value})
+		case "replaceRegex":
+			if len(args) != 2 {
+				return nil, fmt.Errorf("string.replaceRegex expects (pattern, replacement)")
+			}
+			return e.natives.Call("re", "replace", []runtime.Value{args[0], args[1], value})
+		case "matchesRegex":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("string.matchesRegex expects one argument")
+			}
+			return e.natives.Call("re", "test", []runtime.Value{args[0], value})
 		case "indexOf":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("string.indexOf expects one argument")

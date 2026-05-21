@@ -1,0 +1,38 @@
+import io;
+import sys;
+import json;
+
+let args = sys.args();
+int n = args.length() > 0 ? args[0].toInt() : 200;
+
+let payload = {
+    "name": "Geblang",
+    "version": "1.0.5",
+    "tags": ["script", "static", "decimals"],
+    "metrics": {"users": 12345, "posts": 678910, "active": true},
+    "items": [
+        {"id": 1, "title": "alpha", "score": 95, "labels": ["x", "y"]},
+        {"id": 2, "title": "beta",  "score": 80, "labels": ["x", "z"]},
+        {"id": 3, "title": "gamma", "score": 75, "labels": ["z"]},
+        {"id": 4, "title": "delta", "score": 60, "labels": ["y", "z"]}
+    ]
+};
+
+# Inflate to ~1 MB by wrapping the payload in a list with many copies.
+let bulk = {"records": []};
+for (int i = 0; i < 800; i++) {
+    bulk["records"] = bulk["records"].push(payload);
+}
+
+let text = json.stringify(bulk);
+int textLen = text.length();
+
+int total = 0;
+for (int i = 0; i < n; i++) {
+    let parsed = json.parse(text);
+    let again = json.stringify(parsed);
+    total = total + again.length();
+}
+
+io.println(textLen);
+io.println(total);

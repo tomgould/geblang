@@ -67,6 +67,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"pow": {}, "pi": {}, "e": {},
 		"log2": {}, "trunc": {}, "sign": {}, "cbrt": {}, "hypot": {},
 		"inf": {}, "nan": {}, "isNaN": {}, "isInf": {},
+		"median": {}, "percentile": {}, "quantile": {}, "mode": {},
 	},
 	"sys": {
 		"hostname": {}, "pid": {}, "platform": {}, "arch": {},
@@ -147,6 +148,9 @@ var pureBuiltins = map[string]map[string]struct{}{
 	"strbuilder": {
 		"new": {}, "append": {}, "appendLine": {}, "build": {},
 		"length": {}, "clear": {}, "dispose": {},
+	},
+	"csv": {
+		"parse": {}, "parseDict": {}, "stringify": {},
 	},
 	"compress": {
 		"gzip": {}, "gunzip": {},

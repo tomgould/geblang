@@ -1,6 +1,7 @@
 package native
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -272,7 +273,7 @@ func JSONToValue(value any) (runtime.Value, error) {
 		}
 		return runtime.List{Elements: elements}, nil
 	case map[string]any:
-		entries := map[string]runtime.DictEntry{}
+		entries := make(map[string]runtime.DictEntry, len(value))
 		for key, item := range value {
 			converted, err := JSONToValue(item)
 			if err != nil {
@@ -285,6 +286,126 @@ func JSONToValue(value any) (runtime.Value, error) {
 	default:
 		return nil, fmt.Errorf("unsupported JSON value %T", value)
 	}
+}
+
+// EncodeJSONValue serialises a runtime.Value as a JSON string directly,
+// without the runtime.Value -> any -> json.Encoder intermediate of
+// ValueToJSON. Skips the map[string]any allocations json.stringify
+// otherwise pays per dict (heavy on json_roundtrip).
+func EncodeJSONValue(value runtime.Value) (string, error) {
+	var buf bytes.Buffer
+	if err := encodeJSONValueInto(&buf, value); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
+	switch v := value.(type) {
+	case runtime.Null:
+		buf.WriteString("null")
+		return nil
+	case runtime.Bool:
+		if v.Value {
+			buf.WriteString("true")
+		} else {
+			buf.WriteString("false")
+		}
+		return nil
+	case runtime.SmallInt:
+		buf.WriteString(strconv.FormatInt(v.Value, 10))
+		return nil
+	case runtime.Int:
+		if v.Value.IsInt64() {
+			buf.WriteString(strconv.FormatInt(v.Value.Int64(), 10))
+			return nil
+		}
+		// Bigints larger than int64 are encoded as strings to round-trip
+		// through downstream decoders that can't represent them as Number.
+		buf.WriteByte('"')
+		buf.WriteString(v.Value.String())
+		buf.WriteByte('"')
+		return nil
+	case runtime.Decimal:
+		buf.WriteString(v.Value.FloatString(10))
+		return nil
+	case runtime.Float:
+		text, err := json.Marshal(v.Value)
+		if err != nil {
+			return err
+		}
+		buf.Write(text)
+		return nil
+	case runtime.String:
+		return encodeJSONString(buf, v.Value)
+	case runtime.Bytes:
+		buf.WriteByte('"')
+		buf.WriteString(base64.StdEncoding.EncodeToString(v.Value))
+		buf.WriteByte('"')
+		return nil
+	case runtime.List:
+		buf.WriteByte('[')
+		for i, item := range v.Elements {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := encodeJSONValueInto(buf, item); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte(']')
+		return nil
+	case runtime.Dict:
+		buf.WriteByte('{')
+		// Sort keys so output is deterministic (json.Marshal of a Go
+		// map alphabetises by default; downstream code relies on it).
+		keys := make([]string, 0, len(v.Entries))
+		for k, entry := range v.Entries {
+			if _, ok := entry.Key.(runtime.String); !ok {
+				return fmt.Errorf("json.stringify only supports dicts with string keys")
+			}
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for i, k := range keys {
+			entry := v.Entries[k]
+			key := entry.Key.(runtime.String)
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := encodeJSONString(buf, key.Value); err != nil {
+				return err
+			}
+			buf.WriteByte(':')
+			if err := encodeJSONValueInto(buf, entry.Value); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte('}')
+		return nil
+	case *runtime.Instance:
+		converted, err := instanceToSerializable(v, ValueToJSON)
+		if err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(converted)
+		if err != nil {
+			return err
+		}
+		buf.Write(encoded)
+		return nil
+	default:
+		return fmt.Errorf("json.stringify does not support %s", v.TypeName())
+	}
+}
+
+func encodeJSONString(buf *bytes.Buffer, s string) error {
+	encoded, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	buf.Write(encoded)
+	return nil
 }
 
 // ValueToJSON converts a runtime.Value to a plain Go value suitable for JSON encoding.

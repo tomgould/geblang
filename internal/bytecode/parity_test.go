@@ -7545,6 +7545,54 @@ io.println(true != false);
 `, "8\n20\n16\n2\n-3\n-2\ntrue\nfalse\ntrue\n4.0000000000\n7.0000000000\ntrue\nfoobar\nfalse\ntrue\ntrue\n")
 }
 
+func TestParityStringRegexMethods(t *testing.T) {
+	runParity(t, `import io;
+
+io.println("foo,bar,baz".splitRegex(",").length);
+io.println("foo, bar; baz".replaceRegex("[,;] *", "|"));
+io.println("foo123".matchesRegex("[a-z]+[0-9]+"));
+io.println("only-letters".matchesRegex("[0-9]+"));
+`, "3\nfoo|bar|baz\ntrue\nfalse\n")
+}
+
+func TestParityMathStats(t *testing.T) {
+	runParity(t, `import io;
+import math;
+
+let xs = [0, 10, 20, 30, 40];
+io.println(math.median(xs));
+io.println(math.percentile(xs, 25));
+io.println(math.percentile(xs, 75));
+io.println(math.mode([1, 1, 2, 2, 3]));
+`, "20\n10\n30\n1\n")
+}
+
+func TestParityCSVParseAndStringify(t *testing.T) {
+	runParity(t, `import io;
+import csv;
+
+let text = "a,b,c\n1,2,3\n4,5,6";
+let rows = csv.parse(text);
+io.println(rows.length);
+io.println(rows[1][1]);
+
+let dicts = csv.parseDict(text);
+io.println(dicts[0]["b"]);
+io.println(dicts[1]["c"]);
+`, "3\n2\n2\n6\n")
+}
+
+func TestParityCSVCustomDelimiter(t *testing.T) {
+	runParity(t, `import io;
+import csv;
+
+let text = "a;b;c\n1;2;3";
+let rows = csv.parse(text, {"delimiter": ";"});
+io.println(rows.length);
+io.println(rows[1][2]);
+`, "2\n3\n")
+}
+
 func TestParityFieldLookupCacheAcrossClasses(t *testing.T) {
 	runParity(t, `import io;
 

@@ -4,34 +4,35 @@
 
 ### Performance
 
-- Tagged `VMValue` fast paths in `vm.add` and `vm.binaryNumeric`:
-  pop `VMValue`, check the tag, short-circuit SmallInt+SmallInt and
-  Float+Float through direct int64 / float64 arithmetic; fall back
-  to interface conversion only when the tag check misses. Bench
-  impact: `dict_ops` 27 ms → 19 ms (-30%) on the untyped arithmetic
-  path.
-- Compile-time constant folding for arithmetic on literal operands:
-  `3 + 5` → `8`, `"foo" + "bar"` → `"foobar"`, comparisons, and
-  Geblang-floor `//` / `%`. Constant div-by-zero surfaces as a
+- `acc = acc + "literal"` in tight loops now uses a hidden builder;
+  `string_concat` 78 to 8 ms.
+- Callbacks (`collections.map` / `filter` / `reduce` etc.) no longer
+  rebuild a sub-VM per call; `list_functional` 1604 to 13 ms.
+- Regex compile cache (`re.*`); `regex_match` 187 to 64 ms.
+- Field-access inline cache; `class_dispatch` 26 to 21 ms.
+- Tagged-`VMValue` arithmetic on hot ops; `dict_ops` 27 to 19 ms.
+- Compile-time folding of literal arithmetic; div-by-zero is a
   check-time error.
-- Field-access inline cache on `OpGetField` / `OpSetField`: single
-  slot keyed by `(class pointer, field name)` records whether the
-  name is a known field and whether `__get` / `__set` magic methods
-  exist. Bench impact: `class_dispatch` 26 ms → 21 ms (-19%).
-- Builder-backed `acc = acc + "literal"` in tight loops: new
-  `OpAppendStringConstStmt` keeps the local as a hidden builder
-  between iterations; slow-path reads materialise back to `string`.
-  Bench impact: `string_concat` 78 ms → 8 ms (-90%). Geblang now
-  beats both Python and PHP on the bench. Chunk format 54 → 55.
+- Direct `runtime.Value` to JSON encoder.
 
-### Language features
+### Stdlib
 
-- `strings.StringBuilder` class (`stdlib/strings.gb`) for cases the
-  auto-rewrite doesn't cover. Methods: `append`, `appendLine`,
-  `build`, `length`, `clear`, `dispose`. Wraps the new low-level
-  `strbuilder` native module.
+- `strings.StringBuilder` class for explicit builder-backed string
+  assembly.
+- `csv.parse` / `csv.parseDict` / `csv.stringify` for in-memory CSV;
+  options: `delimiter`, `trimSpace`.
+- `path.glob` now supports Python-style `**` recursive matches.
+- `math.median` / `percentile` / `quantile` / `mode` over numeric
+  lists. R type-7 linear interpolation.
+- String methods `splitRegex`, `replaceRegex`, `matchesRegex` for
+  regex-aware split / replace-all / test.
 
-## 1.0.4 (unreleased)
+### Benchmarks
+
+Three new scoreboard benches: `regex_match`, `json_roundtrip`,
+`list_functional`.
+
+## 1.0.4
 
 Bytecode VM hot-path performance + a lifted compiler parity gap,
 on top of the type-matcher fixes that surfaced building the Gebweb
@@ -89,7 +90,7 @@ Profile-guided round (Geblang's own `profiler.snapshot()` /
   and `global = global + "literal"` now compile to a single
   `OpAppendStringConst` / `OpAppendGlobalStringConst` instead of
   the three-opcode sequence `OpGetLocal`/`OpAddStringConst`/
-  `OpSetLocal`. Bytecode chunk format version bumped 53 → 54.
+  `OpSetLocal`. Bytecode chunk format version bumped 53 to 54.
 
 - **REPL accepts `1 as bool`.** The REPL's auto-semicolon-insertion
   treated only identifier / numeric-literal stmt-end tokens as
@@ -171,7 +172,7 @@ removal would address those; both queued for 1.0.5.
   existing `staticIntExpr`), it emits a specialised `OpAddString`
   opcode that runs the concat inline with no type switch or
   method-dispatch detour. Mirrors the existing `OpAddInt` family
-  for ints. Bytecode chunk format version bumped 50 → 51.
+  for ints. Bytecode chunk format version bumped 50 to 51.
 
 - **Method-pointer lookup cache** (`vm.go:lookupMethodLower`).
   A single-slot cache keyed by (class name, lowered method name)
@@ -181,7 +182,7 @@ removal would address those; both queued for 1.0.5.
   `class_dispatch`-shaped workload) hit the cache on >99% of
   calls and skip the map lookup entirely.
 
-Bench impact (median ms, before → after Tier 1 + Tier 2,
+Bench impact (median ms, before to after Tier 1 + Tier 2,
 over 3 runs):
 
 | Bench | Before | After | Δ |
@@ -233,8 +234,8 @@ Tier A follow-up (`vm.go` + `bytecode.go`):
   was added with an inline `Str string` field so `OpAddString`
   could skip the interface-box heap allocation per push. Grew
   `VMValue` from 32 B to 48 B (+50 %), which regressed
-  `string_concat` (69 → 82 ms), `dict_ops` (18 → 23 ms),
-  `class_dispatch` (37 → 42 ms), and `recursive_fib` (85 → 95 ms)
+  `string_concat` (69 to 82 ms), `dict_ops` (18 to 23 ms),
+  `class_dispatch` (37 to 42 ms), and `recursive_fib` (85 to 95 ms)
   via worse cache locality on the stack/locals/globals slices.
   Reverted. The runtime.String interface box remains the dominant
   per-iteration cost on `string_concat`; closing it cleanly needs
@@ -258,7 +259,7 @@ Tier A follow-up (`vm.go` + `bytecode.go`):
   fall back to the evaluator - lifting those needs full
   expression evaluation at call time, which is a bigger
   restructuring of the calling convention. Bytecode chunk format
-  version bumped 51 → 52. New parity test
+  version bumped 51 to 52. New parity test
   `TestParityEmptyContainerDefaults`; new language test
   `tests/functions/empty_container_defaults_test.gb`.
 
@@ -692,7 +693,7 @@ building Gebweb.
   See *Classes And Interfaces > Decorators* in the manual for the
   semantics. New parity test
   `TestParityFieldDecoratorsAndDottedNames`.
-- **Chunk format Version 49 → 50.** New per-field decorator-
+- **Chunk format Version 49 to 50.** New per-field decorator-
   metadata list parallel to `FieldNames` so reflection over
   cross-chunk classes returns the field annotations from the
   declaring chunk.
@@ -859,7 +860,7 @@ features but not break what is below.
   and `range` all expose `.length` as a property (alongside the
   existing `.length()` method).
 - **Inherited generic type bindings** - `class Sub extends Base<string>`
-  now propagates `T → string` to subclass instances, visible via
+  now propagates `T to string` to subclass instances, visible via
   `reflect.typeBindings(instance)["T"]`.
 - **`func` as a field type** - `class Holder { func cb; ... }` parses
   correctly. `callable` and `function` work too.
@@ -919,8 +920,8 @@ features but not break what is below.
 ### Toolchain
 
 - **Go 1.26.3 build** - Docker image and `go.mod` now target Go 1.26.3.
-  Dependency versions refreshed (`pgx` v5.5 → v5.9, `sqlite` v1.29 →
-  v1.50, `golang.org/x/crypto` v0.17 → v0.51). `scripts/upgrade-go.sh`
+  Dependency versions refreshed (`pgx` v5.5 to v5.9, `sqlite` v1.29 to
+  v1.50, `golang.org/x/crypto` v0.17 to v0.51). `scripts/upgrade-go.sh`
   installs the matching toolchain on Ubuntu/WSL.
 - **Vet-clean** - audited and fixed 181 printf-style call sites that
   Go 1.26's promoted vet check flagged in parser / semantic / vm.

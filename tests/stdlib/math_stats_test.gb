@@ -1,0 +1,78 @@
+/**
+ * @title math stats
+ * @summary percentile / quantile / median / mode using R type-7 linear interp.
+ */
+import test;
+import math;
+
+class MathStatsTest extends test.Test {
+    @test
+    func medianOddSize(): void {
+        this.assertEquals(3.0f, math.median([1, 2, 3, 4, 5]));
+    }
+
+    @test
+    func medianEvenSize(): void {
+        this.assertEquals(2.5f, math.median([1, 2, 3, 4]));
+    }
+
+    @test
+    func medianSingleElement(): void {
+        this.assertEquals(42.0f, math.median([42]));
+    }
+
+    @test
+    func percentileEndpoints(): void {
+        this.assertEquals(0.0f, math.percentile([0, 10, 20, 30, 40], 0));
+        this.assertEquals(40.0f, math.percentile([0, 10, 20, 30, 40], 100));
+    }
+
+    @test
+    func percentileMidpoint(): void {
+        this.assertEquals(20.0f, math.percentile([0, 10, 20, 30, 40], 50));
+    }
+
+    @test
+    func percentileInterpolated(): void {
+        # 25th percentile of [0,10,20,30,40] = 10 (R type-7 linear).
+        this.assertEquals(10.0f, math.percentile([0, 10, 20, 30, 40], 25));
+    }
+
+    @test
+    func quantileInterpolated(): void {
+        this.assertEquals(20.0f, math.quantile([0, 10, 20, 30, 40], 0.5f));
+    }
+
+    @test
+    func modeSimple(): void {
+        this.assertEquals(2.0f, math.mode([1, 2, 2, 3, 4]));
+    }
+
+    @test
+    func modeTieBreaksToLowest(): void {
+        # [1, 1, 2, 2] both have count 2; lowest wins.
+        this.assertEquals(1.0f, math.mode([1, 1, 2, 2]));
+    }
+
+    @test
+    func emptyListRaises(): void {
+        let caught = false;
+        try {
+            math.median([]);
+        } catch (RuntimeError e) {
+            caught = true;
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func percentileOutOfRange(): void {
+        let caught = false;
+        try {
+            math.percentile([1, 2, 3], 150);
+        } catch (RuntimeError e) {
+            caught = true;
+        }
+        this.assertTrue(caught);
+    }
+}

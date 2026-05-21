@@ -589,6 +589,26 @@
         ],
         "description": "Cast overload: `instance as bytes`"
     },
+    "csv.parse rows": {
+        "prefix": "csvparse",
+        "body": [
+            "let ${1:rows} = csv.parse(${2:text});",
+            "for (${3:row} in ${1:rows}) {",
+            "\t$0",
+            "}"
+        ],
+        "description": "csv.parse: parse CSV text into a list of cell-list rows"
+    },
+    "csv.parseDict dict rows": {
+        "prefix": "csvdict",
+        "body": [
+            "let ${1:rows} = csv.parseDict(${2:text});",
+            "for (${3:row} in ${1:rows}) {",
+            "\t$0",
+            "}"
+        ],
+        "description": "csv.parseDict: parse CSV with first row as headers; returns list of dicts"
+    },
     "StringBuilder builder-backed accumulator": {
         "prefix": "stringbuilder",
         "body": [
