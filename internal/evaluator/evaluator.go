@@ -6928,6 +6928,15 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"shuffle":   e.registryBuiltin("random", "shuffle"),
 			"Generator": e.registryBuiltin("random", "Generator"),
 		},
+		"strbuilder": {
+			"new":        e.registryBuiltin("strbuilder", "new"),
+			"append":     e.registryBuiltin("strbuilder", "append"),
+			"appendLine": e.registryBuiltin("strbuilder", "appendLine"),
+			"build":      e.registryBuiltin("strbuilder", "build"),
+			"length":     e.registryBuiltin("strbuilder", "length"),
+			"clear":      e.registryBuiltin("strbuilder", "clear"),
+			"dispose":    e.registryBuiltin("strbuilder", "dispose"),
+		},
 		"time": {
 			"now":     e.registryBuiltin("time", "now"),
 			"elapsed": e.registryBuiltin("time", "elapsed"),

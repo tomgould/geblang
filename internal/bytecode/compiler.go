@@ -524,6 +524,9 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		c.emitAt(OpYield, stmt.Token.Line, stmt.Token.Column)
 		return nil
 	case *ast.ExpressionStatement:
+		if c.tryEmitFusedStringAppendStmt(stmt.Expression) {
+			return nil
+		}
 		if err := c.compileExpression(stmt.Expression); err != nil {
 			return err
 		}
@@ -534,6 +537,36 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 	default:
 		return fmt.Errorf("bytecode compiler does not support %T yet", stmt)
 	}
+}
+
+func (c *Compiler) tryEmitFusedStringAppendStmt(expr ast.Expression) bool {
+	assign, ok := expr.(*ast.AssignmentExpression)
+	if !ok {
+		return false
+	}
+	leftIdent, ok := assign.Left.(*ast.Identifier)
+	if !ok {
+		return false
+	}
+	resolved, ok := c.resolveName(leftIdent.Value)
+	if !ok || resolved.typ != "string" {
+		return false
+	}
+	if resolved.kind != "local" && resolved.kind != "global" {
+		return false
+	}
+	lit, ok := selfStringConstAppendAssignment(leftIdent.Value, assign.Value)
+	if !ok {
+		return false
+	}
+	constIdx := int64(len(c.chunk.Constants))
+	c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: lit})
+	op := OpAppendStringConstStmt
+	if resolved.kind == "global" {
+		op = OpAppendGlobalStringConstStmt
+	}
+	c.emitAt(op, assign.Token.Line, assign.Token.Column, resolved.slot, constIdx)
+	return true
 }
 
 func (c *Compiler) compileWhileStatement(stmt *ast.WhileStatement) error {

@@ -1,0 +1,47 @@
+module strings;
+
+import strbuilder;
+
+## Builder-backed string accumulator for tight loops that append many
+## fragments. Amortised O(n) vs O(n²) for naive concatenation. Call
+## dispose() in long-running code to release the underlying handle.
+export class StringBuilder {
+    any handle;
+
+    func StringBuilder(string initial = "") {
+        this.handle = strbuilder.new(initial);
+    }
+
+    ## Append a string fragment. Returns this for chaining.
+    func append(string s): StringBuilder {
+        strbuilder.append(this.handle, s);
+        return this;
+    }
+
+    ## Append a fragment followed by a newline. Returns this for chaining.
+    func appendLine(string s): StringBuilder {
+        strbuilder.appendLine(this.handle, s);
+        return this;
+    }
+
+    ## Materialise the accumulated content as a string.
+    func build(): string {
+        return strbuilder.build(this.handle);
+    }
+
+    ## Current byte length of the accumulated content.
+    func length(): int {
+        return strbuilder.length(this.handle);
+    }
+
+    ## Reset the buffer to empty. Returns this for chaining.
+    func clear(): StringBuilder {
+        strbuilder.clear(this.handle);
+        return this;
+    }
+
+    ## Release the underlying handle. Safe to call multiple times.
+    func dispose() {
+        strbuilder.dispose(this.handle);
+    }
+}

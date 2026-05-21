@@ -1,5 +1,24 @@
 # Release Notes
 
+## 1.0.5
+
+### Performance
+
+- Builder-backed `acc = acc + "literal"` in tight loops: new
+  `OpAppendStringConstStmt` keeps the local as a hidden builder
+  between iterations and amortises the prior O(n²) repeated-string
+  allocation to O(n). Slow-path reads materialise back to a plain
+  `string`. Bench impact: `string_concat` 78 ms → 8 ms (-90%).
+  Geblang now beats both Python and PHP on the bench.
+
+### Language features
+
+- `strings.StringBuilder` class (`stdlib/strings.gb`) for cases
+  where the auto-rewrite doesn't apply: dynamic RHS, class-field
+  accumulators, chained writes. Methods: `append`, `appendLine`,
+  `build`, `length`, `clear`, `dispose`. Wraps the new low-level
+  `strbuilder` native module.
+
 ## 1.0.4
 
 ### Language features

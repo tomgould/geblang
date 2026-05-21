@@ -534,5 +534,70 @@
             "}"
         ],
         "description": "Custom deserialisation factory (used by json/yaml/toml.parseAs)"
+    },
+    "__string cast dunder": {
+        "prefix": "castString",
+        "body": [
+            "func __string(): string {",
+            "\treturn \"${1:value}\";$0",
+            "}"
+        ],
+        "description": "Cast overload: `instance as string`"
+    },
+    "__int cast dunder": {
+        "prefix": "castInt",
+        "body": [
+            "func __int(): int {",
+            "\treturn ${1:0};$0",
+            "}"
+        ],
+        "description": "Cast overload: `instance as int`"
+    },
+    "__float cast dunder": {
+        "prefix": "castFloat",
+        "body": [
+            "func __float(): float {",
+            "\treturn ${1:0.0};$0",
+            "}"
+        ],
+        "description": "Cast overload: `instance as float`"
+    },
+    "__bool cast dunder": {
+        "prefix": "castBool",
+        "body": [
+            "func __bool(): bool {",
+            "\treturn ${1:true};$0",
+            "}"
+        ],
+        "description": "Cast overload: `instance as bool`"
+    },
+    "__decimal cast dunder": {
+        "prefix": "castDecimal",
+        "body": [
+            "func __decimal(): decimal {",
+            "\treturn ${1:0d};$0",
+            "}"
+        ],
+        "description": "Cast overload: `instance as decimal`"
+    },
+    "__bytes cast dunder": {
+        "prefix": "castBytes",
+        "body": [
+            "func __bytes(): bytes {",
+            "\treturn bytes.fromString(\"${1:value}\");$0",
+            "}"
+        ],
+        "description": "Cast overload: `instance as bytes`"
+    },
+    "StringBuilder builder-backed accumulator": {
+        "prefix": "stringbuilder",
+        "body": [
+            "let ${1:sb} = strings.StringBuilder();",
+            "${1:sb}.append(\"${2:fragment}\");",
+            "$0",
+            "let ${3:result} = ${1:sb}.build();",
+            "${1:sb}.dispose();"
+        ],
+        "description": "strings.StringBuilder: amortised O(n) accumulator for tight-loop string assembly"
     }
 }

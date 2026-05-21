@@ -15,7 +15,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(54)
+	Version = uint16(55)
 )
 
 type Op byte
@@ -226,6 +226,10 @@ const (
 	// OpAppendGlobalStringConst {globalSlot, literalConstantIndex}:
 	// global-slot variant of OpAppendStringConst.
 	OpAppendGlobalStringConst
+	// OpAppendStringConstStmt: builder-backed, no stack push.
+	// Emitted for `local = local + "literal"` as a standalone stmt.
+	OpAppendStringConstStmt
+	OpAppendGlobalStringConstStmt
 )
 
 type Instruction struct {

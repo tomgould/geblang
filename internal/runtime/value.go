@@ -117,6 +117,30 @@ type String struct {
 func (v String) TypeName() string { return "string" }
 func (v String) Inspect() string  { return v.Value }
 
+// StringAccumulator masquerades as a string in a slot but defers
+// allocation: getLocalVM / getGlobalVM materialise it to a String on
+// read. Lives only in slots written by OpAppendStringConstStmt.
+type StringAccumulator struct {
+	B *strings.Builder
+}
+
+func (v *StringAccumulator) TypeName() string { return "string" }
+func (v *StringAccumulator) Inspect() string {
+	if v == nil || v.B == nil {
+		return ""
+	}
+	return v.B.String()
+}
+
+// Materialize returns the accumulator's current contents as a
+// runtime.String. Safe to call when the underlying builder is nil.
+func (v *StringAccumulator) Materialize() String {
+	if v == nil || v.B == nil {
+		return String{Value: ""}
+	}
+	return String{Value: v.B.String()}
+}
+
 type Bytes struct {
 	Value []byte
 }

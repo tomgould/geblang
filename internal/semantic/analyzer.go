@@ -99,6 +99,7 @@ var builtinModuleNames = map[string]bool{
 	"io": true, "sys": true, "process": true, "async": true,
 	"json": true, "xml": true, "toml": true, "yaml": true, "csv": true,
 	"collections": true, "secrets": true, "random": true,
+	"strbuilder": true,
 	"schema": true, "serde": true, "metrics": true,
 	"trace": true, "profile": true, "crypt": true,
 	"encoding": true, "compress": true, "template": true,

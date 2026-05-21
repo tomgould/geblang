@@ -706,6 +706,13 @@ func (vm *VM) Run() (err error) {
 			}
 			cur := target[slot]
 			if cur.Kind == runtime.VMKindBoxed {
+				if acc, ok := cur.Boxed.(*runtime.StringAccumulator); ok {
+					acc.B.WriteString(litVal.Value)
+					materialised := runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: acc.Materialize()}
+					target[slot] = materialised
+					vm.pushVM(materialised)
+					continue
+				}
 				if l, lok := cur.Boxed.(runtime.String); lok {
 					next := runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: l.Value + litVal.Value}}
 					target[slot] = next
@@ -725,6 +732,56 @@ func (vm *VM) Run() (err error) {
 			}
 			target[slot] = result
 			vm.pushVM(result)
+			ip = nextIP
+		case OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
+			slot := instruction.Operands[0]
+			constIdx := instruction.Operands[1]
+			if constIdx < 0 || int(constIdx) >= len(vm.chunk.Constants) {
+				return vm.runtimeError(instruction, "constant index out of range")
+			}
+			litVal, ok := vm.chunk.Constants[constIdx].(runtime.String)
+			if !ok {
+				return vm.runtimeError(instruction, "literal must be string")
+			}
+			var target []runtime.VMValue
+			if instruction.Op == OpAppendStringConstStmt {
+				target = vm.locals
+			} else {
+				target = vm.globals
+			}
+			if int(slot) >= len(target) {
+				return vm.runtimeError(instruction, "slot out of range")
+			}
+			cur := target[slot]
+			if cur.Kind == runtime.VMKindBoxed {
+				if acc, ok := cur.Boxed.(*runtime.StringAccumulator); ok {
+					acc.B.WriteString(litVal.Value)
+					continue
+				}
+				if l, lok := cur.Boxed.(runtime.String); lok {
+					if l.Value == "" {
+						target[slot] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: litVal.Value}}
+						continue
+					}
+					sb := &strings.Builder{}
+					sb.Grow(len(l.Value) + len(litVal.Value) + 256)
+					sb.WriteString(l.Value)
+					sb.WriteString(litVal.Value)
+					target[slot] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: &runtime.StringAccumulator{B: sb}}
+					continue
+				}
+			}
+			vm.pushVM(cur)
+			vm.pushVM(runtime.VMValueFromValue(litVal))
+			nextIP, err := vm.add(instruction, ip)
+			if err != nil {
+				return err
+			}
+			result, perr := vm.popVM()
+			if perr != nil {
+				return vm.runtimeError(instruction, "%s", perr.Error())
+			}
+			target[slot] = result
 			ip = nextIP
 		case OpAddStringConst:
 			n := len(vm.stack)
@@ -8784,7 +8841,7 @@ func copyStringInt64SliceMap(values map[string][]int64) map[string][]int64 {
 
 func shiftInstructionOperands(instruction *Instruction, instructionShift int, constantShift int) {
 	switch instruction.Op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpCatch, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpCatch, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 		for i := range instruction.Operands {
 			if isConstantOperand(instruction.Op, i) && instruction.Operands[i] >= 0 {
 				instruction.Operands[i] += int64(constantShift)
@@ -8817,7 +8874,7 @@ func isConstantOperand(op Op, index int) bool {
 	switch op {
 	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpGetField, OpSetField, OpMethodCall, OpMethodCallSpread, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst:
 		return index == 0
-	case OpAppendStringConst, OpAppendGlobalStringConst:
+	case OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 		return index == 1
 	case OpNativeCallNamed:
 		return index == 0 || index >= 2
@@ -13117,6 +13174,13 @@ func (vm *VM) getGlobal(slot int64) (runtime.Value, error) {
 	if value.Kind == runtime.VMKindUnset {
 		return nil, fmt.Errorf("global is undefined")
 	}
+	if value.Kind == runtime.VMKindBoxed {
+		if acc, ok := value.Boxed.(*runtime.StringAccumulator); ok {
+			s := acc.Materialize()
+			vm.globals[slot] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: s}
+			return s, nil
+		}
+	}
 	return value.ToValue(), nil
 }
 
@@ -13129,6 +13193,13 @@ func (vm *VM) getGlobalVM(slot int64) (runtime.VMValue, error) {
 	value := vm.globals[slot]
 	if value.Kind == runtime.VMKindUnset {
 		return runtime.VMValueNull, fmt.Errorf("global is undefined")
+	}
+	if value.Kind == runtime.VMKindBoxed {
+		if acc, ok := value.Boxed.(*runtime.StringAccumulator); ok {
+			materialized := runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: acc.Materialize()}
+			vm.globals[slot] = materialized
+			return materialized, nil
+		}
 	}
 	return value, nil
 }
@@ -13192,6 +13263,11 @@ func (vm *VM) getLocal(slot int64) (runtime.Value, error) {
 			}
 			return cell.Value, nil
 		}
+		if acc, ok := value.Boxed.(*runtime.StringAccumulator); ok {
+			s := acc.Materialize()
+			vm.locals[slot] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: s}
+			return s, nil
+		}
 	}
 	return value.ToValue(), nil
 }
@@ -13212,6 +13288,11 @@ func (vm *VM) getLocalVM(slot int64) (runtime.VMValue, error) {
 				return runtime.VMValueNull, fmt.Errorf("local is undefined")
 			}
 			return runtime.VMValueFromValue(cell.Value), nil
+		}
+		if acc, ok := value.Boxed.(*runtime.StringAccumulator); ok {
+			materialized := runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: acc.Materialize()}
+			vm.locals[slot] = materialized
+			return materialized, nil
 		}
 	}
 	return value, nil

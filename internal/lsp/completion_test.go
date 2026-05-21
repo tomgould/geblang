@@ -81,6 +81,34 @@ func TestCompletionOffersImportModules(t *testing.T) {
 	}
 }
 
+func TestCompletionOffersStringBuilder(t *testing.T) {
+	s := &server{docs: map[string]string{"file:///main.gb": "import strings;\nstrings."}}
+
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 1, Character: 8},
+	}})
+
+	if !hasCompletion(items, "StringBuilder") {
+		t.Fatalf("expected strings.StringBuilder completion, got %#v", items)
+	}
+}
+
+func TestCompletionOffersStrbuilderPrimitives(t *testing.T) {
+	s := &server{docs: map[string]string{"file:///main.gb": "import strbuilder;\nstrbuilder."}}
+
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 1, Character: 11},
+	}})
+
+	for _, want := range []string{"new", "append", "appendLine", "build", "length", "clear", "dispose"} {
+		if !hasCompletion(items, want) {
+			t.Fatalf("expected strbuilder.%s completion, got %#v", want, items)
+		}
+	}
+}
+
 func TestSignatureHelpForModuleFunction(t *testing.T) {
 	s := &server{docs: map[string]string{"file:///main.gb": "db.query(conn, "}}
 

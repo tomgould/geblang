@@ -161,6 +161,62 @@ For *timing-attack-safe* string equality (HMAC verification, token comparison, e
 
 ---
 
+## Builder: `strings.StringBuilder`
+
+Import `strings`. `StringBuilder` is a builder-backed accumulator. Use it for tight loops that append many fragments — internally a single `strings.Builder` grows amortised O(n) instead of the O(n²) cost of repeated `acc = acc + fragment` allocating a fresh string every iteration.
+
+```gb
+import strings;
+import io;
+
+let sb = strings.StringBuilder();
+for (int i = 0; i < 10; i++) {
+    sb.append("part-");
+    sb.append(i as string);
+    sb.appendLine("");
+}
+io.println(sb.build());
+sb.dispose();
+```
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `StringBuilder(initial = "")` | `StringBuilder` | Construct a new builder, optionally pre-seeded with `initial`. |
+| `append(s)` | `StringBuilder` | Append a fragment. Returns `this` for chaining. |
+| `appendLine(s)` | `StringBuilder` | Append a fragment followed by `\n`. Returns `this`. |
+| `build()` | `string` | Materialise the accumulated content. |
+| `length()` | `int` | Current byte length. |
+| `clear()` | `StringBuilder` | Reset the buffer to empty. Returns `this`. |
+| `dispose()` | `void` | Release the underlying handle. Safe to call multiple times. Call in long-running processes to free the builder. |
+
+For the common `acc = acc + "literal"` idiom inside a loop, the bytecode compiler **automatically** swaps the local to a builder-backed representation behind the scenes, then materialises it back to a string on the next read. No source change required:
+
+```gb
+string acc = "";
+for (int i = 0; i < 10000; i++) {
+    acc = acc + "x";          # compiler emits builder-backed append
+}
+io.println(acc.length());     # 10000 — acc materialises here
+```
+
+Reach for the explicit `StringBuilder` when the auto-rewrite doesn't apply: dynamic (non-literal) RHS, accumulator written through a class field, or when you want chained writes (`sb.append("a").append("b")`).
+
+### Low-level primitives: `strbuilder`
+
+`StringBuilder` is implemented in `stdlib/strings.gb` on top of the `strbuilder` native module. The handle-based primitives are available directly for advanced uses:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `strbuilder.new(initial = "")` | handle | Create a new builder; returns an opaque handle. |
+| `strbuilder.append(h, s)` | handle | Append `s` to the builder; returns `h`. |
+| `strbuilder.appendLine(h, s)` | handle | Append `s` followed by `\n`. |
+| `strbuilder.build(h)` | `string` | Materialise the current content. |
+| `strbuilder.length(h)` | `int` | Current byte length. |
+| `strbuilder.clear(h)` | handle | Reset the buffer. |
+| `strbuilder.dispose(h)` | `null` | Release the handle. |
+
+---
+
 ## Regex: `re`
 
 Import `re`. The module is a thin wrapper over Go's [`regexp/syntax`](https://pkg.go.dev/regexp/syntax) (RE2 dialect, no backreferences but full Unicode, anchors, and lookahead-free alternation).

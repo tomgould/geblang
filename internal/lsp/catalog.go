@@ -215,6 +215,7 @@ var stdlibCatalog = map[string]moduleDoc{
 		"race":    fn([]string{"list<Task> tasks"}, "Task", "Returns the first task to complete; cancels the rest."),
 		"timeout": fn([]string{"Task task", "int milliseconds"}, "Task", "Cancels the task if it does not finish within the deadline."),
 		"cancel":  fn([]string{"Task task"}, "void", "Cancels a running task."),
+		"token":   fn([]string{}, "Task", "Returns a fresh uncompleted Task used as a pure cancellation signal (used by Timer/Ticker)."),
 	}},
 	"bytes": {functions: map[string]functionDoc{
 		"fromString": fn([]string{"string text"}, "bytes", "Encodes a string as bytes."),
@@ -338,10 +339,10 @@ var stdlibCatalog = map[string]moduleDoc{
 		"stderr": fn([]string{}, "Logger", "Creates a stderr logger."),
 		"file":   fn([]string{"string path"}, "Logger", "Creates a file logger."),
 		"custom": fn([]string{"LogInterface handler"}, "Logger", "Creates a custom logger."),
-		"info":   fn([]string{"Logger logger", "string message", "dict<string, any> context = {}"}, "void", "Writes an info log."),
-		"warn":   fn([]string{"Logger logger", "string message", "dict<string, any> context = {}"}, "void", "Writes a warning log."),
-		"error":  fn([]string{"Logger logger", "string message", "dict<string, any> context = {}"}, "void", "Writes an error log."),
-		"debug":  fn([]string{"Logger logger", "string message", "dict<string, any> context = {}"}, "void", "Writes a debug log."),
+		"info":   fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes an info log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger."),
+		"warn":   fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes a warning log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger."),
+		"error":  fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes an error log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger."),
+		"debug":  fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes a debug log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger."),
 		"close":  fn([]string{"Logger logger"}, "void", "Closes a logger."),
 	}},
 	"math": {functions: map[string]functionDoc{
@@ -538,6 +539,18 @@ var stdlibCatalog = map[string]moduleDoc{
 		"choice":   fn([]string{"list<any> items"}, "any", "Returns a random element."),
 		"shuffle":  fn([]string{"list<any> items"}, "list<any>", "Returns a shuffled copy."),
 	}, classes: map[string]string{"Generator": "Stateful PRNG handle."}},
+	"strings": {classes: map[string]string{
+		"StringBuilder": "Builder-backed string accumulator. Amortised O(n) append for tight-loop assembly; call dispose() to release the handle in long-running processes.",
+	}},
+	"strbuilder": {functions: map[string]functionDoc{
+		"new":        fn([]string{"string initial = \"\""}, "StringBuilder", "Creates a new builder handle, optionally pre-seeded."),
+		"append":     fn([]string{"StringBuilder sb", "string s"}, "StringBuilder", "Appends a fragment; returns the same handle."),
+		"appendLine": fn([]string{"StringBuilder sb", "string s"}, "StringBuilder", "Appends a fragment followed by a newline."),
+		"build":      fn([]string{"StringBuilder sb"}, "string", "Materialises the accumulated content."),
+		"length":     fn([]string{"StringBuilder sb"}, "int", "Current byte length."),
+		"clear":      fn([]string{"StringBuilder sb"}, "StringBuilder", "Resets the buffer to empty."),
+		"dispose":    fn([]string{"StringBuilder sb"}, "void", "Releases the handle. Safe to call multiple times."),
+	}},
 	"secrets": {functions: map[string]functionDoc{
 		"randomBytes":       fn([]string{"int n"}, "bytes", "Cryptographically random N bytes."),
 		"randomInt":         fn([]string{"int min", "int max"}, "int", "Cryptographically random int in [min, max]."),

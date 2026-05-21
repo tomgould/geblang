@@ -1,0 +1,24 @@
+import strings;
+import io;
+
+# Auto-rewrite: the bytecode compiler swaps `acc` to a builder-backed
+# representation behind the scenes for this loop. No source change.
+string fast = "";
+for (int i = 0; i < 1000; i++) {
+    fast = fast + "x";
+}
+io.println(fast.length()); # 1000
+
+# Explicit StringBuilder for cases the auto-rewrite doesn't cover —
+# class-field accumulators, dynamic-RHS appends, or chained writes.
+let sb = strings.StringBuilder();
+for (int i = 0; i < 5; i++) {
+    sb.append("row-").append(i as string).appendLine("");
+}
+io.println(sb.build());
+# row-0
+# row-1
+# row-2
+# row-3
+# row-4
+sb.dispose();

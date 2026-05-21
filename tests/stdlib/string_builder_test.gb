@@ -1,0 +1,214 @@
+/**
+ * @title StringBuilder stdlib test
+ * @summary Builder-backed string accumulator + the compiler's tight-loop
+ *          auto-rewrite of `acc = acc + "literal"`.
+ */
+import test;
+import strings;
+import strbuilder;
+
+class StringBuilderTest extends test.Test {
+    @test
+    func appendBuildsResult(): void {
+        let sb = strings.StringBuilder();
+        sb.append("foo").append("-").append("bar");
+        this.assertEquals("foo-bar", sb.build());
+        this.assertEquals(7, sb.length());
+        sb.dispose();
+    }
+
+    @test
+    func emptyBuilderBuildsEmptyString(): void {
+        let sb = strings.StringBuilder();
+        this.assertEquals("", sb.build());
+        this.assertEquals(0, sb.length());
+        sb.dispose();
+    }
+
+    @test
+    func appendLineAddsNewline(): void {
+        let sb = strings.StringBuilder();
+        sb.appendLine("line1");
+        sb.append("line2");
+        this.assertEquals("line1\nline2", sb.build());
+        sb.dispose();
+    }
+
+    @test
+    func appendLineOfEmptyStringAddsOnlyNewline(): void {
+        let sb = strings.StringBuilder();
+        sb.appendLine("");
+        this.assertEquals("\n", sb.build());
+        this.assertEquals(1, sb.length());
+        sb.dispose();
+    }
+
+    @test
+    func appendOfEmptyStringIsNoOp(): void {
+        let sb = strings.StringBuilder();
+        sb.append("x");
+        sb.append("");
+        sb.append("y");
+        this.assertEquals("xy", sb.build());
+        sb.dispose();
+    }
+
+    @test
+    func clearResetsBuffer(): void {
+        let sb = strings.StringBuilder();
+        sb.append("discarded");
+        sb.clear();
+        this.assertEquals(0, sb.length());
+        this.assertEquals("", sb.build());
+        sb.append("kept");
+        this.assertEquals("kept", sb.build());
+        sb.dispose();
+    }
+
+    @test
+    func initialSeed(): void {
+        let sb = strings.StringBuilder("start");
+        sb.append("-end");
+        this.assertEquals("start-end", sb.build());
+        sb.dispose();
+    }
+
+    @test
+    func disposeIsIdempotent(): void {
+        let sb = strings.StringBuilder();
+        sb.append("data");
+        sb.dispose();
+        sb.dispose();
+        # Second dispose is a no-op; no error raised.
+        this.assertTrue(true);
+    }
+
+    @test
+    func appendReturnsThis(): void {
+        let sb = strings.StringBuilder();
+        let same = sb.append("a");
+        same.append("b");
+        this.assertEquals("ab", sb.build());
+        sb.dispose();
+    }
+
+    @test
+    func loopAccumulatorMatchesNaive(): void {
+        string acc = "";
+        for (int i = 0; i < 100; i++) {
+            acc = acc + "x";
+        }
+        this.assertEquals(100, acc.length());
+        for (int i = 0; i < 100; i++) {
+            this.assertEquals("x", acc.substring(i, i + 1));
+        }
+    }
+
+    @test
+    func loopAccumulatorInterleavedRead(): void {
+        string acc = "";
+        for (int i = 0; i < 10; i++) {
+            acc = acc + "a";
+            if (i == 4) {
+                this.assertEquals(5, acc.length());
+            }
+        }
+        this.assertEquals("aaaaaaaaaa", acc);
+    }
+
+    @test
+    func loopAccumulatorWithConditionalAppend(): void {
+        string acc = "";
+        for (int i = 0; i < 20; i++) {
+            if (i % 3 == 0) {
+                acc = acc + "a";
+            } else if (i % 2 == 0) {
+                acc = acc + "bc";
+            } else {
+                acc = acc + "1";
+            }
+        }
+        this.assertEquals("a1bcabc1a1bcabc1a1bcabc1a1", acc);
+    }
+
+    @test
+    func loopAccumulatorBreakStillMaterialises(): void {
+        string acc = "";
+        for (int i = 0; i < 100; i++) {
+            if (i == 5) {
+                break;
+            }
+            acc = acc + "x";
+        }
+        this.assertEquals("xxxxx", acc);
+    }
+
+    @test
+    func loopAccumulatorContinueSkips(): void {
+        string acc = "";
+        for (int i = 0; i < 10; i++) {
+            if (i % 2 == 0) {
+                continue;
+            }
+            acc = acc + "o";
+        }
+        this.assertEquals("ooooo", acc);
+    }
+
+    @test
+    func loopAccumulatorSurvivesNestedLoop(): void {
+        string acc = "";
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 4; j++) {
+                acc = acc + "x";
+            }
+            acc = acc + "|";
+        }
+        this.assertEquals("xxxx|xxxx|xxxx|", acc);
+    }
+
+    @test
+    func nonLiteralRhsTakesGenericPath(): void {
+        string acc = "";
+        string lit = "x";
+        for (int i = 0; i < 50; i++) {
+            acc = acc + lit;
+        }
+        this.assertEquals(50, acc.length());
+    }
+
+    @test
+    func lowLevelHandles(): void {
+        let h = strbuilder.new();
+        strbuilder.append(h, "hello");
+        strbuilder.append(h, ", ");
+        strbuilder.append(h, "world");
+        this.assertEquals("hello, world", strbuilder.build(h));
+        this.assertEquals(12, strbuilder.length(h));
+        strbuilder.clear(h);
+        this.assertEquals(0, strbuilder.length(h));
+        strbuilder.dispose(h);
+    }
+
+    @test
+    func lowLevelInitialSeed(): void {
+        let h = strbuilder.new("seed");
+        strbuilder.append(h, "-tail");
+        this.assertEquals("seed-tail", strbuilder.build(h));
+        strbuilder.dispose(h);
+    }
+
+    @test
+    func unknownHandleRaises(): void {
+        let h = strbuilder.new();
+        strbuilder.dispose(h);
+        let caught = false;
+        try {
+            strbuilder.build(h);
+        } catch (RuntimeError e) {
+            caught = true;
+            this.assertTrue(e.message.contains("unknown StringBuilder handle"));
+        }
+        this.assertTrue(caught);
+    }
+}

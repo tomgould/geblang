@@ -70,6 +70,7 @@ func NewBuiltinRegistry() *Registry {
 	registerTime(r)
 	registerBytes(r)
 	registerString(r)
+	registerStringBuilder(r)
 	registerCompress(r)
 	registerEncoding(r)
 	registerURL(r)

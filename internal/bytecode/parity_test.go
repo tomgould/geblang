@@ -7496,6 +7496,47 @@ io.println(acc);
 // TestParityCastDunders exercises __string/__int/__float/__bool/__decimal/__bytes
 // cast-overload dunders. Both backends call the dunder when the
 // receiver is an instance and the target is a built-in primitive.
+func TestParityStringAccumulatorLoop(t *testing.T) {
+	runParity(t, `import io;
+
+string acc = "";
+for (int i = 0; i < 200; i++) {
+    acc = acc + "x";
+}
+io.println(acc.length());
+io.println(acc.substring(0, 3));
+io.println(acc.substring(197, 200));
+`, "200\nxxx\nxxx\n")
+}
+
+func TestParityStringAccumulatorInterleavedRead(t *testing.T) {
+	runParity(t, `import io;
+
+string acc = "";
+for (int i = 0; i < 10; i++) {
+    acc = acc + "ab";
+    if (i == 4) {
+        io.println(acc);
+    }
+}
+io.println(acc);
+`, "ababababab\nabababababababababab\n")
+}
+
+func TestParityStringAccumulatorEscapesAssignment(t *testing.T) {
+	runParity(t, `import io;
+
+string acc = "";
+for (int i = 0; i < 5; i++) {
+    acc = acc + "ab";
+}
+string copy = acc;
+acc = acc + "cd";
+io.println(copy);
+io.println(acc);
+`, "ababababab\nabababababcd\n")
+}
+
 func TestParityCastDunders(t *testing.T) {
 	runParity(t, `import io;
 
