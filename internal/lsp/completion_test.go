@@ -109,6 +109,21 @@ func TestCompletionOffersStrbuilderPrimitives(t *testing.T) {
 	}
 }
 
+func TestCompletionOffersMagicMethods(t *testing.T) {
+	s := &server{docs: map[string]string{"file:///main.gb": "__"}}
+
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 0, Character: 2},
+	}})
+
+	for _, want := range []string{"__iter", "__done", "__next", "__invoke", "__enter__", "__exit__"} {
+		if !hasCompletion(items, want) {
+			t.Fatalf("expected magic method %s completion, got %#v", want, items)
+		}
+	}
+}
+
 func TestSignatureHelpForModuleFunction(t *testing.T) {
 	s := &server{docs: map[string]string{"file:///main.gb": "db.query(conn, "}}
 

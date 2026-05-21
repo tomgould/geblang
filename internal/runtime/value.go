@@ -448,6 +448,12 @@ type Function struct {
 	// resolves against the outer call site's concrete bindings.
 	// Mirror of BytecodeClosure.TypeBindings on the VM side.
 	TypeBindings map[string]string
+	// DefinitionModule / DefinitionLine / DefinitionColumn capture the
+	// source position of the function declaration, surfaced by
+	// reflect.location.
+	DefinitionModule string
+	DefinitionLine   int
+	DefinitionColumn int
 }
 
 func (v Function) TypeName() string { return "func" }
@@ -499,6 +505,13 @@ type FunctionMetadata struct {
 	Async          bool
 	Variadic       bool
 	Decorators     []DecoratorMetadata
+	// Module / DefLine / DefColumn capture the source position of
+	// the function's `func` keyword. Surfaced by reflect.location.
+	// Empty / zero when the function did not originate from a
+	// bytecode chunk (e.g. native stdlib functions).
+	Module    string
+	DefLine   int64
+	DefColumn int64
 }
 
 type ClassMetadata struct {
@@ -509,6 +522,11 @@ type ClassMetadata struct {
 	Methods       []string
 	StaticMethods []string
 	Interfaces    []string
+	// Module / DefLine / DefColumn capture the source position of
+	// the class's `class` keyword. Surfaced by reflect.location.
+	Module    string
+	DefLine   int64
+	DefColumn int64
 }
 
 type DecoratorTarget struct {
@@ -543,6 +561,10 @@ type BytecodeFunction struct {
 	Async          bool
 	Variadic       bool
 	Decorators     []DecoratorMetadata
+	// DefLine / DefColumn capture the source position of the
+	// function declaration, surfaced by reflect.location.
+	DefLine        int64
+	DefColumn      int64
 }
 
 func (v BytecodeFunction) TypeName() string { return "function" }
@@ -613,6 +635,10 @@ type BytecodeClass struct {
 	StaticMetadata      map[string][]FunctionMetadata
 	ConstructorMetadata []FunctionMetadata
 	Immutable           bool
+	// DefLine / DefColumn capture the source position of the
+	// class declaration, surfaced by reflect.location.
+	DefLine             int64
+	DefColumn           int64
 }
 
 func (v BytecodeClass) TypeName() string { return "class" }
@@ -853,6 +879,12 @@ type Class struct {
 	Destructor           *Function
 	Env                  *Environment
 	Immutable            bool
+	// DefinitionModule / DefinitionLine / DefinitionColumn capture the
+	// source position of the class declaration, surfaced by
+	// reflect.location.
+	DefinitionModule string
+	DefinitionLine   int
+	DefinitionColumn int
 }
 
 func (v *Class) TypeName() string { return "class" }

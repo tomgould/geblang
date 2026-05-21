@@ -1,0 +1,58 @@
+/**
+ * @title Nested generic inference (1.0.6, carry-over from 1.0.5)
+ * @summary Both backends now walk parameter type-spec trees
+ * recursively against the concrete arg value, so type params
+ * nested inside `list<dict<K, V>>` (and other multi-level container
+ * shapes) bind from a single argument rather than ignoring the
+ * inner level. Pre-1.0.6 only one level of container was inspected,
+ * leaving inner type params unbound.
+ */
+import test;
+import reflect;
+
+class Box<K, V> {
+    list<dict<K, V>> rows;
+    func Box(list<dict<K, V>> rows) {
+        this.rows = rows;
+    }
+}
+
+class Triple<A, B, C> {
+    list<list<dict<A, B>>> matrix;
+    C tag;
+    func Triple(list<list<dict<A, B>>> matrix, C tag) {
+        this.matrix = matrix;
+        this.tag = tag;
+    }
+}
+
+func firstKey<K, V>(list<dict<K, V>> rows): K {
+    for (k in rows[0].keys()) {
+        return k;
+    }
+    return null as K;
+}
+
+class NestedInferenceTest extends test.Test {
+    @test
+    func twoLevelListOfDictBindsKAndV(): void {
+        let b = Box([{"a": 1, "b": 2}]);
+        let bindings = reflect.typeBindings(b);
+        this.assertEquals("string", bindings["K"]);
+        this.assertEquals("int", bindings["V"]);
+    }
+
+    @test
+    func threeLevelListOfListOfDictBinds(): void {
+        let t = Triple([[{"key": 1.5}]], "label");
+        let bindings = reflect.typeBindings(t);
+        this.assertEquals("string", bindings["A"]);
+        this.assertEquals("decimal", bindings["B"]);
+        this.assertEquals("string", bindings["C"]);
+    }
+
+    @test
+    func functionWithNestedGenericInfersKeyType(): void {
+        this.assertEquals("hello", firstKey([{"hello": 1}]));
+    }
+}

@@ -1,0 +1,43 @@
+/**
+ * @title reflect.location (1.0.6)
+ * @summary `reflect.location(target)` returns a dict
+ * `{module, line, column}` describing the source position of a
+ * function or class declaration. Returns `null` when the target
+ * carries no recorded location (native builtins, etc.).
+ */
+import test;
+import reflect;
+
+func sample(int n): int {
+    return n + 1;
+}
+
+class Tag {
+    string name;
+    func Tag(string name) { this.name = name; }
+}
+
+class ReflectLocationTest extends test.Test {
+    @test
+    func functionLocationReportsDeclLine(): void {
+        let loc = reflect.location(sample);
+        this.assertNotNull(loc);
+        this.assertEquals(11, loc["line"]);
+        this.assertEquals(1, loc["column"]);
+    }
+
+    @test
+    func classLocationReportsDeclLine(): void {
+        let loc = reflect.location(Tag);
+        this.assertNotNull(loc);
+        this.assertEquals(15, loc["line"]);
+        this.assertEquals(1, loc["column"]);
+    }
+
+    @test
+    func instanceFallsBackToClass(): void {
+        let loc = reflect.location(Tag("x"));
+        this.assertNotNull(loc);
+        this.assertEquals(15, loc["line"]);
+    }
+}

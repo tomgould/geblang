@@ -601,19 +601,7 @@ func ValueToYAML(value runtime.Value) (any, error) {
 
 // ParseJSONText parses a JSON string into a runtime.Value.
 func ParseJSONText(text string) (runtime.Value, *ParseError) {
-	decoder := json.NewDecoder(strings.NewReader(text))
-	decoder.UseNumber()
-	var decoded any
-	if err := decoder.Decode(&decoded); err != nil {
-		parseErr := JSONParseError(err, text)
-		return nil, &parseErr
-	}
-	value, err := JSONToValue(decoded)
-	if err != nil {
-		parseErr := NewParseError(err.Error(), text, -1)
-		return nil, &parseErr
-	}
-	return value, nil
+	return parseJSONDirect(text)
 }
 
 // ParseTOMLText parses a TOML string into a runtime.Value.

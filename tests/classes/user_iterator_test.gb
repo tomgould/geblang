@@ -1,0 +1,91 @@
+/**
+ * @title User-class iterator protocol (1.0.6)
+ * @summary A class can opt into `for (x in obj)` by defining
+ * `__iter(): Iter` returning an iterator; the iterator is any class
+ * that defines `__done(): bool` and `__next(): any`. The loop calls
+ * `__done()` before each step and stops when it returns true,
+ * otherwise binds `__next()`'s result to the loop variable. Classes
+ * that implement `__next()`/`__done()` directly can be used without
+ * a separate `__iter()`.
+ */
+import test;
+
+class Range {
+    int from;
+    int to;
+    int cur;
+
+    func Range(int from, int to) {
+        this.from = from;
+        this.to = to;
+        this.cur = from;
+    }
+
+    func __iter(): Range {
+        this.cur = this.from;
+        return this;
+    }
+
+    func __done(): bool {
+        return this.cur >= this.to;
+    }
+
+    func __next(): int {
+        int v = this.cur;
+        this.cur = this.cur + 1;
+        return v;
+    }
+}
+
+class SelfIter {
+    int n;
+    int seen;
+
+    func SelfIter(int n) {
+        this.n = n;
+        this.seen = 0;
+    }
+
+    func __done(): bool {
+        return this.seen >= this.n;
+    }
+
+    func __next(): int {
+        this.seen = this.seen + 1;
+        return this.seen;
+    }
+}
+
+class UserIteratorTest extends test.Test {
+    @test
+    func iterDoneNextLoop(): void {
+        list<int> collected = [];
+        for (n in Range(2, 5)) {
+            collected = collected.push(n);
+        }
+        this.assertEquals([2, 3, 4], collected);
+    }
+
+    @test
+    func iterResetsOnEachIter(): void {
+        let r = Range(0, 3);
+        list<int> first = [];
+        for (n in r) {
+            first = first.push(n);
+        }
+        list<int> second = [];
+        for (n in r) {
+            second = second.push(n);
+        }
+        this.assertEquals(first, second);
+    }
+
+    @test
+    func selfIteratorWithoutIterMethod(): void {
+        list<int> collected = [];
+        for (n in SelfIter(3)) {
+            collected = collected.push(n);
+        }
+        this.assertEquals([1, 2, 3], collected);
+    }
+}

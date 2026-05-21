@@ -1,0 +1,56 @@
+/* User-defined iterator protocol (1.0.6).
+ *
+ * A class becomes iterable in `for (x in obj)` by implementing
+ * __iter() (optional) plus __done() and __next(). __iter() returns
+ * the iterator and is called once at loop start; __done() is called
+ * before each step and stops the loop when it returns true;
+ * __next() returns the value to bind to the loop variable.
+ */
+import io;
+
+class Fibonacci {
+    int limit;
+    int a;
+    int b;
+    int seen;
+
+    func Fibonacci(int limit) {
+        this.limit = limit;
+        this.a = 0;
+        this.b = 1;
+        this.seen = 0;
+    }
+
+    func __iter(): Fibonacci {
+        this.a = 0;
+        this.b = 1;
+        this.seen = 0;
+        return this;
+    }
+
+    func __done(): bool {
+        return this.seen >= this.limit;
+    }
+
+    func __next(): int {
+        int v = this.a;
+        int t = this.a + this.b;
+        this.a = this.b;
+        this.b = t;
+        this.seen = this.seen + 1;
+        return v;
+    }
+}
+
+for (n in Fibonacci(8)) {
+    io.println(n);
+}
+/* 0
+ * 1
+ * 1
+ * 2
+ * 3
+ * 5
+ * 8
+ * 13
+ */

@@ -1,0 +1,29 @@
+/* Fluent collection pipelines via streams.Stream (1.0.6).
+ *
+ * Intermediate ops (map, filter, take) are lazy and return a new
+ * Stream; terminal ops (toList, count, reduce, first, anyMatch,
+ * allMatch, forEach, toSet) drive the pipeline. Streams also
+ * implement the 1.0.6 iterator protocol so `for x in stream` works.
+ */
+import io;
+import streams;
+import collections;
+
+let sumOfSquares = streams.of([1, 2, 3, 4, 5])
+    .map(func(int x): int { return x * x; })
+    .reduce(0, func(int a, int b): int { return a + b; });
+io.println(sumOfSquares);  /* 55 */
+
+let firstThreeMultiplesOf7 = streams.of(collections.range(1, 100))
+    .filter(func(int x): bool { return x % 7 == 0; })
+    .take(3)
+    .toList();
+io.println(firstThreeMultiplesOf7);  /* [7, 14, 21] */
+
+for (n in streams.of([10, 20, 30])) {
+    io.println(n);
+}
+/* 10
+ * 20
+ * 30
+ */

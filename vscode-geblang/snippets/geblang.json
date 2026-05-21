@@ -515,6 +515,38 @@
         ],
         "description": "Class with __enter__ / __exit__ for `with`-block semantics"
     },
+    "Iterator class (__iter/__done/__next)": {
+        "prefix": "iter",
+        "body": [
+            "class ${1:Range} {",
+            "\t${2:int from};",
+            "\t${3:int to};",
+            "\t${4:int cur};",
+            "",
+            "\tfunc ${1:Range}(${5:int from, int to}) {",
+            "\t\tthis.from = from;",
+            "\t\tthis.to = to;",
+            "\t\tthis.cur = from;",
+            "\t}",
+            "",
+            "\tfunc __iter(): ${1:Range} {",
+            "\t\tthis.cur = this.from;",
+            "\t\treturn this;",
+            "\t}",
+            "",
+            "\tfunc __done(): bool {",
+            "\t\treturn this.cur >= this.to;",
+            "\t}",
+            "",
+            "\tfunc __next(): ${6:int} {",
+            "\t\t${6:int} v = this.cur;",
+            "\t\tthis.cur = this.cur + 1;",
+            "\t\treturn v;",
+            "\t}",
+            "}$0"
+        ],
+        "description": "Iterable class with __iter/__done/__next (1.0.6)"
+    },
     "__serialize__ override": {
         "prefix": "serialize",
         "body": [

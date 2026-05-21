@@ -491,6 +491,52 @@ for (i in collections.range(0, 5, 1)) {
 }
 ```
 
+## `streams` Module (1.0.6)
+
+`streams.Stream` wraps any iterable (list, set, generator, range, or
+another class with the 1.0.6 iterator protocol) in a fluent,
+lazy-by-default pipeline. Intermediate ops return a new Stream that
+pulls values on demand; terminal ops drive the pipeline and produce
+a value.
+
+| Intermediate (returns Stream) | Effect |
+| --- | --- |
+| `map(fn)` | Apply `fn` to every value |
+| `filter(fn)` | Keep values where `fn(x)` is true |
+| `take(n)` | Yield at most the first `n` values |
+
+| Terminal (drives the pipeline) | Result |
+| --- | --- |
+| `toList()` | `list<any>` of all values |
+| `toSet()` | `set<any>` of all values (duplicates collapse) |
+| `count()` | Number of values |
+| `first()` | First value or `null` when empty |
+| `reduce(initial, fn)` | Left fold using `fn(acc, value)` |
+| `forEach(fn)` | Invoke `fn(value)` for each value |
+| `anyMatch(fn)` | True when any value satisfies `fn` |
+| `allMatch(fn)` | True when every value satisfies `fn` (vacuously true for empty) |
+
+`streams.of(source)` builds a Stream. Streams implement `__iter()` so
+they slot into `for-in` loops and `iterable<T>` parameters without
+materialising.
+
+```gb
+import streams;
+import collections;
+import io;
+
+let sumOfSquares = streams.of([1, 2, 3, 4, 5])
+    .map(func(int x): int { return x * x; })
+    .reduce(0, func(int a, int b): int { return a + b; });
+io.println(sumOfSquares);  # 55
+
+let firstThreeMultiplesOf7 = streams.of(collections.range(1, 100))
+    .filter(func(int x): bool { return x % 7 == 0; })
+    .take(3)
+    .toList();
+io.println(firstThreeMultiplesOf7);  # [7, 14, 21]
+```
+
 Use a C-style `for` loop when you need the counter as an index:
 
 ```gb

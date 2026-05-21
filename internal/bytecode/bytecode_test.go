@@ -1112,8 +1112,10 @@ first(10);
 }
 
 func TestCompileAndRunBytecodeRejectsExcessiveRecursion(t *testing.T) {
+	// Non-tail recursion: the `+ 0` keeps the call out of tail position
+	// so the new OpTailCall fast path does not collapse the frames.
 	source := []byte(`func recurse(int n): int {
-    return recurse(n + 1);
+    return recurse(n + 1) + 0;
 }
 
 recurse(0);

@@ -1,0 +1,25 @@
+/* reflect.location returns the source position of a function or
+ * class declaration as {module, line, column} (1.0.6).
+ *
+ * Useful for diagnostics, code-gen, and framework error messages
+ * that want to point back at the user's source.
+ */
+import io;
+import reflect;
+
+func handler(): string {
+    return "ok";
+}
+
+class Service {
+    int id;
+    func Service(int id) { this.id = id; }
+}
+
+let h = reflect.location(handler);
+let s = reflect.location(Service);
+let i = reflect.location(Service(1));
+
+io.println("handler @ line " + (h["line"] as string) + ", column " + (h["column"] as string));
+io.println("Service @ line " + (s["line"] as string) + ", column " + (s["column"] as string));
+io.println("instance fallback @ line " + (i["line"] as string));

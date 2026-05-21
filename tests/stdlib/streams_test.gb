@@ -1,0 +1,84 @@
+/**
+ * @title Streams module (1.0.6)
+ * @summary `streams.Stream` wraps any iterable and exposes a
+ * fluent, lazy-by-default API. Intermediate ops (`map`, `filter`,
+ * `take`) return a new Stream that pulls values on demand; terminal
+ * ops (`toList`, `toSet`, `count`, `reduce`, `forEach`, `first`,
+ * `anyMatch`, `allMatch`) materialise the pipeline. Streams
+ * implement `__iter()` so they slot into `for-in` loops too.
+ *
+ * Also pins the cross-chunk closure-dispatch fix: passing an
+ * entry-script closure into a stdlib-module method that re-invokes
+ * it (via collections.lazyMap, etc.) used to corrupt the closure
+ * into the module's own constructor.
+ */
+import test;
+import streams;
+import collections;
+
+class StreamsTest extends test.Test {
+    @test
+    func mapFilterToList(): void {
+        let result = streams.of([1, 2, 3, 4, 5, 6])
+            .filter(func(int x): bool { return x % 2 == 0; })
+            .map(func(int x): int { return x * 10; })
+            .toList();
+        this.assertEquals([20, 40, 60], result);
+    }
+
+    @test
+    func reduceFolds(): void {
+        let sum = streams.of([1, 2, 3, 4, 5])
+            .map(func(int x): int { return x * x; })
+            .reduce(0, func(int a, int b): int { return a + b; });
+        this.assertEquals(55, sum);
+    }
+
+    @test
+    func takeWithLazySource(): void {
+        let result = streams.of(collections.range(1, 100))
+            .filter(func(int x): bool { return x % 7 == 0; })
+            .take(3)
+            .toList();
+        this.assertEquals([7, 14, 21], result);
+    }
+
+    @test
+    func count(): void {
+        this.assertEquals(3, streams.of([1, 2, 3]).count());
+        this.assertEquals(0, streams.of([] as list<int>).count());
+    }
+
+    @test
+    func firstReturnsLeadingValue(): void {
+        this.assertEquals(10, streams.of([10, 20, 30]).first());
+        this.assertNull(streams.of([] as list<int>).first());
+    }
+
+    @test
+    func anyAndAllMatch(): void {
+        let s = streams.of([1, 2, 3, 4]);
+        this.assertTrue(s.anyMatch(func(int x): bool { return x > 3; }));
+        this.assertFalse(s.anyMatch(func(int x): bool { return x > 100; }));
+        this.assertTrue(s.allMatch(func(int x): bool { return x > 0; }));
+        this.assertFalse(s.allMatch(func(int x): bool { return x > 2; }));
+    }
+
+    @test
+    func forInIteratesPipeline(): void {
+        list<int> collected = [];
+        for (n in streams.of([10, 20, 30])) {
+            collected = collected.push(n);
+        }
+        this.assertEquals([10, 20, 30], collected);
+    }
+
+    @test
+    func forEachVisitsEveryElement(): void {
+        list<int> seen = [];
+        streams.of([1, 2, 3]).forEach(func(int x): void {
+            seen = seen.push(x * 100);
+        });
+        this.assertEquals([100, 200, 300], seen);
+    }
+}

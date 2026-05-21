@@ -203,6 +203,13 @@ type deferredAction struct {
 	funcIdx  int64           // for func
 	receiver runtime.Value   // for method
 	args     []runtime.Value // for native/func/method
+	// names parallels args when the deferred call was emitted by an
+	// OpDefer*Named opcode. Empty entries mark positional args;
+	// non-empty entries name the corresponding argument so the
+	// deferred-dispatch path can reorder against the callee's
+	// signature when the queue runs. nil when the defer used the
+	// positional-only opcode.
+	names []string
 }
 
 type exceptionHandler struct {
@@ -217,6 +224,11 @@ type iteratorValue struct {
 	index     int
 	rangeIter *rangeIterator
 	generator *runtime.Generator
+	// userIter holds a user-defined iterator instance returned by
+	// the source's __iter() method (or the source itself when it
+	// already implements __next/__done). next() calls
+	// userIterDone()/userIterNext() per step.
+	userIter *runtime.Instance
 }
 
 func (v *iteratorValue) TypeName() string { return "iterator" }
@@ -1329,6 +1341,12 @@ func (vm *VM) Run() (err error) {
 				return err
 			}
 			ip = nextIP
+		case OpTailCall:
+			nextIP, err := vm.tailCall(instruction)
+			if err != nil {
+				return err
+			}
+			ip = nextIP
 		case OpRange:
 			if err := vm.execRange(instruction); err != nil {
 				return err
@@ -1701,6 +1719,87 @@ func (vm *VM) Run() (err error) {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
 			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args})
+		case OpDeferNativeCallNamed:
+			if len(instruction.Operands) < 2 {
+				return vm.runtimeError(instruction, "defer named native call has invalid operands")
+			}
+			nameIndex := instruction.Operands[0]
+			argc := int(instruction.Operands[1])
+			if len(instruction.Operands) != 2+argc {
+				return vm.runtimeError(instruction, "defer named native call argument metadata mismatch")
+			}
+			nameConst, ok := vm.chunk.Constants[nameIndex].(runtime.String)
+			if !ok {
+				return vm.runtimeError(instruction, "defer named native call name must be string")
+			}
+			args := make([]runtime.Value, argc)
+			for i := argc - 1; i >= 0; i-- {
+				v, err := vm.pop()
+				if err != nil {
+					return vm.runtimeError(instruction, "%s", err.Error())
+				}
+				args[i] = v
+			}
+			names, err := vm.readArgNames(instruction, instruction.Operands[2:])
+			if err != nil {
+				return err
+			}
+			vm.addDefer(deferredAction{kind: deferKindNative, name: nameConst.Value, args: args, names: names})
+		case OpDeferMethodCallNamed:
+			if len(instruction.Operands) < 2 {
+				return vm.runtimeError(instruction, "defer named method call has invalid operands")
+			}
+			nameIndex := instruction.Operands[0]
+			argc := int(instruction.Operands[1])
+			if len(instruction.Operands) != 2+argc {
+				return vm.runtimeError(instruction, "defer named method call argument metadata mismatch")
+			}
+			nameConst, ok := vm.chunk.Constants[nameIndex].(runtime.String)
+			if !ok {
+				return vm.runtimeError(instruction, "defer named method call name must be string")
+			}
+			args := make([]runtime.Value, argc)
+			for i := argc - 1; i >= 0; i-- {
+				v, err := vm.pop()
+				if err != nil {
+					return vm.runtimeError(instruction, "%s", err.Error())
+				}
+				args[i] = v
+			}
+			names, err := vm.readArgNames(instruction, instruction.Operands[2:])
+			if err != nil {
+				return err
+			}
+			receiver, err := vm.pop()
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
+			vm.addDefer(deferredAction{kind: deferKindMethod, name: nameConst.Value, receiver: receiver, args: args, names: names})
+		case OpDeferCallableCallNamed:
+			if len(instruction.Operands) < 1 {
+				return vm.runtimeError(instruction, "defer named callable call has invalid operands")
+			}
+			argc := int(instruction.Operands[0])
+			if len(instruction.Operands) != 1+argc {
+				return vm.runtimeError(instruction, "defer named callable call argument metadata mismatch")
+			}
+			args := make([]runtime.Value, argc)
+			for i := argc - 1; i >= 0; i-- {
+				v, err := vm.pop()
+				if err != nil {
+					return vm.runtimeError(instruction, "%s", err.Error())
+				}
+				args[i] = v
+			}
+			names, err := vm.readArgNames(instruction, instruction.Operands[1:])
+			if err != nil {
+				return err
+			}
+			callable, err := vm.pop()
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
+			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args, names: names})
 		case OpPrintln:
 			value, err := vm.pop()
 			if err != nil {
@@ -2290,6 +2389,8 @@ func (vm *VM) bytecodeFunctionValue(index int64, raw bool) runtime.BytecodeFunct
 	function.Async = info.Async
 	function.Variadic = info.Variadic
 	function.Decorators = append([]runtime.DecoratorMetadata(nil), info.Decorators...)
+	function.DefLine = info.DefLine
+	function.DefColumn = info.DefColumn
 	return function
 }
 
@@ -3772,18 +3873,89 @@ func (vm *VM) iterInit(instruction Instruction) error {
 	if err != nil {
 		return vm.runtimeError(instruction, "%s", err.Error())
 	}
-	switch value := value.(type) {
-	case runtime.List:
-		values := append([]runtime.Value(nil), value.Elements...)
-		vm.push(&iteratorValue{values: values})
-	case *runtime.Generator:
-		vm.push(&iteratorValue{generator: value})
-	case runtime.Range:
-		vm.push(newRangeIterator(value))
-	default:
-		return vm.runtimeError(instruction, "%s is not iterable", value.TypeName())
+	iter, err := vm.iteratorFor(instruction, value)
+	if err != nil {
+		return err
 	}
+	vm.push(iter)
 	return nil
+}
+
+// iteratorFor turns any iterable value into an iteratorValue. List /
+// Generator / Range take the existing fast paths; user-class
+// instances dispatch __iter() (or use __next/__done directly when
+// __iter is absent) and the result is itself fed back into this
+// function so a Stream-style class can return a Generator, another
+// Instance, a List, etc.
+func (vm *VM) iteratorFor(instruction Instruction, value runtime.Value) (*iteratorValue, error) {
+	switch v := value.(type) {
+	case runtime.List:
+		values := append([]runtime.Value(nil), v.Elements...)
+		return &iteratorValue{values: values}, nil
+	case *runtime.Generator:
+		return &iteratorValue{generator: v}, nil
+	case runtime.Range:
+		return newRangeIterator(v), nil
+	case *runtime.Instance:
+		return vm.userInstanceIterator(instruction, v)
+	}
+	return nil, vm.runtimeError(instruction, "%s is not iterable", value.TypeName())
+}
+
+// userInstanceIterator resolves the iterator for a *runtime.Instance.
+// Calls obj.__iter() when defined and recursively iteratorFor's the
+// result. Falls back to the instance-as-iterator path when only
+// __next is defined.
+func (vm *VM) userInstanceIterator(instruction Instruction, instance *runtime.Instance) (*iteratorValue, error) {
+	if instance == nil || instance.Class == nil {
+		return nil, vm.runtimeError(instruction, "cannot iterate uninitialised instance")
+	}
+	hasIter, hasNext := vm.instanceIteratorHooks(instance)
+	if hasIter {
+		result, err := vm.CallMethod(instance, "__iter", nil)
+		if err != nil {
+			return nil, vm.runtimeError(instruction, "%s.__iter: %s", instance.Class.Name, err.Error())
+		}
+		// If __iter returns the same instance and the instance is its
+		// own iterator (has __next/__done), break the recursion.
+		if inst, ok := result.(*runtime.Instance); ok && inst == instance {
+			if hasNext {
+				return &iteratorValue{userIter: instance}, nil
+			}
+		}
+		return vm.iteratorFor(instruction, result)
+	}
+	if hasNext {
+		return &iteratorValue{userIter: instance}, nil
+	}
+	return nil, vm.runtimeError(instruction, "%s is not iterable: define __iter() or __next()/__done()", instance.Class.Name)
+}
+
+// instanceIteratorHooks reports whether an instance's class exposes
+// __iter and __next. Falls back to the runtime.Class method table for
+// instances whose ClassInfo lives in a different chunk (e.g. a class
+// defined in an imported stdlib module).
+func (vm *VM) instanceIteratorHooks(instance *runtime.Instance) (hasIter, hasNext bool) {
+	if instance.Class == nil {
+		return false, false
+	}
+	if classInfo, ok := vm.classInfo(instance.Class.Name); ok {
+		_, hasIter = vm.lookupMethod(classInfo, "__iter")
+		_, hasNext = vm.lookupMethod(classInfo, "__next")
+		return hasIter, hasNext
+	}
+	for c := instance.Class; c != nil; c = c.Parent {
+		if len(c.Methods["__iter"]) > 0 {
+			hasIter = true
+		}
+		if len(c.Methods["__next"]) > 0 {
+			hasNext = true
+		}
+		if hasIter && hasNext {
+			break
+		}
+	}
+	return hasIter, hasNext
 }
 
 func (vm *VM) iterNext(instruction Instruction) (bool, error) {
@@ -3800,6 +3972,19 @@ func (vm *VM) iterNext(instruction Instruction) (bool, error) {
 	if !ok {
 		return false, vm.runtimeError(instruction, "local is not an iterator")
 	}
+	if iter.userIter != nil {
+		next, ok, err := vm.advanceUserIterator(instruction, iter.userIter)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+		if err := vm.setLocal(valueSlot, next); err != nil {
+			return false, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		return true, nil
+	}
 	next, ok, err := iter.next()
 	if err != nil {
 		return false, vm.runtimeError(instruction, "%s", err.Error())
@@ -3811,6 +3996,40 @@ func (vm *VM) iterNext(instruction Instruction) (bool, error) {
 		return false, vm.runtimeError(instruction, "%s", err.Error())
 	}
 	return true, nil
+}
+
+// advanceUserIterator drives one step of a user-defined iterator
+// (Instance with __next()/__done() methods). Returns (value, true)
+// for an item, (nil, false) when the iterator reports done.
+func (vm *VM) advanceUserIterator(instruction Instruction, iter *runtime.Instance) (runtime.Value, bool, error) {
+	if iter == nil || iter.Class == nil {
+		return nil, false, vm.runtimeError(instruction, "user iterator has no class")
+	}
+	classInfo, ok := vm.classInfo(iter.Class.Name)
+	if !ok {
+		return nil, false, vm.runtimeError(instruction, "%s is not an iterator", iter.Class.Name)
+	}
+	if _, hasDone := vm.lookupMethod(classInfo, "__done"); hasDone {
+		doneResult, err := vm.CallMethod(iter, "__done", nil)
+		if err != nil {
+			return nil, false, vm.runtimeError(instruction, "%s.__done: %s", iter.Class.Name, err.Error())
+		}
+		doneBool, ok := doneResult.(runtime.Bool)
+		if !ok {
+			return nil, false, vm.runtimeError(instruction, "%s.__done must return bool, got %s", iter.Class.Name, doneResult.TypeName())
+		}
+		if doneBool.Value {
+			return nil, false, nil
+		}
+	}
+	if _, hasNext := vm.lookupMethod(classInfo, "__next"); !hasNext {
+		return nil, false, vm.runtimeError(instruction, "%s is not an iterator: define __next()", iter.Class.Name)
+	}
+	value, err := vm.CallMethod(iter, "__next", nil)
+	if err != nil {
+		return nil, false, vm.runtimeError(instruction, "%s.__next: %s", iter.Class.Name, err.Error())
+	}
+	return value, true, nil
 }
 
 // withEnter pops the resource from the stack. If the resource is a
@@ -4094,6 +4313,9 @@ func (iter *iteratorValue) next() (runtime.Value, bool, error) {
 		value, ok := iter.rangeIter.next()
 		return value, ok, nil
 	}
+	if iter.userIter != nil {
+		return nil, false, errUserIterPlaceholder
+	}
 	if iter.index >= len(iter.values) {
 		return nil, false, nil
 	}
@@ -4101,6 +4323,12 @@ func (iter *iteratorValue) next() (runtime.Value, bool, error) {
 	iter.index++
 	return value, true, nil
 }
+
+// errUserIterPlaceholder signals that the iterator backs a user
+// *Instance and must be driven via the VM (which holds the call
+// dispatcher). Callers that observe this error read userIter and
+// dispatch __done()/__next() themselves.
+var errUserIterPlaceholder = errors.New("user iterator must be advanced via VM")
 
 func (iter *rangeIterator) next() (runtime.Value, bool) {
 	if !rangeContains(iter.current, iter.end, iter.step, iter.exclusive) {
@@ -4249,6 +4477,95 @@ func (vm *VM) popExitCode(instruction Instruction) (int, error) {
 		return int(v.Value.Int64()), nil
 	}
 	return 0, vm.runtimeError(instruction, "sys.exit expects int")
+}
+
+// tailCall replaces the top frame's function with a new one. Used by
+// OpTailCall for `return f(args)` in tail position. The current
+// frame's returnIP, returnOverride, and locals buffer are reused
+// (or replaced if LocalCount differs). Defers and exception handlers
+// in the caller MUST be empty - the compiler enforces this.
+func (vm *VM) tailCall(instruction Instruction) (int, error) {
+	if len(instruction.Operands) != 2 {
+		return 0, vm.runtimeError(instruction, "tail call instruction has invalid operands")
+	}
+	index := instruction.Operands[0]
+	argc := instruction.Operands[1]
+	if index < 0 || int(index) >= len(vm.chunk.Functions) {
+		return 0, vm.runtimeError(instruction, "tail call function index out of range")
+	}
+	function := vm.chunk.Functions[index]
+	if len(vm.frames) == 0 {
+		return 0, vm.runtimeError(instruction, "tail call without an active frame")
+	}
+	paramCount := len(function.ParamSlots)
+	if int(argc) != paramCount {
+		return 0, vm.runtimeError(instruction, "tail call arity mismatch: %s expects %d, got %d", function.Name, paramCount, argc)
+	}
+	n := len(vm.stack)
+	if int(argc) > n {
+		return 0, vm.runtimeError(instruction, "stack underflow")
+	}
+	stackArgs := vm.stack[n-int(argc) : n]
+	if function.requiresParamValidation {
+		typeParams := function.typeParamSet
+		specs := function.paramTypeSpecs
+		for i := 0; i < paramCount; i++ {
+			pt := function.ParamTypes[i]
+			if pt == "" {
+				continue
+			}
+			argKind := stackArgs[i].Kind
+			if i < len(specs) && specs[i].kind == vmTypeInt && argKind == runtime.VMKindSmallInt {
+				continue
+			}
+			var spec vmTypeSpec
+			if i < len(specs) && specs[i].raw != "" {
+				spec = specs[i]
+			} else {
+				spec = vm.typeSpec(pt)
+			}
+			if !vm.matchVMValueToTypeSpec(typeParams, stackArgs[i], spec) {
+				return 0, vm.runtimeError(instruction, "%s: argument %d expected %s, got %s", function.Name, i+1, pt, stackArgs[i].ToValue().TypeName())
+			}
+		}
+	}
+	args := make([]runtime.VMValue, paramCount)
+	copy(args, stackArgs)
+	vm.stack = vm.stack[:n-int(argc)]
+	// Reuse the existing top frame: keep returnIP, returnOverride.
+	// Replace functionName / callLine for stack traces. Reset other
+	// fields to defaults for the new function.
+	frame := &vm.frames[len(vm.frames)-1]
+	frame.functionName = function.Name
+	frame.callLine = instruction.Line
+	frame.negateReturn = false
+	frame.isErrorClass = false
+	frame.isImmutableClass = false
+	frame.isDestructibleConstructor = false
+	frame.typeBindings = nil
+	frame.generator = nil
+	frame.generatorDone = nil
+	vm.pendingTypeBindings = nil
+	// Release the caller-function's own locals (the frame was reusing
+	// them; the eventual OpReturn will use frame.locals, which still
+	// points to the original caller's locals, to restore on pop). Then
+	// allocate a fresh slice for the callee. function.SharesParentFrame
+	// is screened out at compile time so we always go through the
+	// fresh-allocation branch.
+	if !frame.shared {
+		vm.releaseLocalsBuffer(vm.locals)
+	}
+	frame.shared = false
+	vm.locals = vm.takeLocalsBuffer(int(function.LocalCount))
+	for i := 0; i < paramCount; i++ {
+		vm.locals[function.ParamSlots[i]] = args[i]
+	}
+	frameDepth := len(vm.frames)
+	if frameDepth < cap(vm.defers) {
+		vm.defers = vm.defers[:frameDepth+1]
+		vm.defers[frameDepth] = vm.defers[frameDepth][:0]
+	}
+	return int(function.Entry) - 1, nil
 }
 
 func (vm *VM) call(instruction Instruction, ip int) (int, error) {
@@ -4685,42 +5002,7 @@ func (vm *VM) inferTypeBindingsFromLocals(function FunctionInfo) map[string]stri
 			if err != nil || v == nil {
 				continue
 			}
-			if len(spec.args) == 1 {
-				name := spec.args[0].base
-				if typeParamSet[strings.ToLower(name)] {
-					var elemType string
-					if list, ok := v.(runtime.List); ok && len(list.Elements) > 0 {
-						elemType = list.Elements[0].TypeName()
-					} else if set, ok := v.(runtime.Set); ok && len(set.Elements) > 0 {
-						for _, entry := range set.Elements {
-							elemType = entry.Value.TypeName()
-							break
-						}
-					}
-					if elemType != "" {
-						if _, exists := typeBindings[name]; !exists {
-							typeBindings[name] = elemType
-						}
-					}
-				}
-			} else if len(spec.args) == 2 && spec.baseLower == "dict" {
-				nameK, nameV := spec.args[0].base, spec.args[1].base
-				if d, ok := v.(runtime.Dict); ok && len(d.Entries) > 0 {
-					for _, entry := range d.Entries {
-						if typeParamSet[strings.ToLower(nameK)] {
-							if _, exists := typeBindings[nameK]; !exists {
-								typeBindings[nameK] = entry.Key.TypeName()
-							}
-						}
-						if typeParamSet[strings.ToLower(nameV)] {
-							if _, exists := typeBindings[nameV]; !exists {
-								typeBindings[nameV] = entry.Value.TypeName()
-							}
-						}
-						break
-					}
-				}
-			}
+			vm.inferGenericBindingsFromSpec(spec, v, typeParamSet, typeBindings)
 			continue
 		}
 		if typeParamSet[strings.ToLower(paramType)] {
@@ -4736,6 +5018,70 @@ func (vm *VM) inferTypeBindingsFromLocals(function FunctionInfo) map[string]stri
 		vm.frames[len(vm.frames)-1].typeBindings = typeBindings
 	}
 	return typeBindings
+}
+
+// inferGenericBindingsFromSpec walks a parameter's type-spec tree
+// against the concrete arg value to discover bindings for any leaf
+// type-parameter references. Recurses into nested container shapes so
+// `list<dict<K, V>>` populates both K and V from a single arg, not
+// just the immediate level. Direct type-param leaves (e.g. just `T`)
+// fall through to the caller's same-level path; this helper only
+// fires when the spec has args (a generic container shape). Caller
+// already null-checked v.
+func (vm *VM) inferGenericBindingsFromSpec(spec vmTypeSpec, v runtime.Value, typeParamSet map[string]bool, typeBindings map[string]string) {
+	if len(spec.args) == 0 {
+		return
+	}
+	switch spec.baseLower {
+	case "list":
+		list, ok := v.(runtime.List)
+		if !ok || len(list.Elements) == 0 {
+			return
+		}
+		vm.bindOrRecurse(spec.args[0], list.Elements[0], typeParamSet, typeBindings)
+	case "set":
+		set, ok := v.(runtime.Set)
+		if !ok || len(set.Elements) == 0 {
+			return
+		}
+		for _, entry := range set.Elements {
+			vm.bindOrRecurse(spec.args[0], entry.Value, typeParamSet, typeBindings)
+			break
+		}
+	case "dict":
+		if len(spec.args) != 2 {
+			return
+		}
+		d, ok := v.(runtime.Dict)
+		if !ok || len(d.Entries) == 0 {
+			return
+		}
+		for _, entry := range d.Entries {
+			vm.bindOrRecurse(spec.args[0], entry.Key, typeParamSet, typeBindings)
+			vm.bindOrRecurse(spec.args[1], entry.Value, typeParamSet, typeBindings)
+			break
+		}
+	}
+}
+
+// bindOrRecurse is the leaf step of inferGenericBindingsFromSpec.
+// When `spec` is a bare type-param reference, record the binding from
+// the concrete value. Otherwise it is a nested container; recurse.
+func (vm *VM) bindOrRecurse(spec vmTypeSpec, v runtime.Value, typeParamSet map[string]bool, typeBindings map[string]string) {
+	if len(spec.args) == 0 {
+		if !typeParamSet[strings.ToLower(spec.base)] {
+			return
+		}
+		if v == nil {
+			return
+		}
+		if _, exists := typeBindings[spec.base]; exists {
+			return
+		}
+		typeBindings[spec.base] = v.TypeName()
+		return
+	}
+	vm.inferGenericBindingsFromSpec(spec, v, typeParamSet, typeBindings)
 }
 
 func (vm *VM) startPrevalidatedFunction(instruction Instruction, ip int, function FunctionInfo, provided []runtime.Value, returnOverride runtime.Value) (int, error) {
@@ -4895,7 +5241,6 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 			if i >= len(function.ParamSlots) {
 				break
 			}
-			// Container type like "list<T>", "set<T>", "dict<K,V>".
 			var spec vmTypeSpec
 			if i < len(function.paramTypeSpecs) && function.paramTypeSpecs[i].raw != "" {
 				spec = function.paramTypeSpecs[i]
@@ -4905,42 +5250,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 			if len(spec.args) > 0 {
 				slot := function.ParamSlots[i]
 				if v, err := vm.getLocal(slot); err == nil && v != nil {
-					if len(spec.args) == 1 {
-						name := spec.args[0].base
-						if typeParamSet[strings.ToLower(name)] {
-							var elemType string
-							if list, ok := v.(runtime.List); ok && len(list.Elements) > 0 {
-								elemType = list.Elements[0].TypeName()
-							} else if set, ok := v.(runtime.Set); ok && len(set.Elements) > 0 {
-								for _, entry := range set.Elements {
-									elemType = entry.Value.TypeName()
-									break
-								}
-							}
-							if elemType != "" {
-								if _, exists := typeBindings[name]; !exists {
-									typeBindings[name] = elemType
-								}
-							}
-						}
-					} else if len(spec.args) == 2 && spec.baseLower == "dict" {
-						nameK, nameV := spec.args[0].base, spec.args[1].base
-						if d, ok := v.(runtime.Dict); ok && len(d.Entries) > 0 {
-							for _, entry := range d.Entries {
-								if typeParamSet[strings.ToLower(nameK)] {
-									if _, exists := typeBindings[nameK]; !exists {
-										typeBindings[nameK] = entry.Key.TypeName()
-									}
-								}
-								if typeParamSet[strings.ToLower(nameV)] {
-									if _, exists := typeBindings[nameV]; !exists {
-										typeBindings[nameV] = entry.Value.TypeName()
-									}
-								}
-								break
-							}
-						}
-					}
+					vm.inferGenericBindingsFromSpec(spec, v, typeParamSet, typeBindings)
 				}
 				continue
 			}
@@ -6253,6 +6563,11 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 			return nil, fmt.Errorf("reflect.typeOf expects value")
 		}
 		return runtime.Type{Name: args[0].TypeName()}, nil
+	case "location":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("reflect.location expects value")
+		}
+		return vm.reflectLocation(args[0])
 	case "getField":
 		if len(args) != 2 {
 			return nil, fmt.Errorf("reflect.getField expects (instance, fieldName)")
@@ -6664,6 +6979,61 @@ func reflectDecoratorTarget(value runtime.Value) (runtime.DecoratorTarget, bool)
 	}
 }
 
+// reflectLocation returns the source position of a function or class
+// declaration as `{module: string, line: int, column: int}`. Returns
+// null when the value has no recorded location (native stdlib, etc.).
+func (vm *VM) reflectLocation(value runtime.Value) (runtime.Value, error) {
+	switch v := value.(type) {
+	case runtime.BytecodeFunction:
+		if v.DefLine == 0 && v.DefColumn == 0 {
+			return runtime.Null{}, nil
+		}
+		return makeLocationDict(v.Module, v.DefLine, v.DefColumn), nil
+	case runtime.BytecodeClosure:
+		if int(v.FunctionIndex) >= len(vm.chunk.Functions) {
+			return runtime.Null{}, nil
+		}
+		info := vm.chunk.Functions[v.FunctionIndex]
+		if info.DefLine == 0 && info.DefColumn == 0 {
+			return runtime.Null{}, nil
+		}
+		return makeLocationDict(v.Module, info.DefLine, info.DefColumn), nil
+	case runtime.BytecodeClass:
+		if v.DefLine == 0 && v.DefColumn == 0 {
+			return runtime.Null{}, nil
+		}
+		return makeLocationDict(v.Module, v.DefLine, v.DefColumn), nil
+	case runtime.DecoratorTarget:
+		if v.Function != nil && (v.Function.DefLine != 0 || v.Function.DefColumn != 0) {
+			return makeLocationDict(v.Function.Module, v.Function.DefLine, v.Function.DefColumn), nil
+		}
+		if v.Class != nil && (v.Class.DefLine != 0 || v.Class.DefColumn != 0) {
+			return makeLocationDict(v.Class.Module, v.Class.DefLine, v.Class.DefColumn), nil
+		}
+		return runtime.Null{}, nil
+	case *runtime.Instance:
+		if v == nil || v.Class == nil {
+			return runtime.Null{}, nil
+		}
+		if classInfo, ok := vm.classInfo(v.Class.Name); ok {
+			if classInfo.DefLine == 0 && classInfo.DefColumn == 0 {
+				return runtime.Null{}, nil
+			}
+			return makeLocationDict(v.Class.Module, classInfo.DefLine, classInfo.DefColumn), nil
+		}
+		return runtime.Null{}, nil
+	}
+	return runtime.Null{}, nil
+}
+
+func makeLocationDict(module string, line, column int64) runtime.Dict {
+	entries := map[string]runtime.DictEntry{}
+	putBytecodeDict(entries, "module", runtime.String{Value: module})
+	putBytecodeDict(entries, "line", runtime.NewInt64(line))
+	putBytecodeDict(entries, "column", runtime.NewInt64(column))
+	return runtime.Dict{Entries: entries}
+}
+
 func reflectFunctionMetadata(value runtime.Value) (runtime.FunctionMetadata, bool) {
 	switch value := value.(type) {
 	case runtime.DecoratorTarget:
@@ -6685,6 +7055,7 @@ func reflectFunctionMetadata(value runtime.Value) (runtime.FunctionMetadata, boo
 // reference directly.
 func (vm *VM) bytecodeClassFromInfo(classInfo ClassInfo, index int64) runtime.BytecodeClass {
 	return runtime.BytecodeClass{
+		Module:              vm.moduleName,
 		Name:                classInfo.Name,
 		Doc:                 classInfo.Doc,
 		Index:               index,
@@ -6697,6 +7068,8 @@ func (vm *VM) bytecodeClassFromInfo(classInfo ClassInfo, index int64) runtime.By
 		MethodMetadata:      vm.classFunctionMetadata(classInfo.Methods, "method", 1),
 		StaticMetadata:      vm.classFunctionMetadata(classInfo.StaticMethods, "staticMethod", 0),
 		ConstructorMetadata: vm.constructorFunctionMetadata(classInfo.ConstructorIndices),
+		DefLine:             classInfo.DefLine,
+		DefColumn:           classInfo.DefColumn,
 	}
 }
 
@@ -6808,6 +7181,9 @@ func bytecodeClassMetadata(value runtime.BytecodeClass) runtime.ClassMetadata {
 		Methods:       sortedStringMapValues(methods),
 		StaticMethods: sortedStringMapValues(staticMethods),
 		Interfaces:    append([]string(nil), value.Interfaces...),
+		Module:        value.Module,
+		DefLine:       value.DefLine,
+		DefColumn:     value.DefColumn,
 	}
 	sort.Strings(metadata.Fields)
 	sort.Strings(metadata.Interfaces)
@@ -6856,6 +7232,9 @@ func bytecodeFunctionMetadata(value runtime.BytecodeFunction) *runtime.FunctionM
 		Async:          value.Async,
 		Variadic:       value.Variadic,
 		Decorators:     append([]runtime.DecoratorMetadata(nil), value.Decorators...),
+		Module:         value.Module,
+		DefLine:        value.DefLine,
+		DefColumn:      value.DefColumn,
 	}
 }
 
@@ -7039,10 +7418,6 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value) runtime.Value {
 		return runtime.Function{
 			Name: callable.Name,
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-				// Wrapped bridges can fire from arbitrary goroutines
-				// (http handlers, websocket events). Take the slow
-				// runWrapper path so a fresh chunk + sub-VM isolates
-				// state.
 				return vm.callCallableSlow(callable, args)
 			},
 		}
@@ -7483,6 +7858,72 @@ func (vm *VM) collectionsNativeLazyFilter(args []runtime.Value) (runtime.Value, 
 	}), nil
 }
 
+// reorderMethodNamedArgs reorders deferred-method-call arguments
+// against the method's actual ParamNames so the runtime dispatch sees
+// values in positional order. The receiver counts as paramOffset=1.
+func (vm *VM) reorderMethodNamedArgs(instruction Instruction, instance *runtime.Instance, methodName string, args []runtime.Value, names []string) ([]runtime.Value, error) {
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if !ok {
+		return args, nil
+	}
+	indices, ok := vm.lookupMethod(classInfo, methodName)
+	if !ok || len(indices) == 0 {
+		return args, nil
+	}
+	idx, err := vm.selectRuntimeFunction(instruction, methodName, indices, args, 1)
+	if err != nil {
+		return nil, err
+	}
+	function := vm.chunk.Functions[idx]
+	return vm.orderRuntimeArguments(instruction, function, args, names, 1)
+}
+
+// reorderCallableNamedArgs reorders deferred-callable-call arguments
+// using the callable's signature. BytecodeFunction / BytecodeClosure
+// expose a FunctionIndex pointing at ParamNames; other callable kinds
+// (native functions, Instance.__invoke) can't be reordered statically,
+// so the names list is rejected up front by the compiler in those
+// cases - here we fall back to the positional order if the callable
+// shape is unrecognised.
+func (vm *VM) reorderCallableNamedArgs(instruction Instruction, callee runtime.Value, args []runtime.Value, names []string) ([]runtime.Value, error) {
+	var funcIdx int64 = -1
+	switch v := callee.(type) {
+	case runtime.BytecodeFunction:
+		funcIdx = v.Index
+	case runtime.BytecodeClosure:
+		funcIdx = v.FunctionIndex
+	default:
+		return args, nil
+	}
+	if funcIdx < 0 || int(funcIdx) >= len(vm.chunk.Functions) {
+		return args, nil
+	}
+	function := vm.chunk.Functions[funcIdx]
+	offset := 0
+	if closure, ok := callee.(runtime.BytecodeClosure); ok {
+		offset = len(closure.Upvalues)
+	}
+	return vm.orderRuntimeArguments(instruction, function, args, names, offset)
+}
+
+// readArgNames decodes the trailing name-index operands carried by
+// OpDefer*CallNamed. Each entry is a constant-pool index pointing to
+// a String holding the argument name, or -1 for a positional arg.
+func (vm *VM) readArgNames(instruction Instruction, nameOperands []int64) ([]string, error) {
+	names := make([]string, len(nameOperands))
+	for i, idx := range nameOperands {
+		if idx < 0 {
+			continue
+		}
+		name, err := vm.constantStringAt(instruction, idx, "argument name constant must be string")
+		if err != nil {
+			return nil, err
+		}
+		names[i] = name
+	}
+	return names, nil
+}
+
 func (vm *VM) addDefer(action deferredAction) {
 	current := len(vm.defers) - 1
 	vm.defers[current] = append(vm.defers[current], action)
@@ -7519,7 +7960,11 @@ func (vm *VM) runDefers(instruction Instruction) error {
 				return err
 			}
 		case deferKindNative:
-			if _, err := vm.evalNativeCall(action.name, action.args); err != nil {
+			if len(action.names) > 0 {
+				if _, err := vm.evalNativeCallWithNames(action.name, action.args, action.names); err != nil {
+					return vm.runtimeError(instruction, "deferred call %s: %v", action.name, err)
+				}
+			} else if _, err := vm.evalNativeCall(action.name, action.args); err != nil {
 				return vm.runtimeError(instruction, "deferred call %s: %v", action.name, err)
 			}
 		case deferKindFunc:
@@ -7531,11 +7976,27 @@ func (vm *VM) runDefers(instruction Instruction) error {
 			if !ok {
 				return vm.runtimeError(instruction, "deferred method call receiver is not an instance")
 			}
-			if _, err := vm.CallMethod(instance, action.name, action.args); err != nil {
+			args := action.args
+			if len(action.names) > 0 {
+				reordered, err := vm.reorderMethodNamedArgs(instruction, instance, action.name, action.args, action.names)
+				if err != nil {
+					return vm.runtimeError(instruction, "deferred method call %s: %v", action.name, err)
+				}
+				args = reordered
+			}
+			if _, err := vm.CallMethod(instance, action.name, args); err != nil {
 				return vm.runtimeError(instruction, "deferred method call %s: %v", action.name, err)
 			}
 		case deferKindCallable:
-			if _, err := vm.callCallable(action.value, action.args); err != nil {
+			args := action.args
+			if len(action.names) > 0 {
+				reordered, err := vm.reorderCallableNamedArgs(instruction, action.value, action.args, action.names)
+				if err != nil {
+					return vm.runtimeError(instruction, "deferred callable call: %v", err)
+				}
+				args = reordered
+			}
+			if _, err := vm.callCallable(action.value, args); err != nil {
 				return vm.runtimeError(instruction, "deferred callable call: %v", err)
 			}
 		default:
@@ -7549,7 +8010,7 @@ func (vm *VM) Exports() (map[string]runtime.Value, error) {
 	exports := map[string]runtime.Value{}
 	for _, export := range vm.chunk.Exports {
 		if export.FunctionIndex >= 0 {
-			function := runtime.BytecodeFunction{Name: export.Name, Index: export.FunctionIndex}
+			function := runtime.BytecodeFunction{Name: export.Name, Index: export.FunctionIndex, Module: vm.moduleName}
 			if int(export.FunctionIndex) < len(vm.chunk.Functions) {
 				info := vm.chunk.Functions[export.FunctionIndex]
 				function.Doc = info.Doc
@@ -7559,6 +8020,8 @@ func (vm *VM) Exports() (map[string]runtime.Value, error) {
 				function.Async = info.Async
 				function.Variadic = info.Variadic
 				function.Decorators = append([]runtime.DecoratorMetadata(nil), info.Decorators...)
+				function.DefLine = info.DefLine
+				function.DefColumn = info.DefColumn
 			}
 			exports[export.Name] = function
 			continue
@@ -7620,6 +8083,9 @@ func (vm *VM) constructorFunctionMetadata(indices []int64) []runtime.FunctionMet
 			Async:      info.Async,
 			Variadic:   info.Variadic,
 			Decorators: append([]runtime.DecoratorMetadata(nil), info.Decorators...),
+			Module:     vm.moduleName,
+			DefLine:    info.DefLine,
+			DefColumn:  info.DefColumn,
 		})
 	}
 	return result
@@ -7643,6 +8109,9 @@ func (vm *VM) classFunctionMetadata(methods map[string][]int64, target string, p
 				Async:          info.Async,
 				Variadic:       info.Variadic,
 				Decorators:     append([]runtime.DecoratorMetadata(nil), info.Decorators...),
+				Module:         vm.moduleName,
+				DefLine:        info.DefLine,
+				DefColumn:      info.DefColumn,
 			})
 		}
 	}
@@ -7813,7 +8282,11 @@ func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Valu
 		}
 		return nil, fmt.Errorf("no matching overload for %s with %d arguments", f.Name, len(args))
 	case runtime.BytecodeFunction:
-		if f.Module != "" && f.Module != vm.moduleName {
+		if f.Module != vm.moduleName {
+			// Cross-chunk function reference - the Index resolves
+			// against the defining chunk's function table, not ours.
+			// Includes entry-script values (Module=="") that crossed
+			// into a stdlib sub-VM.
 			if vm.moduleLoader == nil {
 				return nil, fmt.Errorf("bytecode module loader is not configured")
 			}
@@ -7833,7 +8306,13 @@ func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Valu
 		}
 		return vm.CallFunction(f.Index, args)
 	case runtime.BytecodeClosure:
-		if f.Module != "" && f.Module != vm.moduleName {
+		if f.Module != vm.moduleName {
+			// The closure was created in a different chunk - its
+			// FunctionIndex resolves against that chunk's function
+			// table, not ours. Route through the module loader so
+			// the call dispatches in the right VM context. Includes
+			// closures from the entry script (Module=="") that
+			// crossed into a stdlib module-defined class method.
 			if vm.moduleLoader == nil {
 				return nil, fmt.Errorf("bytecode module loader is not configured")
 			}
@@ -9019,7 +9498,7 @@ func copyStringInt64SliceMap(values map[string][]int64) map[string][]int64 {
 
 func shiftInstructionOperands(instruction *Instruction, instructionShift int, constantShift int) {
 	switch instruction.Op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpCatch, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 		for i := range instruction.Operands {
 			if isConstantOperand(instruction.Op, i) && instruction.Operands[i] >= 0 {
 				instruction.Operands[i] += int64(constantShift)
@@ -9056,6 +9535,12 @@ func isConstantOperand(op Op, index int) bool {
 		return index == 1
 	case OpNativeCallNamed:
 		return index == 0 || index >= 2
+	case OpDeferNativeCallNamed:
+		return index == 0 || index >= 2
+	case OpDeferMethodCallNamed:
+		return index == 0 || index >= 2
+	case OpDeferCallableCallNamed:
+		return index >= 1
 	case OpCallParentMethod:
 		return index == 1
 	case OpGetStaticValue, OpSetStaticValue:
@@ -9833,6 +10318,27 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 		return 0, vm.runtimeError(instruction, "stack underflow")
 	}
 	base := n - argc - 1
+	function := vm.chunk.Functions[functionIndex]
+	// Fast path: skip the per-arg ToValue() conversion when
+	// startFunctionVMValue can take VMValues directly. Receiver +
+	// argc must match the callee's full param count, and we must
+	// be able to recover the *Instance receiver from a boxed slot
+	// (the only kind the wrapper sets).
+	if !function.Variadic && argc+1 == len(function.ParamSlots) {
+		receiverSlot := vm.stack[base]
+		if receiverSlot.Kind == runtime.VMKindBoxed {
+			if instance, ok := receiverSlot.Boxed.(*runtime.Instance); ok {
+				stackArgs := vm.stack[base : base+argc+1]
+				vm.stack = vm.stack[:base]
+				nextIP, err := vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
+				if err != nil {
+					return 0, err
+				}
+				vm.inheritInstanceTypeBindings(instance)
+				return nextIP, nil
+			}
+		}
+	}
 	callArgs := make([]runtime.Value, argc+1)
 	for i := 0; i <= argc; i++ {
 		callArgs[i] = vm.stack[base+i].ToValue()
@@ -9842,7 +10348,7 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 	if !ok {
 		return 0, vm.runtimeError(instruction, "resolved method receiver is not an instance, got %s", callArgs[0].TypeName())
 	}
-	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], callArgs, nil)
+	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, function, callArgs, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -10211,7 +10717,11 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		if nameValue.Value != "__invoke" {
 			return 0, vm.runtimeError(instruction, "closure does not have method %s", nameValue.Value)
 		}
-		if closure.Module != "" && closure.Module != vm.moduleName {
+		if closure.Module != vm.moduleName {
+			// Cross-chunk closure invocation - route through the
+			// module loader so the FunctionIndex resolves against
+			// the chunk that defined the closure. Entry-script
+			// closures (Module=="") flow through the same path.
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
@@ -10332,7 +10842,7 @@ func (vm *VM) methodCallNamed(instruction Instruction, ip int) (int, error) {
 		if nameValue.Value != "__invoke" {
 			return 0, vm.runtimeError(instruction, "closure does not have method %s", nameValue.Value)
 		}
-		if closure.Module != "" && closure.Module != vm.moduleName {
+		if closure.Module != vm.moduleName {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}

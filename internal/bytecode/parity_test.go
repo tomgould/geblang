@@ -6414,6 +6414,175 @@ io.println(a());
 `, "true\n")
 }
 
+// TestParityUserClassIterator verifies the 1.0.6 user-class iterator
+// protocol: `for (x in obj)` calls obj.__iter() to get an iterator,
+// then drives __done()/__next() per step. Both backends must produce
+// the same sequence. Also covers a class that implements __next()
+// directly (no __iter() method), in which case the instance is its
+// own iterator.
+func TestParityUserClassIterator(t *testing.T) {
+	runParity(t, `import io;
+
+class Range {
+    int from;
+    int to;
+    int cur;
+
+    func Range(int from, int to) {
+        this.from = from;
+        this.to = to;
+        this.cur = from;
+    }
+
+    func __iter(): Range {
+        this.cur = this.from;
+        return this;
+    }
+
+    func __done(): bool {
+        return this.cur >= this.to;
+    }
+
+    func __next(): int {
+        int v = this.cur;
+        this.cur = this.cur + 1;
+        return v;
+    }
+}
+
+class Steps {
+    int n;
+    int seen;
+
+    func Steps(int n) {
+        this.n = n;
+        this.seen = 0;
+    }
+
+    func __done(): bool {
+        return this.seen >= this.n;
+    }
+
+    func __next(): int {
+        this.seen = this.seen + 1;
+        return this.seen * 10;
+    }
+}
+
+for (n in Range(2, 5)) {
+    io.println(n);
+}
+
+for (n in Steps(3)) {
+    io.println(n);
+}
+`, "2\n3\n4\n10\n20\n30\n")
+}
+
+// TestParityNestedGenericInference pins the 1.0.6 fix where both
+// backends walk parameter type-spec trees recursively to bind type
+// params nested inside `list<dict<K, V>>` (etc). Previously only the
+// outermost container level was inspected, leaving inner type params
+// unbound.
+func TestParityNestedGenericInference(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+
+class Box<K, V> {
+    list<dict<K, V>> rows;
+    func Box(list<dict<K, V>> rows) { this.rows = rows; }
+}
+
+let b = Box([{"a": 1}]);
+let bindings = reflect.typeBindings(b);
+io.println(bindings["K"]);
+io.println(bindings["V"]);
+`, "string\nint\n")
+}
+
+// TestParityDeferNamedArgs pins the 1.0.6 fix that lifted the
+// "named arguments in defer" rejection for instance method and
+// callable-variable defers. Both backends must order the deferred
+// arguments by name (not source order) when running the queue.
+func TestParityDeferNamedArgs(t *testing.T) {
+	runParity(t, `import io;
+
+class Logger {
+    string prefix;
+    func Logger(string prefix) { this.prefix = prefix; }
+    func log(string head, string tail): void {
+        io.println(this.prefix + ":" + head + "-" + tail);
+    }
+}
+
+func run(): void {
+    let logger = Logger("M");
+    defer logger.log(tail: "end", head: "start");
+    let cb = func(string left, string right): void {
+        io.println("cb:" + left + "+" + right);
+    };
+    defer cb(right: "R", left: "L");
+    io.println("before");
+}
+
+run();
+`, "before\ncb:L+R\nM:start-end\n")
+}
+
+// TestParityReflectLocation pins the 1.0.6 reflect.location surface:
+// the evaluator and VM must agree on the {module, line, column}
+// shape and the recorded line/column for both function and class
+// declarations.
+func TestParityReflectLocation(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+
+func one(): int { return 1; }
+
+class A {}
+
+io.println(reflect.location(one)["line"]);
+io.println(reflect.location(one)["column"]);
+io.println(reflect.location(A)["line"]);
+io.println(reflect.location(A)["column"]);
+`, "4\n1\n6\n1\n")
+}
+
+// TestVMTailCallElimination exercises 1.0.6's OpTailCall path under
+// the VM. The evaluator's call-depth limit caps mutual recursion at
+// ~10k frames; the VM with TCE collapses the chain into a single
+// frame and finishes whatever depth the loop runs to. We assert the
+// VM reaches a depth (100_000) the evaluator could not.
+func TestVMTailCallElimination(t *testing.T) {
+	source := `import io;
+
+func loop(int n, int acc): int {
+    if (n == 0) {
+        return acc;
+    }
+    return loop(n - 1, acc + 1);
+}
+
+io.println(loop(100000, 0));
+`
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+	chunk, err := bytecode.Compile(program, []byte(source), "tce")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var out bytes.Buffer
+	if err := bytecode.NewVM(chunk, &out).Run(); err != nil {
+		t.Fatalf("vm: %v", err)
+	}
+	if got, want := out.String(), "100000\n"; got != want {
+		t.Fatalf("output mismatch: got %q want %q", got, want)
+	}
+}
+
 // TestParityFloorDivOnDecimalAndFloat verifies the `//` floor-
 // division operator handles decimal / float operands (eval used
 // to error with "unsupported decimal operator //"). Floor toward

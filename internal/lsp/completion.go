@@ -381,7 +381,77 @@ func topLevelCompletionItems(prefix string) []CompletionItem {
 			items = append(items, CompletionItem{Label: kw, Kind: completionKindKeyword, Detail: "keyword"})
 		}
 	}
+	if strings.HasPrefix(prefix, "_") || prefix == "" {
+		for _, m := range magicMethods {
+			if prefix == "" || strings.HasPrefix(m.name, prefix) {
+				items = append(items, CompletionItem{Label: m.name, Kind: completionKindFunction, Detail: m.detail})
+			}
+		}
+	}
 	return items
+}
+
+// magicMethods enumerates the dunder methods recognised by the
+// runtime. Surfaced as completions when the cursor sits on a name
+// starting with `_` so editors can scaffold the right signature.
+// Names match the recognised forms in internal/bytecode/vm.go and
+// internal/evaluator/evaluator.go: most operators use a single
+// trailing underscore segment (`__eq`, `__add`, ...). The four
+// hooks `__enter__` / `__exit__` / `__serialize__` / `__deserialize__`
+// keep the trailing `__` pair for historical reasons.
+var magicMethods = []struct {
+	name   string
+	detail string
+}{
+	// Dynamic dispatch.
+	{"__invoke", "callable-object dispatch (instance(...) and func-typed)"},
+	{"__call", "fallback for unknown instance method names"},
+	{"__callStatic", "fallback for unknown static method names"},
+	{"__get", "fallback for unknown field reads"},
+	{"__set", "fallback for unknown field writes"},
+	{"__getStatic", "fallback for unknown static-value reads"},
+	{"__setStatic", "fallback for unknown static-value writes"},
+	{"__parentMsg", "explicit fallthrough to the parent class chain"},
+	// Iteration protocol (1.0.6).
+	{"__iter", "iterator-protocol: returns the iterator for `for in`"},
+	{"__done", "iterator-protocol: true when iteration finished"},
+	{"__next", "iterator-protocol: next value (called when not done)"},
+	// Context managers.
+	{"__enter__", "with-block entry hook (return value bound to `with (n = ...)`)"},
+	{"__exit__", "with-block exit hook (always runs on any block exit)"},
+	// Serialisation.
+	{"__serialize__", "json/yaml/toml.stringify override (returns plain value)"},
+	{"__deserialize__", "json/yaml/toml.parse factory (static method)"},
+	// Type coercion.
+	{"__string", "implicit-string conversion (str / interpolation / `+`)"},
+	{"__int", "implicit-int conversion (cast-as / arithmetic)"},
+	{"__float", "implicit-float conversion"},
+	{"__decimal", "implicit-decimal conversion"},
+	{"__bool", "implicit-bool conversion (truthiness / `if`)"},
+	{"__bytes", "implicit-bytes conversion"},
+	// Comparison.
+	{"__eq", "equality operator (==)"},
+	{"__lt", "less-than operator (<)"},
+	{"__lte", "less-than-or-equal operator (<=)"},
+	{"__gt", "greater-than operator (>)"},
+	{"__gte", "greater-than-or-equal operator (>=)"},
+	// Arithmetic operators.
+	{"__add", "addition operator (+)"},
+	{"__sub", "subtraction operator (-)"},
+	{"__mul", "multiplication operator (*)"},
+	{"__div", "division operator (/)"},
+	{"__intdiv", "integer-division operator (//)"},
+	{"__mod", "modulo operator (%)"},
+	{"__pow", "exponentiation operator (**)"},
+	{"__neg", "unary negation (-)"},
+	{"__not", "logical-not operator (!)"},
+	// Bitwise operators.
+	{"__bitand", "bitwise-AND operator (&)"},
+	{"__bitor", "bitwise-OR operator (|)"},
+	{"__bitxor", "bitwise-XOR operator (^)"},
+	{"__bitnot", "bitwise-NOT operator (~)"},
+	{"__lshift", "left-shift operator (<<)"},
+	{"__rshift", "right-shift operator (>>)"},
 }
 
 func lookupFunction(module, name string) (functionDoc, bool) {

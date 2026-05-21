@@ -1,0 +1,334 @@
+package native
+
+import (
+	"fmt"
+	"math/big"
+	"strconv"
+	"unicode/utf16"
+	"unicode/utf8"
+
+	"geblang/internal/runtime"
+)
+
+// parseJSONDirect walks the input bytes once and emits runtime.Value
+// without the json.Decoder + any -> runtime.Value double pass that
+// ParseJSONText previously paid for. Numeric semantics mirror the
+// prior path: integers fitting int64 become runtime.SmallInt, larger
+// integers become runtime.Int, anything with `.` / `e` / `E` becomes
+// runtime.Decimal.
+func parseJSONDirect(text string) (runtime.Value, *ParseError) {
+	p := jsonParser{src: text, pos: 0}
+	p.skipWhitespace()
+	value, err := p.parseValue()
+	if err != nil {
+		pe := NewParseError(err.Error(), text, int64(p.pos+1))
+		return nil, &pe
+	}
+	p.skipWhitespace()
+	if p.pos != len(text) {
+		pe := NewParseError("unexpected trailing content", text, int64(p.pos+1))
+		return nil, &pe
+	}
+	return value, nil
+}
+
+type jsonParser struct {
+	src string
+	pos int
+}
+
+func (p *jsonParser) parseValue() (runtime.Value, error) {
+	if p.pos >= len(p.src) {
+		return nil, fmt.Errorf("unexpected end of input")
+	}
+	switch c := p.src[p.pos]; {
+	case c == '{':
+		return p.parseObject()
+	case c == '[':
+		return p.parseArray()
+	case c == '"':
+		s, err := p.parseString()
+		if err != nil {
+			return nil, err
+		}
+		return runtime.String{Value: s}, nil
+	case c == 't' || c == 'f':
+		return p.parseBool()
+	case c == 'n':
+		return p.parseNull()
+	case c == '-' || (c >= '0' && c <= '9'):
+		return p.parseNumber()
+	default:
+		return nil, fmt.Errorf("unexpected character %q", c)
+	}
+}
+
+func (p *jsonParser) parseObject() (runtime.Value, error) {
+	p.pos++ // skip {
+	entries := map[string]runtime.DictEntry{}
+	p.skipWhitespace()
+	if p.pos < len(p.src) && p.src[p.pos] == '}' {
+		p.pos++
+		return runtime.Dict{Entries: entries}, nil
+	}
+	for {
+		p.skipWhitespace()
+		if p.pos >= len(p.src) || p.src[p.pos] != '"' {
+			return nil, fmt.Errorf("expected string key in object")
+		}
+		key, err := p.parseString()
+		if err != nil {
+			return nil, err
+		}
+		p.skipWhitespace()
+		if p.pos >= len(p.src) || p.src[p.pos] != ':' {
+			return nil, fmt.Errorf("expected ':' after object key")
+		}
+		p.pos++
+		p.skipWhitespace()
+		value, err := p.parseValue()
+		if err != nil {
+			return nil, err
+		}
+		keyValue := runtime.String{Value: key}
+		entries[DictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: value}
+		p.skipWhitespace()
+		if p.pos >= len(p.src) {
+			return nil, fmt.Errorf("unexpected end of object")
+		}
+		switch p.src[p.pos] {
+		case ',':
+			p.pos++
+			continue
+		case '}':
+			p.pos++
+			return runtime.Dict{Entries: entries}, nil
+		default:
+			return nil, fmt.Errorf("expected ',' or '}' in object")
+		}
+	}
+}
+
+func (p *jsonParser) parseArray() (runtime.Value, error) {
+	p.pos++ // skip [
+	var elements []runtime.Value
+	p.skipWhitespace()
+	if p.pos < len(p.src) && p.src[p.pos] == ']' {
+		p.pos++
+		return runtime.List{Elements: elements}, nil
+	}
+	for {
+		p.skipWhitespace()
+		value, err := p.parseValue()
+		if err != nil {
+			return nil, err
+		}
+		elements = append(elements, value)
+		p.skipWhitespace()
+		if p.pos >= len(p.src) {
+			return nil, fmt.Errorf("unexpected end of array")
+		}
+		switch p.src[p.pos] {
+		case ',':
+			p.pos++
+			continue
+		case ']':
+			p.pos++
+			return runtime.List{Elements: elements}, nil
+		default:
+			return nil, fmt.Errorf("expected ',' or ']' in array")
+		}
+	}
+}
+
+func (p *jsonParser) parseString() (string, error) {
+	if p.pos >= len(p.src) || p.src[p.pos] != '"' {
+		return "", fmt.Errorf("expected string")
+	}
+	p.pos++ // skip opening quote
+	start := p.pos
+	// Fast path: scan for terminator or escape.
+	for p.pos < len(p.src) {
+		c := p.src[p.pos]
+		if c == '"' {
+			s := p.src[start:p.pos]
+			p.pos++
+			return s, nil
+		}
+		if c == '\\' {
+			// Slow path with escapes.
+			return p.parseStringWithEscapes(start)
+		}
+		if c < 0x20 {
+			return "", fmt.Errorf("invalid control character in string")
+		}
+		p.pos++
+	}
+	return "", fmt.Errorf("unterminated string")
+}
+
+func (p *jsonParser) parseStringWithEscapes(start int) (string, error) {
+	buf := make([]byte, 0, len(p.src)-start)
+	buf = append(buf, p.src[start:p.pos]...)
+	for p.pos < len(p.src) {
+		c := p.src[p.pos]
+		if c == '"' {
+			p.pos++
+			return string(buf), nil
+		}
+		if c == '\\' {
+			p.pos++
+			if p.pos >= len(p.src) {
+				return "", fmt.Errorf("unterminated escape sequence")
+			}
+			esc := p.src[p.pos]
+			p.pos++
+			switch esc {
+			case '"', '\\', '/':
+				buf = append(buf, esc)
+			case 'b':
+				buf = append(buf, '\b')
+			case 'f':
+				buf = append(buf, '\f')
+			case 'n':
+				buf = append(buf, '\n')
+			case 'r':
+				buf = append(buf, '\r')
+			case 't':
+				buf = append(buf, '\t')
+			case 'u':
+				r, err := p.parseUnicodeEscape()
+				if err != nil {
+					return "", err
+				}
+				if utf16.IsSurrogate(r) {
+					if p.pos+1 < len(p.src) && p.src[p.pos] == '\\' && p.src[p.pos+1] == 'u' {
+						p.pos += 2
+						r2, err := p.parseUnicodeEscape()
+						if err != nil {
+							return "", err
+						}
+						combined := utf16.DecodeRune(r, r2)
+						if combined != utf8.RuneError {
+							var tmp [4]byte
+							n := utf8.EncodeRune(tmp[:], combined)
+							buf = append(buf, tmp[:n]...)
+							continue
+						}
+					}
+					var tmp [4]byte
+					n := utf8.EncodeRune(tmp[:], utf8.RuneError)
+					buf = append(buf, tmp[:n]...)
+					continue
+				}
+				var tmp [4]byte
+				n := utf8.EncodeRune(tmp[:], r)
+				buf = append(buf, tmp[:n]...)
+			default:
+				return "", fmt.Errorf("invalid escape \\%c", esc)
+			}
+			continue
+		}
+		if c < 0x20 {
+			return "", fmt.Errorf("invalid control character in string")
+		}
+		buf = append(buf, c)
+		p.pos++
+	}
+	return "", fmt.Errorf("unterminated string")
+}
+
+func (p *jsonParser) parseUnicodeEscape() (rune, error) {
+	if p.pos+4 > len(p.src) {
+		return 0, fmt.Errorf("incomplete \\u escape")
+	}
+	hex := p.src[p.pos : p.pos+4]
+	p.pos += 4
+	n, err := strconv.ParseUint(hex, 16, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid \\u escape %q", hex)
+	}
+	return rune(n), nil
+}
+
+func (p *jsonParser) parseBool() (runtime.Value, error) {
+	if p.pos+4 <= len(p.src) && p.src[p.pos:p.pos+4] == "true" {
+		p.pos += 4
+		return runtime.Bool{Value: true}, nil
+	}
+	if p.pos+5 <= len(p.src) && p.src[p.pos:p.pos+5] == "false" {
+		p.pos += 5
+		return runtime.Bool{Value: false}, nil
+	}
+	return nil, fmt.Errorf("expected boolean literal")
+}
+
+func (p *jsonParser) parseNull() (runtime.Value, error) {
+	if p.pos+4 <= len(p.src) && p.src[p.pos:p.pos+4] == "null" {
+		p.pos += 4
+		return runtime.Null{}, nil
+	}
+	return nil, fmt.Errorf("expected null literal")
+}
+
+func (p *jsonParser) parseNumber() (runtime.Value, error) {
+	start := p.pos
+	if p.src[p.pos] == '-' {
+		p.pos++
+	}
+	for p.pos < len(p.src) {
+		c := p.src[p.pos]
+		if c < '0' || c > '9' {
+			break
+		}
+		p.pos++
+	}
+	isFloat := false
+	if p.pos < len(p.src) && p.src[p.pos] == '.' {
+		isFloat = true
+		p.pos++
+		for p.pos < len(p.src) {
+			c := p.src[p.pos]
+			if c < '0' || c > '9' {
+				break
+			}
+			p.pos++
+		}
+	}
+	if p.pos < len(p.src) && (p.src[p.pos] == 'e' || p.src[p.pos] == 'E') {
+		isFloat = true
+		p.pos++
+		if p.pos < len(p.src) && (p.src[p.pos] == '+' || p.src[p.pos] == '-') {
+			p.pos++
+		}
+		for p.pos < len(p.src) {
+			c := p.src[p.pos]
+			if c < '0' || c > '9' {
+				break
+			}
+			p.pos++
+		}
+	}
+	text := p.src[start:p.pos]
+	if isFloat {
+		return runtime.NewDecimalLiteral(text)
+	}
+	// Integer: fits int64 -> use big.Int via runtime.NewIntLiteral so
+	// the type matches the existing path (runtime.Int holding the value).
+	value, ok := new(big.Int).SetString(text, 10)
+	if !ok {
+		return nil, fmt.Errorf("invalid integer literal %q", text)
+	}
+	return runtime.Int{Value: value}, nil
+}
+
+func (p *jsonParser) skipWhitespace() {
+	for p.pos < len(p.src) {
+		switch p.src[p.pos] {
+		case ' ', '\t', '\n', '\r':
+			p.pos++
+		default:
+			return
+		}
+	}
+}

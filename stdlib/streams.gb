@@ -1,0 +1,124 @@
+module streams;
+
+import collections;
+
+## Stream wraps any iterable (list, set, generator, range, or another
+## class with the 1.0.6 iterator protocol) and exposes a fluent,
+## lazy-by-default API. Intermediate steps (`map`, `filter`, `take`)
+## return a new Stream that pulls values on demand; terminal steps
+## (`toList`, `count`, `reduce`, `forEach`, `first`, `anyMatch`,
+## `allMatch`, `toSet`) materialise the pipeline.
+##
+## Streams implement `__iter()` so they slot directly into
+## `for (x in stream)` loops and anywhere an `iterable<T>` is
+## expected.
+export class Stream {
+    any source;
+
+    func Stream(any source) {
+        this.source = source;
+    }
+
+    ## Intermediate: maps each value through `fn`. Applied lazily.
+    func map(any fn): Stream {
+        return Stream(collections.lazyMap(this.source, fn));
+    }
+
+    ## Intermediate: keeps values for which `fn` returns true.
+    ## Applied lazily.
+    func filter(any fn): Stream {
+        return Stream(collections.lazyFilter(this.source, fn));
+    }
+
+    ## Intermediate: yields at most the first `n` values.
+    func take(int n): Stream {
+        return Stream(collections.take(this.source, n));
+    }
+
+    ## Iterator-protocol entry point: forwards iteration to the
+    ## wrapped source so `for (x in stream)` walks the pipeline
+    ## without materialising it.
+    func __iter(): any {
+        return this.source;
+    }
+
+    ## Terminal: materialises the pipeline into a list.
+    func toList(): list<any> {
+        list<any> result = [];
+        for (x in this.source) {
+            result = result.push(x);
+        }
+        return result;
+    }
+
+    ## Terminal: materialises the pipeline into a set. Duplicates
+    ## collapse.
+    func toSet(): set<any> {
+        set<any> result = [] as set<any>;
+        for (x in this.source) {
+            result = result.add(x);
+        }
+        return result;
+    }
+
+    ## Terminal: counts values produced by the pipeline.
+    func count(): int {
+        int n = 0;
+        for (x in this.source) {
+            n = n + 1;
+        }
+        return n;
+    }
+
+    ## Terminal: returns the first value, or null when empty.
+    func first(): any {
+        for (x in this.source) {
+            return x;
+        }
+        return null;
+    }
+
+    ## Terminal: invokes `fn(value)` for each value.
+    func forEach(any fn): void {
+        for (x in this.source) {
+            fn(x);
+        }
+    }
+
+    ## Terminal: folds the pipeline left-to-right starting from
+    ## `initial`. `fn(accumulator, value)` returns the next
+    ## accumulator.
+    func reduce(any initial, any fn): any {
+        any acc = initial;
+        for (x in this.source) {
+            acc = fn(acc, x);
+        }
+        return acc;
+    }
+
+    ## Terminal: true when at least one value satisfies `fn`.
+    func anyMatch(any fn): bool {
+        for (x in this.source) {
+            if ((fn(x) as bool)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    ## Terminal: true when every value satisfies `fn` (vacuously true
+    ## for an empty pipeline).
+    func allMatch(any fn): bool {
+        for (x in this.source) {
+            if (!(fn(x) as bool)) {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+## Wraps any iterable in a Stream for fluent chaining.
+export func of(any source): Stream {
+    return Stream(source);
+}

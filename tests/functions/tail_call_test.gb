@@ -1,0 +1,56 @@
+/**
+ * @title Tail-call elimination (1.0.6)
+ * @summary `return f(args)` in tail position reuses the calling
+ * frame rather than pushing a new one. Lets tail-recursive loops
+ * with primitive params (int / bool / float / string / any) run
+ * without consuming the call stack.
+ */
+import test;
+
+func loop(int n, int acc): int {
+    if (n == 0) {
+        return acc;
+    }
+    return loop(n - 1, acc + n);
+}
+
+func chooseEvenOdd(int n): string {
+    if (n == 0) {
+        return "even";
+    }
+    return chooseEvenOdd(n - 1);
+}
+
+func bounceA(int n): int {
+    if (n == 0) {
+        return 0;
+    }
+    return bounceB(n - 1);
+}
+
+func bounceB(int n): int {
+    if (n == 0) {
+        return 1;
+    }
+    return bounceA(n - 1);
+}
+
+class TailCallTest extends test.Test {
+    @test
+    func tailRecursionProducesCorrectAccumulator(): void {
+        /* Correctness check across both backends; the deep-recursion
+         * stress lives in the bytecode parity test. */
+        this.assertEquals(500500, loop(1000, 0));
+    }
+
+    @test
+    func tailDispatchOnPrimitiveString(): void {
+        this.assertEquals("even", chooseEvenOdd(500));
+    }
+
+    @test
+    func mutualTailRecursionTerminates(): void {
+        this.assertEquals(0, bounceA(500));
+        this.assertEquals(1, bounceA(501));
+    }
+}

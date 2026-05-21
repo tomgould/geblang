@@ -22,7 +22,7 @@ import (
 	"geblang/internal/semantic"
 )
 
-const version = "1.0.5"
+const version = "1.0.6"
 const bannerString = "Geblang Version %s, ©2026 David Gebler.\n==========================================\n"
 
 type executionMode int
@@ -1997,9 +1997,18 @@ func (l *bytecodeModuleLoader) LoadModule(canonical string, alias string) (*runt
 }
 
 func (l *bytecodeModuleLoader) CallModuleFunction(function runtime.BytecodeFunction, args []runtime.Value) (runtime.Value, error) {
-	chunk, ok := l.chunks[function.Module]
-	if !ok {
-		return nil, fmt.Errorf("module %s is not loaded", function.Module)
+	var chunk bytecode.Chunk
+	if function.Module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script function invoked without a main chunk")
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunks[function.Module]
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", function.Module)
+		}
+		chunk = c
 	}
 	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
 	vm.SetModuleName(function.Module)
@@ -2011,9 +2020,22 @@ func (l *bytecodeModuleLoader) CallModuleFunction(function runtime.BytecodeFunct
 }
 
 func (l *bytecodeModuleLoader) CallModuleClosure(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
-	chunk, ok := l.chunks[closure.Module]
-	if !ok {
-		return nil, fmt.Errorf("module %s is not loaded", closure.Module)
+	var chunk bytecode.Chunk
+	if closure.Module == "" {
+		// Closures created in the entry script carry Module="".
+		// Dispatch against the main chunk so the FunctionIndex
+		// resolves to the closure's body rather than whatever
+		// happens to live at that index in some sub-VM's chunk.
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script closure invoked without a main chunk")
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunks[closure.Module]
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", closure.Module)
+		}
+		chunk = c
 	}
 	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
 	vm.SetModuleName(closure.Module)
@@ -2164,6 +2186,8 @@ func (l *bytecodeModuleLoader) FindClassByName(name string) (runtime.Value, bool
 					Decorators:       classInfo.Decorators,
 					MethodDecorators: classInfo.MethodDecorators,
 					StaticDecorators: classInfo.StaticDecorators,
+					DefLine:          classInfo.DefLine,
+					DefColumn:        classInfo.DefColumn,
 				}, true
 			}
 		}
@@ -2182,6 +2206,8 @@ func (l *bytecodeModuleLoader) FindClassByName(name string) (runtime.Value, bool
 					Decorators:       classInfo.Decorators,
 					MethodDecorators: classInfo.MethodDecorators,
 					StaticDecorators: classInfo.StaticDecorators,
+					DefLine:          classInfo.DefLine,
+					DefColumn:        classInfo.DefColumn,
 				}, true
 			}
 		}

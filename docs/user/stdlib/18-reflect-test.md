@@ -73,6 +73,34 @@ io.println(reflect.interfaceMethods(Named)[0]["doc"]);
 Frameworks should prefer reflection over custom syntax when discovering routes,
 middleware, services, and metadata.
 
+### Source locations (1.0.6)
+
+`reflect.location(target)` returns a dict `{module, line, column}` for any
+function, class, or instance, or `null` when the target carries no recorded
+location (native builtins). Useful for diagnostics, code-generation, and
+framework error messages that want to point back at the user's source.
+
+```gb
+import io;
+import reflect;
+
+func handler(): string {
+    return "ok";
+}
+
+class Service {
+    int id;
+    func Service(int id) { this.id = id; }
+}
+
+io.println(reflect.location(handler));   # {column: 1, line: 4, module: ""}
+io.println(reflect.location(Service));   # {column: 1, line: 8, module: ""}
+io.println(reflect.location(Service(1)));# {column: 1, line: 8, module: ""}
+```
+
+The `module` field is the canonical module name as imported (empty for the
+entry script).
+
 ## Test
 
 Import `test` for class-based tests. Test cases are ordinary classes that

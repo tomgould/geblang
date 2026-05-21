@@ -662,6 +662,70 @@ fresh `let x = ...;` re-introduces the name with a new lifetime.
 Destructors that throw during a sweep print the error to stderr but do not
 crash the sweep.
 
+## Iterator Protocol (`__iter`, `__done`, `__next`) (1.0.6)
+
+A class becomes usable in `for (x in obj)` by implementing the iterator
+protocol. Two methods drive each step:
+
+- `__done(): bool` returns `true` when iteration is exhausted.
+- `__next()` returns the next value (called only when `__done()` is
+  `false`).
+
+A class that exposes both `__done` and `__next` directly is its own
+iterator. To make a class iterable without making it the iterator
+itself, also implement `__iter()` which returns the iterator (often a
+fresh instance, or `this` after resetting internal state):
+
+```gb
+class Range {
+    int from;
+    int to;
+    int cur;
+
+    func Range(int from, int to) {
+        this.from = from;
+        this.to = to;
+        this.cur = from;
+    }
+
+    func __iter(): Range {
+        this.cur = this.from;
+        return this;
+    }
+
+    func __done(): bool {
+        return this.cur >= this.to;
+    }
+
+    func __next(): int {
+        int v = this.cur;
+        this.cur = this.cur + 1;
+        return v;
+    }
+}
+
+for (n in Range(2, 5)) {
+    io.println(n);
+}
+/* 2
+ * 3
+ * 4
+ */
+```
+
+The loop calls `__iter()` once at the start to obtain the iterator,
+then alternates `__done()` and `__next()` until `__done()` returns
+`true`. `__iter()` can return any class instance that exposes
+`__done`/`__next`; this lets a single iterable produce fresh
+iterators for nested or repeated traversal.
+
+When a class has no `__iter()` but does expose `__next`/`__done`, the
+instance itself is used as the iterator. Useful for one-shot
+iterators that should not be restarted.
+
+User-defined iterables compose with `iterable<T>` parameters and slot
+straight into the generator/list/dict iteration paths.
+
 ## Context Managers (`with`, `__enter__`, `__exit__`)
 
 The `with` statement runs the magic methods `__enter__()` and `__exit__()`

@@ -15,7 +15,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(55)
+	Version = uint16(58)
 )
 
 type Op byte
@@ -230,6 +230,27 @@ const (
 	// Emitted for `local = local + "literal"` as a standalone stmt.
 	OpAppendStringConstStmt
 	OpAppendGlobalStringConstStmt
+	// OpTailCall {functionIndex, argc}: emitted for `return f(args)` in
+	// tail position. Reuses the current frame instead of pushing a
+	// new one; the eventual OpReturn pops the original caller's frame.
+	// Skipped by the compiler if defers / exception handlers / iterator
+	// finalizers are in scope or the call cannot be statically resolved.
+	OpTailCall
+	// OpDeferNativeCallNamed {nameIndex, argc, argName0Index, ...}:
+	// like OpDeferNativeCall but carries per-arg name indices so
+	// `defer module.fn(b=2, a=1)` captures the named-arg shape and
+	// the deferred dispatch can reorder against the native registry's
+	// signature when the queue runs. argNameIndex < 0 marks a
+	// positional arg.
+	OpDeferNativeCallNamed
+	// OpDeferMethodCallNamed {nameIndex, argc, argName0Index, ...}:
+	// named-arg counterpart to OpDeferMethodCall.
+	OpDeferMethodCallNamed
+	// OpDeferCallableCallNamed {argc, argName0Index, ...}: named-arg
+	// counterpart to OpDeferCallableCall. The closure's signature is
+	// resolved at deferred-dispatch time so the names can be reordered
+	// against the underlying function's ParamNames.
+	OpDeferCallableCallNamed
 )
 
 type Instruction struct {
@@ -306,6 +327,10 @@ type FunctionInfo struct {
 	// runs them on the caller's locals buffer instead of allocating a
 	// fresh frame slice.
 	SharesParentFrame bool
+	// DefLine / DefColumn capture the source position of the `func`
+	// keyword for this function, exposed by reflect.location.
+	DefLine           int64
+	DefColumn         int64
 	Decorators        []runtime.DecoratorMetadata
 	paramTypeSpecs    []vmTypeSpec
 	typeParamSet      map[string]bool
@@ -350,6 +375,10 @@ type ClassInfo struct {
 	MethodDecorators         map[string][]runtime.DecoratorMetadata
 	StaticDecorators         map[string][]runtime.DecoratorMetadata
 	Immutable                bool
+	// DefLine / DefColumn capture the source position of the `class`
+	// keyword, exposed by reflect.location.
+	DefLine                  int64
+	DefColumn                int64
 }
 
 type InterfaceInfo struct {
@@ -456,6 +485,8 @@ func Encode(chunk Chunk) ([]byte, error) {
 			sharesByte = 1
 		}
 		out = append(out, sharesByte)
+		out = binary.BigEndian.AppendUint64(out, uint64(function.DefLine))
+		out = binary.BigEndian.AppendUint64(out, uint64(function.DefColumn))
 		var err error
 		out, err = appendDecoratorMetadata(out, function.Decorators)
 		if err != nil {
@@ -553,6 +584,8 @@ func Encode(chunk Chunk) ([]byte, error) {
 				return nil, err
 			}
 		}
+		out = binary.BigEndian.AppendUint64(out, uint64(class.DefLine))
+		out = binary.BigEndian.AppendUint64(out, uint64(class.DefColumn))
 	}
 	out = binary.BigEndian.AppendUint32(out, uint32(len(chunk.Interfaces)))
 	for _, iface := range chunk.Interfaces {
@@ -670,6 +703,8 @@ func Decode(data []byte) (Chunk, error) {
 		function.Async = reader.u8() != 0
 		function.IsGenerator = reader.u8() != 0
 		function.SharesParentFrame = reader.u8() != 0
+		function.DefLine = int64(reader.u64())
+		function.DefColumn = int64(reader.u64())
 		function.Decorators = reader.decoratorMetadata()
 		chunk.Functions = append(chunk.Functions, function)
 	}
@@ -755,6 +790,8 @@ func Decode(data []byte) (Chunk, error) {
 				class.FieldDecorators = append(class.FieldDecorators, reader.decoratorMetadata())
 			}
 		}
+		class.DefLine = int64(reader.u64())
+		class.DefColumn = int64(reader.u64())
 		chunk.Classes = append(chunk.Classes, class)
 	}
 	interfaceCount := int(reader.u32())

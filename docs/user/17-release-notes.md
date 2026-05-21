@@ -1,5 +1,71 @@
 # Release Notes
 
+## 1.0.6
+
+### Performance
+
+- Token-driven JSON parser replaces the prior double-walk through
+  `encoding/json` + `JSONToValue`; `json_roundtrip` 1665 to ~1148 ms
+  (-31%).
+- `OpCallResolvedMethod` skips per-arg `ToValue()` boxing for the
+  common `instance.method(args)` case by routing through
+  `startFunctionVMValue` with VMValues straight off the stack;
+  `class_dispatch` 30 to 21 ms (-30%), now beats Python.
+- Tail-call elimination via `OpTailCall`: `return f(args)` in tail
+  position reuses the current frame. Limited to functions with
+  primitive-typed params (int / bool / float / string / decimal /
+  any) so the O(1) validation stays inside the opcode. Lifts the
+  stack-depth ceiling on tail-recursive loops.
+
+### Language features
+
+- **Iterator protocol for user classes.** `for (x in obj)` calls
+  `obj.__iter()` (optional) to get an iterator; the loop alternates
+  `__done(): bool` and `__next()` until `__done()` returns `true`.
+  Classes that expose `__done` / `__next` directly are their own
+  iterators. `__iter()` may return any iterable - lists, generators,
+  ranges, or another iterator instance.
+- **`streams.Stream` fluent collection pipeline.** Wrap any iterable
+  via `streams.of(source)`; intermediate ops (`map`, `filter`,
+  `take`) are lazy and return a new Stream; terminal ops (`toList`,
+  `toSet`, `count`, `first`, `reduce`, `forEach`, `anyMatch`,
+  `allMatch`) drive the pipeline. Implements `__iter()` so streams
+  slot into `for-in` loops and `iterable<T>` parameters.
+- **`reflect.location(target)`** returns
+  `{module, line, column}` for functions, classes, decorator
+  targets, closures, and instances (fall back to class declaration
+  position). Useful for diagnostics, code-gen, and framework error
+  messages.
+- **Named arguments in `defer`.** The three previously-rejected
+  shapes (deferred callable, deferred instance method, deferred
+  module-function call) now accept named args; the deferred dispatch
+  reorders against the callee's signature when the queue fires.
+- **Nested generic call-site inference.** Type params nested inside
+  `list<dict<K, V>>` (and deeper container shapes) now bind from a
+  single argument on both backends.
+
+### Bug fixes
+
+- **Cross-chunk closures crossed into stdlib-module class methods
+  no longer resolve their `FunctionIndex` against the wrong chunk.**
+  Closures created in the entry script (`Module == ""`) and
+  reinvoked from inside a stdlib class method via
+  `collections.lazyMap` etc. used to silently rebind to the
+  receiving module's own constructor at that index. The dispatcher
+  now routes cross-chunk callables through the module loader, which
+  falls back to the main chunk for empty `Module`.
+
+### Stdlib
+
+- `streams` module (Stream class + `of` constructor).
+
+### Compiler / VM internals
+
+- Chunk format version bumped 55 to 58 (one bump per opcode
+  addition: `OpTailCall`, `DefLine`/`DefColumn` on FunctionInfo +
+  ClassInfo for `reflect.location`, three `OpDefer*CallNamed`
+  opcodes for named-arg defers).
+
 ## 1.0.5
 
 ### Performance

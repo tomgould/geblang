@@ -397,6 +397,7 @@ var stdlibCatalog = map[string]moduleDoc{
 		"doc":        fn([]string{"any target"}, "string", "Returns the target docblock."),
 		"docs":       fn([]string{"any target"}, "dict<string, any>", "Returns structured documentation metadata."),
 		"typeOf":     fn([]string{"any value"}, "Type", "Returns runtime type metadata."),
+		"location":   fn([]string{"any target"}, "dict<string, any>", "Returns the source position of a function or class as {module, line, column}; null when unknown (1.0.6)."),
 		"exports":    fn([]string{"string module"}, "list<string>", "Lists module exports."),
 		"fields":     fn([]string{"Type class"}, "list<dict<string, any>>", "Returns class fields."),
 		"methods":    fn([]string{"Type class"}, "list<dict<string, any>>", "Returns class methods."),
@@ -546,6 +547,11 @@ var stdlibCatalog = map[string]moduleDoc{
 		"choice":   fn([]string{"list<any> items"}, "any", "Returns a random element."),
 		"shuffle":  fn([]string{"list<any> items"}, "list<any>", "Returns a shuffled copy."),
 	}, classes: map[string]string{"Generator": "Stateful PRNG handle."}},
+	"streams": {functions: map[string]functionDoc{
+		"of": fn([]string{"any source"}, "Stream", "Wraps any iterable in a Stream for fluent chaining (1.0.6)."),
+	}, classes: map[string]string{
+		"Stream": "Lazy-by-default fluent pipeline over an iterable. Intermediate ops (map / filter / take) return a new Stream; terminal ops (toList / toSet / count / first / reduce / forEach / anyMatch / allMatch) drive iteration. Implements __iter() so a Stream is itself iterable.",
+	}},
 	"strings": {classes: map[string]string{
 		"StringBuilder": "Builder-backed string accumulator. Amortised O(n) append for tight-loop assembly; call dispose() to release the handle in long-running processes.",
 	}},

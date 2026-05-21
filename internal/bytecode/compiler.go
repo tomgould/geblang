@@ -200,6 +200,8 @@ func reflectFunctionMetadataFromStatement(c *Compiler, stmt *ast.FunctionStateme
 		Async:      stmt.Async,
 		Variadic:   len(stmt.Parameters) > 0 && stmt.Parameters[len(stmt.Parameters)-1].Variadic,
 		Decorators: dec,
+		DefLine:    int64(stmt.Token.Line),
+		DefColumn:  int64(stmt.Token.Column),
 	}, nil
 }
 
@@ -232,7 +234,12 @@ func reflectFunctionMetadataFromSignature(c *Compiler, sig *ast.FunctionSignatur
 }
 
 func reflectClassMetadataFromStatement(stmt *ast.ClassStatement) *runtime.ClassMetadata {
-	metadata := &runtime.ClassMetadata{Name: stmt.Name.Value, Doc: stmt.Doc}
+	metadata := &runtime.ClassMetadata{
+		Name:      stmt.Name.Value,
+		Doc:       stmt.Doc,
+		DefLine:   int64(stmt.Token.Line),
+		DefColumn: int64(stmt.Token.Column),
+	}
 	if stmt.Extends != nil {
 		metadata.Parent = stmt.Extends.Name
 	}
@@ -490,6 +497,13 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 	case *ast.SimpleStatement:
 		return c.compileSimpleStatement(stmt)
 	case *ast.ReturnStatement:
+		if c.inFunc > 0 && stmt.Value != nil && len(c.finalizers) == 0 {
+			if emitted, err := c.tryEmitTailCall(stmt); err != nil {
+				return err
+			} else if emitted {
+				return nil
+			}
+		}
 		if c.inFunc > 0 {
 			if stmt.Value != nil {
 				expected := c.currentReturnType()
@@ -537,6 +551,95 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 	default:
 		return fmt.Errorf("bytecode compiler does not support %T yet", stmt)
 	}
+}
+
+// tryEmitTailCall checks whether `return f(args)` qualifies for tail
+// call elimination and, if so, emits an OpTailCall plus the args. Skips
+// the OpReturn emission; the tail-called function's eventual OpReturn
+// pops the reused frame to the original caller.
+//
+// Conditions:
+//   - The return value is a direct CallExpression with a plain
+//     identifier callee resolving to a statically-known function.
+//   - The function has no spread / no type args / no decorators.
+//   - Args use positional-only (no named args).
+//
+// Returns true if the tail call was emitted; the caller skips its
+// normal compile-then-OpReturn path. Returns false to fall through.
+func (c *Compiler) tryEmitTailCall(stmt *ast.ReturnStatement) (bool, error) {
+	call, ok := stmt.Value.(*ast.CallExpression)
+	if !ok {
+		return false, nil
+	}
+	ident, ok := call.Callee.(*ast.Identifier)
+	if !ok {
+		return false, nil
+	}
+	// Skip when the identifier resolves to a local/global (the call
+	// dispatches through a closure value, not a direct function).
+	if _, isVar := c.resolveName(ident.Value); isVar {
+		return false, nil
+	}
+	// Skip class instantiation: `Stream(args)` is OpNew + constructor,
+	// not a direct function call. The constructor function lives in
+	// c.funcs under the class name, but tail-calling it would bypass
+	// OpNew and produce an empty value.
+	if _, isClass := c.classes[strings.ToLower(ident.Value)]; isClass {
+		return false, nil
+	}
+	if _, hasSpread := callSpreadIndex(call.Arguments); hasSpread {
+		return false, nil
+	}
+	if len(call.TypeArguments) > 0 {
+		return false, nil
+	}
+	for _, arg := range call.Arguments {
+		if arg.Name != nil {
+			return false, nil
+		}
+	}
+	index, orderedArgs, err := c.selectFunctionCall(ident.Value, call.Arguments, 0)
+	if err != nil {
+		return false, nil
+	}
+	fn := c.chunk.Functions[index]
+	if fn.Async || fn.IsGenerator || fn.Variadic {
+		return false, nil
+	}
+	if fn.SharesParentFrame {
+		// Nested functions borrow the enclosing frame's locals; tail
+		// calling would release them out from under any in-flight
+		// reference.
+		return false, nil
+	}
+	if len(fn.Decorators) > 0 {
+		return false, nil
+	}
+	if len(fn.TypeParameters) > 0 {
+		// Generic functions need type-binding inference; skip TCE.
+		return false, nil
+	}
+	if len(orderedArgs) != len(fn.ParamSlots) {
+		// Default args or short calls; let the normal path expand them.
+		return false, nil
+	}
+	for _, paramType := range fn.ParamTypes {
+		// Restrict TCE to functions whose params validate in O(1).
+		// Container types (dict/list/set/Class<T>) require deep walks
+		// that the OpCall path amortises but TCE would repeat per
+		// iteration of a tail-recursive loop.
+		if paramType == "" {
+			continue
+		}
+		if !isPrimitiveTypeForTCE(paramType) {
+			return false, nil
+		}
+	}
+	if err := c.compileOrderedArguments(fn, orderedArgs, 0, call.Token.Line, call.Token.Column); err != nil {
+		return false, err
+	}
+	c.emitAt(OpTailCall, stmt.Token.Line, stmt.Token.Column, index, int64(len(orderedArgs)))
+	return true, nil
 }
 
 func (c *Compiler) tryEmitFusedStringAppendStmt(expr ast.Expression) bool {
@@ -831,6 +934,8 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	c.chunk.Functions[index].TypeParamConstraintExprs = allTypeParamConstraintExprs
 	c.chunk.Functions[index].Doc = stmt.Doc
 	c.chunk.Functions[index].Entry = entry
+	c.chunk.Functions[index].DefLine = int64(stmt.Token.Line)
+	c.chunk.Functions[index].DefColumn = int64(stmt.Token.Column)
 	c.chunk.Functions[index].ParamNames = paramNames
 	c.chunk.Functions[index].ParamSlots = paramSlots
 	c.chunk.Functions[index].ParamTypes = paramTypes
@@ -899,6 +1004,8 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 	class := c.chunk.Classes[index]
 	class.Doc = stmt.Doc
 	class.ParentIndex = -1
+	class.DefLine = int64(stmt.Token.Line)
+	class.DefColumn = int64(stmt.Token.Column)
 	class.TypeParameters = typeParameterNames(stmt.Generics)
 	class.TypeParamConstraintExprs = typeParamConstraintExprs(stmt.Generics)
 	class.Methods = map[string][]int64{}
@@ -1281,15 +1388,24 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 			} else {
 				c.emitAt(OpGetGlobal, stmt.Token.Line, stmt.Token.Column, resolved.slot)
 			}
+			hasNamedArgs := false
 			for _, arg := range call.Arguments {
 				if arg.Name != nil {
-					return fmt.Errorf("bytecode compiler does not support named arguments in deferred callable call")
+					hasNamedArgs = true
 				}
 				if err := c.compileExpression(arg.Value); err != nil {
 					return err
 				}
 			}
-			c.emitAt(OpDeferCallableCall, stmt.Token.Line, stmt.Token.Column, int64(len(call.Arguments)))
+			if !hasNamedArgs {
+				c.emitAt(OpDeferCallableCall, stmt.Token.Line, stmt.Token.Column, int64(len(call.Arguments)))
+				return nil
+			}
+			operands := []int64{int64(len(call.Arguments))}
+			for _, arg := range call.Arguments {
+				operands = append(operands, c.argNameIndex(arg))
+			}
+			c.emitAt(OpDeferCallableCallNamed, stmt.Token.Line, stmt.Token.Column, operands...)
 			return nil
 		}
 		return fmt.Errorf("defer: %w", err)
@@ -1305,9 +1421,10 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 		} else {
 			c.emitAt(OpGetGlobal, stmt.Token.Line, stmt.Token.Column, resolved.slot)
 		}
+		hasNamedArgs := false
 		for _, arg := range call.Arguments {
 			if arg.Name != nil {
-				return fmt.Errorf("bytecode compiler does not support named arguments in defer")
+				hasNamedArgs = true
 			}
 			if err := c.compileExpression(arg.Value); err != nil {
 				return err
@@ -1315,7 +1432,15 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 		}
 		nameIndex := int64(len(c.chunk.Constants))
 		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: name})
-		c.emitAt(OpDeferMethodCall, stmt.Token.Line, stmt.Token.Column, nameIndex, int64(len(call.Arguments)))
+		if !hasNamedArgs {
+			c.emitAt(OpDeferMethodCall, stmt.Token.Line, stmt.Token.Column, nameIndex, int64(len(call.Arguments)))
+			return nil
+		}
+		operands := []int64{nameIndex, int64(len(call.Arguments))}
+		for _, arg := range call.Arguments {
+			operands = append(operands, c.argNameIndex(arg))
+		}
+		c.emitAt(OpDeferMethodCallNamed, stmt.Token.Line, stmt.Token.Column, operands...)
 		return nil
 	}
 	// Resolve any `import path as natpath` alias to its canonical name
@@ -1338,9 +1463,10 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 	if !isBytecodeCallableModule(canonical) {
 		return fmt.Errorf("bytecode compiler cannot defer calls to module %q", module)
 	}
+	hasNamedArgs := false
 	for _, arg := range call.Arguments {
 		if arg.Name != nil {
-			return fmt.Errorf("bytecode compiler does not support named arguments in defer")
+			hasNamedArgs = true
 		}
 		if err := c.compileExpression(arg.Value); err != nil {
 			return err
@@ -1348,8 +1474,28 @@ func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
 	}
 	nameIndex := int64(len(c.chunk.Constants))
 	c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: canonical + "." + name})
-	c.emitAt(OpDeferNativeCall, stmt.Token.Line, stmt.Token.Column, nameIndex, int64(len(call.Arguments)))
+	if !hasNamedArgs {
+		c.emitAt(OpDeferNativeCall, stmt.Token.Line, stmt.Token.Column, nameIndex, int64(len(call.Arguments)))
+		return nil
+	}
+	operands := []int64{nameIndex, int64(len(call.Arguments))}
+	for _, arg := range call.Arguments {
+		operands = append(operands, c.argNameIndex(arg))
+	}
+	c.emitAt(OpDeferNativeCallNamed, stmt.Token.Line, stmt.Token.Column, operands...)
 	return nil
+}
+
+// argNameIndex returns the constant-pool index of a String holding the
+// argument's keyword name, or -1 when the argument is positional. Used
+// by the OpDefer*CallNamed encoders.
+func (c *Compiler) argNameIndex(arg ast.CallArgument) int64 {
+	if arg.Name == nil {
+		return -1
+	}
+	idx := int64(len(c.chunk.Constants))
+	c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: arg.Name.Value})
+	return idx
 }
 
 func (c *Compiler) pushFinalizer(ctx finalizerContext) {
@@ -3330,7 +3476,7 @@ func (c *Compiler) compileReflectCall(expr *ast.CallExpression, name string) err
 		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "reflect." + name})
 		c.emitAt(OpNativeCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 		return nil
-	case "decorators", "hasDecorator", "decorator", "parameters", "returnType", "doc", "docs", "typeOf", "fields", "methods", "staticMethods", "parent", "interfaces", "className", "constructors", "typeBindings", "interfaceMethods", "interfaceParents":
+	case "decorators", "hasDecorator", "decorator", "parameters", "returnType", "doc", "docs", "typeOf", "location", "fields", "methods", "staticMethods", "parent", "interfaces", "className", "constructors", "typeBindings", "interfaceMethods", "interfaceParents":
 		if reflectSingleValueCall(name) && len(expr.Arguments) != 1 {
 			return fmt.Errorf("reflect.%s expects value", name)
 		}
@@ -3390,7 +3536,7 @@ func (c *Compiler) compileReflectCall(expr *ast.CallExpression, name string) err
 
 func reflectSingleValueCall(name string) bool {
 	switch name {
-	case "parameters", "returnType", "doc", "docs", "typeOf", "fields", "methods", "staticMethods", "parent", "interfaces", "className", "constructors", "typeBindings", "interfaceMethods", "interfaceParents":
+	case "parameters", "returnType", "doc", "docs", "typeOf", "location", "fields", "methods", "staticMethods", "parent", "interfaces", "className", "constructors", "typeBindings", "interfaceMethods", "interfaceParents":
 		return true
 	default:
 		return false
@@ -4289,6 +4435,19 @@ func selfStringConstAppendAssignment(name string, value ast.Expression) (string,
 		return "", false
 	}
 	return lit.Value, true
+}
+
+func isPrimitiveTypeForTCE(paramType string) bool {
+	switch strings.ToLower(paramType) {
+	case "", "any", "int", "bool", "float", "string", "decimal":
+		return true
+	}
+	// Trim a leading "?" nullable marker; the underlying type still
+	// needs primitive scalar validation.
+	if strings.HasPrefix(paramType, "?") {
+		return isPrimitiveTypeForTCE(paramType[1:])
+	}
+	return false
 }
 
 func functionRequiresParamValidation(function FunctionInfo) bool {

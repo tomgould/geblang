@@ -1614,7 +1614,7 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 		if stmt.Static {
 			return signal{}, fmt.Errorf("static functions are parsed but not evaluated yet")
 		}
-		fn := runtime.Function{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), TypeParamConstraints: typeParamConstraints(stmt.Generics), Parameters: e.resolveParameters(stmt.Parameters), ReturnType: e.resolveTypeRef(stmt.ReturnType), Body: stmt.Body, Env: env, Decorators: stmt.Decorators, Target: "function", Async: stmt.Async, IsGenerator: blockContainsYield(stmt.Body)}
+		fn := runtime.Function{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), TypeParamConstraints: typeParamConstraints(stmt.Generics), Parameters: e.resolveParameters(stmt.Parameters), ReturnType: e.resolveTypeRef(stmt.ReturnType), Body: stmt.Body, Env: env, Decorators: stmt.Decorators, Target: "function", Async: stmt.Async, IsGenerator: blockContainsYield(stmt.Body), DefinitionLine: stmt.Token.Line, DefinitionColumn: stmt.Token.Column}
 		decorated, err := e.applyCallableFunctionDecorators(fn, stmt.Decorators, env)
 		if err != nil {
 			return signal{}, err
@@ -4313,6 +4313,8 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 		StaticMethods:        map[string][]runtime.Function{},
 		StaticValues:         map[string]runtime.Value{},
 		Env:                  env,
+		DefinitionLine:       stmt.Token.Line,
+		DefinitionColumn:     stmt.Token.Column,
 	}
 	if stmt.Extends != nil {
 		if isBuiltinErrorClass(stmt.Extends.Name) {
@@ -5749,6 +5751,84 @@ func (e *Evaluator) evalForInStatement(stmt *ast.ForStatement, loopEnv *runtime.
 		}
 		return signal{}, nil
 	}
+	if instance, ok := iterable.(*runtime.Instance); ok {
+		iter, passthrough, iterableOk, err := e.resolveUserIterator(instance)
+		if err != nil {
+			return signal{}, err
+		}
+		if iterableOk {
+			if passthrough != nil {
+				iterable = passthrough
+				goto dispatchPassthrough
+			}
+			for {
+				if doneFn, ok := lookupMethod(iter.Class, "__done"); ok {
+					doneResult, err := e.applyFunctionWithThis(doneFn, nil, iter)
+					if err != nil {
+						return signal{}, err
+					}
+					doneBool, ok := doneResult.(runtime.Bool)
+					if !ok {
+						return signal{}, fmt.Errorf("%s.__done must return bool, got %s", iter.Class.Name, doneResult.TypeName())
+					}
+					if doneBool.Value {
+						break
+					}
+				}
+				nextFn, ok := lookupMethod(iter.Class, "__next")
+				if !ok {
+					return signal{}, fmt.Errorf("%s is not an iterator: define __next()", iter.Class.Name)
+				}
+				value, err := e.applyFunctionWithThis(nextFn, nil, iter)
+				if err != nil {
+					return signal{}, err
+				}
+				sig, err := e.evalForInIteration(stmt, loopEnv, names, value)
+				if err != nil {
+					return signal{}, err
+				}
+				switch sig.kind {
+				case "break":
+					return signal{}, nil
+				case "continue", "":
+				default:
+					return sig, nil
+				}
+				if sig.exited {
+					return sig, nil
+				}
+			}
+			return signal{}, nil
+		}
+	}
+dispatchPassthrough:
+	if generator, ok := iterable.(*runtime.Generator); ok {
+		defer generator.Close()
+		for {
+			value, ok, err := generator.Next()
+			if err != nil {
+				return signal{}, err
+			}
+			if !ok {
+				break
+			}
+			sig, err := e.evalForInIteration(stmt, loopEnv, names, value)
+			if err != nil {
+				return signal{}, err
+			}
+			switch sig.kind {
+			case "break":
+				return signal{}, nil
+			case "continue", "":
+			default:
+				return sig, nil
+			}
+			if sig.exited {
+				return sig, nil
+			}
+		}
+		return signal{}, nil
+	}
 	values, err := e.iterableValues(iterable)
 	if err != nil {
 		return signal{}, err
@@ -5836,6 +5916,45 @@ func bindDestructuredName(env *runtime.Environment, name string, value runtime.V
 		return env.Define(name, value, false)
 	}
 	return env.Assign(name, value)
+}
+
+// resolveUserIterator returns the iterator backing a `for (x in obj)`
+// loop where obj is a user-defined class instance. Calls obj.__iter()
+// when defined and returns:
+//  - (*runtime.Instance, true, nil) when the result is itself an
+//    iterator instance (has __next or is `this` for self-iterating
+//    classes).
+//  - (any other runtime.Value via the "passthrough" path, true, nil)
+//    by setting the value into `passthrough` so the caller falls back
+//    to the standard iteration dispatcher on List / Generator / etc.
+//  - (nil, false, nil) when the instance implements neither protocol
+//    side (caller surfaces the existing "not iterable" error).
+func (e *Evaluator) resolveUserIterator(instance *runtime.Instance) (*runtime.Instance, runtime.Value, bool, error) {
+	if instance == nil || instance.Class == nil {
+		return nil, nil, false, nil
+	}
+	if iterFn, ok := lookupMethod(instance.Class, "__iter"); ok {
+		result, err := e.applyFunctionWithThis(iterFn, nil, instance)
+		if err != nil {
+			return nil, nil, true, err
+		}
+		if inst, ok := result.(*runtime.Instance); ok {
+			if inst == instance {
+				if _, hasNext := lookupMethod(instance.Class, "__next"); hasNext {
+					return instance, nil, true, nil
+				}
+			}
+			if _, hasNext := lookupMethod(inst.Class, "__next"); hasNext {
+				return inst, nil, true, nil
+			}
+			return nil, inst, true, nil
+		}
+		return nil, result, true, nil
+	}
+	if _, ok := lookupMethod(instance.Class, "__next"); ok {
+		return instance, nil, true, nil
+	}
+	return nil, nil, false, nil
 }
 
 func (e *Evaluator) iterableValues(value runtime.Value) ([]runtime.Value, error) {
@@ -7223,6 +7342,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"doc":              reflectDoc,
 			"docs":             reflectDocs,
 			"typeOf":           reflectTypeOf,
+			"location":         reflectLocation,
 			"exports":          reflectExports,
 			"fields":           reflectFields,
 			"getField":         reflectGetField,
@@ -10129,6 +10249,44 @@ func reflectTypeOf(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 		return nil, fmt.Errorf("%s expects value", call.Callee.String())
 	}
 	return runtime.Type{Name: args[0].TypeName()}, nil
+}
+
+// reflectLocation returns the source position of a function or class
+// declaration as `{module, line, column}`. Returns null when the
+// value carries no recorded location.
+func reflectLocation(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects value", call.Callee.String())
+	}
+	makeDict := func(module string, line, column int64) runtime.Dict {
+		entries := map[string]runtime.DictEntry{}
+		putDict(entries, "module", runtime.String{Value: module})
+		putDict(entries, "line", runtime.NewInt64(line))
+		putDict(entries, "column", runtime.NewInt64(column))
+		return runtime.Dict{Entries: entries}
+	}
+	switch v := args[0].(type) {
+	case runtime.DecoratorTarget:
+		if v.Function != nil && (v.Function.DefLine != 0 || v.Function.DefColumn != 0) {
+			return makeDict(v.Function.Module, v.Function.DefLine, v.Function.DefColumn), nil
+		}
+		if v.Class != nil && (v.Class.DefLine != 0 || v.Class.DefColumn != 0) {
+			return makeDict(v.Class.Module, v.Class.DefLine, v.Class.DefColumn), nil
+		}
+	case runtime.Function:
+		if v.DefinitionLine != 0 || v.DefinitionColumn != 0 {
+			return makeDict(v.DefinitionModule, int64(v.DefinitionLine), int64(v.DefinitionColumn)), nil
+		}
+	case *runtime.Class:
+		if v != nil && (v.DefinitionLine != 0 || v.DefinitionColumn != 0) {
+			return makeDict(v.DefinitionModule, int64(v.DefinitionLine), int64(v.DefinitionColumn)), nil
+		}
+	case *runtime.Instance:
+		if v != nil && v.Class != nil && (v.Class.DefinitionLine != 0 || v.Class.DefinitionColumn != 0) {
+			return makeDict(v.Class.DefinitionModule, int64(v.Class.DefinitionLine), int64(v.Class.DefinitionColumn)), nil
+		}
+	}
+	return runtime.Null{}, nil
 }
 
 func reflectFields(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -20978,6 +21136,85 @@ func (e *Evaluator) applyFunction(fn runtime.Function, args []runtime.Value) (ru
 // type check then resolves T to int through the planted callEnv binding.
 // When the call site has no explicit type arguments, falls through to the
 // normal inference path.
+// inferGenericBindingsFromTypeRef walks a parameter's TypeRef tree
+// against the concrete arg value to discover bindings for any leaf
+// type-parameter references. Mirrors VM.inferGenericBindingsFromSpec
+// so the same nested-generic cases bind identically in both backends.
+// Direct type-param leaves like `T` bind from arg.TypeName(); nested
+// container shapes recurse into the inner spec against the container's
+// first element/entry.
+func (e *Evaluator) inferGenericBindingsFromTypeRef(spec *ast.TypeRef, value runtime.Value, typeParamSet map[string]bool, callEnv *runtime.Environment, this *runtime.Instance) {
+	if spec == nil || spec.Operator != "" || value == nil {
+		return
+	}
+	if len(spec.Arguments) == 0 {
+		if !typeParamSet[strings.ToLower(spec.Name)] {
+			return
+		}
+		e.recordInferredBinding(spec.Name, value.TypeName(), callEnv, this)
+		return
+	}
+	switch strings.ToLower(spec.Name) {
+	case "list":
+		list, ok := value.(runtime.List)
+		if !ok || len(list.Elements) == 0 || len(spec.Arguments) == 0 {
+			return
+		}
+		e.inferGenericBindingsFromTypeRef(spec.Arguments[0], list.Elements[0], typeParamSet, callEnv, this)
+	case "set":
+		set, ok := value.(runtime.Set)
+		if !ok || len(set.Elements) == 0 || len(spec.Arguments) == 0 {
+			return
+		}
+		for _, entry := range set.Elements {
+			e.inferGenericBindingsFromTypeRef(spec.Arguments[0], entry.Value, typeParamSet, callEnv, this)
+			break
+		}
+	case "dict":
+		if len(spec.Arguments) != 2 {
+			return
+		}
+		d, ok := value.(runtime.Dict)
+		if !ok || len(d.Entries) == 0 {
+			return
+		}
+		for _, entry := range d.Entries {
+			e.inferGenericBindingsFromTypeRef(spec.Arguments[0], entry.Key, typeParamSet, callEnv, this)
+			e.inferGenericBindingsFromTypeRef(spec.Arguments[1], entry.Value, typeParamSet, callEnv, this)
+			break
+		}
+	}
+}
+
+// recordInferredBinding stores a discovered (type-param-name, type-name)
+// binding into the call environment and, for constructor calls, into
+// the instance's TypeBindings so reflect.typeBindings can surface it.
+// "skip if already bound" semantics match the legacy non-recursive
+// code so explicit `<T=...>` args planted by the caller win.
+func (e *Evaluator) recordInferredBinding(name, typeName string, callEnv *runtime.Environment, this *runtime.Instance) {
+	if name == "" || typeName == "" {
+		return
+	}
+	if _, already := callEnv.GetTypeBinding(name); !already {
+		callEnv.DefineTypeBinding(name, typeName)
+	}
+	if this == nil || this.Class == nil {
+		return
+	}
+	if _, alreadyBound := this.TypeBindings[name]; alreadyBound {
+		return
+	}
+	for _, cp := range this.Class.TypeParameters {
+		if strings.EqualFold(cp, name) {
+			if this.TypeBindings == nil {
+				this.TypeBindings = map[string]string{}
+			}
+			this.TypeBindings[name] = typeName
+			return
+		}
+	}
+}
+
 func (e *Evaluator) applyFunctionWithTypeArgs(fn runtime.Function, args []runtime.Value, typeArgs []*ast.TypeRef) (runtime.Value, error) {
 	if len(typeArgs) == 0 || len(fn.TypeParameters) == 0 {
 		return e.applyFunction(fn, args)
@@ -21075,106 +21312,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 			if i >= len(args) || param.Type == nil {
 				break
 			}
-			if typeParamSet[strings.ToLower(param.Type.Name)] && param.Type.Operator == "" && len(param.Type.Arguments) == 0 {
-				name := param.Type.Name
-				typeName := args[i].TypeName()
-				if _, already := callEnv.GetTypeBinding(name); !already {
-					callEnv.DefineTypeBinding(name, typeName)
-				}
-				// Persist to instance for constructor path (this.TypeBindings not yet set for this
-				// param) and skip for method path (binding already set at construction time).
-				if this != nil {
-					if _, alreadyBound := this.TypeBindings[name]; !alreadyBound {
-						for _, cp := range this.Class.TypeParameters {
-							if strings.EqualFold(cp, name) {
-								if this.TypeBindings == nil {
-									this.TypeBindings = map[string]string{}
-								}
-								this.TypeBindings[name] = typeName
-								break
-							}
-						}
-					}
-				}
-			} else if param.Type.Operator == "" && len(param.Type.Arguments) == 1 {
-				// Container type like list<T> or set<T>: infer T from the first element.
-				arg := param.Type.Arguments[0]
-				if arg != nil && arg.Operator == "" && arg.Name != "" && typeParamSet[strings.ToLower(arg.Name)] {
-					name := arg.Name
-					var typeName string
-					if list, ok := args[i].(runtime.List); ok && len(list.Elements) > 0 {
-						typeName = list.Elements[0].TypeName()
-					} else if set, ok := args[i].(runtime.Set); ok && len(set.Elements) > 0 {
-						for _, entry := range set.Elements {
-							typeName = entry.Value.TypeName()
-							break
-						}
-					}
-					if typeName != "" {
-						if _, already := callEnv.GetTypeBinding(name); !already {
-							callEnv.DefineTypeBinding(name, typeName)
-						}
-						if this != nil {
-							if _, alreadyBound := this.TypeBindings[name]; !alreadyBound {
-								for _, cp := range this.Class.TypeParameters {
-									if strings.EqualFold(cp, name) {
-										if this.TypeBindings == nil {
-											this.TypeBindings = map[string]string{}
-										}
-										this.TypeBindings[name] = typeName
-										break
-									}
-								}
-							}
-						}
-					}
-				}
-			} else if param.Type.Operator == "" && len(param.Type.Arguments) == 2 {
-				// dict<K,V>: infer K and V from the first entry.
-				argK := param.Type.Arguments[0]
-				argV := param.Type.Arguments[1]
-				if d, ok := args[i].(runtime.Dict); ok && len(d.Entries) > 0 {
-					for _, entry := range d.Entries {
-						if argK != nil && argK.Operator == "" && argK.Name != "" && typeParamSet[strings.ToLower(argK.Name)] {
-							if _, already := callEnv.GetTypeBinding(argK.Name); !already {
-								callEnv.DefineTypeBinding(argK.Name, entry.Key.TypeName())
-							}
-							if this != nil {
-								if _, alreadyBound := this.TypeBindings[argK.Name]; !alreadyBound {
-									for _, cp := range this.Class.TypeParameters {
-										if strings.EqualFold(cp, argK.Name) {
-											if this.TypeBindings == nil {
-												this.TypeBindings = map[string]string{}
-											}
-											this.TypeBindings[argK.Name] = entry.Key.TypeName()
-											break
-										}
-									}
-								}
-							}
-						}
-						if argV != nil && argV.Operator == "" && argV.Name != "" && typeParamSet[strings.ToLower(argV.Name)] {
-							if _, already := callEnv.GetTypeBinding(argV.Name); !already {
-								callEnv.DefineTypeBinding(argV.Name, entry.Value.TypeName())
-							}
-							if this != nil {
-								if _, alreadyBound := this.TypeBindings[argV.Name]; !alreadyBound {
-									for _, cp := range this.Class.TypeParameters {
-										if strings.EqualFold(cp, argV.Name) {
-											if this.TypeBindings == nil {
-												this.TypeBindings = map[string]string{}
-											}
-											this.TypeBindings[argV.Name] = entry.Value.TypeName()
-											break
-										}
-									}
-								}
-							}
-						}
-						break // only need first entry
-					}
-				}
-			}
+			e.inferGenericBindingsFromTypeRef(param.Type, args[i], typeParamSet, callEnv, this)
 		}
 	}
 	if err := e.checkTypeParamConstraints(fn, callEnv); err != nil {

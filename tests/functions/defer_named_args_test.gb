@@ -1,0 +1,58 @@
+/**
+ * @title Named arguments in defer (1.0.6, carry-over from 1.0.5)
+ * @summary Defer now accepts named arguments for the three call
+ * shapes that previously rejected them: instance method calls,
+ * callable values (closures / function variables), and native
+ * module calls. The runtime captures (value, name) pairs and
+ * reorders them against the callee's signature when the deferred
+ * action fires.
+ */
+import test;
+
+list<string> trace = [];
+
+func collect(string tag): void {
+    trace = trace.push(tag);
+}
+
+class Logger {
+    string prefix;
+
+    func Logger(string prefix) {
+        this.prefix = prefix;
+    }
+
+    func log(string head, string tail): void {
+        collect(this.prefix + ":" + head + "-" + tail);
+    }
+}
+
+func runMethodDeferred(): void {
+    let logger = Logger("M");
+    defer logger.log(tail: "end", head: "start");
+    collect("before");
+}
+
+func runCallableDeferred(): void {
+    let cb = func(string left, string right): void {
+        collect("cb:" + left + "+" + right);
+    };
+    defer cb(right: "R", left: "L");
+    collect("before");
+}
+
+class DeferNamedArgsTest extends test.Test {
+    @test
+    func methodDeferredNamedArgs(): void {
+        trace = [];
+        runMethodDeferred();
+        this.assertEquals(["before", "M:start-end"], trace);
+    }
+
+    @test
+    func callableDeferredNamedArgs(): void {
+        trace = [];
+        runCallableDeferred();
+        this.assertEquals(["before", "cb:L+R"], trace);
+    }
+}
