@@ -7,7 +7,7 @@ int n = args.length() > 0 ? args[0].toInt() : 200;
 
 let payload = {
     "name": "Geblang",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "tags": ["script", "static", "decimals"],
     "metrics": {"users": 12345, "posts": 678910, "active": true},
     "items": [

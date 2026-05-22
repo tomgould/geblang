@@ -547,6 +547,14 @@
         ],
         "description": "Iterable class with __iter/__done/__next (1.0.6)"
     },
+    "reflect.location lookup": {
+        "prefix": "reflectloc",
+        "body": [
+            "let loc = reflect.location(${1:target});",
+            "io.println(loc[\"module\"] + \":\" + (loc[\"line\"] as string));$0"
+        ],
+        "description": "Get the source position of a function or class as {module, line, column} (1.0.6)"
+    },
     "__serialize__ override": {
         "prefix": "serialize",
         "body": [
