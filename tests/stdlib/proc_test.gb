@@ -1,0 +1,63 @@
+/**
+ * @title Subprocess streaming + PTY (1.1.0 F4)
+ * @summary `proc.spawn(cmd, args, opts)` starts a child process
+ * and returns immediately with stream-shaped `stdin`, `stdout`,
+ * and `stderr`. `process.wait()` blocks for the exit code;
+ * `process.kill()` / `process.signal(name)` terminate.
+ * `{pty: true}` attaches a pseudo-terminal (stdin/stdout share
+ * the master fd; stderr is null).
+ */
+import test;
+import proc;
+import streams;
+
+class ProcTest extends test.Test {
+    @test
+    func spawnEchoCapturesStdout(): void {
+        let p = proc.spawn("echo", ["hello", "world"]);
+        let out = p.stdout.readAll();
+        let code = p.wait();
+        this.assertEquals("hello world\n", out);
+        this.assertEquals(0, code);
+    }
+
+    @test
+    func stdinPipeReachesChild(): void {
+        let p = proc.spawn("cat", []);
+        p.stdin.write("ping\n");
+        p.stdin.close();
+        let out = p.stdout.readAll();
+        let code = p.wait();
+        this.assertEquals("ping\n", out);
+        this.assertEquals(0, code);
+    }
+
+    @test
+    func nonZeroExitReturned(): void {
+        let p = proc.spawn("sh", ["-c", "exit 42"]);
+        let code = p.wait();
+        this.assertEquals(42, code);
+    }
+
+    @test
+    func stderrIsSeparate(): void {
+        let p = proc.spawn("sh", ["-c", "echo out; echo err 1>&2"]);
+        let out = p.stdout.readAll();
+        let stderr = p.stderr as streams.IOStream;
+        let err = stderr.readAll();
+        let code = p.wait();
+        this.assertEquals("out\n", out);
+        this.assertEquals("err\n", err);
+        this.assertEquals(0, code);
+    }
+
+    @test
+    func ptyModeMergesStreams(): void {
+        let p = proc.spawn("echo", ["pty greeting"], {"pty": true});
+        let out = p.stdout.readAll();
+        let code = p.wait();
+        this.assertTrue(out.contains("pty greeting"));
+        this.assertNull(p.stderr);
+        this.assertEquals(0, code);
+    }
+}

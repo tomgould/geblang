@@ -1,6 +1,8 @@
 module streams;
 
 import collections;
+import io;
+import strings;
 
 ## Stream wraps any iterable (list, set, generator, range, or another
 ## class with the 1.0.6 iterator protocol) and exposes a fluent,
@@ -121,4 +123,169 @@ export class Stream {
 ## Wraps any iterable in a Stream for fluent chaining.
 export func of(any source): Stream {
     return Stream(source);
+}
+
+## IOStream wraps a low-level handle (file, in-memory buffer,
+## stdin / stdout / stderr) in the F3 stream protocol. Methods:
+## `read` / `readAll` / `readLine` / `lines` / `write` / `writeln`
+## / `flush` / `close` / `isClosed`. Memory-backed instances also
+## expose `toString()`; non-memory handles raise on that call.
+##
+## Iterating a stream yields lines:
+## `for (line in stream) { ... }`. Implements the protocol dunders
+## `__read` / `__write` / `__close` so helpers like
+## `streams.copy` / `streams.readAll` consume it without going
+## through the named methods.
+export class IOStream {
+    any handle;
+    bool _closed;
+
+    func IOStream(any handle) {
+        this.handle = handle;
+        this._closed = false;
+    }
+
+    ## Reads up to `n` bytes from the stream. Returns the empty
+    ## string at EOF.
+    func read(int n): string {
+        return io.read(this.handle, n);
+    }
+
+    ## Reads the entire remaining contents of the stream into a
+    ## single string.
+    func readAll(): string {
+        return io.readAll(this.handle);
+    }
+
+    ## Reads the next line with the trailing `\n` (or `\r\n`)
+    ## stripped. Returns null at EOF.
+    func readLine(): ?string {
+        return io.readLine(this.handle);
+    }
+
+    ## Lazy generator yielding each line until EOF.
+    func lines(): generator<string> {
+        while (true) {
+            let line = io.readLine(this.handle);
+            if (line == null) {
+                break;
+            }
+            yield line as string;
+        }
+    }
+
+    ## Writes `buf` and returns the number of bytes written.
+    func write(string buf): int {
+        return io.write(this.handle, buf);
+    }
+
+    ## Writes `buf` followed by a newline.
+    func writeln(string buf): int {
+        return io.writeln(this.handle, buf);
+    }
+
+    ## Flushes any buffered output.
+    func flush(): void {
+        io.flush(this.handle);
+    }
+
+    ## Closes the underlying resource. Safe to call more than once.
+    func close(): void {
+        if (this._closed) {
+            return;
+        }
+        io.close(this.handle);
+        this._closed = true;
+    }
+
+    ## True after `close()` has been called.
+    func isClosed(): bool {
+        return this._closed;
+    }
+
+    ## Returns the full buffer contents of a memory-backed stream
+    ## without moving the read cursor. Raises on file / stdin /
+    ## stdout / stderr handles.
+    func toString(): string {
+        return io.toString(this.handle);
+    }
+
+    func __read(int n): string {
+        return io.read(this.handle, n);
+    }
+
+    func __write(string buf): int {
+        return io.write(this.handle, buf);
+    }
+
+    func __close(): void {
+        this.close();
+    }
+
+    func __iter(): any {
+        return this.lines();
+    }
+}
+
+## Opens a file and wraps it in an IOStream. `mode` accepts the
+## same strings as `io.open` (e.g. `"r"`, `"w"`, `"a"`, `"r+"`).
+export func open(string path, string mode = "r"): IOStream {
+    return IOStream(io.open(path, mode));
+}
+
+## Returns an IOStream backed by an in-memory buffer. The optional
+## `initial` argument seeds the buffer; reads pull from the seed
+## first, then from anything subsequently written. Memory-backed
+## streams support `toString()` for inspection.
+export func memory(string initial = ""): IOStream {
+    if (initial == "") {
+        return IOStream(io.memory());
+    }
+    return IOStream(io.memory(initial));
+}
+
+## Wraps stdin in an IOStream.
+export func stdin(): IOStream {
+    return IOStream(io.stdin());
+}
+
+## Wraps stdout in an IOStream.
+export func stdout(): IOStream {
+    return IOStream(io.stdout());
+}
+
+## Wraps stderr in an IOStream.
+export func stderr(): IOStream {
+    return IOStream(io.stderr());
+}
+
+## Reads everything from `src` (anything with a `__read(int)`
+## method) until EOF and returns the accumulated string.
+export func readAll(any src, int chunk = 4096): string {
+    let sb = strings.StringBuilder();
+    while (true) {
+        string part = src.__read(chunk);
+        if (part == "") {
+            break;
+        }
+        sb.append(part);
+    }
+    let result = sb.build();
+    sb.dispose();
+    return result;
+}
+
+## Pipes everything from `src.__read(chunk)` into `dst.__write(...)`
+## until `src` returns EOF. Returns the total number of bytes
+## transferred (as reported by `dst.__write`).
+export func copy(any src, any dst, int chunk = 4096): int {
+    int total = 0;
+    while (true) {
+        string part = src.__read(chunk);
+        if (part == "") {
+            break;
+        }
+        total = total + (dst.__write(part) as int);
+    }
+    return total;
 }

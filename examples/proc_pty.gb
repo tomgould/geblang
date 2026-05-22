@@ -1,0 +1,14 @@
+/**
+ * @title Subprocess PTY mode (1.1.0 F4)
+ * @summary `proc.spawn(cmd, args, {pty: true})` attaches a
+ * pseudo-terminal so the child detects a TTY. `stdin` and
+ * `stdout` share the master fd; `stderr` is null.
+ * @category Standard Library
+ */
+import io;
+import proc;
+
+let p = proc.spawn("echo", ["pty greeting"], {"pty": true});
+io.println(p.stdout.readAll());
+p.wait();
+# pty greeting

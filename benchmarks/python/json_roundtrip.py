@@ -5,7 +5,7 @@ n = int(sys.argv[1]) if len(sys.argv) > 1 else 200
 
 payload = {
     "name": "Geblang",
-    "version": "1.0.6",
+    "version": "1.1.0",
     "tags": ["script", "static", "decimals"],
     "metrics": {"users": 12345, "posts": 678910, "active": True},
     "items": [

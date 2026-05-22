@@ -1,0 +1,41 @@
+/**
+ * @title File watching (1.1.0 F5)
+ * @summary `watch.start(path, callback, opts)` registers an
+ * fsnotify watcher; the callback fires for each filesystem event.
+ * Pass `{recursive: true}` to walk subdirectories at registration
+ * time. `watch.stop(handle)` halts the watcher and waits for any
+ * in-flight callback to finish.
+ * @category Standard Library
+ */
+import io;
+import sys;
+import path;
+import watch;
+
+# Module-level state so the callback's writes are visible to the
+# parent after watch.stop returns. Local closures captured by the
+# callback do not propagate mutations back across goroutines.
+list<string> events = [];
+
+let target = path.join(sys.tmpdir(), "geb_watch_example.txt");
+io.writeText(target, "first");
+
+let handle = watch.start(target, func(dict<string, any> event): void {
+    events = events.push((event["type"] as string) + " " + (event["path"] as string));
+});
+
+sys.sleep(50);
+io.writeText(target, "second");
+sys.sleep(150);
+io.writeText(target, "third");
+sys.sleep(150);
+
+watch.stop(handle);
+io.remove(target);
+
+for (e in events) {
+    io.println(e);
+}
+# Expected on Linux:
+#   write /tmp/geb_watch_example.txt
+#   write /tmp/geb_watch_example.txt

@@ -3,7 +3,7 @@ $n = isset($argv[1]) ? (int) $argv[1] : 200;
 
 $payload = [
     "name" => "Geblang",
-    "version" => "1.0.6",
+    "version" => "1.1.0",
     "tags" => ["script", "static", "decimals"],
     "metrics" => ["users" => 12345, "posts" => 678910, "active" => true],
     "items" => [

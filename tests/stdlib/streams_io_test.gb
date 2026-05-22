@@ -1,0 +1,125 @@
+/**
+ * @title Streams IO protocol (1.1.0 F3 Phase 1)
+ * @summary `streams.IOStream` wraps a low-level handle in the F3
+ * stream protocol. Concrete methods (`read`, `readAll`, `readLine`,
+ * `lines`, `write`, `writeln`, `close`) sit alongside the dunder
+ * protocol (`__read`, `__write`, `__close`, `__iter`) that
+ * protocol-driven helpers (`streams.copy`, `streams.readAll`)
+ * consume.
+ */
+import test;
+import streams;
+import io;
+
+class StreamsIOTest extends test.Test {
+    @test
+    func memoryReadLineUntilEOF(): void {
+        let mem = streams.memory("alpha\nbeta\ngamma\n");
+        this.assertEquals("alpha", mem.readLine());
+        this.assertEquals("beta", mem.readLine());
+        this.assertEquals("gamma", mem.readLine());
+        this.assertNull(mem.readLine());
+    }
+
+    @test
+    func memoryForInIteratesLines(): void {
+        let mem = streams.memory("one\ntwo\nthree\n");
+        list<string> collected = [];
+        for (line in mem) {
+            collected = collected.push(line);
+        }
+        this.assertEquals(["one", "two", "three"], collected);
+    }
+
+    @test
+    func memoryWriteThenToString(): void {
+        let buf = streams.memory();
+        buf.writeln("hello");
+        buf.writeln("world");
+        this.assertEquals("hello\nworld\n", buf.toString());
+    }
+
+    @test
+    func streamsReadAllUsesDunder(): void {
+        let mem = streams.memory("payload contents");
+        this.assertEquals("payload contents", streams.readAll(mem));
+    }
+
+    @test
+    func streamsCopyPipesBetweenStreams(): void {
+        let src = streams.memory("the quick brown fox");
+        let dst = streams.memory();
+        let n = streams.copy(src, dst);
+        this.assertEquals(19, n);
+        this.assertEquals("the quick brown fox", dst.toString());
+    }
+
+    @test
+    func fileStreamRoundTrip(): void {
+        let path = "/tmp/geblang_streams_io_test.txt";
+        let fw = streams.open(path, "w");
+        fw.writeln("alpha");
+        fw.writeln("beta");
+        fw.close();
+
+        let fr = streams.open(path, "r");
+        list<string> lines = [];
+        for (line in fr) {
+            lines = lines.push(line);
+        }
+        fr.close();
+        this.assertEquals(["alpha", "beta"], lines);
+
+        io.remove(path);
+    }
+
+    @test
+    func closeIsIdempotent(): void {
+        let mem = streams.memory("x");
+        this.assertFalse(mem.isClosed());
+        mem.close();
+        this.assertTrue(mem.isClosed());
+        mem.close();
+        this.assertTrue(mem.isClosed());
+    }
+
+    @test
+    func userClassImplementsProtocolViaDunders(): void {
+        # A user class that only implements the dunder protocol can be
+        # consumed by streams.readAll and streams.copy without
+        # subclassing IOStream.
+        let src = TwoChunkSource("foo|", "bar");
+        let dst = streams.memory();
+        let n = streams.copy(src, dst);
+        this.assertEquals(7, n);
+        this.assertEquals("foo|bar", dst.toString());
+
+        let again = TwoChunkSource("hello ", "world");
+        this.assertEquals("hello world", streams.readAll(again));
+    }
+}
+
+## Minimal dunder-only stream source used by the protocol test above.
+class TwoChunkSource {
+    string a;
+    string b;
+    int step;
+
+    func TwoChunkSource(string a, string b) {
+        this.a = a;
+        this.b = b;
+        this.step = 0;
+    }
+
+    func __read(int n): string {
+        if (this.step == 0) {
+            this.step = 1;
+            return this.a;
+        }
+        if (this.step == 1) {
+            this.step = 2;
+            return this.b;
+        }
+        return "";
+    }
+}

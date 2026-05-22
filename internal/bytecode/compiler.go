@@ -5563,7 +5563,7 @@ func isEvaluatorOnlyBuiltinImport(path []string) bool {
 
 func isStatefulBytecodeBuiltinModule(name string) bool {
 	switch name {
-	case "io", "sys", "secrets", "process",
+	case "io", "sys", "secrets", "process", "procnative",
 		"http", "websocket", "smtp", "web", "db", "ext", "net", "test", "log", "watch",
 		"csv", "schema", "serde", "metrics", "trace", "profile", "path", "async", "dotenv", "cli":
 		return true

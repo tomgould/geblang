@@ -1,0 +1,37 @@
+/**
+ * @title Subprocess streaming (1.1.0 F4)
+ * @summary `proc.spawn(cmd, args, opts)` starts a child process
+ * and returns immediately. `Process.stdin` / `stdout` / `stderr`
+ * are stream wrappers; `Process.wait()` blocks for the exit code.
+ * @category Standard Library
+ */
+import io;
+import proc;
+
+# Capture stdout from a one-shot command.
+let p = proc.spawn("echo", ["hello from spawn"]);
+io.println(p.stdout.readAll());
+io.println("exit " + (p.wait() as string));
+# hello from spawn
+#
+# exit 0
+
+# Pipe data through stdin to a filter and read filtered output.
+let g = proc.spawn("grep", ["error"]);
+g.stdin.writeln("info: starting up");
+g.stdin.writeln("error: disk full");
+g.stdin.writeln("info: done");
+g.stdin.close();
+io.println(g.stdout.readAll());
+g.wait();
+# error: disk full
+
+# Stream stdout line by line.
+let l = proc.spawn("sh", ["-c", "for i in 1 2 3; do echo line $i; done"]);
+for (line in l.stdout) {
+    io.println("got: " + line);
+}
+l.wait();
+# got: line 1
+# got: line 2
+# got: line 3

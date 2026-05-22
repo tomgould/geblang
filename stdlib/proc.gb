@@ -1,0 +1,69 @@
+module proc;
+
+import procnative;
+import streams;
+import io;
+
+## Process represents a running child process started by
+## `proc.spawn`. `stdin`, `stdout`, and `stderr` are stream
+## wrappers around the process's pipes (or the pty master in
+## pty mode). In pty mode `stderr` is null because the pty
+## merges output streams.
+##
+## Use `process.wait()` to block until the child exits and read
+## the exit code; `process.kill()` or `process.signal("SIGTERM")`
+## terminate it.
+export class Process {
+    int handle;
+    int pid;
+    streams.IOStream stdin;
+    streams.IOStream stdout;
+    any stderr;
+
+    func Process(int handle, int pid, streams.IOStream stdin, streams.IOStream stdout, any stderr) {
+        this.handle = handle;
+        this.pid = pid;
+        this.stdin = stdin;
+        this.stdout = stdout;
+        this.stderr = stderr;
+    }
+
+    ## Blocks until the process exits and returns its exit code.
+    func wait(): int {
+        return procnative.wait(this.handle);
+    }
+
+    ## Sends SIGKILL to the process.
+    func kill(): void {
+        procnative.kill(this.handle);
+    }
+
+    ## Sends a named signal (e.g. "SIGTERM", "SIGHUP") to the
+    ## process.
+    func signal(string name): void {
+        procnative.signal(this.handle, name);
+    }
+}
+
+## Spawns a child process and returns a Process immediately. Args
+## is a list of positional arguments; opts may include
+## `{pty: true}` to attach a pseudo-terminal (stdin and stdout
+## share the master fd; stderr is null), `{cwd: "..."}` to set
+## the working directory, and `{env: {...}}` to replace the
+## environment.
+##
+## ```gb
+## let p = proc.spawn("echo", ["hello"]);
+## io.println(p.stdout.readAll());
+## p.wait();
+## ```
+export func spawn(string command, list<string> args = [], dict<string, any> opts = {}): Process {
+    let raw = procnative.spawn(command, args, opts);
+    return Process(
+        raw["handle"] as int,
+        raw["pid"] as int,
+        streams.IOStream(raw["stdin"]),
+        streams.IOStream(raw["stdout"]),
+        raw["stderr"]
+    );
+}

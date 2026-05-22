@@ -1,0 +1,59 @@
+/**
+ * @title Stream protocol (1.1.0 F3)
+ * @summary `streams.open` / `streams.memory` wrap a low-level handle
+ * in the F3 stream protocol. Concrete methods (`read`, `readAll`,
+ * `readLine`, `lines`, `write`, `writeln`, `close`) sit alongside
+ * the dunder protocol (`__read` / `__write` / `__close` / `__iter`)
+ * that protocol-driven helpers (`streams.copy`, `streams.readAll`)
+ * consume.
+ * @category Standard Library
+ */
+import streams;
+import io;
+
+# Iterate lines of a memory-backed stream.
+let mem = streams.memory("alpha\nbeta\ngamma\n");
+for (line in mem) {
+    io.println(line);
+}
+# alpha
+# beta
+# gamma
+
+# Write through a memory stream and read back via toString().
+let buf = streams.memory();
+buf.writeln("first");
+buf.writeln("second");
+io.println(buf.toString());
+# first
+# second
+
+# streams.copy / streams.readAll work on anything implementing the
+# __read / __write dunders - including user-defined classes.
+class HexSource {
+    int step;
+    func HexSource() { this.step = 0; }
+    func __read(int n): string {
+        if (this.step == 0) { this.step = 1; return "hello "; }
+        if (this.step == 1) { this.step = 2; return "world"; }
+        return "";
+    }
+}
+
+let out = streams.memory();
+streams.copy(HexSource(), out);
+io.println(out.toString());
+# hello world
+
+# File streams behave the same way. streams.open returns an
+# IOStream; close() releases the handle.
+io.writeText("/tmp/streams_io_example.txt", "one\ntwo\nthree\n");
+let fs = streams.open("/tmp/streams_io_example.txt", "r");
+for (line in fs) {
+    io.println(line);
+}
+fs.close();
+io.remove("/tmp/streams_io_example.txt");
+# one
+# two
+# three

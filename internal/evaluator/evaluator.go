@@ -49,6 +49,8 @@ import (
 	"geblang/internal/semantic"
 
 	tomllib "github.com/BurntSushi/toml"
+	"github.com/creack/pty"
+	"github.com/fsnotify/fsnotify"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/websocket"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -152,6 +154,9 @@ type Evaluator struct {
 	traceMu           sync.Mutex
 	nextTraceID       int64
 	traces            map[int64]*traceSpan
+	watchMu           sync.Mutex
+	nextWatchID       int64
+	watches           map[int64]*watchHandle
 	webMu             sync.Mutex
 	nextWebID         int64
 	webApps           map[int64]*webApp
@@ -245,13 +250,14 @@ type processHandle struct {
 }
 
 type ioStreamHandle struct {
-	name    string
-	reader  io.Reader
-	writer  io.Writer
-	closer  io.Closer
-	memory  *memoryStream
-	restore func()
-	closed  bool
+	name      string
+	reader    io.Reader
+	writer    io.Writer
+	closer    io.Closer
+	memory    *memoryStream
+	restore   func()
+	closed    bool
+	bufReader *bufio.Reader
 }
 
 type memoryStream struct {
@@ -494,7 +500,7 @@ func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []st
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, traces: map[int64]*traceSpan{}, webApps: map[int64]*webApp{}, websockets: map[int64]*websocket.Conn{}, netHandles: map[int64]*netHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*websocket.Conn{}, netHandles: map[int64]*netHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}}
 	e.builtins = e.builtinModules()
 	// Register an InstanceInvoker so native code (e.g.
 	// convert.go's __serialize__ dispatch) can call class
@@ -755,6 +761,14 @@ func (e *Evaluator) Cleanup() error {
 		record(closeIOStreamHandle(stream))
 	}
 
+	e.watchMu.Lock()
+	watches := e.watches
+	e.watches = map[int64]*watchHandle{}
+	e.watchMu.Unlock()
+	for _, watcher := range watches {
+		record(stopWatchHandle(watcher))
+	}
+
 	e.dbMu.Lock()
 	dbRows := e.dbRows
 	stmts := e.stmts
@@ -876,14 +890,32 @@ func closeIOStreamHandle(handle *ioStreamHandle) error {
 		return nil
 	}
 	handle.closed = true
+	handle.bufReader = nil
 	if handle.restore != nil {
 		handle.restore()
 		handle.restore = nil
 	}
 	if handle.closer != nil {
-		return handle.closer.Close()
+		if err := handle.closer.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			return err
+		}
 	}
 	return nil
+}
+
+// isIOStreamKind reports whether a NativeObject is one of the stream
+// kinds io.* helpers operate on. Centralises the previously-repeated
+// `kind == "IOStream" || kind == "IOCapture"` check so a typo in any
+// one site can't silently skip the branch.
+func isIOStreamKind(value runtime.Value) (runtime.NativeObject, bool) {
+	obj, ok := value.(runtime.NativeObject)
+	if !ok {
+		return runtime.NativeObject{}, false
+	}
+	if obj.Kind != "IOStream" && obj.Kind != "IOCapture" {
+		return runtime.NativeObject{}, false
+	}
+	return obj, true
 }
 
 func cleanupProcess(process *processHandle) {
@@ -6909,6 +6941,13 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 				return &runtime.Instance{Class: e.processClass, Fields: map[string]runtime.Value{"handle": handle}}, nil
 			},
 		},
+		"procnative": {
+			"spawn":  e.procSpawn,
+			"wait":   e.procWait,
+			"kill":   e.procKill,
+			"signal": e.procSignal,
+			"pid":    e.procPid,
+		},
 		"async": {
 			"run":     e.asyncRun,
 			"sleep":   asyncSleep,
@@ -7386,6 +7425,8 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 		"watch": {
 			"snapshot": watchSnapshot,
 			"wait":     watchWait,
+			"start":    e.watchStart,
+			"stop":     e.watchStop,
 		},
 		"math": {
 			"abs":   e.registryBuiltin("math", "abs"),
@@ -9670,6 +9711,166 @@ func watchSnapshotsEqual(left runtime.Dict, right runtime.Dict) bool {
 		}
 	}
 	return true
+}
+
+// watchHandle owns an fsnotify watcher and the dispatch goroutine that
+// invokes the user's callback on each event. The done channel is
+// closed by stopWatchHandle to unblock the goroutine; the WaitGroup
+// lets stop callers wait for in-flight callbacks to finish so reads
+// from the parent goroutine happen-after the last callback write.
+type watchHandle struct {
+	watcher *fsnotify.Watcher
+	done    chan struct{}
+	wg      sync.WaitGroup
+	stopped bool
+}
+
+// fsnotifyEventType maps fsnotify's bitmask to the protocol's
+// "create" | "write" | "remove" | "rename" | "chmod" string.
+func fsnotifyEventType(op fsnotify.Op) string {
+	switch {
+	case op.Has(fsnotify.Create):
+		return "create"
+	case op.Has(fsnotify.Write):
+		return "write"
+	case op.Has(fsnotify.Remove):
+		return "remove"
+	case op.Has(fsnotify.Rename):
+		return "rename"
+	case op.Has(fsnotify.Chmod):
+		return "chmod"
+	default:
+		return "unknown"
+	}
+}
+
+func (e *Evaluator) watchStart(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects path, callback, optional options", call.Callee.String())
+	}
+	path, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s path must be string", call.Callee.String())
+	}
+	callback, ok := args[1].(runtime.Function)
+	if !ok {
+		return nil, fmt.Errorf("%s callback must be a function", call.Callee.String())
+	}
+	recursive := false
+	if len(args) == 3 {
+		opts, ok := args[2].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("%s options must be a dict", call.Callee.String())
+		}
+		if value, found := dictField(opts, "recursive"); found {
+			b, ok := value.(runtime.Bool)
+			if !ok {
+				return nil, fmt.Errorf("%s options.recursive must be bool", call.Callee.String())
+			}
+			recursive = b.Value
+		}
+	}
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+	if recursive {
+		if err := filepath.Walk(path.Value, func(p string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				return watcher.Add(p)
+			}
+			return nil
+		}); err != nil {
+			_ = watcher.Close()
+			return nil, err
+		}
+	} else {
+		if err := watcher.Add(path.Value); err != nil {
+			_ = watcher.Close()
+			return nil, err
+		}
+	}
+	handle := &watchHandle{watcher: watcher, done: make(chan struct{})}
+	e.watchMu.Lock()
+	e.nextWatchID++
+	id := e.nextWatchID
+	e.watches[id] = handle
+	e.watchMu.Unlock()
+	handle.wg.Add(1)
+	go func() {
+		defer handle.wg.Done()
+		e.dispatchWatchEvents(handle, callback)
+	}()
+	return runtime.NewInt64(id), nil
+}
+
+// dispatchWatchEvents loops on the fsnotify channels until the handle
+// is stopped, invoking the user's callback for each event. The
+// callback runs in a child evaluator (for stack-frame isolation
+// across goroutines) but the closure itself is NOT cloned, so
+// mutations to captured globals propagate back to the parent. The
+// `async.run` callback pattern uses the same approach.
+func (e *Evaluator) dispatchWatchEvents(handle *watchHandle, callback runtime.Function) {
+	child := e.childForCallback()
+	defer child.Cleanup()
+	for {
+		select {
+		case event, ok := <-handle.watcher.Events:
+			if !ok {
+				return
+			}
+			eventDict := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+			putDict(eventDict.Entries, "path", runtime.String{Value: event.Name})
+			putDict(eventDict.Entries, "type", runtime.String{Value: fsnotifyEventType(event.Op)})
+			_, _ = child.applyFunction(callback, []runtime.Value{eventDict})
+		case _, ok := <-handle.watcher.Errors:
+			if !ok {
+				return
+			}
+		case <-handle.done:
+			return
+		}
+	}
+}
+
+func (e *Evaluator) watchStop(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects a watch handle", call.Callee.String())
+	}
+	id, err := rawInt64(args[0], "watch handle")
+	if err != nil {
+		return nil, err
+	}
+	e.watchMu.Lock()
+	handle, ok := e.watches[id]
+	if ok {
+		delete(e.watches, id)
+	}
+	e.watchMu.Unlock()
+	if !ok {
+		if e.parent != nil {
+			return e.parent.watchStop(call, args)
+		}
+		return runtime.Null{}, nil
+	}
+	return runtime.Null{}, stopWatchHandle(handle)
+}
+
+func stopWatchHandle(handle *watchHandle) error {
+	if handle == nil || handle.stopped {
+		return nil
+	}
+	handle.stopped = true
+	close(handle.done)
+	err := handle.watcher.Close()
+	// Wait for the dispatch goroutine to finish its current callback
+	// (and exit) before returning, so the caller's subsequent reads
+	// from any callback-touched state happen after the last write.
+	handle.wg.Wait()
+	return err
 }
 
 func (e *Evaluator) logStdout(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -14511,7 +14712,7 @@ func (e *Evaluator) ioStreamHandle(value runtime.Value) (*ioStreamHandle, error)
 }
 
 func (e *Evaluator) ioReader(value runtime.Value) (io.Reader, error) {
-	if stream, ok := value.(runtime.NativeObject); ok && (stream.Kind == "IOStream" || stream.Kind == "IOCapture") {
+	if stream, ok := isIOStreamKind(value); ok {
 		handle, err := e.ioStreamHandle(stream)
 		if err != nil {
 			return nil, err
@@ -14519,13 +14720,16 @@ func (e *Evaluator) ioReader(value runtime.Value) (io.Reader, error) {
 		if handle.reader == nil {
 			return nil, fmt.Errorf("%s stream is not readable", handle.name)
 		}
+		if handle.bufReader != nil {
+			return handle.bufReader, nil
+		}
 		return handle.reader, nil
 	}
 	return e.fileHandle(value)
 }
 
 func (e *Evaluator) ioWriter(value runtime.Value) (io.Writer, error) {
-	if stream, ok := value.(runtime.NativeObject); ok && (stream.Kind == "IOStream" || stream.Kind == "IOCapture") {
+	if stream, ok := isIOStreamKind(value); ok {
 		handle, err := e.ioStreamHandle(stream)
 		if err != nil {
 			return nil, err
@@ -14631,7 +14835,7 @@ func (e *Evaluator) ioFlush(call *ast.CallExpression, args []runtime.Value) (run
 		}
 		return runtime.Null{}, nil
 	}
-	if stream, ok := args[0].(runtime.NativeObject); ok && (stream.Kind == "IOStream" || stream.Kind == "IOCapture") {
+	if stream, ok := isIOStreamKind(args[0]); ok {
 		if _, err := e.ioStreamHandle(stream); err != nil {
 			return nil, err
 		}
@@ -14733,7 +14937,7 @@ func (e *Evaluator) ioClose(call *ast.CallExpression, args []runtime.Value) (run
 	if buffer, ok := args[0].(runtime.NativeObject); ok && buffer.Kind == "IOBuffer" {
 		return e.closeBuffer(buffer.ID)
 	}
-	if stream, ok := args[0].(runtime.NativeObject); ok && (stream.Kind == "IOStream" || stream.Kind == "IOCapture") {
+	if stream, ok := isIOStreamKind(args[0]); ok {
 		e.streamMu.Lock()
 		handle, ok := e.streams[stream.ID]
 		if ok {
@@ -15021,12 +15225,18 @@ func (e *Evaluator) ioReadLine(call *ast.CallExpression, args []runtime.Value) (
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
 	}
-	if stream, ok := args[0].(runtime.NativeObject); ok && (stream.Kind == "IOStream" || stream.Kind == "IOCapture") {
-		reader, err := e.ioReader(stream)
+	if stream, ok := isIOStreamKind(args[0]); ok {
+		handle, err := e.ioStreamHandle(stream)
 		if err != nil {
 			return nil, err
 		}
-		line, err := bufio.NewReader(reader).ReadString('\n')
+		if handle.reader == nil {
+			return nil, fmt.Errorf("%s stream is not readable", handle.name)
+		}
+		if handle.bufReader == nil {
+			handle.bufReader = bufio.NewReader(handle.reader)
+		}
+		line, err := handle.bufReader.ReadString('\n')
 		if err != nil && err != io.EOF {
 			return nil, err
 		}
@@ -15059,13 +15269,28 @@ func (e *Evaluator) ioReadLines(call *ast.CallExpression, args []runtime.Value) 
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
 	}
-	handle, err := fileHandleID(args[0])
-	if err != nil {
-		return nil, err
-	}
-	r, err := e.fileBufReader(handle)
-	if err != nil {
-		return nil, err
+	var r *bufio.Reader
+	if stream, ok := isIOStreamKind(args[0]); ok {
+		handle, err := e.ioStreamHandle(stream)
+		if err != nil {
+			return nil, err
+		}
+		if handle.reader == nil {
+			return nil, fmt.Errorf("%s stream is not readable", handle.name)
+		}
+		if handle.bufReader == nil {
+			handle.bufReader = bufio.NewReader(handle.reader)
+		}
+		r = handle.bufReader
+	} else {
+		handle, err := fileHandleID(args[0])
+		if err != nil {
+			return nil, err
+		}
+		r, err = e.fileBufReader(handle)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var lines []runtime.Value
 	for {
@@ -16020,11 +16245,243 @@ func singleProcessHandleID(call *ast.CallExpression, args []runtime.Value) (int6
 }
 
 func processHandleID(value runtime.Value) (int64, error) {
-	id, ok := value.(runtime.Int)
-	if !ok || !id.Value.IsInt64() {
+	id, ok := native.AsInt64(value)
+	if !ok {
 		return 0, fmt.Errorf("process handle must be int")
 	}
-	return id.Value.Int64(), nil
+	return id, nil
+}
+
+// ptyEIOReader wraps the master side of a pseudo-terminal so that
+// the Linux-specific EIO returned after the child closes its end
+// reads as io.EOF. POSIX defines this behaviour for ptys; Geblang
+// users shouldn't see the raw errno.
+type ptyEIOReader struct {
+	r io.Reader
+}
+
+func (p *ptyEIOReader) Read(buf []byte) (int, error) {
+	n, err := p.r.Read(buf)
+	if err != nil {
+		if pathErr, ok := err.(*os.PathError); ok && pathErr.Err == syscall.EIO {
+			return n, io.EOF
+		}
+	}
+	return n, err
+}
+
+// procSpawn starts a child process and returns a dict with handle,
+// pid, and three IOStream handles (stdin, stdout, stderr). PTY mode
+// (opts["pty"] == true) uses github.com/creack/pty so stdin/stdout
+// share the master pty fd and stderr is null.
+func (e *Evaluator) procSpawn(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 1 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects command, optional args list, optional options", call.Callee.String())
+	}
+	cmdName, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s command must be string", call.Callee.String())
+	}
+	var cmdArgs []string
+	if len(args) >= 2 {
+		switch a := args[1].(type) {
+		case runtime.List:
+			cmdArgs = make([]string, 0, len(a.Elements))
+			for _, elem := range a.Elements {
+				s, ok := elem.(runtime.String)
+				if !ok {
+					return nil, fmt.Errorf("%s args list elements must be strings", call.Callee.String())
+				}
+				cmdArgs = append(cmdArgs, s.Value)
+			}
+		case runtime.Null:
+			cmdArgs = nil
+		default:
+			return nil, fmt.Errorf("%s args must be a list of strings or null", call.Callee.String())
+		}
+	}
+	usePTY := false
+	var workDir string
+	var envEntries []string
+	if len(args) == 3 {
+		opts, ok := args[2].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("%s options must be a dict", call.Callee.String())
+		}
+		if value, found := dictField(opts, "pty"); found {
+			b, ok := value.(runtime.Bool)
+			if !ok {
+				return nil, fmt.Errorf("%s options.pty must be bool", call.Callee.String())
+			}
+			usePTY = b.Value
+		}
+		if value, found := dictField(opts, "cwd"); found {
+			s, ok := value.(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("%s options.cwd must be string", call.Callee.String())
+			}
+			workDir = s.Value
+		}
+		if value, found := dictField(opts, "env"); found {
+			if d, ok := value.(runtime.Dict); ok {
+				for _, entry := range d.Entries {
+					k, kok := entry.Key.(runtime.String)
+					v, vok := entry.Value.(runtime.String)
+					if !kok || !vok {
+						return nil, fmt.Errorf("%s options.env keys and values must be strings", call.Callee.String())
+					}
+					envEntries = append(envEntries, k.Value+"="+v.Value)
+				}
+			} else {
+				return nil, fmt.Errorf("%s options.env must be a dict", call.Callee.String())
+			}
+		}
+	}
+	cmd := exec.Command(cmdName.Value, cmdArgs...)
+	if workDir != "" {
+		cmd.Dir = workDir
+	}
+	if envEntries != nil {
+		cmd.Env = envEntries
+	}
+	handle := &processHandle{cmd: cmd}
+	var stdinStream, stdoutStream, stderrStream *ioStreamHandle
+	if usePTY {
+		ptyFile, err := pty.Start(cmd)
+		if err != nil {
+			return nil, err
+		}
+		handle.stdin = ptyFile
+		handle.stdout = ptyFile
+		var ptyCloseOnce sync.Once
+		handle.cancel = func() {
+			ptyCloseOnce.Do(func() { _ = ptyFile.Close() })
+		}
+		// On Linux, reading the pty master after the child exits
+		// returns EIO; translate to EOF so io.read* gives a clean
+		// end-of-stream signal rather than surfacing the errno.
+		ptyReader := &ptyEIOReader{r: ptyFile}
+		// Both stdin and stdout streams alias the master pty fd. The
+		// fd itself is closed by handle.cancel (which procWait /
+		// procKill invoke); the per-stream Close() should be a no-op
+		// so stopping a closed handle stays idempotent.
+		stdinStream = &ioStreamHandle{name: "proc stdin (pty)", writer: ptyFile}
+		stdoutStream = &ioStreamHandle{name: "proc stdout (pty)", reader: ptyReader}
+		stderrStream = nil
+	} else {
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			return nil, err
+		}
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			_ = stdin.Close()
+			return nil, err
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			_ = stdin.Close()
+			return nil, err
+		}
+		if err := cmd.Start(); err != nil {
+			_ = stdin.Close()
+			return nil, err
+		}
+		handle.stdin = stdin
+		handle.stdout = stdout
+		handle.stderr = stderr
+		stdinStream = &ioStreamHandle{name: "proc stdin", writer: stdin, closer: stdin}
+		stdoutStream = &ioStreamHandle{name: "proc stdout", reader: stdout}
+		stderrStream = &ioStreamHandle{name: "proc stderr", reader: stderr}
+	}
+	e.processMu.Lock()
+	e.nextProcID++
+	procID := e.nextProcID
+	e.processes[procID] = handle
+	e.processMu.Unlock()
+	stdinVal := e.registerIOStream(stdinStream)
+	stdoutVal := e.registerIOStream(stdoutStream)
+	var stderrVal runtime.Value = runtime.Null{}
+	if stderrStream != nil {
+		stderrVal = e.registerIOStream(stderrStream)
+	}
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "handle", runtime.NewInt64(procID))
+	putDict(entries, "pid", runtime.NewInt64(int64(cmd.Process.Pid)))
+	putDict(entries, "stdin", stdinVal)
+	putDict(entries, "stdout", stdoutVal)
+	putDict(entries, "stderr", stderrVal)
+	return runtime.Dict{Entries: entries}, nil
+}
+
+func (e *Evaluator) procWait(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	process, err := e.singleProcessHandle(call, args)
+	if err != nil {
+		return nil, err
+	}
+	err = process.cmd.Wait()
+	if process.cancel != nil {
+		process.cancel()
+	}
+	code := int64(0)
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			code = int64(exitErr.ExitCode())
+		} else {
+			return nil, err
+		}
+	}
+	return runtime.NewInt64(code), nil
+}
+
+func (e *Evaluator) procKill(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	process, err := e.singleProcessHandle(call, args)
+	if err != nil {
+		return nil, err
+	}
+	if process.cancel != nil {
+		process.cancel()
+	}
+	if process.cmd.Process == nil {
+		return runtime.Null{}, nil
+	}
+	return runtime.Null{}, process.cmd.Process.Kill()
+}
+
+func (e *Evaluator) procSignal(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects (process, signalName)", call.Callee.String())
+	}
+	process, err := e.processHandle(args[0])
+	if err != nil {
+		return nil, err
+	}
+	name, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s signal name must be string", call.Callee.String())
+	}
+	signal, err := signalByName(name.Value)
+	if err != nil {
+		return nil, err
+	}
+	if process.cmd.Process == nil {
+		return nil, fmt.Errorf("process has not started")
+	}
+	if process.cancel != nil && signal == syscall.SIGKILL {
+		process.cancel()
+	}
+	return runtime.Null{}, process.cmd.Process.Signal(signal)
+}
+
+func (e *Evaluator) procPid(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	process, err := e.singleProcessHandle(call, args)
+	if err != nil {
+		return nil, err
+	}
+	if process.cmd.Process == nil {
+		return nil, fmt.Errorf("process has not started")
+	}
+	return runtime.NewInt64(int64(process.cmd.Process.Pid)), nil
 }
 
 func sysSetenv(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -16049,18 +16506,18 @@ func sysSleep(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects one argument (milliseconds)", call.Callee.String())
 	}
-	switch v := args[0].(type) {
-	case runtime.Int:
-		ms := v.Value.Int64()
-		if ms > 0 {
-			time.Sleep(time.Duration(ms) * time.Millisecond)
-		}
-	case runtime.Float:
+	if v, ok := args[0].(runtime.Float); ok {
 		if v.Value > 0 {
 			time.Sleep(time.Duration(v.Value * float64(time.Millisecond)))
 		}
-	default:
+		return runtime.Null{}, nil
+	}
+	ms, ok := native.AsInt64(args[0])
+	if !ok {
 		return nil, fmt.Errorf("%s expects a numeric millisecond value", call.Callee.String())
+	}
+	if ms > 0 {
+		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 	return runtime.Null{}, nil
 }

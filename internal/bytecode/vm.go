@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -24,10 +25,29 @@ import (
 )
 
 type VM struct {
-	chunk               Chunk
-	stdout              io.Writer
-	stack               []runtime.VMValue
-	globals             []runtime.VMValue
+	chunk   Chunk
+	stdout  io.Writer
+	stack   []runtime.VMValue
+	globals []runtime.VMValue
+	// globalsMu guards bulk operations on the globals slice used by the
+	// wrap-bridge: setGlobal writes and the snapshot-in / per-slot
+	// write-back done when a wrapped callable fires on a different
+	// goroutine than the parent. Per-instruction OpGetGlobal stays
+	// lock-free; the bridge boundary is the only race surface the
+	// detector flags.
+	globalsMu sync.Mutex
+	// dirtyGlobals tracks which global slots a sub-VM has written so the
+	// wrap-bridge write-back can copy only the touched slots back to the
+	// parent rather than slicecopying the entire backing array (which
+	// races the parent's lock-free OpGetGlobal on unrelated slots).
+	dirtyGlobals        []bool
+	// bridgeActive is set once a wrap-bridge worker is, or could become,
+	// alive against this VM's globals. While false, setGlobalVM /
+	// setGlobal can write without taking globalsMu because no concurrent
+	// reader/writer of vm.globals exists. Set monotonically: once true,
+	// stays true for the VM's lifetime. The single-goroutine hot path
+	// (numeric_loop) never bridges, so it stays lock-free.
+	bridgeActive atomic.Bool
 	locals              []runtime.VMValue
 	frames              []callFrame
 	maxCallDepth        int
@@ -84,10 +104,10 @@ type VM struct {
 	// and skips the `classInfo.Methods` map access entirely. The
 	// cache uses pointer-equality on the indices slice to detect
 	// hits without copying.
-	methodLookupClass   string
-	methodLookupName    string
-	methodLookupIndices []int64
-	methodLookupValid   bool
+	methodLookupClass    string
+	methodLookupName     string
+	methodLookupIndices  []int64
+	methodLookupValid    bool
 	fieldLookupClass     *runtime.Class
 	fieldLookupName      string
 	fieldLookupOnClass   bool
@@ -329,7 +349,7 @@ func NewVM(chunk Chunk, stdout io.Writer) *VM {
 	// per-VM metadata (typeParamSet, paramTypeSpecs, etc.) without
 	// racing concurrent VMs that share the same source chunk.
 	chunk.Functions = append([]FunctionInfo(nil), chunk.Functions...)
-	vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), locals: make([]runtime.VMValue, localSize), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: classIndex, natives: native.NewBuiltinRegistry(), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
+	vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), dirtyGlobals: make([]bool, globalSize), locals: make([]runtime.VMValue, localSize), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: classIndex, natives: native.NewBuiltinRegistry(), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
 	vm.prepareFunctionTypeMetadata()
 	vm.prewarmLocalsPool()
 	// Register an InstanceInvoker so native code (e.g.
@@ -2505,7 +2525,7 @@ func (vm *VM) callPrefixOperatorMethod(instruction Instruction, ip int, value ru
 	if !ok {
 		return ip, false, nil
 	}
-	if instance.Class.Module != "" && instance.Class.Module != vm.moduleName {
+	if instance.Class.Module != vm.moduleName {
 		if vm.moduleLoader == nil {
 			return 0, true, vm.runtimeError(instruction, "bytecode module loader is not configured")
 		}
@@ -2632,7 +2652,7 @@ func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 		return 0, vm.runtimeError(instruction, "%s", err.Error())
 	}
 	if instance, ok := left.(*runtime.Instance); ok {
-		if instance.Class.Module != "" && instance.Class.Module != vm.moduleName {
+		if instance.Class.Module != vm.moduleName {
 			if len(instance.Class.Methods["__eq"]) == 0 {
 				vm.push(runtime.Bool{Value: valuesEqual(left, right)})
 				return ip, nil
@@ -3292,7 +3312,7 @@ func (vm *VM) callBinaryOperatorMethod(instruction Instruction, ip int, left run
 	if !ok {
 		return ip, false, nil
 	}
-	if instance.Class.Module != "" && instance.Class.Module != vm.moduleName {
+	if instance.Class.Module != vm.moduleName {
 		if len(instance.Class.Methods[strings.ToLower(methodName)]) == 0 {
 			return ip, false, nil
 		}
@@ -7415,6 +7435,11 @@ func (vm *VM) wrapStatefulNativeArgs(args []runtime.Value) []runtime.Value {
 func (vm *VM) wrapStatefulNativeValue(value runtime.Value) runtime.Value {
 	switch callable := value.(type) {
 	case runtime.BytecodeFunction:
+		// The wrapped Native closure can be invoked later from another
+		// goroutine (timer fires, HTTP handler, etc.). From this point on,
+		// any concurrent write-back into vm.globals must serialise with
+		// the parent's setGlobalVM, so flip bridgeActive monotonically.
+		vm.bridgeActive.Store(true)
 		return runtime.Function{
 			Name: callable.Name,
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -7422,6 +7447,7 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value) runtime.Value {
 			},
 		}
 	case runtime.BytecodeClosure:
+		vm.bridgeActive.Store(true)
 		return runtime.Function{
 			Name: callable.Name,
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -7447,7 +7473,7 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value) runtime.Value {
 
 func isStatefulNativeModule(module string) bool {
 	switch module {
-	case "io", "sys", "secrets", "process",
+	case "io", "sys", "secrets", "process", "procnative",
 		"http", "websocket", "smtp", "web", "db", "ext", "net", "test", "log", "watch",
 		"csv", "schema", "serde", "metrics", "trace", "profile", "path", "async", "dotenv", "cli":
 		return true
@@ -9380,7 +9406,22 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 		chunk.Instructions = append(chunk.Instructions, copied)
 	}
 	callVM := NewVMWithModuleLoader(chunk, vm.stdout, vm.moduleLoader)
+	// The callVM is a wrap-bridge worker: its setGlobalVM writes feed the
+	// write-back loop below, so it must take the locked + dirty-tracking
+	// path even if no further wrap fires inside it.
+	callVM.bridgeActive.Store(true)
+	// Mark this parent VM as bridging so its subsequent setGlobalVM
+	// writes serialise with the snapshot-in / write-back done by the
+	// callVM on whichever goroutine eventually invokes the wrapped
+	// callable. The store happens on the parent's goroutine before any
+	// possibility of cross-goroutine read.
+	vm.bridgeActive.Store(true)
+	// Snapshot parent globals under the mutex so a wrap-bridge callback
+	// invoked from a worker goroutine doesn't race with the parent's
+	// setGlobal writes.
+	vm.globalsMu.Lock()
 	callVM.restoreGlobalsVM(vm.globals)
+	vm.globalsMu.Unlock()
 	callVM.SetModuleName(vm.moduleName)
 	if vm.statefulNative != nil {
 		callVM.SetStatefulNativeCaller(vm.statefulNative)
@@ -9405,8 +9446,24 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 	// caller. Without this, deferred function calls and any other paths that
 	// invoke CallFunction from inside a running VM silently discard global
 	// writes the callee performed (defer-fired closures over module-level
-	// state were the symptom).
-	vm.globals = append(vm.globals[:0], callVM.globals...)
+	// state were the symptom). Write only the slots the callee touched -
+	// a slicecopy of the entire backing array would race the parent's
+	// lock-free OpGetGlobal on unrelated slots when the bridge fires on a
+	// goroutine.
+	vm.globalsMu.Lock()
+	for i, dirty := range callVM.dirtyGlobals {
+		if !dirty {
+			continue
+		}
+		if i >= len(callVM.globals) || i >= len(vm.globals) {
+			continue
+		}
+		vm.globals[i] = callVM.globals[i]
+		if i < len(vm.dirtyGlobals) {
+			vm.dirtyGlobals[i] = true
+		}
+	}
+	vm.globalsMu.Unlock()
 	if len(callVM.stack) == 0 {
 		return runtime.Null{}, nil
 	}
@@ -10319,6 +10376,15 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 	}
 	base := n - argc - 1
 	function := &vm.chunk.Functions[functionIndex]
+	if function.IsGenerator && !vm.generatorExecution {
+		callArgs := make([]runtime.Value, argc+1)
+		for i := 0; i <= argc; i++ {
+			callArgs[i] = vm.stack[base+i].ToValue()
+		}
+		vm.stack = vm.stack[:base]
+		vm.push(vm.lazyGenerator(functionIndex, callArgs))
+		return ip, nil
+	}
 	// Fast path: skip the per-arg ToValue() conversion when
 	// startFunctionVMValue can take VMValues directly. Receiver +
 	// argc must match the callee's full param count, and we must
@@ -10421,7 +10487,13 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		return ip, nil
 	}
 	if instance, ok := receiver.(*runtime.Instance); ok {
-		if instance.Class.Module != "" && instance.Class.Module != vm.moduleName {
+		// Dispatch foreign-class methods through the module loader. A
+		// class is foreign when its declaring chunk differs from the
+		// chunk this VM is currently executing. This covers stdlib
+		// sub-VMs calling main-chunk classes (e.g. a user class
+		// passed to streams.copy implementing __read) as well as
+		// cross-stdlib-module method calls.
+		if instance.Class.Module != vm.moduleName {
 			// For classes from foreign modules, prefer native Go methods (e.g.
 			// process.Process, http.Response) before falling through to the
 			// bytecode module loader, which has no chunk for native modules.
@@ -10484,6 +10556,10 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 				return 0, vm.runtimeError(instruction, "%s", err.Error())
 			}
 			vm.push(result)
+			return ip, nil
+		}
+		if vm.chunk.Functions[functionIndex].IsGenerator && !vm.generatorExecution {
+			vm.push(vm.lazyGenerator(functionIndex, slots))
 			return ip, nil
 		}
 		nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], slots, nil)
@@ -13905,7 +13981,14 @@ func (vm *VM) setGlobal(slot int64, value runtime.Value) error {
 			return err
 		}
 	}
+	if !vm.bridgeActive.Load() {
+		vm.globals[slot] = runtime.VMValueFromValue(value)
+		return nil
+	}
+	vm.globalsMu.Lock()
 	vm.globals[slot] = runtime.VMValueFromValue(value)
+	vm.markGlobalDirtyLocked(int(slot))
+	vm.globalsMu.Unlock()
 	return nil
 }
 
@@ -13920,8 +14003,34 @@ func (vm *VM) setGlobalVM(slot int64, value runtime.VMValue) error {
 			return err
 		}
 	}
+	// Fast path: no wrap-bridge worker can be touching this VM's
+	// globals, so the write is safe without locking or dirty tracking.
+	// bridgeActive flips false->true on this same goroutine before any
+	// worker is observable, so a single atomic Load here is sufficient.
+	if !vm.bridgeActive.Load() {
+		vm.globals[slot] = value
+		return nil
+	}
+	vm.globalsMu.Lock()
 	vm.globals[slot] = value
+	vm.markGlobalDirtyLocked(int(slot))
+	vm.globalsMu.Unlock()
 	return nil
+}
+
+// markGlobalDirtyLocked records that slot has been written and grows the
+// dirty-bitset alongside vm.globals if a previous ensureSlot grew the
+// globals slice beyond the bitset's capacity. Caller holds globalsMu.
+func (vm *VM) markGlobalDirtyLocked(slot int) {
+	if slot < 0 {
+		return
+	}
+	if slot >= len(vm.dirtyGlobals) {
+		grown := make([]bool, len(vm.globals))
+		copy(grown, vm.dirtyGlobals)
+		vm.dirtyGlobals = grown
+	}
+	vm.dirtyGlobals[slot] = true
 }
 
 func (vm *VM) getGlobal(slot int64) (runtime.Value, error) {

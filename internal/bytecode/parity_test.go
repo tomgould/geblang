@@ -39,6 +39,11 @@ type stdlibModuleLoader struct {
 	globals    map[string][]runtime.Value
 	decorators map[string]bytecode.FunctionDecoratorState
 	loading    map[string]bool
+	// mainChunk lets sub-VMs (stdlib modules) call back into the
+	// entry chunk when a foreign instance's method needs dispatch,
+	// e.g. streams.copy invoking __read on a user-defined class.
+	mainChunk    bytecode.Chunk
+	hasMainChunk bool
 }
 
 func newStdlibModuleLoader(stdout io.Writer, stateful bytecode.StatefulNativeCaller) *stdlibModuleLoader {
@@ -119,8 +124,23 @@ func (l *stdlibModuleLoader) LoadModule(canonical, alias string) (*runtime.Modul
 	return module, nil
 }
 
-func (l *stdlibModuleLoader) newSubVM(moduleName string) *bytecode.VM {
-	chunk := l.chunks[moduleName]
+// newSubVM returns a VM bound to either a stdlib module's chunk or
+// the main chunk (when moduleName == "" and mainChunk is registered).
+// Errors when no matching chunk exists.
+func (l *stdlibModuleLoader) newSubVM(moduleName string) (*bytecode.VM, error) {
+	var chunk bytecode.Chunk
+	if moduleName == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script chunk not registered with loader")
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunks[moduleName]
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", moduleName)
+		}
+		chunk = c
+	}
 	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
 	vm.SetModuleName(moduleName)
 	vm.SetModulePaths(l.modulePaths)
@@ -129,56 +149,63 @@ func (l *stdlibModuleLoader) newSubVM(moduleName string) *bytecode.VM {
 	}
 	vm.RestoreGlobals(l.globals[moduleName])
 	vm.RestoreFunctionDecoratorState(l.decorators[moduleName])
-	return vm
+	return vm, nil
 }
 
 func (l *stdlibModuleLoader) CallModuleFunction(function runtime.BytecodeFunction, args []runtime.Value) (runtime.Value, error) {
-	if _, ok := l.chunks[function.Module]; !ok {
-		return nil, fmt.Errorf("module %s is not loaded", function.Module)
+	vm, err := l.newSubVM(function.Module)
+	if err != nil {
+		return nil, err
 	}
-	return l.newSubVM(function.Module).CallFunction(function.Index, args)
+	return vm.CallFunction(function.Index, args)
 }
 
 func (l *stdlibModuleLoader) CallModuleClosure(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
-	if _, ok := l.chunks[closure.Module]; !ok {
-		return nil, fmt.Errorf("module %s is not loaded", closure.Module)
+	vm, err := l.newSubVM(closure.Module)
+	if err != nil {
+		return nil, err
 	}
-	return l.newSubVM(closure.Module).CallClosure(closure, args)
+	return vm.CallClosure(closure, args)
 }
 
 func (l *stdlibModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value) (runtime.Value, error) {
-	if _, ok := l.chunks[class.Module]; !ok {
-		return nil, fmt.Errorf("module %s is not loaded", class.Module)
+	vm, err := l.newSubVM(class.Module)
+	if err != nil {
+		return nil, err
 	}
-	return l.newSubVM(class.Module).ConstructClass(class.Index, args)
+	return vm.ConstructClass(class.Index, args)
 }
 
 func (l *stdlibModuleLoader) DeserializeModuleClass(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, error) {
-	if _, ok := l.chunks[class.Module]; !ok {
-		return nil, fmt.Errorf("module %s is not loaded", class.Module)
+	vm, err := l.newSubVM(class.Module)
+	if err != nil {
+		return nil, err
 	}
-	return l.newSubVM(class.Module).DeserializeIntoChunkClass(class, value)
+	return vm.DeserializeIntoChunkClass(class, value)
 }
 
 func (l *stdlibModuleLoader) ConstructorsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error) {
-	if _, ok := l.chunks[class.Module]; !ok {
-		return nil, fmt.Errorf("module %s is not loaded", class.Module)
+	vm, err := l.newSubVM(class.Module)
+	if err != nil {
+		return nil, err
 	}
-	return l.newSubVM(class.Module).ReflectConstructorsForChunkClass(class)
+	return vm.ReflectConstructorsForChunkClass(class)
 }
 
 func (l *stdlibModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value) (runtime.Value, error) {
-	if _, ok := l.chunks[class.Module]; !ok {
-		return nil, fmt.Errorf("module %s is not loaded", class.Module)
+	vm, err := l.newSubVM(class.Module)
+	if err != nil {
+		return nil, err
 	}
-	return l.newSubVM(class.Module).CallStaticMethod(class.Index, methodName, args)
+	return vm.CallStaticMethod(class.Index, methodName, args)
 }
 
 func (l *stdlibModuleLoader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-	if _, ok := l.chunks[module]; !ok {
-		return nil, fmt.Errorf("module %s is not loaded", module)
+	vm, err := l.newSubVM(module)
+	if err != nil {
+		return nil, err
 	}
-	return l.newSubVM(module).CallInstanceMethod(instance, methodName, args)
+	return vm.CallInstanceMethod(instance, methodName, args)
 }
 
 func (l *stdlibModuleLoader) FindFunctionByName(name string) (runtime.Value, bool) {
@@ -245,6 +272,8 @@ func runParityWithStdlib(t *testing.T, source string, want string) {
 	var vmOut bytes.Buffer
 	stateful := evaluator.New(&vmOut)
 	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.mainChunk = chunk
+	loader.hasMainChunk = true
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetStatefulNativeCaller(stateful)
 	if err := vm.Run(); err != nil {
@@ -7860,4 +7889,192 @@ io.println(b as decimal);
 io.println((b as bytes) as string);
 io.println(Box(0) as bool);
 `, "Box(42)\n42\n42\ntrue\n42.0000000000\nBox(42)\nfalse\n")
+}
+
+func TestParityGeneratorMethodOnClass(t *testing.T) {
+	runParity(t, `import io;
+
+class Box {
+    int max;
+    func Box(int m) { this.max = m; }
+    func nums(): generator<int> {
+        for (let int i = 0; i < this.max; i++) {
+            yield i;
+        }
+    }
+}
+
+let b = Box(3);
+for (n in b.nums()) {
+    io.println(n);
+}
+`, "0\n1\n2\n")
+}
+
+func TestParityStreamsMemoryReadLine(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import streams;
+
+let mem = streams.memory("alpha\nbeta\ngamma\n");
+io.println(mem.readLine());
+io.println(mem.readLine());
+io.println(mem.readLine());
+io.println(mem.readLine());
+`, "alpha\nbeta\ngamma\nnull\n")
+}
+
+func TestParityStreamsForInIteratesLines(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import streams;
+
+let mem = streams.memory("a\nb\nc\n");
+for (line in mem) {
+    io.println(line);
+}
+`, "a\nb\nc\n")
+}
+
+func TestParityStreamsCopyViaDunders(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import streams;
+
+let src = streams.memory("the quick brown fox");
+let dst = streams.memory();
+let n = streams.copy(src, dst);
+io.println(n);
+io.println(dst.toString());
+`, "19\nthe quick brown fox\n")
+}
+
+func TestParityStreamsUserDunderProtocol(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import streams;
+
+class Chunked {
+    int step;
+    func Chunked() { this.step = 0; }
+    func __read(int n): string {
+        if (this.step == 0) { this.step = 1; return "hello "; }
+        if (this.step == 1) { this.step = 2; return "world"; }
+        return "";
+    }
+}
+
+let dst = streams.memory();
+streams.copy(Chunked(), dst);
+io.println(dst.toString());
+io.println(streams.readAll(Chunked()));
+`, "hello world\nhello world\n")
+}
+
+// TestParityUserClassOpOverloadInStreamReduce exercises user-class
+// operator overloads (__add, __eq) inside a streams.reduce / .anyMatch
+// pipeline where the reducer closure is created in the main chunk and
+// fired from inside the streams sub-VM. The 1.0.6 cross-chunk closure
+// dispatch fix routes the closure back to its declaring chunk so the
+// __add / __eq dispatches happen in the main-chunk VM, where the user
+// class lives.
+//
+// Companion to TestParityStreamsUserDunderProtocol, which covers the
+// methodCall cross-chunk path (`vm.go:~10465`). The prefix-op, __eq,
+// and binary-op guards at vm.go:~2520 / ~2647 / ~3307 are also
+// relaxed to `instance.Class.Module != vm.moduleName` for symmetry,
+// but no current stdlib code path evaluates a magic op directly on a
+// user-class instance from inside a sub-VM. The relaxation is
+// defensive; this test locks in the closure-dispatch route that real
+// stream pipelines exercise.
+func TestParityUserClassOpOverloadInStreamReduce(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import streams;
+
+class Money {
+    int cents;
+    func Money(int c) { this.cents = c; }
+    func __add(any other): Money {
+        return Money(this.cents + (other as Money).cents);
+    }
+    func __eq(any other): bool {
+        if (!(other instanceof Money)) { return false; }
+        return this.cents == (other as Money).cents;
+    }
+    func __string(): string {
+        return "$" + (this.cents as string);
+    }
+}
+
+let total = streams.of([Money(100), Money(250), Money(75)])
+    .reduce(Money(0), func(any acc, any x): any {
+        return (acc as Money) + (x as Money);
+    });
+io.println(total as string);
+
+let hasExact = streams.of([Money(10), Money(20), Money(30)])
+    .anyMatch(func(any x): bool { return (x as Money) == Money(20); });
+io.println(hasExact);
+
+let missing = streams.of([Money(10), Money(20), Money(30)])
+    .anyMatch(func(any x): bool { return (x as Money) == Money(999); });
+io.println(missing);
+`, "$425\ntrue\nfalse\n")
+}
+
+// TestParityWatchStartStopFires exercises the F5 watch.start /
+// watch.stop callback path. The fsnotify watcher fires the event
+// callback on a goroutine; the eval-side child evaluator and the
+// VM-side wrap-bridge both have to propagate the module-level
+// `kinds` mutation back to the parent before the assertion reads it.
+// watch.stop waits for the dispatch goroutine to drain so the read
+// happens-after the last callback write.
+func TestParityWatchStartStopFires(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import watch;
+import sys;
+import path;
+
+let p = path.join(sys.tmpdir(), "geb_parity_watch.txt");
+io.writeText(p, "v1");
+
+list<string> kinds = [];
+let h = watch.start(p, func(dict<string, any> e): void {
+    kinds = kinds.push(e["type"] as string);
+});
+
+sys.sleep(50);
+io.writeText(p, "v2");
+sys.sleep(150);
+
+watch.stop(h);
+io.remove(p);
+io.println(kinds.contains("write"));
+`, "true\n")
+}
+
+// TestParityProcSpawnEcho exercises F4 subprocess streaming on
+// both backends: spawn echo, read stdout to EOF, wait for exit.
+// Reuses the IOStream wrapper from F3 - proc.spawn returns a
+// process whose stdout/stderr/stdin are IOStream-shaped.
+func TestParityProcSpawnEcho(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import proc;
+
+let p = proc.spawn("echo", ["hello", "world"]);
+let out = p.stdout.readAll();
+let code = p.wait();
+io.print(out);
+io.println(code);
+`, "hello world\n0\n")
+}
+
+func TestParityProcStdinPipe(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import proc;
+
+let p = proc.spawn("cat", []);
+p.stdin.write("ping\n");
+p.stdin.close();
+let out = p.stdout.readAll();
+let code = p.wait();
+io.print(out);
+io.println(code);
+`, "ping\n0\n")
 }

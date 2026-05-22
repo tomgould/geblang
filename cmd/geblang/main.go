@@ -22,7 +22,7 @@ import (
 	"geblang/internal/semantic"
 )
 
-const version = "1.0.6"
+const version = "1.1.0"
 const bannerString = "Geblang Version %s, ©2026 David Gebler.\n==========================================\n"
 
 type executionMode int
@@ -2135,9 +2135,23 @@ func (l *bytecodeModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClas
 }
 
 func (l *bytecodeModuleLoader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-	chunk, ok := l.chunks[module]
-	if !ok {
-		return nil, fmt.Errorf("module %s is not loaded", module)
+	var chunk bytecode.Chunk
+	if module == "" {
+		// Main-chunk classes carry Module="". Sub-VMs running stdlib
+		// modules dispatch into the entry chunk through this branch
+		// when invoking a method on a user instance (e.g. the F3
+		// dunder protocol: streams.copy(src, ...) calls
+		// src.__read(n) where src is a main-chunk class).
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script instance method %s.%s called without a main chunk", className, methodName)
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunks[module]
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", module)
+		}
+		chunk = c
 	}
 	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
 	vm.SetModuleName(module)

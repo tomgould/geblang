@@ -548,9 +548,28 @@ var stdlibCatalog = map[string]moduleDoc{
 		"shuffle":  fn([]string{"list<any> items"}, "list<any>", "Returns a shuffled copy."),
 	}, classes: map[string]string{"Generator": "Stateful PRNG handle."}},
 	"streams": {functions: map[string]functionDoc{
-		"of": fn([]string{"any source"}, "Stream", "Wraps any iterable in a Stream for fluent chaining (1.0.6)."),
+		"of":      fn([]string{"any source"}, "Stream", "Wraps any iterable in a Stream for fluent chaining (1.0.6)."),
+		"open":    fn([]string{"string path", "string mode = \"r\""}, "IOStream", "Opens a file and wraps it in an IOStream (1.1.0)."),
+		"memory":  fn([]string{"string initial = \"\""}, "IOStream", "Returns an in-memory read/write IOStream, optionally seeded (1.1.0)."),
+		"stdin":   fn([]string{}, "IOStream", "Wraps stdin in an IOStream (1.1.0)."),
+		"stdout":  fn([]string{}, "IOStream", "Wraps stdout in an IOStream (1.1.0)."),
+		"stderr":  fn([]string{}, "IOStream", "Wraps stderr in an IOStream (1.1.0)."),
+		"readAll": fn([]string{"any src", "int chunk = 4096"}, "string", "Reads everything from any value implementing __read(int) until EOF (1.1.0)."),
+		"copy":    fn([]string{"any src", "any dst", "int chunk = 4096"}, "int", "Pipes from src.__read(chunk) into dst.__write(...) until EOF; returns bytes transferred (1.1.0)."),
 	}, classes: map[string]string{
-		"Stream": "Lazy-by-default fluent pipeline over an iterable. Intermediate ops (map / filter / take) return a new Stream; terminal ops (toList / toSet / count / first / reduce / forEach / anyMatch / allMatch) drive iteration. Implements __iter() so a Stream is itself iterable.",
+		"Stream":   "Lazy-by-default fluent pipeline over an iterable. Intermediate ops (map / filter / take) return a new Stream; terminal ops (toList / toSet / count / first / reduce / forEach / anyMatch / allMatch) drive iteration. Implements __iter() so a Stream is itself iterable.",
+		"IOStream": "Handle-backed stream wrapper (1.1.0 F3). Methods: read(n) / readAll() / readLine() / lines() / write(buf) / writeln(buf) / flush() / close() / isClosed(). Memory-backed instances also expose toString(). Dunder protocol: __read / __write / __close / __iter (yields lines).",
+	}},
+	"watch": {functions: map[string]functionDoc{
+		"snapshot": fn([]string{"string path"}, "dict<string, any>", "Capture the current state of a file or directory for polling-based change detection."),
+		"wait":     fn([]string{"string path", "dict<string, any> previous", "int timeoutMs", "int intervalMs = 250"}, "dict<string, any>", "Block until the path's state differs from the snapshot or the timeout expires."),
+		"start":    fn([]string{"string path", "func callback", "dict<string, any> options = {}"}, "int", "Register an fsnotify watcher; fires callback({path, type}) for each event. Options: {recursive: bool} (1.1.0)."),
+		"stop":     fn([]string{"int handle"}, "void", "Stop a watcher and wait for in-flight callbacks to finish (1.1.0)."),
+	}},
+	"proc": {functions: map[string]functionDoc{
+		"spawn": fn([]string{"string command", "list<string> args = []", "dict<string, any> options = {}"}, "Process", "Spawn a child process and return a Process. Options: {pty: bool, cwd: string, env: dict<string, string>} (1.1.0 F4)."),
+	}, classes: map[string]string{
+		"Process": "Running child process (1.1.0 F4). Fields: pid, handle, stdin (IOStream), stdout (IOStream), stderr (IOStream or null in pty mode). Methods: wait() returns the exit code, kill() sends SIGKILL, signal(name) sends a named signal.",
 	}},
 	"strings": {classes: map[string]string{
 		"StringBuilder": "Builder-backed string accumulator. Amortised O(n) append for tight-loop assembly; call dispose() to release the handle in long-running processes.",

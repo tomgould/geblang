@@ -54,7 +54,7 @@ Open the `vscode-geblang` folder in VS Code and press **F5** to launch a new Ext
 ```sh
 npm install -g @vscode/vsce
 vsce package
-code --install-extension vscode-geblang-1.0.4.vsix
+code --install-extension vscode-geblang-1.1.0.vsix
 ```
 
 ## Debugging a Geblang Script

@@ -1,5 +1,55 @@
 # Release Notes
 
+## 1.1.0
+
+### Stdlib
+
+- New `streams.IOStream` class wraps a file or in-memory handle
+  with `read`, `readAll`, `readLine`, `lines`, `write`, `writeln`,
+  `flush`, `close`, and `for (line in stream)` iteration.
+  Memory-backed instances also expose `toString()`.
+- New factories: `streams.open(path, mode)`,
+  `streams.memory(initial)`, and
+  `streams.stdin / stdout / stderr()`.
+- New helpers `streams.readAll(src)` and
+  `streams.copy(src, dst)` consume any value implementing the
+  stream protocol.
+- New `proc` module starts child processes that stream
+  concurrently with the parent: `proc.spawn(cmd, args, opts)`
+  returns a `Process` with `stdin`, `stdout`, `stderr` (each an
+  `IOStream`), plus `wait()`, `kill()`, `signal(name)`, and
+  `pid`. `{pty: true}` attaches a pseudo-terminal so interactive
+  programs see a TTY. The existing synchronous `process.run` /
+  `sys.run` are unchanged.
+- New `watch.start(path, callback, opts)` registers an fsnotify
+  watcher and fires `callback({path, type})` for each filesystem
+  event. `{recursive: true}` walks subdirectories at register
+  time. `watch.stop(handle)` waits for the in-flight callback to
+  finish before returning. Polling helpers (`watch.snapshot` /
+  `watch.wait`) remain available.
+
+### Language features
+
+- Stream protocol dunders: classes implementing `__read(int)`,
+  `__write(string)`, and `__close()` plug into `streams.copy`,
+  `streams.readAll`, and `for (line in stream)` directly.
+- Generator methods on user classes now run on the VM.
+
+### Bug fixes
+
+- `io.readLine` over an in-memory stream returned `null` after
+  the first line; now reads each line in turn.
+- Cross-goroutine timer and ticker callbacks no longer trip the
+  race detector.
+- Methods on a main-script class invoked from a stdlib module
+  work without an `unknown class` error.
+- `sys.sleep` and `process.signal` accept any int value.
+
+### Performance
+
+- Tight integer loops stay lock-free after the timer-race fix;
+  `numeric_loop` 166 ms to 136 ms.
+
 ## 1.0.6
 
 ### Performance

@@ -1,0 +1,89 @@
+/**
+ * @title File watching (1.1.0 F5)
+ * @summary `watch.start(path, callback, opts)` registers an
+ * fsnotify watcher and fires `callback({path, type})` for each
+ * filesystem event until `watch.stop(handle)` is called. Events:
+ * `"create" | "write" | "remove" | "rename" | "chmod"`. With
+ * `{recursive: true}`, subdirectories present at start time are
+ * also watched.
+ */
+import test;
+import watch;
+import io;
+import sys;
+import path;
+
+# Callbacks fire on a fsnotify goroutine and write back to module
+# globals through the wrap-bridge. Locals captured by the closure
+# don't propagate back to the parent, so the tests collect into
+# module-level state and reset it at the top of each test.
+list<string> watchedKinds = [];
+list<string> watchedPaths = [];
+int watchedHits = 0;
+
+class WatchTest extends test.Test {
+    func resetState(): void {
+        watchedKinds = [];
+        watchedPaths = [];
+        watchedHits = 0;
+    }
+
+    @test
+    func writeFiresWriteEvent(): void {
+        this.resetState();
+        let p = path.join(sys.tmpdir(), "geb_watch_write.txt");
+        io.writeText(p, "v1");
+        let h = watch.start(p, func(dict<string, any> e): void {
+            watchedKinds = watchedKinds.push(e["type"] as string);
+        });
+        sys.sleep(50);
+        io.writeText(p, "v2");
+        sys.sleep(150);
+        watch.stop(h);
+        io.remove(p);
+        this.assertTrue(watchedKinds.contains("write"));
+    }
+
+    @test
+    func stopHaltsCallback(): void {
+        this.resetState();
+        let p = path.join(sys.tmpdir(), "geb_watch_stop.txt");
+        io.writeText(p, "v1");
+        let h = watch.start(p, func(dict<string, any> e): void {
+            watchedHits = watchedHits + 1;
+        });
+        sys.sleep(50);
+        io.writeText(p, "v2");
+        sys.sleep(150);
+        watch.stop(h);
+        let before = watchedHits;
+        io.writeText(p, "v3");
+        sys.sleep(150);
+        io.remove(p);
+        this.assertEquals(before, watchedHits);
+    }
+
+    @test
+    func recursiveCapturesSubdir(): void {
+        this.resetState();
+        let dir = path.join(sys.tmpdir(), "geb_watch_recursive");
+        let sub = path.join(dir, "sub");
+        io.mkdir(sub, 0o755);
+        let h = watch.start(dir, func(dict<string, any> e): void {
+            watchedPaths = watchedPaths.push(e["path"] as string);
+        }, {"recursive": true});
+        sys.sleep(50);
+        let target = path.join(sub, "leaf.txt");
+        io.writeText(target, "hello");
+        sys.sleep(150);
+        watch.stop(h);
+        io.remove(dir);
+        bool found = false;
+        for (p in watchedPaths) {
+            if ((p as string).contains("leaf.txt")) {
+                found = true;
+            }
+        }
+        this.assertTrue(found);
+    }
+}

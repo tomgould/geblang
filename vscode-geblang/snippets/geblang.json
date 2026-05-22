@@ -659,5 +659,68 @@
             "${1:sb}.dispose();"
         ],
         "description": "strings.StringBuilder: amortised O(n) accumulator for tight-loop string assembly"
+    },
+    "streams.open file stream": {
+        "prefix": "streamsopen",
+        "body": [
+            "let ${1:stream} = streams.open(\"${2:path}\", \"${3:r}\");",
+            "defer ${1:stream}.close();",
+            "for (${4:line} in ${1:stream}) {",
+            "\t$0",
+            "}"
+        ],
+        "description": "streams.open: file-backed stream wrapper; iterating yields lines (1.1.0 F3)"
+    },
+    "streams.memory in-memory stream": {
+        "prefix": "streamsmem",
+        "body": [
+            "let ${1:buf} = streams.memory(${2:\"\"});",
+            "${1:buf}.writeln(\"${3:text}\");",
+            "$0",
+            "let ${4:contents} = ${1:buf}.toString();"
+        ],
+        "description": "streams.memory: in-memory read/write stream wrapper (1.1.0 F3)"
+    },
+    "streams.copy pipe between streams": {
+        "prefix": "streamscopy",
+        "body": [
+            "let ${1:total} = streams.copy(${2:src}, ${3:dst});$0"
+        ],
+        "description": "streams.copy: pipes from src.__read into dst.__write (1.1.0 F3)"
+    },
+    "watch.start fsnotify watcher": {
+        "prefix": "watchstart",
+        "body": [
+            "let ${1:handle} = watch.start(\"${2:path}\", func(dict<string, any> ${3:event}): void {",
+            "\t$0",
+            "});"
+        ],
+        "description": "watch.start: register an fsnotify watcher with a callback (1.1.0 F5)"
+    },
+    "watch.start recursive": {
+        "prefix": "watchrecursive",
+        "body": [
+            "let ${1:handle} = watch.start(\"${2:path}\", func(dict<string, any> ${3:event}): void {",
+            "\t$0",
+            "}, {\"recursive\": true});"
+        ],
+        "description": "watch.start with recursive: true (1.1.0 F5)"
+    },
+    "proc.spawn subprocess": {
+        "prefix": "procspawn",
+        "body": [
+            "let ${1:p} = proc.spawn(\"${2:command}\", [${3}]);",
+            "let ${4:out} = ${1:p}.stdout.readAll();",
+            "let ${5:code} = ${1:p}.wait();$0"
+        ],
+        "description": "proc.spawn: start a child process and capture stdout (1.1.0 F4)"
+    },
+    "proc.spawn PTY": {
+        "prefix": "procpty",
+        "body": [
+            "let ${1:p} = proc.spawn(\"${2:command}\", [${3}], {\"pty\": true});",
+            "$0"
+        ],
+        "description": "proc.spawn with pty: true; stdin/stdout share the master fd (1.1.0 F4)"
     }
 }
