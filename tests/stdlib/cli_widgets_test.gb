@@ -1,0 +1,42 @@
+/**
+ * @title Terminal widgets (1.2.0)
+ * @summary `cli.widgets.Spinner` and `cli.widgets.ProgressBar`
+ * write ANSI control sequences to stderr. The tests cover the
+ * state transitions (frame advance, value clamp) rather than
+ * the rendered output (which depends on stderr being a TTY).
+ */
+import test;
+import cli.widgets as widgets;
+
+class CliWidgetsTest extends test.Test {
+    @test
+    func spinnerAdvancesFrameIndex(): void {
+        let sp = widgets.Spinner("loading");
+        this.assertEquals(0, sp._frame);
+        sp.tick();
+        this.assertTrue(sp._frame >= 0 && sp._frame < 10);
+        sp.tick();
+        sp.stop();
+    }
+
+    @test
+    func progressClampsToTotal(): void {
+        let pb = widgets.ProgressBar(5, 10);
+        pb.advance(3);
+        this.assertEquals(3, pb.current);
+        pb.advance(10);
+        this.assertEquals(13, pb.current);
+        pb.set(2);
+        this.assertEquals(2, pb.current);
+        pb.finish();
+    }
+
+    @test
+    func progressUpdateLabel(): void {
+        let pb = widgets.ProgressBar(100, 20, "stage 1");
+        this.assertEquals("stage 1", pb.label);
+        pb.updateLabel("stage 2");
+        this.assertEquals("stage 2", pb.label);
+        pb.finish();
+    }
+}

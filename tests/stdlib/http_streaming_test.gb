@@ -1,0 +1,57 @@
+/**
+ * @title HTTP streaming request body (1.2.0)
+ * @summary http.post / http.request / http.requestWithOptions
+ * accept a `streams.IOStream` for `body` so multi-GB uploads
+ * don't load into memory. String and bytes shorthand still work.
+ */
+import test;
+import http;
+import streams;
+import sys;
+
+class HttpStreamingTest extends test.Test {
+    func newEchoServer(): dict<string, any> {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            return {"status": 200, "body": "echo: " + (req["body"] as string)};
+        });
+        let port = (http.serverAddr(server).split(":")[1] as string) as int;
+        sys.sleep(20 as int);
+        return {"server": server, "port": port};
+    }
+
+    @test
+    func postAcceptsMemoryStream(): void {
+        let s = this.newEchoServer();
+        let port = s["port"] as int;
+        let body = streams.memory("payload-from-stream");
+        let r = http.post("http://127.0.0.1:" + (port as string) + "/upload", body);
+        http.shutdown(s["server"]);
+        this.assertEquals(200, r["status"]);
+        this.assertEquals("echo: payload-from-stream", r["body"]);
+    }
+
+    @test
+    func postStillAcceptsString(): void {
+        let s = this.newEchoServer();
+        let port = s["port"] as int;
+        let r = http.post("http://127.0.0.1:" + (port as string) + "/upload", "string-body");
+        http.shutdown(s["server"]);
+        this.assertEquals(200, r["status"]);
+        this.assertEquals("echo: string-body", r["body"]);
+    }
+
+    @test
+    func requestWithOptionsAcceptsStream(): void {
+        let s = this.newEchoServer();
+        let port = s["port"] as int;
+        let body = streams.memory("from-options");
+        let r = http.requestWithOptions({
+            "method": "POST",
+            "url": "http://127.0.0.1:" + (port as string) + "/upload",
+            "body": body,
+        });
+        http.shutdown(s["server"]);
+        this.assertEquals(200, r["status"]);
+        this.assertEquals("echo: from-options", r["body"]);
+    }
+}

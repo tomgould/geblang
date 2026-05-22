@@ -1,0 +1,106 @@
+module sockets;
+
+import net;
+import streams;
+
+## Socket is a TCP (or TLS) connection wrapped in the F3 stream
+## protocol. Methods: `read` / `readAll` / `readLine` / `lines` /
+## `write` / `writeln` / `close` / `isClosed` plus the iterator
+## dunder so `for (line in sock) { ... }` yields lines.
+##
+## Construct via `sockets.dial(host, port, opts?)`; for server-side
+## sockets you receive a Socket via the `sockets.serve(...)` callback.
+export class Socket {
+    int handle;
+    streams.IOStream stream;
+    string _localAddr;
+    string _remoteAddr;
+    bool _closed;
+
+    func Socket(int handle, streams.IOStream stream, string localAddr, string remoteAddr) {
+        this.handle = handle;
+        this.stream = stream;
+        this._localAddr = localAddr;
+        this._remoteAddr = remoteAddr;
+        this._closed = false;
+    }
+
+    func read(int n): string { return this.stream.read(n); }
+    func readAll(): string { return this.stream.readAll(); }
+    func readLine(): ?string { return this.stream.readLine(); }
+    func lines(): generator<string> {
+        for (line in this.stream) {
+            yield line as string;
+        }
+    }
+    func write(string buf): int { return this.stream.write(buf); }
+    func writeln(string buf): int { return this.stream.writeln(buf); }
+
+    func close(): void {
+        if (this._closed) { return; }
+        this.stream.close();
+        this._closed = true;
+    }
+
+    func isClosed(): bool { return this._closed; }
+    func localAddr(): string { return this._localAddr; }
+    func remoteAddr(): string { return this._remoteAddr; }
+
+    ## F3 dunder protocol so streams.copy / streams.readAll work
+    ## directly on a Socket.
+    func __read(int n): string { return this.stream.__read(n); }
+    func __write(string buf): int { return this.stream.__write(buf); }
+    func __close(): void { this.close(); }
+    func __iter(): any { return this.stream; }
+}
+
+## Listener owns a bound port and the goroutine that dispatches
+## incoming connections to the user's handler. `close()` stops
+## accepting and waits for the in-flight handler call (if any) to
+## finish before returning.
+export class Listener {
+    int handle;
+    string _localAddr;
+    bool _closed;
+
+    func Listener(int handle, string localAddr) {
+        this.handle = handle;
+        this._localAddr = localAddr;
+        this._closed = false;
+    }
+
+    func close(): void {
+        if (this._closed) { return; }
+        net.closeListener(this.handle);
+        this._closed = true;
+    }
+
+    func isClosed(): bool { return this._closed; }
+    func localAddr(): string { return this._localAddr; }
+}
+
+## Opens a TCP (or TLS) connection. `opts` may include
+## `{tls: true}` to wrap with TLS and `{timeoutMs: int}` to bound
+## the connect time.
+export func dial(string host, int port, dict<string, any> opts = {}): Socket {
+    let raw = net.dial(host, port, opts);
+    return Socket(
+        raw["handle"] as int,
+        streams.IOStream(raw["stream"]),
+        raw["localAddr"] as string,
+        raw["remoteAddr"] as string
+    );
+}
+
+## Starts an accept loop on the given (host, port). For each
+## incoming connection, `handler(socket)` runs in a child evaluator
+## with the original closure (mutations to module-level globals
+## propagate). `close()` on the returned Listener stops the loop and
+## waits for the current handler invocation to finish.
+export func serve(string host, int port, any handler): Listener {
+    let raw = net.serve(host, port, handler);
+    return Listener(
+        raw["handle"] as int,
+        raw["localAddr"] as string
+    );
+}

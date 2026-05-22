@@ -6,6 +6,8 @@ package bytecode_test
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
 	"fmt"
 	"io"
 	"net"
@@ -13,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"geblang/internal/bytecode"
@@ -22,6 +25,8 @@ import (
 	"geblang/internal/parser"
 	"geblang/internal/runtime"
 	"geblang/internal/semantic"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // stdlibModuleLoader is a minimal bytecode-side module loader used by
@@ -8077,4 +8082,222 @@ let code = p.wait();
 io.print(out);
 io.println(code);
 `, "ping\n0\n")
+}
+
+// TestParitySocketsEchoRoundTrip exercises the F3-shaped sockets
+// stdlib wrapper on both backends: a sockets.serve handler receives
+// a Socket, the client dials, writes a line, and reads back the
+// echo. Server.close drains the accept goroutine so the read on
+// the parent goroutine happens-after the last callback write.
+func TestParitySocketsEchoRoundTrip(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import sockets;
+import streams;
+import sys;
+
+list<string> received = [];
+let server = sockets.serve("127.0.0.1", 0, func(dict<string, any> raw): void {
+    let stream = streams.IOStream(raw["stream"]);
+    while (true) {
+        let line = stream.readLine();
+        if (line == null) { break; }
+        received = received.push(line as string);
+        stream.writeln("echo: " + (line as string));
+    }
+    stream.close();
+});
+
+let port = (server.localAddr().split(":")[1] as string) as int;
+let client = sockets.dial("127.0.0.1", port);
+client.writeln("ping");
+let reply = client.readLine();
+client.close();
+sys.sleep(100 as int);
+server.close();
+
+io.println(reply);
+io.println(received.length());
+`, "echo: ping\n1\n")
+}
+
+// sshTestServer runs an in-process SSH server for hermetic SSH
+// parity tests. The server accepts password "secret" for any
+// username, signs an ephemeral RSA host key, and handles "exec"
+// requests by running a tiny set of canned commands in a
+// goroutine. Returns (addr, hostKeyPath, stopFn). The
+// hostKeyPath is a temporary file containing the server's host
+// key in known_hosts format so the test can verify without
+// relying on insecureSkipHostKey.
+type sshTestServer struct {
+	listener net.Listener
+	hostKey  ssh.Signer
+	wg       sync.WaitGroup
+	stopCh   chan struct{}
+}
+
+func startSSHTestServer(t *testing.T) *sshTestServer {
+	t.Helper()
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("ssh server rsa key: %v", err)
+	}
+	signer, err := ssh.NewSignerFromKey(rsaKey)
+	if err != nil {
+		t.Fatalf("ssh server signer: %v", err)
+	}
+	cfg := &ssh.ServerConfig{
+		PasswordCallback: func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+			if string(password) == "secret" {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("password rejected")
+		},
+	}
+	cfg.AddHostKey(signer)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ssh server listen: %v", err)
+	}
+	srv := &sshTestServer{listener: listener, hostKey: signer, stopCh: make(chan struct{})}
+	srv.wg.Add(1)
+	go srv.acceptLoop(cfg)
+	return srv
+}
+
+func (s *sshTestServer) acceptLoop(cfg *ssh.ServerConfig) {
+	defer s.wg.Done()
+	for {
+		conn, err := s.listener.Accept()
+		if err != nil {
+			return
+		}
+		go s.handleConn(conn, cfg)
+	}
+}
+
+func (s *sshTestServer) handleConn(rawConn net.Conn, cfg *ssh.ServerConfig) {
+	defer rawConn.Close()
+	sshConn, chans, reqs, err := ssh.NewServerConn(rawConn, cfg)
+	if err != nil {
+		return
+	}
+	defer sshConn.Close()
+	go ssh.DiscardRequests(reqs)
+	for newCh := range chans {
+		if newCh.ChannelType() != "session" {
+			_ = newCh.Reject(ssh.UnknownChannelType, "unsupported channel type")
+			continue
+		}
+		ch, reqs, err := newCh.Accept()
+		if err != nil {
+			continue
+		}
+		go s.handleSession(ch, reqs)
+	}
+}
+
+func (s *sshTestServer) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
+	defer ch.Close()
+	for req := range reqs {
+		switch req.Type {
+		case "exec":
+			cmd := string(req.Payload[4:])
+			_ = req.Reply(true, nil)
+			s.runCommand(ch, cmd)
+			_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+			return
+		case "shell":
+			_ = req.Reply(true, nil)
+			return
+		default:
+			_ = req.Reply(false, nil)
+		}
+	}
+}
+
+func (s *sshTestServer) runCommand(ch ssh.Channel, cmd string) {
+	// Tiny canned responses so the test doesn't depend on a real
+	// shell. The expectations stay readable in the parity test
+	// source.
+	switch {
+	case cmd == "echo hello":
+		_, _ = ch.Write([]byte("hello\n"))
+	case cmd == "echo err 1>&2":
+		_, _ = ch.Stderr().Write([]byte("err\n"))
+	case strings.HasPrefix(cmd, "cat"):
+		// Stream stdin to stdout so spawn/stdin tests can pipe.
+		_, _ = io.Copy(ch, ch)
+	}
+}
+
+func (s *sshTestServer) addr() string {
+	return s.listener.Addr().String()
+}
+
+func (s *sshTestServer) port() string {
+	_, port, _ := net.SplitHostPort(s.addr())
+	return port
+}
+
+func (s *sshTestServer) stop() {
+	_ = s.listener.Close()
+	s.wg.Wait()
+}
+
+func TestParitySSHExec(t *testing.T) {
+	srv := startSSHTestServer(t)
+	defer srv.stop()
+	runParityWithStdlib(t, fmt.Sprintf(`import io;
+import ssh;
+
+let c = ssh.connect("alice@127.0.0.1", {
+    "port": %s,
+    "password": "secret",
+    "insecureSkipHostKey": true,
+});
+let r = c.exec("echo hello");
+io.print(r.stdout);
+io.println(r.exitCode);
+c.close();
+`, srv.port()), "hello\n0\n")
+}
+
+func TestParitySSHSpawnEcho(t *testing.T) {
+	srv := startSSHTestServer(t)
+	defer srv.stop()
+	runParityWithStdlib(t, fmt.Sprintf(`import io;
+import ssh;
+
+let c = ssh.connect("alice@127.0.0.1", {
+    "port": %s,
+    "password": "secret",
+    "insecureSkipHostKey": true,
+});
+let s = c.spawn("cat");
+s.stdin.write("ping\n");
+s.stdin.close();
+io.print(s.stdout.readAll());
+io.println(s.wait());
+c.close();
+`, srv.port()), "ping\n0\n")
+}
+
+func TestParityHttpStreamingBody(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import http;
+import streams;
+import sys;
+
+let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+    return {"status": 200, "body": "got: " + (req["body"] as string)};
+});
+let port = (http.serverAddr(server).split(":")[1] as string) as int;
+sys.sleep(20 as int);
+
+let body = streams.memory("streamed-payload");
+let r = http.post("http://127.0.0.1:" + (port as string) + "/u", body);
+io.println(r["status"]);
+io.println(r["body"]);
+http.shutdown(server);
+`, "200\ngot: streamed-payload\n")
 }

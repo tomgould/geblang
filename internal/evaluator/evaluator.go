@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"database/sql"
 	"encoding/base64"
 	"encoding/csv"
@@ -53,6 +54,10 @@ import (
 	"github.com/fsnotify/fsnotify"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/websocket"
+	"github.com/pkg/sftp"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/crypto/ssh/knownhosts"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"golang.org/x/sys/unix"
 	yamllib "gopkg.in/yaml.v3"
@@ -166,6 +171,14 @@ type Evaluator struct {
 	netMu             sync.Mutex
 	nextNetID         int64
 	netHandles        map[int64]*netHandle
+	netServerMu       sync.Mutex
+	nextNetServerID   int64
+	netServers        map[int64]*netServerHandle
+	sshMu             sync.Mutex
+	nextSSHID         int64
+	sshClients        map[int64]*sshClientHandle
+	sshSessions       map[int64]*sshSessionHandle
+	sshTunnels        map[int64]*sshTunnelHandle
 	httpServerMu      sync.Mutex
 	nextHTTPServerID  int64
 	httpServers       map[int64]*httpServerHandle
@@ -307,6 +320,43 @@ type netHandle struct {
 	listener net.Listener
 	conn     net.Conn
 	packet   net.PacketConn
+}
+
+// netServerHandle owns an accept-loop goroutine for net.serve. The
+// goroutine exits when the listener is closed; stopServerHandle
+// closes the listener and waits for the goroutine to drain.
+type netServerHandle struct {
+	listener net.Listener
+	wg       sync.WaitGroup
+	stopped  bool
+}
+
+// sshClientHandle wraps an established ssh.Client plus a lazily
+// created sftp.Client (shared across SFTP calls on the same
+// connection).
+type sshClientHandle struct {
+	client  *ssh.Client
+	sftpMu  sync.Mutex
+	sftpCli *sftp.Client
+	closed  bool
+}
+
+// sshSessionHandle wraps a long-running ssh.Session whose stdin /
+// stdout / stderr have been wired to streamable pipes. Mirrors
+// processHandle for proc.spawn.
+type sshSessionHandle struct {
+	session *ssh.Session
+	stdin   io.WriteCloser
+	stdout  io.Reader
+	stderr  io.Reader
+}
+
+// sshTunnelHandle owns the accept-loop goroutine for a local or
+// remote port forward.
+type sshTunnelHandle struct {
+	listener net.Listener
+	wg       sync.WaitGroup
+	stopped  bool
 }
 
 type httpServerHandle struct {
@@ -500,7 +550,7 @@ func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []st
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*websocket.Conn{}, netHandles: map[int64]*netHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*websocket.Conn{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}}
 	e.builtins = e.builtinModules()
 	// Register an InstanceInvoker so native code (e.g.
 	// convert.go's __serialize__ dispatch) can call class
@@ -769,6 +819,32 @@ func (e *Evaluator) Cleanup() error {
 		record(stopWatchHandle(watcher))
 	}
 
+	e.netServerMu.Lock()
+	netServers := e.netServers
+	e.netServers = map[int64]*netServerHandle{}
+	e.netServerMu.Unlock()
+	for _, server := range netServers {
+		record(stopNetServerHandle(server))
+	}
+
+	e.sshMu.Lock()
+	sshTunnels := e.sshTunnels
+	sshSessions := e.sshSessions
+	sshClients := e.sshClients
+	e.sshTunnels = map[int64]*sshTunnelHandle{}
+	e.sshSessions = map[int64]*sshSessionHandle{}
+	e.sshClients = map[int64]*sshClientHandle{}
+	e.sshMu.Unlock()
+	for _, tunnel := range sshTunnels {
+		record(stopSSHTunnelHandle(tunnel))
+	}
+	for _, session := range sshSessions {
+		_ = session.session.Close()
+	}
+	for _, client := range sshClients {
+		record(closeSSHClientHandle(client))
+	}
+
 	e.dbMu.Lock()
 	dbRows := e.dbRows
 	stmts := e.stmts
@@ -873,14 +949,23 @@ func (e *Evaluator) Cleanup() error {
 }
 
 func closeNetHandle(handle *netHandle) error {
+	close := func(closer io.Closer) error {
+		if err := closer.Close(); err != nil &&
+			!errors.Is(err, os.ErrClosed) &&
+			!errors.Is(err, net.ErrClosed) &&
+			!strings.Contains(err.Error(), "use of closed network connection") {
+			return err
+		}
+		return nil
+	}
 	if handle.listener != nil {
-		return handle.listener.Close()
+		return close(handle.listener)
 	}
 	if handle.conn != nil {
-		return handle.conn.Close()
+		return close(handle.conn)
 	}
 	if handle.packet != nil {
-		return handle.packet.Close()
+		return close(handle.packet)
 	}
 	return nil
 }
@@ -896,7 +981,10 @@ func closeIOStreamHandle(handle *ioStreamHandle) error {
 		handle.restore = nil
 	}
 	if handle.closer != nil {
-		if err := handle.closer.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		if err := handle.closer.Close(); err != nil &&
+			!errors.Is(err, os.ErrClosed) &&
+			!errors.Is(err, net.ErrClosed) &&
+			!strings.Contains(err.Error(), "use of closed network connection") {
 			return err
 		}
 	}
@@ -6948,6 +7036,23 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"signal": e.procSignal,
 			"pid":    e.procPid,
 		},
+		"sshnative": {
+			"connect":       e.sshConnect,
+			"exec":          e.sshExec,
+			"spawn":         e.sshSpawn,
+			"sessionWait":   e.sshSessionWait,
+			"sessionKill":   e.sshSessionKill,
+			"upload":        e.sshUpload,
+			"download":      e.sshDownload,
+			"sftpList":      e.sshSftpList,
+			"sftpRemove":    e.sshSftpRemove,
+			"sftpMkdir":     e.sshSftpMkdir,
+			"sftpOpen":      e.sshSftpOpen,
+			"forwardLocal":  e.sshForwardLocal,
+			"forwardRemote": e.sshForwardRemote,
+			"tunnelClose":   e.sshTunnelClose,
+			"close":         e.sshClose,
+		},
 		"async": {
 			"run":     e.asyncRun,
 			"sleep":   asyncSleep,
@@ -7279,16 +7384,20 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"loadAndApply": e.dotenvLoadAndApply,
 		},
 		"cli": {
-			"prompt":    e.cliPrompt,
-			"password":  e.cliPassword,
-			"secret":    e.cliPassword,
-			"confirm":   e.cliConfirm,
-			"choose":    e.cliChoose,
-			"style":     cliStyle,
-			"stripAnsi": cliStripANSI,
-			"table":     cliTable,
-			"parseArgs": e.registryBuiltin("args", "parse"),
-			"help":      e.registryBuiltin("args", "help"),
+			"prompt":           e.cliPrompt,
+			"password":         e.cliPassword,
+			"secret":           e.cliPassword,
+			"confirm":          e.cliConfirm,
+			"choose":           e.cliChoose,
+			"style":            cliStyle,
+			"stripAnsi":        cliStripANSI,
+			"table":            cliTable,
+			"parseArgs":        e.registryBuiltin("args", "parse"),
+			"help":             e.registryBuiltin("args", "help"),
+			"spinnerTick":      e.cliSpinnerTick,
+			"spinnerStop":      e.cliSpinnerStop,
+			"progressRender":   e.cliProgressRender,
+			"progressFinish":   e.cliProgressFinish,
 		},
 		"http": {
 			"serve":              e.httpServe,
@@ -7301,11 +7410,11 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"streamFlush":        e.httpStreamFlush,
 			"streamClose":        e.httpStreamClose,
 			"get":                httpGet,
-			"post":               httpPost,
+			"post":               e.httpPost,
 			"postJson":           httpPostJSON,
 			"parseJson":          httpParseJSON,
-			"request":            httpRequest,
-			"requestWithOptions": httpRequestWithOptions,
+			"request":            e.httpRequest,
+			"requestWithOptions": e.httpRequestWithOptions,
 			"Headers":            httpHeadersObject,
 			"Cookie":             httpCookieObject,
 			"response":           e.httpResponseObject,
@@ -7368,6 +7477,9 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"dialUdp":       e.netDialUDP,
 			"readFrom":      e.netReadFrom,
 			"writeTo":       e.netWriteTo,
+			"dial":          e.netDial,
+			"serve":         e.netServe,
+			"closeListener": e.netCloseListener,
 		},
 		"test": {
 			"run": e.testRun,
@@ -8684,6 +8796,123 @@ func cliTable(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 		headers = columns
 	}
 	return runtime.String{Value: renderTableWithSeparator(headers, tableRows, separator)}, nil
+}
+
+// cliSpinnerFrames are the unicode spinner phases used by
+// cli.Spinner. Falls back to ASCII when stderr is not a TTY.
+var cliSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// cliSpinnerTick renders one frame of an ANSI spinner to stderr.
+// Args: (frameIndex: int, message: string). Returns the next frame
+// index. The Geblang stdlib wrapper holds the index field and calls
+// this on each .tick().
+func (e *Evaluator) cliSpinnerTick(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects (frameIndex, message)", call.Callee.String())
+	}
+	idx, ok := native.AsInt64(args[0])
+	if !ok {
+		return nil, fmt.Errorf("%s frameIndex must be int", call.Callee.String())
+	}
+	msg, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s message must be string", call.Callee.String())
+	}
+	frame := cliSpinnerFrames[int(idx)%len(cliSpinnerFrames)]
+	_, _ = fmt.Fprintf(e.stderr, "\r%s %s", frame, msg.Value)
+	return runtime.NewInt64((idx + 1) % int64(len(cliSpinnerFrames))), nil
+}
+
+// cliSpinnerStop clears the spinner line.
+func (e *Evaluator) cliSpinnerStop(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) > 1 {
+		return nil, fmt.Errorf("%s expects (finalMessage?)", call.Callee.String())
+	}
+	final := ""
+	if len(args) == 1 {
+		s, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s finalMessage must be string", call.Callee.String())
+		}
+		final = s.Value
+	}
+	_, _ = fmt.Fprint(e.stderr, "\r\x1b[2K")
+	if final != "" {
+		_, _ = fmt.Fprintln(e.stderr, final)
+	}
+	return runtime.Null{}, nil
+}
+
+// cliProgressRender draws an ANSI progress bar to stderr.
+// Args: (current: int, total: int, width: int = 30, label: string = "").
+// Renders [#####-----] 50% (5/10) label.
+func (e *Evaluator) cliProgressRender(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 2 || len(args) > 4 {
+		return nil, fmt.Errorf("%s expects (current, total, width?, label?)", call.Callee.String())
+	}
+	current, ok := native.AsInt64(args[0])
+	if !ok {
+		return nil, fmt.Errorf("%s current must be int", call.Callee.String())
+	}
+	total, ok := native.AsInt64(args[1])
+	if !ok {
+		return nil, fmt.Errorf("%s total must be int", call.Callee.String())
+	}
+	width := int64(30)
+	if len(args) >= 3 {
+		n, ok := native.AsInt64(args[2])
+		if !ok {
+			return nil, fmt.Errorf("%s width must be int", call.Callee.String())
+		}
+		width = n
+	}
+	label := ""
+	if len(args) == 4 {
+		s, ok := args[3].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s label must be string", call.Callee.String())
+		}
+		label = s.Value
+	}
+	if total <= 0 {
+		total = 1
+	}
+	if current < 0 {
+		current = 0
+	}
+	if current > total {
+		current = total
+	}
+	filled := int(width * current / total)
+	pct := int(100 * current / total)
+	bar := strings.Repeat("#", filled) + strings.Repeat("-", int(width)-filled)
+	line := fmt.Sprintf("\r[%s] %d%% (%d/%d)", bar, pct, current, total)
+	if label != "" {
+		line += " " + label
+	}
+	_, _ = fmt.Fprint(e.stderr, line)
+	return runtime.Null{}, nil
+}
+
+// cliProgressFinish clears the progress line and optionally prints
+// a final message.
+func (e *Evaluator) cliProgressFinish(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) > 1 {
+		return nil, fmt.Errorf("%s expects (finalMessage?)", call.Callee.String())
+	}
+	final := ""
+	if len(args) == 1 {
+		s, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s finalMessage must be string", call.Callee.String())
+		}
+		final = s.Value
+	}
+	_, _ = fmt.Fprint(e.stderr, "\r\x1b[2K")
+	if final != "" {
+		_, _ = fmt.Fprintln(e.stderr, final)
+	}
+	return runtime.Null{}, nil
 }
 
 func cliTableRows(rows runtime.List, headers []string) ([][]string, []string, error) {
@@ -11664,6 +11893,180 @@ func (e *Evaluator) netHandle(value runtime.Value) (*netHandle, error) {
 	return handle, nil
 }
 
+// netDial opens a TCP (or TLS) connection and returns a dict with
+// the connection handle, an IOStream wrapping the conn, and local /
+// remote address strings. Mirrors the F4 proc.spawn shape so the
+// stdlib `net.Socket` class can hand back ready-made IOStream values
+// for read / write / readLine / lines / close.
+//
+// Args: (host: string, port: int, opts: dict<string, any> = {})
+// Recognised opts: "tls" (bool) for TLS dial, "timeoutMs" (int) for
+// connect timeout.
+func (e *Evaluator) netDial(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects (host, port, opts?)", call.Callee.String())
+	}
+	host, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s host must be string", call.Callee.String())
+	}
+	port, ok := native.AsInt64(args[1])
+	if !ok {
+		return nil, fmt.Errorf("%s port must be int", call.Callee.String())
+	}
+	useTLS := false
+	var timeoutMs int64
+	if len(args) == 3 {
+		opts, ok := args[2].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("%s options must be a dict", call.Callee.String())
+		}
+		if v, found := dictField(opts, "tls"); found {
+			b, ok := v.(runtime.Bool)
+			if !ok {
+				return nil, fmt.Errorf("%s options.tls must be bool", call.Callee.String())
+			}
+			useTLS = b.Value
+		}
+		if v, found := dictField(opts, "timeoutMs"); found {
+			n, ok := native.AsInt64(v)
+			if !ok {
+				return nil, fmt.Errorf("%s options.timeoutMs must be int", call.Callee.String())
+			}
+			timeoutMs = n
+		}
+	}
+	addr := net.JoinHostPort(host.Value, strconv.FormatInt(port, 10))
+	var conn net.Conn
+	var err error
+	dialer := &net.Dialer{}
+	if timeoutMs > 0 {
+		dialer.Timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+	if useTLS {
+		tlsDialer := &tls.Dialer{NetDialer: dialer, Config: &tls.Config{ServerName: host.Value}}
+		conn, err = tlsDialer.Dial("tcp", addr)
+	} else {
+		conn, err = dialer.Dial("tcp", addr)
+	}
+	if err != nil {
+		return nil, err
+	}
+	netHandleValue := e.registerNetHandle(&netHandle{conn: conn})
+	streamHandle := &ioStreamHandle{name: "net socket", reader: conn, writer: conn, closer: conn}
+	streamValue := e.registerIOStream(streamHandle)
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "handle", netHandleValue)
+	putDict(entries, "stream", streamValue)
+	putDict(entries, "localAddr", runtime.String{Value: conn.LocalAddr().String()})
+	putDict(entries, "remoteAddr", runtime.String{Value: conn.RemoteAddr().String()})
+	return runtime.Dict{Entries: entries}, nil
+}
+
+// netServe binds a listener, spawns an accept-loop goroutine, and
+// dispatches each accepted connection to the user's handler callback
+// as a Socket-shaped dict. The handler runs in a child evaluator so
+// captured module-level state is observable; the wrap-bridge route
+// is used on the VM side. Returns a server handle for shutdown.
+func (e *Evaluator) netServe(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 3 || len(args) > 4 {
+		return nil, fmt.Errorf("%s expects (host, port, handler, opts?)", call.Callee.String())
+	}
+	host, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s host must be string", call.Callee.String())
+	}
+	port, ok := native.AsInt64(args[1])
+	if !ok {
+		return nil, fmt.Errorf("%s port must be int", call.Callee.String())
+	}
+	handler, ok := args[2].(runtime.Function)
+	if !ok {
+		return nil, fmt.Errorf("%s handler must be a function", call.Callee.String())
+	}
+	addr := net.JoinHostPort(host.Value, strconv.FormatInt(port, 10))
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	server := &netServerHandle{listener: listener}
+	e.netServerMu.Lock()
+	e.nextNetServerID++
+	id := e.nextNetServerID
+	e.netServers[id] = server
+	e.netServerMu.Unlock()
+	server.wg.Add(1)
+	go func() {
+		defer server.wg.Done()
+		child := e.childForCallback()
+		defer child.Cleanup()
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			handlerConn := conn
+			// Register handles on the parent evaluator: the user's
+			// handler closure was defined there, so its captured
+			// `io.*` / `net.*` native lookups dispatch against the
+			// parent's stream + net maps.
+			connHandle := e.registerNetHandle(&netHandle{conn: handlerConn})
+			streamHandle := &ioStreamHandle{name: "net socket", reader: handlerConn, writer: handlerConn, closer: handlerConn}
+			streamValue := e.registerIOStream(streamHandle)
+			entries := map[string]runtime.DictEntry{}
+			putDict(entries, "handle", connHandle)
+			putDict(entries, "stream", streamValue)
+			putDict(entries, "localAddr", runtime.String{Value: handlerConn.LocalAddr().String()})
+			putDict(entries, "remoteAddr", runtime.String{Value: handlerConn.RemoteAddr().String()})
+			socketDict := runtime.Dict{Entries: entries}
+			_, _ = child.applyFunction(handler, []runtime.Value{socketDict})
+		}
+	}()
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "handle", runtime.NewInt64(id))
+	putDict(entries, "localAddr", runtime.String{Value: listener.Addr().String()})
+	return runtime.Dict{Entries: entries}, nil
+}
+
+// netCloseListener stops an accept-loop and joins the goroutine so
+// callers can rely on reads of callback-touched state to happen
+// after the last handler invocation.
+func (e *Evaluator) netCloseListener(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects (server handle)", call.Callee.String())
+	}
+	id, ok := native.AsInt64(args[0])
+	if !ok {
+		return nil, fmt.Errorf("%s server handle must be int", call.Callee.String())
+	}
+	e.netServerMu.Lock()
+	server, ok := e.netServers[id]
+	if ok {
+		delete(e.netServers, id)
+	}
+	e.netServerMu.Unlock()
+	if !ok {
+		if e.parent != nil {
+			return e.parent.netCloseListener(call, args)
+		}
+		return runtime.Null{}, nil
+	}
+	return runtime.Null{}, stopNetServerHandle(server)
+}
+
+func stopNetServerHandle(server *netServerHandle) error {
+	if server == nil || server.stopped {
+		return nil
+	}
+	server.stopped = true
+	err := server.listener.Close()
+	server.wg.Wait()
+	if err != nil && !errors.Is(err, net.ErrClosed) {
+		return err
+	}
+	return nil
+}
+
 func setNetHandleDeadline(handle *netHandle, deadline time.Time) error {
 	type deadliner interface {
 		SetDeadline(time.Time) error
@@ -12862,7 +13265,58 @@ func runtimeInt64(value runtime.Value, name string) (int64, error) {
 	return intValue.Value.Int64(), nil
 }
 
-func httpRequest(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+// httpBodyReader converts a Geblang body value into an io.Reader the
+// HTTP client can consume. Strings and bytes use in-memory readers
+// (Content-Length is set automatically by net/http). An IOStream
+// hands back its underlying reader, which produces chunked
+// transfer-encoding for unknown-length bodies. Returns (nil, nil) for
+// runtime.Null so callers can build requests without a body.
+func (e *Evaluator) httpBodyReader(value runtime.Value, label string) (io.Reader, error) {
+	switch v := value.(type) {
+	case nil, runtime.Null:
+		return nil, nil
+	case runtime.String:
+		return strings.NewReader(v.Value), nil
+	case runtime.Bytes:
+		return bytes.NewReader(v.Value), nil
+	case runtime.NativeObject:
+		if v.Kind == "IOStream" || v.Kind == "IOCapture" {
+			handle, err := e.ioStreamHandle(v)
+			if err != nil {
+				return nil, err
+			}
+			if handle.reader == nil {
+				return nil, fmt.Errorf("%s body stream is not readable", label)
+			}
+			if handle.bufReader != nil {
+				return handle.bufReader, nil
+			}
+			return handle.reader, nil
+		}
+	case runtime.Int, runtime.SmallInt:
+		// File handle from io.open. Read straight from the underlying
+		// file - the HTTP client closes its own copy of the reader
+		// when the request finishes, but the file handle stays in
+		// e.files until the user calls io.close.
+		file, err := e.fileHandle(value)
+		if err != nil {
+			return nil, fmt.Errorf("%s %w", label, err)
+		}
+		return file, nil
+	case *runtime.Instance:
+		// streams.IOStream (and subclasses) store the native handle
+		// in a `handle` field; recurse on that so the caller can
+		// pass the friendly OO wrapper directly.
+		if v != nil && v.Class != nil {
+			if inner, ok := v.Fields["handle"]; ok {
+				return e.httpBodyReader(inner, label)
+			}
+		}
+	}
+	return nil, fmt.Errorf("%s body must be string, bytes, or IOStream (got %T)", label, value)
+}
+
+func (e *Evaluator) httpRequest(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 3 && len(args) != 4 {
 		return nil, fmt.Errorf("%s expects three or four arguments", call.Callee.String())
 	}
@@ -12874,11 +13328,11 @@ func httpRequest(call *ast.CallExpression, args []runtime.Value) (runtime.Value,
 	if !ok {
 		return nil, fmt.Errorf("%s URL must be string", call.Callee.String())
 	}
-	body, ok := args[2].(runtime.String)
-	if !ok {
-		return nil, fmt.Errorf("%s body must be string", call.Callee.String())
+	bodyReader, err := e.httpBodyReader(args[2], call.Callee.String())
+	if err != nil {
+		return nil, err
 	}
-	req, err := http.NewRequest(method.Value, url.Value, strings.NewReader(body.Value))
+	req, err := http.NewRequest(method.Value, url.Value, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -12933,7 +13387,7 @@ func httpGet(call *ast.CallExpression, args []runtime.Value) (runtime.Value, err
 	return doHTTPRequest(http.DefaultClient, req)
 }
 
-func httpPost(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) httpPost(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 2 && len(args) != 3 {
 		return nil, fmt.Errorf("%s expects url, body, and optional headers", call.Callee.String())
 	}
@@ -12941,11 +13395,11 @@ func httpPost(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 	if !ok {
 		return nil, fmt.Errorf("%s URL must be string", call.Callee.String())
 	}
-	body, ok := args[1].(runtime.String)
-	if !ok {
-		return nil, fmt.Errorf("%s body must be string", call.Callee.String())
+	bodyReader, err := e.httpBodyReader(args[1], call.Callee.String())
+	if err != nil {
+		return nil, err
 	}
-	req, err := http.NewRequest(http.MethodPost, url.Value, strings.NewReader(body.Value))
+	req, err := http.NewRequest(http.MethodPost, url.Value, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -13024,7 +13478,7 @@ func applyRequestHeaders(call *ast.CallExpression, req *http.Request, value runt
 	return nil
 }
 
-func httpRequestWithOptions(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) httpRequestWithOptions(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
 	}
@@ -13040,11 +13494,15 @@ func httpRequestWithOptions(call *ast.CallExpression, args []runtime.Value) (run
 	if !ok {
 		return nil, fmt.Errorf("%s options.url is required", call.Callee.String())
 	}
-	body := ""
-	if value, ok := dictStringField(options, "body"); ok {
-		body = value
+	var bodyReader io.Reader
+	if value, found := dictField(options, "body"); found {
+		var err error
+		bodyReader, err = e.httpBodyReader(value, call.Callee.String())
+		if err != nil {
+			return nil, err
+		}
 	}
-	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	req, err := http.NewRequest(method, url, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -14965,7 +15423,10 @@ func (e *Evaluator) ioClose(call *ast.CallExpression, args []runtime.Value) (run
 	if !ok {
 		return nil, fmt.Errorf("unknown file handle %d", handle)
 	}
-	return runtime.Null{}, file.Close()
+	if err := file.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		return nil, err
+	}
+	return runtime.Null{}, nil
 }
 
 func (e *Evaluator) ioToString(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -16482,6 +16943,744 @@ func (e *Evaluator) procPid(call *ast.CallExpression, args []runtime.Value) (run
 		return nil, fmt.Errorf("process has not started")
 	}
 	return runtime.NewInt64(int64(process.cmd.Process.Pid)), nil
+}
+
+// sshAuthFromOpts builds the ssh auth method list from the dict.
+// Recognised keys: "password", "privateKey" (string PEM),
+// "privateKeyFile" (path), "passphrase" (decrypts the key),
+// "agent" (use SSH_AUTH_SOCK).
+func sshAuthFromOpts(opts runtime.Dict) ([]ssh.AuthMethod, error) {
+	var methods []ssh.AuthMethod
+	if v, ok := dictField(opts, "password"); ok {
+		s, ok := v.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("ssh: options.password must be string")
+		}
+		methods = append(methods, ssh.Password(s.Value))
+	}
+	loadKey := func(pem []byte) error {
+		var signer ssh.Signer
+		var err error
+		if v, ok := dictField(opts, "passphrase"); ok {
+			pass, ok := v.(runtime.String)
+			if !ok {
+				return fmt.Errorf("ssh: options.passphrase must be string")
+			}
+			signer, err = ssh.ParsePrivateKeyWithPassphrase(pem, []byte(pass.Value))
+		} else {
+			signer, err = ssh.ParsePrivateKey(pem)
+		}
+		if err != nil {
+			return err
+		}
+		methods = append(methods, ssh.PublicKeys(signer))
+		return nil
+	}
+	if v, ok := dictField(opts, "privateKey"); ok {
+		s, ok := v.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("ssh: options.privateKey must be string")
+		}
+		if err := loadKey([]byte(s.Value)); err != nil {
+			return nil, err
+		}
+	}
+	if v, ok := dictField(opts, "privateKeyFile"); ok {
+		s, ok := v.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("ssh: options.privateKeyFile must be string")
+		}
+		pem, err := os.ReadFile(s.Value)
+		if err != nil {
+			return nil, fmt.Errorf("ssh: read private key: %w", err)
+		}
+		if err := loadKey(pem); err != nil {
+			return nil, err
+		}
+	}
+	if v, ok := dictField(opts, "agent"); ok {
+		b, ok := v.(runtime.Bool)
+		if !ok {
+			return nil, fmt.Errorf("ssh: options.agent must be bool")
+		}
+		if b.Value {
+			sock := os.Getenv("SSH_AUTH_SOCK")
+			if sock == "" {
+				return nil, fmt.Errorf("ssh: agent requested but SSH_AUTH_SOCK is empty")
+			}
+			conn, err := net.Dial("unix", sock)
+			if err != nil {
+				return nil, fmt.Errorf("ssh: dial agent: %w", err)
+			}
+			methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
+		}
+	}
+	if len(methods) == 0 {
+		return nil, fmt.Errorf("ssh: no authentication method supplied (set password / privateKey / privateKeyFile / agent)")
+	}
+	return methods, nil
+}
+
+func sshHostKeyCallbackFromOpts(opts runtime.Dict) (ssh.HostKeyCallback, error) {
+	if v, ok := dictField(opts, "insecureSkipHostKey"); ok {
+		b, ok := v.(runtime.Bool)
+		if !ok {
+			return nil, fmt.Errorf("ssh: options.insecureSkipHostKey must be bool")
+		}
+		if b.Value {
+			return ssh.InsecureIgnoreHostKey(), nil
+		}
+	}
+	if v, ok := dictField(opts, "knownHostsFile"); ok {
+		s, ok := v.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("ssh: options.knownHostsFile must be string")
+		}
+		return knownhosts.New(s.Value)
+	}
+	// Default: read $HOME/.ssh/known_hosts if available, otherwise
+	// fall back to InsecureIgnoreHostKey is wrong - require explicit
+	// opt-in. Fail with a clear error.
+	return nil, fmt.Errorf("ssh: host key verification not configured (set options.knownHostsFile or options.insecureSkipHostKey: true)")
+}
+
+// sshConnect dials an SSH server. target is "user@host" or just
+// "host" (login from current user). Returns a dict with handle and
+// remoteAddr.
+func (e *Evaluator) sshConnect(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 1 || len(args) > 2 {
+		return nil, fmt.Errorf("%s expects (target, options?)", call.Callee.String())
+	}
+	target, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s target must be string", call.Callee.String())
+	}
+	var opts runtime.Dict
+	if len(args) == 2 {
+		opts, ok = args[1].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("%s options must be a dict", call.Callee.String())
+		}
+	} else {
+		opts = runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	}
+	user := os.Getenv("USER")
+	host := target.Value
+	if at := strings.Index(target.Value, "@"); at >= 0 {
+		user = target.Value[:at]
+		host = target.Value[at+1:]
+	}
+	port := int64(22)
+	if v, ok := dictField(opts, "port"); ok {
+		n, ok := native.AsInt64(v)
+		if !ok {
+			return nil, fmt.Errorf("%s options.port must be int", call.Callee.String())
+		}
+		port = n
+	}
+	authMethods, err := sshAuthFromOpts(opts)
+	if err != nil {
+		return nil, err
+	}
+	hostKeyCb, err := sshHostKeyCallbackFromOpts(opts)
+	if err != nil {
+		return nil, err
+	}
+	timeout := time.Duration(0)
+	if v, ok := dictField(opts, "timeoutMs"); ok {
+		n, ok := native.AsInt64(v)
+		if !ok {
+			return nil, fmt.Errorf("%s options.timeoutMs must be int", call.Callee.String())
+		}
+		timeout = time.Duration(n) * time.Millisecond
+	}
+	cfg := &ssh.ClientConfig{
+		User:            user,
+		Auth:            authMethods,
+		HostKeyCallback: hostKeyCb,
+		Timeout:         timeout,
+	}
+	addr := net.JoinHostPort(host, strconv.FormatInt(port, 10))
+	client, err := ssh.Dial("tcp", addr, cfg)
+	if err != nil {
+		return nil, err
+	}
+	handle := &sshClientHandle{client: client}
+	e.sshMu.Lock()
+	e.nextSSHID++
+	id := e.nextSSHID
+	e.sshClients[id] = handle
+	e.sshMu.Unlock()
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "handle", runtime.NewInt64(id))
+	putDict(entries, "user", runtime.String{Value: user})
+	putDict(entries, "remoteAddr", runtime.String{Value: addr})
+	return runtime.Dict{Entries: entries}, nil
+}
+
+func (e *Evaluator) sshClient(value runtime.Value) (*sshClientHandle, error) {
+	id, ok := native.AsInt64(value)
+	if !ok {
+		return nil, fmt.Errorf("ssh handle must be int")
+	}
+	e.sshMu.Lock()
+	handle, ok := e.sshClients[id]
+	e.sshMu.Unlock()
+	if !ok && e.parent != nil {
+		return e.parent.sshClient(value)
+	}
+	if !ok {
+		return nil, fmt.Errorf("unknown ssh handle %d", id)
+	}
+	if handle.closed {
+		return nil, fmt.Errorf("ssh handle %d is closed", id)
+	}
+	return handle, nil
+}
+
+func (e *Evaluator) sshExec(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects (handle, command)", call.Callee.String())
+	}
+	handle, err := e.sshClient(args[0])
+	if err != nil {
+		return nil, err
+	}
+	cmd, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s command must be string", call.Callee.String())
+	}
+	session, err := handle.client.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+	var stdout, stderr bytes.Buffer
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+	exitCode := int64(0)
+	if err := session.Run(cmd.Value); err != nil {
+		if ee, ok := err.(*ssh.ExitError); ok {
+			exitCode = int64(ee.ExitStatus())
+		} else {
+			return nil, err
+		}
+	}
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "stdout", runtime.String{Value: stdout.String()})
+	putDict(entries, "stderr", runtime.String{Value: stderr.String()})
+	putDict(entries, "exitCode", runtime.NewInt64(exitCode))
+	return runtime.Dict{Entries: entries}, nil
+}
+
+func (e *Evaluator) sshSpawn(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects (handle, command, options?)", call.Callee.String())
+	}
+	handle, err := e.sshClient(args[0])
+	if err != nil {
+		return nil, err
+	}
+	cmd, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s command must be string", call.Callee.String())
+	}
+	session, err := handle.client.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		_ = session.Close()
+		return nil, err
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		_ = session.Close()
+		return nil, err
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		_ = session.Close()
+		return nil, err
+	}
+	if err := session.Start(cmd.Value); err != nil {
+		_ = session.Close()
+		return nil, err
+	}
+	sessionHandle := &sshSessionHandle{session: session, stdin: stdin, stdout: stdout, stderr: stderr}
+	e.sshMu.Lock()
+	e.nextSSHID++
+	sid := e.nextSSHID
+	e.sshSessions[sid] = sessionHandle
+	e.sshMu.Unlock()
+	stdinStream := e.registerIOStream(&ioStreamHandle{name: "ssh stdin", writer: stdin, closer: stdin})
+	stdoutStream := e.registerIOStream(&ioStreamHandle{name: "ssh stdout", reader: stdout})
+	stderrStream := e.registerIOStream(&ioStreamHandle{name: "ssh stderr", reader: stderr})
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "handle", runtime.NewInt64(sid))
+	putDict(entries, "stdin", stdinStream)
+	putDict(entries, "stdout", stdoutStream)
+	putDict(entries, "stderr", stderrStream)
+	return runtime.Dict{Entries: entries}, nil
+}
+
+func (e *Evaluator) sshSession(value runtime.Value) (*sshSessionHandle, error) {
+	id, ok := native.AsInt64(value)
+	if !ok {
+		return nil, fmt.Errorf("ssh session handle must be int")
+	}
+	e.sshMu.Lock()
+	handle, ok := e.sshSessions[id]
+	e.sshMu.Unlock()
+	if !ok && e.parent != nil {
+		return e.parent.sshSession(value)
+	}
+	if !ok {
+		return nil, fmt.Errorf("unknown ssh session handle %d", id)
+	}
+	return handle, nil
+}
+
+func (e *Evaluator) sshSessionWait(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects (session handle)", call.Callee.String())
+	}
+	handle, err := e.sshSession(args[0])
+	if err != nil {
+		return nil, err
+	}
+	exitCode := int64(0)
+	if err := handle.session.Wait(); err != nil {
+		if ee, ok := err.(*ssh.ExitError); ok {
+			exitCode = int64(ee.ExitStatus())
+		} else {
+			return nil, err
+		}
+	}
+	return runtime.NewInt64(exitCode), nil
+}
+
+func (e *Evaluator) sshSessionKill(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 1 || len(args) > 2 {
+		return nil, fmt.Errorf("%s expects (session handle, signal?)", call.Callee.String())
+	}
+	handle, err := e.sshSession(args[0])
+	if err != nil {
+		return nil, err
+	}
+	sig := ssh.SIGKILL
+	if len(args) == 2 {
+		s, ok := args[1].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s signal must be string", call.Callee.String())
+		}
+		sig = ssh.Signal(strings.TrimPrefix(s.Value, "SIG"))
+	}
+	return runtime.Null{}, handle.session.Signal(sig)
+}
+
+// sshSftp returns the cached sftp.Client for a handle, creating it
+// on first use.
+func sshSftp(handle *sshClientHandle) (*sftp.Client, error) {
+	handle.sftpMu.Lock()
+	defer handle.sftpMu.Unlock()
+	if handle.sftpCli != nil {
+		return handle.sftpCli, nil
+	}
+	cli, err := sftp.NewClient(handle.client)
+	if err != nil {
+		return nil, err
+	}
+	handle.sftpCli = cli
+	return cli, nil
+}
+
+func (e *Evaluator) sshUpload(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("%s expects (handle, localPath, remotePath)", call.Callee.String())
+	}
+	handle, err := e.sshClient(args[0])
+	if err != nil {
+		return nil, err
+	}
+	localPath, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s localPath must be string", call.Callee.String())
+	}
+	remotePath, ok := args[2].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s remotePath must be string", call.Callee.String())
+	}
+	cli, err := sshSftp(handle)
+	if err != nil {
+		return nil, err
+	}
+	src, err := os.Open(localPath.Value)
+	if err != nil {
+		return nil, err
+	}
+	defer src.Close()
+	dst, err := cli.Create(remotePath.Value)
+	if err != nil {
+		return nil, err
+	}
+	defer dst.Close()
+	written, err := io.Copy(dst, src)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.NewInt64(written), nil
+}
+
+func (e *Evaluator) sshDownload(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("%s expects (handle, remotePath, localPath)", call.Callee.String())
+	}
+	handle, err := e.sshClient(args[0])
+	if err != nil {
+		return nil, err
+	}
+	remotePath, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s remotePath must be string", call.Callee.String())
+	}
+	localPath, ok := args[2].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s localPath must be string", call.Callee.String())
+	}
+	cli, err := sshSftp(handle)
+	if err != nil {
+		return nil, err
+	}
+	src, err := cli.Open(remotePath.Value)
+	if err != nil {
+		return nil, err
+	}
+	defer src.Close()
+	dst, err := os.Create(localPath.Value)
+	if err != nil {
+		return nil, err
+	}
+	defer dst.Close()
+	written, err := io.Copy(dst, src)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.NewInt64(written), nil
+}
+
+func (e *Evaluator) sshSftpList(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects (handle, remotePath)", call.Callee.String())
+	}
+	handle, err := e.sshClient(args[0])
+	if err != nil {
+		return nil, err
+	}
+	remotePath, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s remotePath must be string", call.Callee.String())
+	}
+	cli, err := sshSftp(handle)
+	if err != nil {
+		return nil, err
+	}
+	infos, err := cli.ReadDir(remotePath.Value)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]runtime.Value, 0, len(infos))
+	for _, info := range infos {
+		entries := map[string]runtime.DictEntry{}
+		putDict(entries, "name", runtime.String{Value: info.Name()})
+		putDict(entries, "size", runtime.NewInt64(info.Size()))
+		putDict(entries, "mode", runtime.NewInt64(int64(info.Mode().Perm())))
+		putDict(entries, "isDir", runtime.Bool{Value: info.IsDir()})
+		putDict(entries, "modUnix", runtime.NewInt64(info.ModTime().Unix()))
+		out = append(out, runtime.Dict{Entries: entries})
+	}
+	return runtime.List{Elements: out}, nil
+}
+
+func (e *Evaluator) sshSftpRemove(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects (handle, remotePath)", call.Callee.String())
+	}
+	handle, err := e.sshClient(args[0])
+	if err != nil {
+		return nil, err
+	}
+	remotePath, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s remotePath must be string", call.Callee.String())
+	}
+	cli, err := sshSftp(handle)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.Null{}, cli.Remove(remotePath.Value)
+}
+
+func (e *Evaluator) sshSftpMkdir(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects (handle, remotePath, mode?)", call.Callee.String())
+	}
+	handle, err := e.sshClient(args[0])
+	if err != nil {
+		return nil, err
+	}
+	remotePath, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s remotePath must be string", call.Callee.String())
+	}
+	cli, err := sshSftp(handle)
+	if err != nil {
+		return nil, err
+	}
+	if err := cli.MkdirAll(remotePath.Value); err != nil {
+		return nil, err
+	}
+	if len(args) == 3 {
+		mode, ok := native.AsInt64(args[2])
+		if !ok {
+			return nil, fmt.Errorf("%s mode must be int", call.Callee.String())
+		}
+		if err := cli.Chmod(remotePath.Value, os.FileMode(mode)); err != nil {
+			return nil, err
+		}
+	}
+	return runtime.Null{}, nil
+}
+
+func (e *Evaluator) sshSftpOpen(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects (handle, remotePath, mode?)", call.Callee.String())
+	}
+	handle, err := e.sshClient(args[0])
+	if err != nil {
+		return nil, err
+	}
+	remotePath, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s remotePath must be string", call.Callee.String())
+	}
+	mode := "r"
+	if len(args) == 3 {
+		s, ok := args[2].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s mode must be string", call.Callee.String())
+		}
+		mode = s.Value
+	}
+	cli, err := sshSftp(handle)
+	if err != nil {
+		return nil, err
+	}
+	var f *sftp.File
+	switch mode {
+	case "r":
+		f, err = cli.Open(remotePath.Value)
+	case "w":
+		f, err = cli.Create(remotePath.Value)
+	case "a":
+		f, err = cli.OpenFile(remotePath.Value, os.O_WRONLY|os.O_APPEND|os.O_CREATE)
+	default:
+		return nil, fmt.Errorf("%s mode must be \"r\", \"w\", or \"a\"", call.Callee.String())
+	}
+	if err != nil {
+		return nil, err
+	}
+	return e.registerIOStream(&ioStreamHandle{name: "ssh sftp file", reader: f, writer: f, closer: f}), nil
+}
+
+// sshForwardLocal binds localPort on 127.0.0.1 and forwards each
+// accepted connection through the SSH server to remoteTarget
+// ("host:port"). The returned tunnel handle can be used with
+// tunnelClose to stop the accept-loop.
+func (e *Evaluator) sshForwardLocal(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("%s expects (handle, localPort, remoteTarget)", call.Callee.String())
+	}
+	handle, err := e.sshClient(args[0])
+	if err != nil {
+		return nil, err
+	}
+	localPort, ok := native.AsInt64(args[1])
+	if !ok {
+		return nil, fmt.Errorf("%s localPort must be int", call.Callee.String())
+	}
+	remote, ok := args[2].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s remoteTarget must be string", call.Callee.String())
+	}
+	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.FormatInt(localPort, 10)))
+	if err != nil {
+		return nil, err
+	}
+	tunnel := &sshTunnelHandle{listener: listener}
+	e.sshMu.Lock()
+	e.nextSSHID++
+	tid := e.nextSSHID
+	e.sshTunnels[tid] = tunnel
+	e.sshMu.Unlock()
+	tunnel.wg.Add(1)
+	go func() {
+		defer tunnel.wg.Done()
+		for {
+			local, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(local net.Conn) {
+				defer local.Close()
+				remoteConn, err := handle.client.Dial("tcp", remote.Value)
+				if err != nil {
+					return
+				}
+				defer remoteConn.Close()
+				done := make(chan struct{}, 2)
+				go func() { _, _ = io.Copy(remoteConn, local); done <- struct{}{} }()
+				go func() { _, _ = io.Copy(local, remoteConn); done <- struct{}{} }()
+				<-done
+			}(local)
+		}
+	}()
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "handle", runtime.NewInt64(tid))
+	putDict(entries, "localAddr", runtime.String{Value: listener.Addr().String()})
+	return runtime.Dict{Entries: entries}, nil
+}
+
+func (e *Evaluator) sshForwardRemote(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("%s expects (handle, remotePort, localTarget)", call.Callee.String())
+	}
+	handle, err := e.sshClient(args[0])
+	if err != nil {
+		return nil, err
+	}
+	remotePort, ok := native.AsInt64(args[1])
+	if !ok {
+		return nil, fmt.Errorf("%s remotePort must be int", call.Callee.String())
+	}
+	local, ok := args[2].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s localTarget must be string", call.Callee.String())
+	}
+	listener, err := handle.client.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.FormatInt(remotePort, 10)))
+	if err != nil {
+		return nil, err
+	}
+	tunnel := &sshTunnelHandle{listener: listener}
+	e.sshMu.Lock()
+	e.nextSSHID++
+	tid := e.nextSSHID
+	e.sshTunnels[tid] = tunnel
+	e.sshMu.Unlock()
+	tunnel.wg.Add(1)
+	go func() {
+		defer tunnel.wg.Done()
+		for {
+			remoteConn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(remote net.Conn) {
+				defer remote.Close()
+				localConn, err := net.Dial("tcp", local.Value)
+				if err != nil {
+					return
+				}
+				defer localConn.Close()
+				done := make(chan struct{}, 2)
+				go func() { _, _ = io.Copy(localConn, remote); done <- struct{}{} }()
+				go func() { _, _ = io.Copy(remote, localConn); done <- struct{}{} }()
+				<-done
+			}(remoteConn)
+		}
+	}()
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "handle", runtime.NewInt64(tid))
+	putDict(entries, "remoteAddr", runtime.String{Value: listener.Addr().String()})
+	return runtime.Dict{Entries: entries}, nil
+}
+
+func (e *Evaluator) sshTunnelClose(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects (tunnel handle)", call.Callee.String())
+	}
+	id, ok := native.AsInt64(args[0])
+	if !ok {
+		return nil, fmt.Errorf("%s tunnel handle must be int", call.Callee.String())
+	}
+	e.sshMu.Lock()
+	tunnel, ok := e.sshTunnels[id]
+	if ok {
+		delete(e.sshTunnels, id)
+	}
+	e.sshMu.Unlock()
+	if !ok {
+		if e.parent != nil {
+			return e.parent.sshTunnelClose(call, args)
+		}
+		return runtime.Null{}, nil
+	}
+	return runtime.Null{}, stopSSHTunnelHandle(tunnel)
+}
+
+func stopSSHTunnelHandle(tunnel *sshTunnelHandle) error {
+	if tunnel == nil || tunnel.stopped {
+		return nil
+	}
+	tunnel.stopped = true
+	err := tunnel.listener.Close()
+	tunnel.wg.Wait()
+	if err != nil &&
+		!errors.Is(err, net.ErrClosed) &&
+		!strings.Contains(err.Error(), "use of closed network connection") {
+		return err
+	}
+	return nil
+}
+
+func (e *Evaluator) sshClose(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects (handle)", call.Callee.String())
+	}
+	id, ok := native.AsInt64(args[0])
+	if !ok {
+		return nil, fmt.Errorf("%s handle must be int", call.Callee.String())
+	}
+	e.sshMu.Lock()
+	handle, ok := e.sshClients[id]
+	if ok {
+		delete(e.sshClients, id)
+	}
+	e.sshMu.Unlock()
+	if !ok {
+		if e.parent != nil {
+			return e.parent.sshClose(call, args)
+		}
+		return runtime.Null{}, nil
+	}
+	return runtime.Null{}, closeSSHClientHandle(handle)
+}
+
+func closeSSHClientHandle(handle *sshClientHandle) error {
+	if handle == nil || handle.closed {
+		return nil
+	}
+	handle.closed = true
+	if handle.sftpCli != nil {
+		_ = handle.sftpCli.Close()
+	}
+	if err := handle.client.Close(); err != nil &&
+		!errors.Is(err, net.ErrClosed) &&
+		!strings.Contains(err.Error(), "use of closed network connection") {
+		return err
+	}
+	return nil
 }
 
 func sysSetenv(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {

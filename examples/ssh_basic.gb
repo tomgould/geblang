@@ -1,0 +1,33 @@
+/**
+ * @title SSH client (1.2.0)
+ * @summary `ssh.connect(target, opts)` opens an SSH connection.
+ * Use `exec` for one-shot commands or `spawn` for streaming
+ * sessions. Auth options: password, privateKey, privateKeyFile,
+ * passphrase, agent. Host-key verification via knownHostsFile
+ * (or insecureSkipHostKey for dev).
+ * @category Standard Library
+ */
+import io;
+import ssh;
+
+# Connect using SSH agent and the user's known_hosts file. This
+# example assumes a reachable SSH server; adjust target/auth for
+# your environment.
+let c = ssh.connect("alice@server.example.com", {
+    "agent": true,
+    "knownHostsFile": "/home/alice/.ssh/known_hosts",
+});
+
+# One-shot command exec returns stdout, stderr, and exit code.
+let r = c.exec("uname -a");
+io.println("output: " + r.stdout);
+io.println("exit: " + (r.exitCode as string));
+
+# Streaming spawn returns an SSHSession with IOStream-shaped pipes.
+let s = c.spawn("ls -la /tmp | head -3");
+for (line in s.stdout) {
+    io.println("> " + (line as string));
+}
+io.println("session exit: " + (s.wait() as string));
+
+c.close();

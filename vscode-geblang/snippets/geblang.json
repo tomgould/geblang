@@ -722,5 +722,79 @@
             "$0"
         ],
         "description": "proc.spawn with pty: true; stdin/stdout share the master fd (1.1.0 F4)"
+    },
+    "sockets.dial TCP/TLS client": {
+        "prefix": "socketsdial",
+        "body": [
+            "let ${1:client} = sockets.dial(\"${2:host}\", ${3:port});",
+            "${1:client}.writeln(\"${4:request}\");",
+            "$0",
+            "${1:client}.close();"
+        ],
+        "description": "sockets.dial: open a TCP/TLS connection (1.2.0)"
+    },
+    "sockets.serve TCP server": {
+        "prefix": "socketsserve",
+        "body": [
+            "let ${1:server} = sockets.serve(\"${2:0.0.0.0}\", ${3:port}, func(dict<string, any> ${4:raw}): void {",
+            "\tlet ${5:stream} = streams.IOStream(${4:raw}[\"stream\"]);",
+            "\t$0",
+            "\t${5:stream}.close();",
+            "});"
+        ],
+        "description": "sockets.serve: TCP server with accept handler (1.2.0)"
+    },
+    "ssh.connect SSH client": {
+        "prefix": "sshconnect",
+        "body": [
+            "let ${1:c} = ssh.connect(\"${2:user@host}\", {",
+            "\t\"agent\": true,",
+            "\t\"knownHostsFile\": \"${3:~/.ssh/known_hosts}\",",
+            "});",
+            "$0",
+            "${1:c}.close();"
+        ],
+        "description": "ssh.connect with agent auth + known_hosts (1.2.0)"
+    },
+    "ssh.exec one-shot command": {
+        "prefix": "sshexec",
+        "body": [
+            "let ${1:r} = ${2:c}.exec(\"${3:command}\");",
+            "io.println(${1:r}.stdout);$0"
+        ],
+        "description": "ssh.exec: one-shot remote command (1.2.0)"
+    },
+    "ssh.spawn streaming session": {
+        "prefix": "sshspawn",
+        "body": [
+            "let ${1:s} = ${2:c}.spawn(\"${3:command}\");",
+            "for (line in ${1:s}.stdout) {",
+            "\t$0",
+            "}",
+            "${1:s}.wait();"
+        ],
+        "description": "ssh.spawn: long-running streaming command (1.2.0)"
+    },
+    "cli.widgets.Spinner": {
+        "prefix": "spinner",
+        "body": [
+            "let ${1:sp} = widgets.Spinner(\"${2:loading}\");",
+            "${1:sp}.tick();",
+            "$0",
+            "${1:sp}.stop(\"${3:done}\");"
+        ],
+        "description": "cli.widgets.Spinner: terminal spinner (1.2.0)"
+    },
+    "cli.widgets.ProgressBar": {
+        "prefix": "progressbar",
+        "body": [
+            "let ${1:pb} = widgets.ProgressBar(${2:total});",
+            "for (int i = 0; i < ${2:total}; i++) {",
+            "\t${1:pb}.advance();",
+            "\t$0",
+            "}",
+            "${1:pb}.finish(\"${3:complete}\");"
+        ],
+        "description": "cli.widgets.ProgressBar: progress bar (1.2.0)"
     }
 }

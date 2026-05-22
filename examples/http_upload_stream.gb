@@ -1,0 +1,30 @@
+/**
+ * @title HTTP request body streaming (1.2.0)
+ * @summary `http.post` / `http.request` / `http.requestWithOptions`
+ * accept a `streams.IOStream` for `body` so multi-GB uploads
+ * don't load into memory. Strings and bytes still work.
+ * @category Standard Library
+ */
+import io;
+import http;
+import streams;
+import sys;
+
+# Local echo server for the demo.
+let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+    return {"status": 200, "body": "received " + (req["body"].length() as string) + " bytes"};
+});
+let port = (http.serverAddr(server).split(":")[1] as string) as int;
+sys.sleep(30 as int);
+
+# Stream a file body directly from disk.
+io.writeText("/tmp/upload.bin", "imagine this is a multi-GB payload");
+let body = streams.open("/tmp/upload.bin");
+let r = http.post("http://127.0.0.1:" + (port as string) + "/upload", body);
+body.close();
+io.remove("/tmp/upload.bin");
+
+io.println("status: " + (r["status"] as string));
+io.println(r["body"]);
+
+http.shutdown(server);

@@ -1,0 +1,28 @@
+/**
+ * @title Terminal widgets (1.2.0)
+ * @summary `cli.widgets.Spinner` for indeterminate progress and
+ * `cli.widgets.ProgressBar` for known totals. Both render to
+ * stderr so stdout piping (`cmd | head`) stays usable.
+ * @category Standard Library
+ */
+import io;
+import cli.widgets as widgets;
+import sys;
+
+# Spinner: indeterminate progress.
+let sp = widgets.Spinner("fetching data");
+for (int i = 0; i < 12; i++) {
+    sp.tick();
+    sys.sleep(80 as int);
+}
+sp.stop("fetched");
+
+# Progress bar: known total.
+let pb = widgets.ProgressBar(20, 30, "downloading");
+for (int i = 0; i < 20; i++) {
+    pb.advance();
+    sys.sleep(40 as int);
+}
+pb.finish("download complete");
+
+io.println("widgets demo done");

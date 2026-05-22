@@ -1,0 +1,191 @@
+module ssh;
+
+import sshnative;
+import streams;
+import io;
+
+## ExecResult is the structured outcome of `client.exec(cmd)`:
+## the command's stdout, stderr, and exit code.
+export class ExecResult {
+    string stdout;
+    string stderr;
+    int exitCode;
+
+    func ExecResult(string stdout, string stderr, int exitCode) {
+        this.stdout = stdout;
+        this.stderr = stderr;
+        this.exitCode = exitCode;
+    }
+}
+
+## SSHSession is a long-running remote command started by
+## `client.spawn(cmd)`. `stdin`, `stdout`, `stderr` are
+## `streams.IOStream` values for piping data through the
+## connection. Mirrors `proc.Process` from F4 so users can
+## reuse muscle memory.
+export class SSHSession {
+    int handle;
+    streams.IOStream stdin;
+    streams.IOStream stdout;
+    streams.IOStream stderr;
+
+    func SSHSession(int handle, streams.IOStream stdin, streams.IOStream stdout, streams.IOStream stderr) {
+        this.handle = handle;
+        this.stdin = stdin;
+        this.stdout = stdout;
+        this.stderr = stderr;
+    }
+
+    func wait(): int { return sshnative.sessionWait(this.handle); }
+    func kill(): void { sshnative.sessionKill(this.handle); }
+    func signal(string name): void { sshnative.sessionKill(this.handle, name); }
+}
+
+## SSHTunnel is a port forward established via
+## `client.forwardLocal(...)` or `client.forwardRemote(...)`.
+## `close()` stops the accept loop and joins the goroutine.
+export class SSHTunnel {
+    int handle;
+    string _addr;
+    bool _closed;
+
+    func SSHTunnel(int handle, string addr) {
+        this.handle = handle;
+        this._addr = addr;
+        this._closed = false;
+    }
+
+    func addr(): string { return this._addr; }
+
+    func close(): void {
+        if (this._closed) { return; }
+        sshnative.tunnelClose(this.handle);
+        this._closed = true;
+    }
+
+    func isClosed(): bool { return this._closed; }
+}
+
+## SSHClient is a connected SSH session. Use `exec` for one-shot
+## commands, `spawn` for long-running commands with streaming I/O,
+## the `upload` / `download` / `sftpList` / `sftpRemove` /
+## `sftpMkdir` / `sftpOpen` family for file transfer, and
+## `forwardLocal` / `forwardRemote` for port forwarding.
+export class SSHClient {
+    int handle;
+    string user;
+    string remoteAddr;
+    bool _closed;
+
+    func SSHClient(int handle, string user, string remoteAddr) {
+        this.handle = handle;
+        this.user = user;
+        this.remoteAddr = remoteAddr;
+        this._closed = false;
+    }
+
+    ## Runs a single command and returns its full output.
+    func exec(string command): ExecResult {
+        let r = sshnative.exec(this.handle, command);
+        return ExecResult(
+            r["stdout"] as string,
+            r["stderr"] as string,
+            r["exitCode"] as int
+        );
+    }
+
+    ## Spawns a long-running command and returns immediately with
+    ## an SSHSession exposing IOStream-shaped stdin / stdout /
+    ## stderr.
+    func spawn(string command): SSHSession {
+        let raw = sshnative.spawn(this.handle, command);
+        return SSHSession(
+            raw["handle"] as int,
+            streams.IOStream(raw["stdin"]),
+            streams.IOStream(raw["stdout"]),
+            streams.IOStream(raw["stderr"])
+        );
+    }
+
+    ## Uploads a local file via SFTP. Returns bytes transferred.
+    func upload(string localPath, string remotePath): int {
+        return sshnative.upload(this.handle, localPath, remotePath);
+    }
+
+    ## Downloads a remote file via SFTP. Returns bytes transferred.
+    func download(string remotePath, string localPath): int {
+        return sshnative.download(this.handle, remotePath, localPath);
+    }
+
+    ## Lists a remote directory. Returns a list of dicts
+    ## `{name, size, mode, isDir, modUnix}`.
+    func sftpList(string remotePath): list<dict<string, any>> {
+        return sshnative.sftpList(this.handle, remotePath);
+    }
+
+    func sftpRemove(string remotePath): void {
+        sshnative.sftpRemove(this.handle, remotePath);
+    }
+
+    func sftpMkdir(string remotePath, int mode = 0o755): void {
+        sshnative.sftpMkdir(this.handle, remotePath, mode);
+    }
+
+    ## Opens a remote file as a streams.IOStream. `mode` is `"r"`,
+    ## `"w"`, or `"a"`. Combine with `streams.copy(...)` to ship
+    ## bytes around the SSH connection.
+    func sftpOpen(string remotePath, string mode = "r"): streams.IOStream {
+        let h = sshnative.sftpOpen(this.handle, remotePath, mode);
+        return streams.IOStream(h);
+    }
+
+    ## Forwards a local port to a remote target through the SSH
+    ## server. Returns an SSHTunnel; close it to stop the loop.
+    func forwardLocal(int localPort, string remoteTarget): SSHTunnel {
+        let raw = sshnative.forwardLocal(this.handle, localPort, remoteTarget);
+        return SSHTunnel(raw["handle"] as int, raw["localAddr"] as string);
+    }
+
+    ## Forwards a remote port back to a local target. The remote
+    ## SSH server binds the port; connections are tunneled to this
+    ## host. Returns an SSHTunnel; close it to stop the loop.
+    func forwardRemote(int remotePort, string localTarget): SSHTunnel {
+        let raw = sshnative.forwardRemote(this.handle, remotePort, localTarget);
+        return SSHTunnel(raw["handle"] as int, raw["remoteAddr"] as string);
+    }
+
+    func close(): void {
+        if (this._closed) { return; }
+        sshnative.close(this.handle);
+        this._closed = true;
+    }
+
+    func isClosed(): bool { return this._closed; }
+}
+
+## Connects to an SSH server. `target` is either `"user@host"` or
+## just `"host"` (defaults to $USER). `opts` configures
+## authentication and host-key verification:
+##
+## Auth (at least one required):
+## - `password`: string
+## - `privateKey`: PEM-encoded key as string
+## - `privateKeyFile`: path to PEM key
+## - `passphrase`: decrypts the key
+## - `agent`: bool, use $SSH_AUTH_SOCK
+##
+## Host key verification (at least one required):
+## - `knownHostsFile`: path to a known_hosts file
+## - `insecureSkipHostKey`: bool, skip verification (dev only!)
+##
+## Other:
+## - `port`: int, default 22
+## - `timeoutMs`: int, connect timeout
+export func connect(string target, dict<string, any> opts = {}): SSHClient {
+    let raw = sshnative.connect(target, opts);
+    return SSHClient(
+        raw["handle"] as int,
+        raw["user"] as string,
+        raw["remoteAddr"] as string
+    );
+}

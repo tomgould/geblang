@@ -1,5 +1,50 @@
 # Release Notes
 
+## 1.2.0
+
+### Stdlib
+
+- New `sockets` module: `sockets.dial(host, port, opts)` opens a
+  TCP or TLS connection and returns a `Socket` wrapping the F3
+  stream protocol. `sockets.serve(host, port, handler)` binds a
+  listener and dispatches each accepted connection to the handler
+  callback. `server.close()` joins the accept goroutine so reads
+  of module-level state from the parent happen-after the last
+  handler invocation. Sockets implement `read` / `readAll` /
+  `readLine` / `lines` / `write` / `writeln` / `close` plus the
+  dunder protocol for `streams.copy` and `for (line in sock)`.
+- New `ssh` module: a Geblang-native SSH client.
+  `ssh.connect(target, opts)` opens an authenticated connection
+  (password / private key / passphrase / agent), with host-key
+  verification via `knownHostsFile`. `client.exec(cmd)` runs a
+  one-shot command returning `{stdout, stderr, exitCode}`.
+  `client.spawn(cmd)` returns an `SSHSession` with
+  `streams.IOStream`-shaped stdin / stdout / stderr (same shape
+  as `proc.Process`), plus `wait()`, `kill()`, `signal(name)`.
+  SFTP: `upload`, `download`, `sftpList`, `sftpRemove`,
+  `sftpMkdir`, and `sftpOpen` (returns an IOStream for piping
+  remote files through `streams.copy`). Port forwarding via
+  `forwardLocal(port, target)` and `forwardRemote(port, target)`
+  returns `SSHTunnel` handles that close cleanly.
+- `http.post` / `http.request` / `http.requestWithOptions` accept
+  a `streams.IOStream` (or any class wrapping one) for the
+  request body, in addition to the existing string and bytes
+  shorthand. Useful for multi-GB uploads that shouldn't load
+  into memory.
+- New `cli.widgets.Spinner` and `cli.widgets.ProgressBar` render
+  ANSI control sequences to stderr (so stdout piping stays
+  usable). The spinner has `tick()` / `update(msg)` / `stop()`;
+  the bar has `advance(n)` / `set(value)` / `updateLabel(label)`
+  / `finish()`.
+
+### Bug fixes
+
+- File / stream / socket close paths now suppress
+  already-closed errors so user code that closes the same handle
+  twice no longer surfaces the harmless errno (covers
+  `os.ErrClosed`, `net.ErrClosed`, and the "use of closed
+  network connection" string fallback).
+
 ## 1.1.0
 
 ### Stdlib

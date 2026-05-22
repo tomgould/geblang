@@ -123,7 +123,7 @@ int n = 80;
 
 let payload = {
     "name": "Geblang",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "tags": ["script", "static", "decimals"],
     "metrics": {"users": 12345, "posts": 678910, "active": true},
     "items": [

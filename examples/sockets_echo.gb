@@ -1,0 +1,48 @@
+/**
+ * @title TCP sockets (1.2.0)
+ * @summary `sockets.serve(host, port, handler)` binds a listener
+ * and dispatches each accepted connection to `handler(socket)`.
+ * `sockets.dial(host, port, opts?)` connects from the client side
+ * and returns a `Socket` wrapping the F3 stream protocol.
+ * @category Standard Library
+ */
+import io;
+import sockets;
+import streams;
+import sys;
+
+# Echo server. Use module-level state so the callback's writes are
+# visible after server.close() drains the accept goroutine.
+list<string> received = [];
+
+let server = sockets.serve("127.0.0.1", 0, func(dict<string, any> raw): void {
+    let stream = streams.IOStream(raw["stream"]);
+    while (true) {
+        let line = stream.readLine();
+        if (line == null) { break; }
+        received = received.push(line as string);
+        stream.writeln("echo: " + (line as string));
+    }
+    stream.close();
+});
+
+io.println("listening at " + server.localAddr());
+let port = (server.localAddr().split(":")[1] as string) as int;
+
+# Connect as a client and pump a few lines through.
+let client = sockets.dial("127.0.0.1", port);
+client.writeln("hello");
+client.writeln("world");
+io.println(client.readLine());
+io.println(client.readLine());
+client.close();
+
+sys.sleep(100 as int);
+server.close();
+
+io.println("server received: " + (received.length() as string) + " lines");
+# Expected output:
+#   listening at 127.0.0.1:<port>
+#   echo: hello
+#   echo: world
+#   server received: 2 lines

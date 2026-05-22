@@ -1,0 +1,36 @@
+/**
+ * @title SSH file transfer via SFTP (1.2.0)
+ * @summary The SSH client exposes SFTP through `upload`,
+ * `download`, `sftpList`, `sftpRemove`, `sftpMkdir`, and
+ * `sftpOpen` (which returns a `streams.IOStream` for piping).
+ * @category Standard Library
+ */
+import io;
+import ssh;
+import streams;
+
+let c = ssh.connect("alice@server.example.com", {
+    "agent": true,
+    "knownHostsFile": "/home/alice/.ssh/known_hosts",
+});
+
+# Upload + download a file.
+c.upload("./payload.txt", "/srv/incoming/payload.txt");
+c.download("/srv/log/app.log", "./remote-app.log");
+
+# Walk a remote directory.
+for (entry in c.sftpList("/srv/incoming")) {
+    io.println((entry["name"] as string) + " (" + (entry["size"] as string) + " bytes)");
+}
+
+# Stream a remote file through the F3 protocol - line iteration
+# works the same as on local files.
+let remote = c.sftpOpen("/srv/log/app.log");
+for (line in remote) {
+    if ((line as string).contains("ERROR")) {
+        io.println(line);
+    }
+}
+remote.close();
+
+c.close();

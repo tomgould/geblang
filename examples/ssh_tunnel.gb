@@ -1,0 +1,27 @@
+/**
+ * @title SSH port forwarding (1.2.0)
+ * @summary `client.forwardLocal(port, target)` exposes a remote
+ * service on a local port through the SSH connection.
+ * `client.forwardRemote(port, target)` lets the remote SSH server
+ * reach back to a local service. Both return an SSHTunnel whose
+ * `close()` joins the accept goroutine cleanly.
+ * @category Standard Library
+ */
+import io;
+import ssh;
+import sys;
+
+let c = ssh.connect("alice@bastion.example.com", {
+    "agent": true,
+    "knownHostsFile": "/home/alice/.ssh/known_hosts",
+});
+
+# Forward localhost:5432 to internal-db:5432 through the bastion.
+let tunnel = c.forwardLocal(5432, "internal-db.private:5432");
+io.println("tunnel bound: " + tunnel.addr());
+
+# ... use 127.0.0.1:5432 from this process ...
+sys.sleep(5000 as int);
+
+tunnel.close();
+c.close();

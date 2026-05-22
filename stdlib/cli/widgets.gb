@@ -1,0 +1,65 @@
+module cli.widgets;
+
+import cli;
+
+## Spinner draws a rotating frame to stderr while a long-running
+## task is in progress. Call `.tick()` periodically (the caller
+## owns the cadence), then `.stop(finalMessage?)` to clear the
+## line.
+export class Spinner {
+    string message;
+    int _frame;
+
+    func Spinner(string message) {
+        this.message = message;
+        this._frame = 0;
+    }
+
+    func tick(): void {
+        this._frame = cli.spinnerTick(this._frame, this.message);
+    }
+
+    func update(string message): void {
+        this.message = message;
+    }
+
+    func stop(string finalMessage = ""): void {
+        cli.spinnerStop(finalMessage);
+    }
+}
+
+## ProgressBar renders `[#####-----] 50% (5/10) label` on stderr.
+## Use `.advance()` for the common +1 case, `.set()` for explicit
+## values, and `.finish()` to clear the line.
+export class ProgressBar {
+    int current;
+    int total;
+    int width;
+    string label;
+
+    func ProgressBar(int total, int width = 30, string label = "") {
+        this.current = 0;
+        this.total = total;
+        this.width = width;
+        this.label = label;
+    }
+
+    func advance(int n = 1): void {
+        this.current = this.current + n;
+        cli.progressRender(this.current, this.total, this.width, this.label);
+    }
+
+    func set(int value): void {
+        this.current = value;
+        cli.progressRender(this.current, this.total, this.width, this.label);
+    }
+
+    func updateLabel(string label): void {
+        this.label = label;
+        cli.progressRender(this.current, this.total, this.width, this.label);
+    }
+
+    func finish(string finalMessage = ""): void {
+        cli.progressFinish(finalMessage);
+    }
+}

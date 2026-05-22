@@ -1,0 +1,96 @@
+/**
+ * @title sockets module (1.2.0)
+ * @summary `sockets.dial(host, port, opts?)` opens a TCP/TLS
+ * connection; `sockets.serve(host, port, handler)` binds a
+ * listener and dispatches accepted connections to the callback.
+ * Sockets are `streams.IOStream`-shaped so all stream methods and
+ * the F3 dunder protocol apply.
+ */
+import test;
+import sockets;
+import streams;
+import sys;
+
+# Module-level globals so the accept-handler's writes are visible
+# to the parent after server.close() drains the goroutine. Local
+# captures don't propagate across goroutines.
+list<string> sockReceived = [];
+int sockHandlerCalls = 0;
+
+class SocketsTest extends test.Test {
+    func resetState(): void {
+        sockReceived = [];
+        sockHandlerCalls = 0;
+    }
+
+    @test
+    func dialEchoRoundTrip(): void {
+        this.resetState();
+        let server = sockets.serve("127.0.0.1", 0, func(dict<string, any> raw): void {
+            sockHandlerCalls = sockHandlerCalls + 1;
+            let stream = streams.IOStream(raw["stream"]);
+            while (true) {
+                let line = stream.readLine();
+                if (line == null) { break; }
+                sockReceived = sockReceived.push(line as string);
+                stream.writeln("echo: " + (line as string));
+            }
+            stream.close();
+        });
+        let port = (server.localAddr().split(":")[1] as string) as int;
+
+        let client = sockets.dial("127.0.0.1", port);
+        client.writeln("ping");
+        let reply = client.readLine();
+        client.close();
+        sys.sleep(100 as int);
+        server.close();
+
+        this.assertEquals("echo: ping", reply);
+        this.assertEquals(1, sockHandlerCalls);
+        this.assertTrue(sockReceived.contains("ping"));
+    }
+
+    @test
+    func socketImplementsStreamProtocol(): void {
+        this.resetState();
+        let server = sockets.serve("127.0.0.1", 0, func(dict<string, any> raw): void {
+            let stream = streams.IOStream(raw["stream"]);
+            stream.writeln("payload");
+            stream.close();
+        });
+        let port = (server.localAddr().split(":")[1] as string) as int;
+
+        let client = sockets.dial("127.0.0.1", port);
+        # Use the F3 streams.readAll helper via the dunder __read.
+        let collected = streams.readAll(client);
+        client.close();
+        sys.sleep(100 as int);
+        server.close();
+
+        this.assertEquals("payload\n", collected);
+    }
+
+    @test
+    func serverCloseStopsAcceptLoop(): void {
+        this.resetState();
+        let server = sockets.serve("127.0.0.1", 0, func(dict<string, any> raw): void {
+            sockHandlerCalls = sockHandlerCalls + 1;
+        });
+        let before = sockHandlerCalls;
+        server.close();
+        # A dial after close should fail; the listener is shut.
+        bool dialFailed = false;
+        try {
+            let port = (server.localAddr().split(":")[1] as string) as int;
+            let c = sockets.dial("127.0.0.1", port);
+            c.close();
+        } catch (IOError e) {
+            dialFailed = true;
+        } catch (Error e) {
+            dialFailed = true;
+        }
+        this.assertTrue(dialFailed);
+        this.assertEquals(before, sockHandlerCalls);
+    }
+}

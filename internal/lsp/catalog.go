@@ -230,16 +230,24 @@ var stdlibCatalog = map[string]moduleDoc{
 		"concat":     fn([]string{"bytes left", "bytes right"}, "bytes", "Concatenates byte buffers."),
 	}},
 	"cli": {functions: map[string]functionDoc{
-		"prompt":    fn([]string{"string label", "string default = \"\""}, "string", "Reads interactive console input."),
-		"password":  fn([]string{"string label"}, "string", "Reads masked console input."),
-		"secret":    fn([]string{"string label"}, "string", "Reads masked console input."),
-		"confirm":   fn([]string{"string label", "bool default = false"}, "bool", "Reads a yes/no answer."),
-		"choose":    fn([]string{"string label", "list<string> choices"}, "string", "Reads a choice from a list."),
-		"style":     fn([]string{"string text", "dict<string, any> options"}, "string", "Applies ANSI console styling."),
-		"stripAnsi": fn([]string{"string text"}, "string", "Removes ANSI escape sequences."),
-		"table":     fn([]string{"list<dict<string, any>> rows"}, "string", "Formats rows as a console table."),
-		"parseArgs": fn([]string{"list<string> argv", "dict<string, any> spec"}, "dict<string, any>", "Parses command-line options."),
-		"help":      fn([]string{"dict<string, any> spec"}, "string", "Builds usage text for an option specification."),
+		"prompt":         fn([]string{"string label", "string default = \"\""}, "string", "Reads interactive console input."),
+		"password":       fn([]string{"string label"}, "string", "Reads masked console input."),
+		"secret":         fn([]string{"string label"}, "string", "Reads masked console input."),
+		"confirm":        fn([]string{"string label", "bool default = false"}, "bool", "Reads a yes/no answer."),
+		"choose":         fn([]string{"string label", "list<string> choices"}, "string", "Reads a choice from a list."),
+		"style":          fn([]string{"string text", "dict<string, any> options"}, "string", "Applies ANSI console styling."),
+		"stripAnsi":      fn([]string{"string text"}, "string", "Removes ANSI escape sequences."),
+		"table":          fn([]string{"list<dict<string, any>> rows"}, "string", "Formats rows as a console table."),
+		"parseArgs":      fn([]string{"list<string> argv", "dict<string, any> spec"}, "dict<string, any>", "Parses command-line options."),
+		"help":           fn([]string{"dict<string, any> spec"}, "string", "Builds usage text for an option specification."),
+		"spinnerTick":    fn([]string{"int frameIndex", "string message"}, "int", "Renders one spinner frame to stderr; returns the next frame index (1.2.0). Use cli.widgets.Spinner for the OO wrapper."),
+		"spinnerStop":    fn([]string{"string finalMessage = \"\""}, "void", "Clears the spinner line (1.2.0)."),
+		"progressRender": fn([]string{"int current", "int total", "int width = 30", "string label = \"\""}, "void", "Renders an ANSI progress bar to stderr (1.2.0). Use cli.widgets.ProgressBar."),
+		"progressFinish": fn([]string{"string finalMessage = \"\""}, "void", "Clears the progress line (1.2.0)."),
+	}},
+	"cli.widgets": {classes: map[string]string{
+		"Spinner":     "Terminal spinner that renders to stderr (1.2.0). Construct with `Spinner(message)`; call `.tick()` periodically and `.stop(finalMessage?)` when done.",
+		"ProgressBar": "Terminal progress bar that renders to stderr (1.2.0). Construct with `ProgressBar(total, width = 30, label = \"\")`; call `.advance(n = 1)`, `.set(value)`, `.updateLabel(label)`, or `.finish(finalMessage?)`.",
 	}},
 	"collections": {functions: map[string]functionDoc{
 		"length":       fn([]string{"any value"}, "int", "Returns the size of a collection or string."),
@@ -570,6 +578,21 @@ var stdlibCatalog = map[string]moduleDoc{
 		"spawn": fn([]string{"string command", "list<string> args = []", "dict<string, any> options = {}"}, "Process", "Spawn a child process and return a Process. Options: {pty: bool, cwd: string, env: dict<string, string>} (1.1.0 F4)."),
 	}, classes: map[string]string{
 		"Process": "Running child process (1.1.0 F4). Fields: pid, handle, stdin (IOStream), stdout (IOStream), stderr (IOStream or null in pty mode). Methods: wait() returns the exit code, kill() sends SIGKILL, signal(name) sends a named signal.",
+	}},
+	"sockets": {functions: map[string]functionDoc{
+		"dial":  fn([]string{"string host", "int port", "dict<string, any> opts = {}"}, "Socket", "Open a TCP (or TLS via opts.tls) connection. Returns a Socket implementing the F3 stream protocol (1.2.0)."),
+		"serve": fn([]string{"string host", "int port", "func handler"}, "Listener", "Bind a listener and dispatch each accepted connection to handler(socket). Close the Listener to join the accept goroutine (1.2.0)."),
+	}, classes: map[string]string{
+		"Socket":   "TCP / TLS connection wrapped in the F3 stream protocol (1.2.0). Methods: read(n) / readAll() / readLine() / lines() / write(buf) / writeln(buf) / close() / isClosed() / localAddr() / remoteAddr(). Dunders: __read / __write / __close / __iter.",
+		"Listener": "TCP listener owning an accept-loop goroutine (1.2.0). close() stops accepting and joins; localAddr() returns the bound address (useful when port is 0).",
+	}},
+	"ssh": {functions: map[string]functionDoc{
+		"connect": fn([]string{"string target", "dict<string, any> opts = {}"}, "SSHClient", "Connect to an SSH server. Target is \"user@host\" or \"host\". Auth opts: password / privateKey / privateKeyFile / passphrase / agent. Host key opts: knownHostsFile / insecureSkipHostKey. Other: port, timeoutMs (1.2.0)."),
+	}, classes: map[string]string{
+		"SSHClient":  "Connected SSH session (1.2.0). Methods: exec(cmd) returns ExecResult; spawn(cmd) returns SSHSession with IOStream pipes; upload / download / sftpList / sftpRemove / sftpMkdir / sftpOpen for SFTP; forwardLocal / forwardRemote return SSHTunnel; close() shuts the connection.",
+		"SSHSession": "Long-running remote command (1.2.0). Fields: handle, stdin / stdout / stderr (IOStream). Methods: wait() returns exit code, kill() sends SIGKILL, signal(name) sends a named signal.",
+		"SSHTunnel":  "Local or remote port forward (1.2.0). addr() returns the bound address; close() stops the accept loop and joins.",
+		"ExecResult": "Result of SSHClient.exec(cmd) (1.2.0). Fields: stdout (string), stderr (string), exitCode (int).",
 	}},
 	"strings": {classes: map[string]string{
 		"StringBuilder": "Builder-backed string accumulator. Amortised O(n) append for tight-loop assembly; call dispose() to release the handle in long-running processes.",
