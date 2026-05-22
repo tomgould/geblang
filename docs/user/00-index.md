@@ -209,53 +209,72 @@ The repository includes a small benchmark harness for local performance checks:
 make bench
 ```
 
-The benchmark suite is very simple, just covering an integer-heavy loop, recursive function
-calls and list construction/iteration. It reports Geblang timings alongside
-equivalent Python and PHP scripts when those runtimes are installed. There is
-also a version available via Docker if you don't have PHP or Python locally:
+The benchmark suite covers integer-heavy loops, recursive function
+calls, list and dict construction, string concatenation, method
+dispatch on a hot class, regex matching, JSON parse + stringify
+round-trips, and lazy/eager functional collection pipelines. It
+reports Geblang timings alongside equivalent Python and PHP scripts
+when those runtimes are installed. There is also a version
+available via Docker if you don't have PHP or Python locally:
 
 ```sh
 make bench-docker
 ```
 
 These numbers should be treated as loose signals only. Both PHP and
-Python have made significant performance strides in recent years; PHP
-in particular ships a real JIT in PHP 8, and CPython 3.11+ has an
-improved interpreter. Geblang aims to be in the same ballpark as those interpreters
-on realistic application code without attempting to match the JIT.
+Python have made significant performance strides in recent years;
+PHP in particular ships a real JIT in PHP 8, and CPython 3.11+ has
+an improved interpreter. Geblang aims to be in the same ballpark as
+those interpreters on realistic application code without attempting
+to match the JIT.
 
 Indicative numbers from a development machine (the absolute values
 will vary):
 
-| Benchmark        | Geblang | Python | PHP   |
-|------------------|---------|--------|-------|
-| `numeric_loop`   | 122 ms  | 135 ms | 29 ms |
-| `recursive_fib`  | 83 ms   | 46 ms  | 22 ms |
-| `list_pipeline`  | 7 ms    | 14 ms  | 11 ms |
+| Benchmark          | Geblang | Python | PHP    |
+|--------------------|---------|--------|--------|
+| `numeric_loop`     | 131 ms  | 141 ms | 33 ms  |
+| `recursive_fib`    | 75 ms   | 44 ms  | 25 ms  |
+| `list_pipeline`    | 9 ms    | 17 ms  | 13 ms  |
+| `string_concat`    | 9 ms    | 21 ms  | 13 ms  |
+| `dict_ops`         | 18 ms   | 22 ms  | 15 ms  |
+| `class_dispatch`   | 21 ms   | 23 ms  | 14 ms  |
+| `regex_match`      | 66 ms   | 51 ms  | 17 ms  |
+| `json_roundtrip`   | 520 ms  | 545 ms | 340 ms |
+| `list_functional`  | 13 ms   | 18 ms  | 14 ms  |
 
 ### What Geblang is quick at
 
-`list_pipeline` builds a 5,000-element list with `.push`, then walks
-it once, filtering on `value % 5 == 0` and summing the matches.
+`list_pipeline`, `list_functional`, and `string_concat` are
+allocation-heavy patterns the VM has been tuned for: building lists
+with `.push`, chaining `.map` / `.filter` / `.reduce`, and
+concatenating string literals into a builder in tight loops.
 
 `numeric_loop` runs a counted `for` loop two million times with a
 small if/else and integer arithmetic in the body. For loops where
-the compiler can tell the variables stay as integers, I put
-serious effort into making the body cheap, and the benchmark
-reflects that.
+the compiler can tell the variables stay as integers, Geblang puts
+serious effort into making the body cheap.
+
+`json_roundtrip` parses a 1 MB JSON payload and stringifies it back
+200 times. After the 1.0.6 token-driven parser and direct encoder,
+Geblang outperforms Python's C-implemented `json` module on this
+workload.
+
+`dict_ops` and `class_dispatch` exercise dict get/set and instance
+method dispatch in a tight loop; both are competitive with Python.
 
 ### What it's slower at
 
-The case where you'll feel the difference is heavy function-call
-work. `recursive_fib(28)` is a large number of recursive calls
-and not much else, and there Geblang is noticeably slower than
-the reference runtimes. 
+`recursive_fib(28)` is a large number of recursive calls and not
+much else; Geblang is noticeably slower than Python and PHP there.
+`regex_match` is similar; regex match cost is dominated by the Go
+regex engine, which trails the C runtimes of Python and PHP.
 
-Geblang's conscious language design choices, particularly in respect of generics
-and type-safety, mean there is more runtime overhead.
-
-For everyday code (request handlers, parsing JSON, walking lists and dicts, modest loops)
-the difference is hopefully invisible.
+Geblang's conscious language design choices, particularly around
+generics and type-safety, mean there is more runtime overhead per
+function call than a dynamically-typed interpreter pays. For
+everyday code (request handlers, parsing JSON, walking lists and
+dicts, modest loops) the difference is hopefully invisible.
 
 > :bulb: Geblang is a personal project, built for fun, interest, curiosity and to help
 > me learn Go and a bit about compiler and interpreter design.

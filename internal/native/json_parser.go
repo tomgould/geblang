@@ -35,7 +35,19 @@ func parseJSONDirect(text string) (runtime.Value, *ParseError) {
 type jsonParser struct {
 	src string
 	pos int
+	// keyCache memoises the dict-key form of object keys so repeated
+	// keys (typical JSON: every record shares "id", "name", etc.)
+	// reuse a single concatenated string instead of paying for the
+	// "s"+key allocation on every entry. Bounded so pathological
+	// inputs with thousands of unique keys don't grow the cache
+	// unboundedly.
+	keyCache map[string]string
 }
+
+// jsonKeyCacheLimit caps the per-parse key intern table. The cache
+// is per-jsonParser so each json.parse call gets a fresh table; the
+// limit just prevents bad inputs from filling memory.
+const jsonKeyCacheLimit = 256
 
 func (p *jsonParser) parseValue() (runtime.Value, error) {
 	if p.pos >= len(p.src) {
@@ -68,7 +80,9 @@ func (p *jsonParser) parseObject() (runtime.Value, error) {
 	// Hint a typical JSON-object size so the first few inserts skip
 	// the rehash cycle. Most JSON objects in real payloads have at
 	// least four-five entries; the bench's per-record object has
-	// five. Map grows past this hint if needed.
+	// five. Map grows past this hint if needed. A more accurate
+	// count via a pre-scan turned out net negative (the extra read
+	// pass costs more than the rehash it saves).
 	entries := make(map[string]runtime.DictEntry, 8)
 	p.skipWhitespace()
 	if p.pos < len(p.src) && p.src[p.pos] == '}' {
@@ -95,7 +109,17 @@ func (p *jsonParser) parseObject() (runtime.Value, error) {
 			return nil, err
 		}
 		keyValue := runtime.String{Value: key}
-		entries[DictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: value}
+		mapKey, cached := p.keyCache[key]
+		if !cached {
+			mapKey = "s" + key
+			if p.keyCache == nil {
+				p.keyCache = make(map[string]string, 16)
+			}
+			if len(p.keyCache) < jsonKeyCacheLimit {
+				p.keyCache[key] = mapKey
+			}
+		}
+		entries[mapKey] = runtime.DictEntry{Key: keyValue, Value: value}
 		p.skipWhitespace()
 		if p.pos >= len(p.src) {
 			return nil, fmt.Errorf("unexpected end of object")
@@ -321,15 +345,15 @@ func (p *jsonParser) parseNumber() (runtime.Value, error) {
 	}
 	// Fast path: integers that fit int64 (the JSON common case for
 	// ids, counts, scores) skip the big.Int parse via SetString and
-	// build a `runtime.Int` directly from int64. Keeping the
-	// runtime type as `Int` rather than `SmallInt` matters because
-	// the evaluator path's equality / arithmetic dispatcher is
-	// keyed on `Int` (`SmallInt` is a VM-side optimisation that
-	// doesn't have full evaluator support yet); a parser that
-	// produced `SmallInt` would diverge under VM/evaluator parity.
+	// build a `runtime.SmallInt` - the runtime's interface-inline
+	// int representation. The VM has handled SmallInt natively since
+	// 1.0.5; the evaluator's numeric-infix dispatcher promotes
+	// SmallInt to Int on the fly and primitiveEqual now cross-
+	// compares SmallInt with Int so parsed values compare equal to
+	// literal int values.
 	if n := p.pos - start; n <= 18 {
 		if v, err := strconv.ParseInt(text, 10, 64); err == nil {
-			return runtime.NewInt64(v), nil
+			return runtime.SmallInt{Value: v}, nil
 		}
 	}
 	value, ok := new(big.Int).SetString(text, 10)

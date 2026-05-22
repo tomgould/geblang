@@ -4,74 +4,42 @@
 
 ### Performance
 
-- Token-driven JSON parser replaces the prior double-walk through
-  `encoding/json` + `JSONToValue`. `DictKey` drops the
-  defensive `strconv.Quote` (the type prefix already disambiguates
-  string keys from other kinds), the JSON encoder writes ASCII
-  strings without per-byte escape checking when nothing needs
-  quoting, the encoder buffer is now pooled across calls, and dict
-  output uses typed sort.Sort instead of reflect-based sort.Slice.
-  Combined effect: `json_roundtrip` 1665 to ~700 ms (-58%), now
-  within ~20% of Python's C-implemented json module on the same
-  workload.
-- `OpCallResolvedMethod` skips per-arg `ToValue()` boxing for the
-  common `instance.method(args)` case by routing through
-  `startFunctionVMValue` with VMValues straight off the stack;
-  `class_dispatch` 30 to 21 ms (-30%), now beats Python.
-- Tail-call elimination via `OpTailCall`: `return f(args)` in tail
-  position reuses the current frame. Limited to functions with
-  primitive-typed params (int / bool / float / string / decimal /
-  any) so the O(1) validation stays inside the opcode. Lifts the
-  stack-depth ceiling on tail-recursive loops.
+- JSON parse + stringify overhaul: shorter dict-key tags, repeated-
+  key interning, direct float/string encoders, pooled scratch
+  buffers; `json_roundtrip` 1665 to 520 ms, faster than Python's C
+  json on the bench.
+- Function-call hot path passes function metadata by pointer rather
+  than copying a 350-byte struct on every call; `recursive_fib` 88
+  to 75 ms.
+- Method dispatch VMValue fast path on `instance.method(args)`;
+  `class_dispatch` 30 to 21 ms.
+- Tail-call elimination: `return f(args)` reuses the current frame
+  for primitive-typed-arg functions, removing the stack-depth
+  ceiling on tail-recursive loops.
 
 ### Language features
 
-- **Iterator protocol for user classes.** `for (x in obj)` calls
-  `obj.__iter()` (optional) to get an iterator; the loop alternates
-  `__done(): bool` and `__next()` until `__done()` returns `true`.
-  Classes that expose `__done` / `__next` directly are their own
-  iterators. `__iter()` may return any iterable - lists, generators,
-  ranges, or another iterator instance.
-- **`streams.Stream` fluent collection pipeline.** Wrap any iterable
-  via `streams.of(source)`; intermediate ops (`map`, `filter`,
-  `take`) are lazy and return a new Stream; terminal ops (`toList`,
-  `toSet`, `count`, `first`, `reduce`, `forEach`, `anyMatch`,
-  `allMatch`) drive the pipeline. Implements `__iter()` so streams
-  slot into `for-in` loops and `iterable<T>` parameters.
-- **`reflect.location(target)`** returns
-  `{module, line, column}` for functions, classes, decorator
-  targets, closures, and instances (fall back to class declaration
-  position). Useful for diagnostics, code-gen, and framework error
-  messages.
-- **Named arguments in `defer`.** The three previously-rejected
-  shapes (deferred callable, deferred instance method, deferred
-  module-function call) now accept named args; the deferred dispatch
-  reorders against the callee's signature when the queue fires.
-- **Nested generic call-site inference.** Type params nested inside
-  `list<dict<K, V>>` (and deeper container shapes) now bind from a
-  single argument on both backends.
+- Iterator protocol: classes with `__iter()` / `__done()` /
+  `__next()` work in `for (x in obj)`.
+- `streams.Stream` fluent collection pipeline (`map`, `filter`,
+  `take`, `toList`, `toSet`, `count`, `first`, `reduce`, `forEach`,
+  `anyMatch`, `allMatch`); lazy by default.
+- `reflect.location(target)` returns `{module, line, column}` for
+  functions, classes, closures, decorator targets, and instances.
+- Named arguments in `defer` for callable, instance-method, and
+  module-function shapes.
+- Nested generic call-site inference: `list<dict<K, V>>` and
+  deeper shapes bind every leaf type parameter.
 
 ### Bug fixes
 
-- **Cross-chunk closures crossed into stdlib-module class methods
-  no longer resolve their `FunctionIndex` against the wrong chunk.**
-  Closures created in the entry script (`Module == ""`) and
-  reinvoked from inside a stdlib class method via
-  `collections.lazyMap` etc. used to silently rebind to the
-  receiving module's own constructor at that index. The dispatcher
-  now routes cross-chunk callables through the module loader, which
-  falls back to the main chunk for empty `Module`.
+- Cross-chunk closures invoked through a stdlib-module class
+  method no longer resolve to the wrong function index.
 
 ### Stdlib
 
-- `streams` module (Stream class + `of` constructor).
-
-### Compiler / VM internals
-
-- Chunk format version bumped 55 to 58 (one bump per opcode
-  addition: `OpTailCall`, `DefLine`/`DefColumn` on FunctionInfo +
-  ClassInfo for `reflect.location`, three `OpDefer*CallNamed`
-  opcodes for named-arg defers).
+- New `streams` module: `streams.of(source)` to wrap an iterable,
+  plus the `Stream` class.
 
 ## 1.0.5
 

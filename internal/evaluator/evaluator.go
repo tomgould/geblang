@@ -21891,9 +21891,26 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 	case runtime.Bool:
 		rightValue, ok := right.(runtime.Bool)
 		return ok && leftValue.Value == rightValue.Value
+	case runtime.SmallInt:
+		// Cross-comparison with Int for the case where a SmallInt
+		// arrived from a native source (e.g. JSON parser) and the
+		// other side is an evaluator-built Int. Same int value
+		// compares equal regardless of representation.
+		if rightSmall, ok := right.(runtime.SmallInt); ok {
+			return leftValue.Value == rightSmall.Value
+		}
+		if rightBig, ok := right.(runtime.Int); ok {
+			return rightBig.Value.IsInt64() && rightBig.Value.Int64() == leftValue.Value
+		}
+		return false
 	case runtime.Int:
-		rightValue, ok := right.(runtime.Int)
-		return ok && leftValue.Value.Cmp(rightValue.Value) == 0
+		if rightValue, ok := right.(runtime.Int); ok {
+			return leftValue.Value.Cmp(rightValue.Value) == 0
+		}
+		if rightSmall, ok := right.(runtime.SmallInt); ok {
+			return leftValue.Value.IsInt64() && leftValue.Value.Int64() == rightSmall.Value
+		}
+		return false
 	case runtime.Decimal:
 		rightValue, ok := right.(runtime.Decimal)
 		return ok && leftValue.Value.Cmp(rightValue.Value) == 0
@@ -22363,39 +22380,43 @@ func isComparison(operator string) bool {
 func dictKey(value runtime.Value) string {
 	switch value := value.(type) {
 	case runtime.Null:
-		return "null"
+		return "n"
 	case runtime.Bool:
 		if value.Value {
-			return "bool:true"
+			return "b1"
 		}
-		return "bool:false"
+		return "b0"
+	case runtime.SmallInt:
+		return "i" + strconv.FormatInt(value.Value, 10)
 	case runtime.Int:
-		return "int:" + value.Value.String()
+		return "i" + value.Value.String()
 	case runtime.Decimal:
-		return "decimal:" + value.Value.RatString()
+		return "d" + value.Value.RatString()
 	case runtime.Float:
 		floatValue := value.Value
 		if floatValue == 0 {
 			floatValue = 0
 		}
-		return "float:" + strconv.FormatFloat(floatValue, 'g', -1, 64)
+		return "f" + strconv.FormatFloat(floatValue, 'g', -1, 64)
 	case runtime.String:
-		return "string:" + value.Value
+		// Single-byte type prefix; matches native.DictKey so dicts
+		// look up identically whether built by VM or evaluator.
+		return "s" + value.Value
 	case runtime.Bytes:
-		return "bytes:" + hex.EncodeToString(value.Value)
+		return "y" + hex.EncodeToString(value.Value)
 	case runtime.List:
 		parts := make([]string, 0, len(value.Elements))
 		for _, element := range value.Elements {
 			parts = append(parts, dictKey(element))
 		}
-		return "list:[" + strings.Join(parts, ",") + "]"
+		return "L[" + strings.Join(parts, ",") + "]"
 	case runtime.Set:
 		parts := make([]string, 0, len(value.Elements))
 		for key := range value.Elements {
 			parts = append(parts, key)
 		}
 		sort.Strings(parts)
-		return "set:{" + strings.Join(parts, ",") + "}"
+		return "S{" + strings.Join(parts, ",") + "}"
 	case runtime.Dict:
 		type kv struct{ k, v string }
 		pairs := make([]kv, 0, len(value.Entries))
@@ -22407,9 +22428,9 @@ func dictKey(value runtime.Value) string {
 		for i, p := range pairs {
 			parts[i] = p.k + "=" + p.v
 		}
-		return "dict:{" + strings.Join(parts, ",") + "}"
+		return "D{" + strings.Join(parts, ",") + "}"
 	case runtime.Range:
-		return "range:" + value.Start.String() + ":" + value.End.String() + ":" + value.Step.String() + ":" + strconv.FormatBool(value.Exclusive)
+		return "r" + value.Start.String() + ":" + value.End.String() + ":" + value.Step.String() + ":" + strconv.FormatBool(value.Exclusive)
 	case runtime.BytecodeFunction:
 		return fmt.Sprintf("bytecode-func:%s:%s:%d", value.Module, value.Name, value.Index)
 	case runtime.BytecodeClass:

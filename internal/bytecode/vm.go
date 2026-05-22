@@ -2031,7 +2031,7 @@ func (vm *VM) Run() (err error) {
 			}
 			if ok {
 				combined := append(staticArgs, spreadList.Elements...)
-				nextIP, err := vm.startFunction(instruction, ip, vm.chunk.Functions[funcIndex], combined, nil)
+				nextIP, err := vm.startFunction(instruction, ip, &vm.chunk.Functions[funcIndex], combined, nil)
 				if err != nil {
 					return err
 				}
@@ -2050,7 +2050,7 @@ func (vm *VM) Run() (err error) {
 			if err != nil {
 				return err
 			}
-			nextIP, err := vm.startFunction(instruction, ip, vm.chunk.Functions[funcIndex], ordered, nil)
+			nextIP, err := vm.startFunction(instruction, ip, &vm.chunk.Functions[funcIndex], ordered, nil)
 			if err != nil {
 				return err
 			}
@@ -2529,7 +2529,7 @@ func (vm *VM) callPrefixOperatorMethod(instruction Instruction, ip int, value ru
 	if err != nil {
 		return 0, true, err
 	}
-	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{instance}, nil)
+	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance}, nil)
 	return nextIP, true, err
 }
 
@@ -2574,7 +2574,7 @@ func (vm *VM) compare(instruction Instruction, ip int) (int, error) {
 				if err != nil {
 					return 0, err
 				}
-				return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
+				return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
 			}
 			if fallbackName, ok := inverseComparisonMethodName(instruction.Op); ok {
 				if indices, ok := vm.lookupMethod(classInfo, fallbackName); ok {
@@ -2582,7 +2582,7 @@ func (vm *VM) compare(instruction Instruction, ip int) (int, error) {
 					if err != nil {
 						return 0, err
 					}
-					nextIP, err := vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
+					nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
 					if err != nil {
 						return 0, err
 					}
@@ -2656,7 +2656,7 @@ func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
+			return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
 		}
 	}
 	vm.push(runtime.Bool{Value: valuesEqual(left, right)})
@@ -3319,7 +3319,7 @@ func (vm *VM) callBinaryOperatorMethod(instruction Instruction, ip int, left run
 	if err != nil {
 		return 0, true, err
 	}
-	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
+	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
 	return nextIP, true, err
 }
 
@@ -4577,7 +4577,7 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 	if index < 0 || int(index) >= len(vm.chunk.Functions) {
 		return 0, vm.runtimeError(instruction, "function index out of range")
 	}
-	function := vm.chunk.Functions[index]
+	function := &vm.chunk.Functions[index]
 	if !vm.requiresCallSitePolymorphism {
 		n := len(vm.stack)
 		if int(argc) > n {
@@ -4784,7 +4784,7 @@ func (vm *VM) callCallableWithForwardThis(fn runtime.Value, args []runtime.Value
 	return vm.callCallable(fn, args)
 }
 
-func (vm *VM) startFunction(instruction Instruction, ip int, function FunctionInfo, provided []runtime.Value, returnOverride runtime.Value) (int, error) {
+func (vm *VM) startFunction(instruction Instruction, ip int, function *FunctionInfo, provided []runtime.Value, returnOverride runtime.Value) (int, error) {
 	return vm.startFunctionWithValidation(instruction, ip, function, provided, returnOverride, true)
 }
 
@@ -4793,7 +4793,7 @@ func (vm *VM) startFunction(instruction Instruction, ip int, function FunctionIn
 // closure call path so that a lambda or named-generic-function value
 // can resolve type-parameter names from the call site of its
 // enclosing generic function.
-func (vm *VM) startFunctionWithBindings(instruction Instruction, ip int, function FunctionInfo, provided []runtime.Value, returnOverride runtime.Value, inheritedBindings map[string]string) (int, error) {
+func (vm *VM) startFunctionWithBindings(instruction Instruction, ip int, function *FunctionInfo, provided []runtime.Value, returnOverride runtime.Value, inheritedBindings map[string]string) (int, error) {
 	prev := vm.pendingTypeBindings
 	vm.pendingTypeBindings = inheritedBindings
 	nextIP, err := vm.startFunctionWithValidation(instruction, ip, function, provided, returnOverride, true)
@@ -4812,7 +4812,7 @@ func (vm *VM) startFunctionWithBindings(instruction Instruction, ip int, functio
 // or match the parameter spec inline. Anything else falls back to the
 // interface-form path by materialising args at the boundary, paying
 // the allocation cost only on the slow path.
-func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function FunctionInfo, stackArgs []runtime.VMValue, returnOverride runtime.Value) (int, error) {
+func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *FunctionInfo, stackArgs []runtime.VMValue, returnOverride runtime.Value) (int, error) {
 	maxDepth := vm.maxCallDepth
 	if maxDepth <= 0 {
 		maxDepth = DefaultMaxCallDepth
@@ -4970,7 +4970,7 @@ func (vm *VM) matchVMValueToTypeSpec(typeParams map[string]bool, value runtime.V
 // startFunctionWithValidation but reads from vm.locals (already set up
 // by startFunctionVMValue) rather than a []runtime.Value arg list.
 // Returns the inferred bindings so the caller can run constraint checks.
-func (vm *VM) inferTypeBindingsFromLocals(function FunctionInfo) map[string]string {
+func (vm *VM) inferTypeBindingsFromLocals(function *FunctionInfo) map[string]string {
 	typeParamSet := function.typeParamSet
 	typeBindings := map[string]string{}
 	// Seed with any explicit `<TypeArgs>` planted by OpPlantCallTypeBindings
@@ -5084,11 +5084,11 @@ func (vm *VM) bindOrRecurse(spec vmTypeSpec, v runtime.Value, typeParamSet map[s
 	vm.inferGenericBindingsFromSpec(spec, v, typeParamSet, typeBindings)
 }
 
-func (vm *VM) startPrevalidatedFunction(instruction Instruction, ip int, function FunctionInfo, provided []runtime.Value, returnOverride runtime.Value) (int, error) {
+func (vm *VM) startPrevalidatedFunction(instruction Instruction, ip int, function *FunctionInfo, provided []runtime.Value, returnOverride runtime.Value) (int, error) {
 	return vm.startFunctionWithValidation(instruction, ip, function, provided, returnOverride, false)
 }
 
-func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, function FunctionInfo, provided []runtime.Value, returnOverride runtime.Value, validateTypes bool) (int, error) {
+func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, function *FunctionInfo, provided []runtime.Value, returnOverride runtime.Value, validateTypes bool) (int, error) {
 	maxDepth := vm.maxCallDepth
 	if maxDepth <= 0 {
 		maxDepth = DefaultMaxCallDepth
@@ -5303,7 +5303,7 @@ func (vm *VM) startClosureFunction(instruction Instruction, ip int, closure runt
 	if int(closure.FunctionIndex) >= len(vm.chunk.Functions) {
 		return 0, vm.runtimeError(instruction, "closure function index out of range")
 	}
-	function := vm.chunk.Functions[closure.FunctionIndex]
+	function := &vm.chunk.Functions[closure.FunctionIndex]
 	if function.IsGenerator && !vm.generatorExecution {
 		vm.push(vm.lazyClosureGenerator(closure, args))
 		return ip, nil
@@ -5479,7 +5479,7 @@ func (vm *VM) constructClass(instruction Instruction, ip int) (int, error) {
 		return 0, err
 	}
 	callArgs := append([]runtime.Value{instance}, args...)
-	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], callArgs, instance)
+	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, instance)
 	if err != nil {
 		return 0, err
 	}
@@ -5772,7 +5772,7 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}}, nil)
+		return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}}, nil)
 	}
 	return 0, vm.runtimeError(instruction, "%s has no field %s", instance.Class.Name, name)
 }
@@ -5842,7 +5842,7 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}, value}, value)
+		return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}, value}, value)
 	}
 	instance.Fields[name] = value
 	vm.push(value)
@@ -5889,7 +5889,7 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 		return 0, err
 	}
 	callArgs := append([]runtime.Value{instance}, args...)
-	return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], callArgs, runtime.Null{})
+	return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, runtime.Null{})
 }
 
 func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
@@ -5923,7 +5923,7 @@ func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
 		return 0, err
 	}
 	callArgs := append([]runtime.Value{instance}, args...)
-	return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], callArgs, nil)
+	return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, nil)
 }
 
 func (vm *VM) popInstanceAndArgs(instruction Instruction, argc int) (*runtime.Instance, []runtime.Value, error) {
@@ -5977,7 +5977,7 @@ func (vm *VM) getStaticValue(instruction Instruction, ip int) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}}, nil)
+			return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}}, nil)
 		}
 		return 0, vm.runtimeError(instruction, "unknown static member %s.%s", vm.chunk.Classes[classIndex].Name, name)
 	}
@@ -6026,7 +6026,7 @@ func (vm *VM) setStaticValue(instruction Instruction, ip int) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}, value}, nil)
+		return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}, value}, nil)
 	}
 	return 0, vm.runtimeError(instruction, "unknown static member %s.%s", vm.chunk.Classes[classIndex].Name, name)
 }
@@ -6060,7 +6060,7 @@ func (vm *VM) callStaticMethod(instruction Instruction, ip int) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}, runtime.List{Elements: args}}, nil)
+			return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}, runtime.List{Elements: args}}, nil)
 		}
 		return 0, vm.runtimeError(instruction, "unknown static method %s.%s", vm.chunk.Classes[classIndex].Name, name)
 	}
@@ -6080,7 +6080,7 @@ func (vm *VM) callStaticMethod(instruction Instruction, ip int) (int, error) {
 		vm.push(result)
 		return ip, nil
 	}
-	return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], args, nil)
+	return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], args, nil)
 }
 
 func (vm *VM) orderRuntimeArguments(instruction Instruction, function FunctionInfo, args []runtime.Value, names []string, paramOffset int) ([]runtime.Value, error) {
@@ -8206,7 +8206,7 @@ func (vm *VM) callBytecodeInline(funcIndex int64, args []runtime.Value) (runtime
 	if funcIndex < 0 || int(funcIndex) >= len(vm.chunk.Functions) {
 		return nil, fmt.Errorf("function index out of range")
 	}
-	function := vm.chunk.Functions[funcIndex]
+	function := &vm.chunk.Functions[funcIndex]
 	if function.IsGenerator || function.Async {
 		return nil, fmt.Errorf("inline call does not support generator/async functions")
 	}
@@ -10318,7 +10318,7 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 		return 0, vm.runtimeError(instruction, "stack underflow")
 	}
 	base := n - argc - 1
-	function := vm.chunk.Functions[functionIndex]
+	function := &vm.chunk.Functions[functionIndex]
 	// Fast path: skip the per-arg ToValue() conversion when
 	// startFunctionVMValue can take VMValues directly. Receiver +
 	// argc must match the callee's full param count, and we must
@@ -10456,7 +10456,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 					return 0, err
 				}
 				callArgs := []runtime.Value{instance, runtime.String{Value: nameValue.Value}, runtime.List{Elements: args}}
-				return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], callArgs, nil)
+				return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, nil)
 			}
 			if result, handled, err := vm.callBuiltinParentMethod(classInfo, instance, nameValue.Value, args); handled {
 				if err != nil {
@@ -10486,7 +10486,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			vm.push(result)
 			return ip, nil
 		}
-		nextIP, err := vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], slots, nil)
+		nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], slots, nil)
 		if err != nil {
 			return 0, err
 		}
@@ -10711,7 +10711,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			vm.push(result)
 			return ip, nil
 		}
-		return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], args, nil)
+		return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], args, nil)
 	}
 	if closure, ok := receiver.(runtime.BytecodeClosure); ok {
 		if nameValue.Value != "__invoke" {
@@ -10896,7 +10896,7 @@ func (vm *VM) methodCallNamed(instruction Instruction, ip int) (int, error) {
 		return ip, nil
 	}
 	callArgs := append([]runtime.Value{instance}, ordered...)
-	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], callArgs, nil)
+	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -11082,9 +11082,9 @@ func stripModulePrefix(typeName string) string {
 func dictKeyFor(value runtime.Value) string {
 	switch v := value.(type) {
 	case runtime.String:
-		return "string:" + v.Value
+		return "s" + v.Value
 	case runtime.SmallInt:
-		return "int:" + strconv.FormatInt(v.Value, 10)
+		return "i" + strconv.FormatInt(v.Value, 10)
 	}
 	return native.DictKey(value)
 }
@@ -11378,7 +11378,7 @@ func (vm *VM) classImplements(classInfo ClassInfo, target string) bool {
 	return false
 }
 
-func (vm *VM) checkTypeParamConstraints(instruction Instruction, function FunctionInfo, typeBindings map[string]string) error {
+func (vm *VM) checkTypeParamConstraints(instruction Instruction, function *FunctionInfo, typeBindings map[string]string) error {
 	if len(function.TypeParamConstraintExprs) == 0 {
 		return nil
 	}
@@ -13832,7 +13832,7 @@ func (vm *VM) bitwiseInfix(instruction Instruction, ip int) (int, error) {
 				if err != nil {
 					return 0, err
 				}
-				return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
+				return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
 			}
 		}
 	}
@@ -13883,7 +13883,7 @@ func (vm *VM) bitwiseNot(instruction Instruction, ip int) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			return vm.startPrevalidatedFunction(instruction, ip, vm.chunk.Functions[functionIndex], []runtime.Value{instance}, nil)
+			return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance}, nil)
 		}
 	}
 	intVal, ok := native.IntValueToBigInt(value)

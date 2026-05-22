@@ -100,5 +100,5 @@ func lineColumn(text string, offset int64) (int64, int64) {
 }
 
 func dictKey(key string) string {
-	return "string:" + key
+	return "s" + key
 }

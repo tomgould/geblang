@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -111,51 +112,71 @@ func instanceToSerializable(instance *runtime.Instance, recurse func(runtime.Val
 }
 
 // DictKey returns the canonical map key string for a runtime.Value used as a dict key.
+// DictKey single-byte type prefixes. Distinct type tags so different
+// runtime values never produce the same map-key string. Short
+// prefixes (1 byte vs the previous 7-byte "string:" form) cut per-key
+// allocation cost and shrink the live byte count walked by the map's
+// hash function on every dict operation.
+const (
+	dictKeyPrefixNull    = "n"
+	dictKeyPrefixBoolT   = "b1"
+	dictKeyPrefixBoolF   = "b0"
+	dictKeyPrefixInt     = "i"
+	dictKeyPrefixDecimal = "d"
+	dictKeyPrefixFloat   = "f"
+	dictKeyPrefixString  = "s"
+	dictKeyPrefixBytes   = "y"
+	dictKeyPrefixList    = "L"
+	dictKeyPrefixSet     = "S"
+	dictKeyPrefixDict    = "D"
+	dictKeyPrefixRange   = "r"
+)
+
 func DictKey(value runtime.Value) string {
 	switch value := value.(type) {
 	case runtime.Null:
-		return "null"
+		return dictKeyPrefixNull
 	case runtime.Bool:
 		if value.Value {
-			return "bool:true"
+			return dictKeyPrefixBoolT
 		}
-		return "bool:false"
+		return dictKeyPrefixBoolF
 	case runtime.SmallInt:
-		return "int:" + strconv.FormatInt(value.Value, 10)
+		return dictKeyPrefixInt + strconv.FormatInt(value.Value, 10)
 	case runtime.Int:
-		return "int:" + value.Value.String()
+		return dictKeyPrefixInt + value.Value.String()
 	case runtime.Decimal:
-		return "decimal:" + value.Value.RatString()
+		return dictKeyPrefixDecimal + value.Value.RatString()
 	case runtime.Float:
 		floatValue := value.Value
 		if floatValue == 0 {
 			floatValue = 0
 		}
-		return "float:" + strconv.FormatFloat(floatValue, 'g', -1, 64)
+		return dictKeyPrefixFloat + strconv.FormatFloat(floatValue, 'g', -1, 64)
 	case runtime.String:
-		// Dict-key uniqueness relies on the "string:" prefix to keep
-		// distinct types from colliding (e.g. int 5 vs string "5").
-		// strconv.Quote here was defensive-only; the prefix already
-		// separates string keys from every other kind, so we skip
-		// quoting and concat the raw bytes directly. This trims a
-		// substantial chunk of CPU off `json_roundtrip` (the parser
-		// builds one of these keys per object entry).
-		return "string:" + value.Value
+		// Dict-key uniqueness relies on the single-byte type prefix
+		// to keep distinct types from colliding (e.g. int 5 vs
+		// string "5"). The previous form prepended "string:" which
+		// is 6 bytes longer; shortening drops alloc + hash cost on
+		// every dict insert. The prefix never appears at the start
+		// of any other type's key because each type uses a distinct
+		// leading byte.
+		return dictKeyPrefixString + value.Value
 	case runtime.Bytes:
-		return "bytes:" + hex.EncodeToString(value.Value)
+		return dictKeyPrefixBytes + hex.EncodeToString(value.Value)
 	case runtime.List:
 		parts := make([]string, 0, len(value.Elements))
 		for _, element := range value.Elements {
 			parts = append(parts, DictKey(element))
 		}
-		return "list:[" + strings.Join(parts, ",") + "]"
+		return dictKeyPrefixList + "[" + strings.Join(parts, ",") + "]"
 	case runtime.Set:
 		parts := make([]string, 0, len(value.Elements))
 		for key := range value.Elements {
 			parts = append(parts, key)
 		}
 		sort.Strings(parts)
-		return "set:{" + strings.Join(parts, ",") + "}"
+		return dictKeyPrefixSet + "{" + strings.Join(parts, ",") + "}"
 	case runtime.Dict:
 		type kv struct{ k, v string }
 		pairs := make([]kv, 0, len(value.Entries))
@@ -167,9 +188,9 @@ func DictKey(value runtime.Value) string {
 		for i, p := range pairs {
 			parts[i] = p.k + "=" + p.v
 		}
-		return "dict:{" + strings.Join(parts, ",") + "}"
+		return dictKeyPrefixDict + "{" + strings.Join(parts, ",") + "}"
 	case runtime.Range:
-		return "range:" + value.Start.String() + ":" + value.End.String() + ":" + value.Step.String() + ":" + strconv.FormatBool(value.Exclusive)
+		return dictKeyPrefixRange + value.Start.String() + ":" + value.End.String() + ":" + value.Step.String() + ":" + strconv.FormatBool(value.Exclusive)
 	case runtime.BytecodeFunction:
 		return fmt.Sprintf("bytecode-func:%s:%s:%d", value.Module, value.Name, value.Index)
 	case runtime.BytecodeClosure:
@@ -323,6 +344,19 @@ var jsonEncodeBufPool = sync.Pool{
 	},
 }
 
+// jsonDictPairsPool reuses the per-dict sort scratch slice the JSON
+// encoder builds when serialising a runtime.Dict. Each Get returns a
+// fresh-or-recycled slice; the encoder Puts it back on exit (including
+// on error paths) so concurrent encodes don't share the same buffer.
+// Recursion inside an outer dict gets its own slice because the
+// outer's hasn't been Put yet.
+var jsonDictPairsPool = sync.Pool{
+	New: func() any {
+		p := make(jsonDictPairs, 0, 16)
+		return &p
+	},
+}
+
 func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 	switch v := value.(type) {
 	case runtime.Null:
@@ -353,11 +387,12 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 		buf.WriteString(v.Value.FloatString(10))
 		return nil
 	case runtime.Float:
-		text, err := json.Marshal(v.Value)
-		if err != nil {
-			return err
+		if math.IsNaN(v.Value) || math.IsInf(v.Value, 0) {
+			return fmt.Errorf("json: unsupported value: %g", v.Value)
 		}
-		buf.Write(text)
+		var scratch [32]byte
+		out := strconv.AppendFloat(scratch[:0], v.Value, 'g', -1, 64)
+		buf.Write(out)
 		return nil
 	case runtime.String:
 		return encodeJSONString(buf, v.Value)
@@ -380,18 +415,26 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 		return nil
 	case runtime.Dict:
 		buf.WriteByte('{')
-		// Sort entries so output is deterministic. Build a typed
-		// []jsonDictPair and sort.Sort (faster than sort.Slice's
-		// reflect-based path used by the previous version).
+		// Sort entries so output is deterministic. Borrow a
+		// pre-allocated jsonDictPairs slice from the pool so the
+		// per-dict allocation cost (800x records x 200 iterations
+		// on the bench) goes through reuse rather than mallocgc.
 		n := len(v.Entries)
 		if n == 0 {
 			buf.WriteByte('}')
 			return nil
 		}
-		pairs := make(jsonDictPairs, 0, n)
+		pairsPtr := jsonDictPairsPool.Get().(*jsonDictPairs)
+		pairs := *pairsPtr
+		pairs = pairs[:0]
+		if cap(pairs) < n {
+			pairs = make(jsonDictPairs, 0, n)
+		}
 		for _, entry := range v.Entries {
 			key, ok := entry.Key.(runtime.String)
 			if !ok {
+				*pairsPtr = pairs[:0]
+				jsonDictPairsPool.Put(pairsPtr)
 				return fmt.Errorf("json.stringify only supports dicts with string keys")
 			}
 			pairs = append(pairs, jsonDictPair{key: key.Value, value: entry.Value})
@@ -402,13 +445,19 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 				buf.WriteByte(',')
 			}
 			if err := encodeJSONString(buf, p.key); err != nil {
+				*pairsPtr = pairs[:0]
+				jsonDictPairsPool.Put(pairsPtr)
 				return err
 			}
 			buf.WriteByte(':')
 			if err := encodeJSONValueInto(buf, p.value); err != nil {
+				*pairsPtr = pairs[:0]
+				jsonDictPairsPool.Put(pairsPtr)
 				return err
 			}
 		}
+		*pairsPtr = pairs[:0]
+		jsonDictPairsPool.Put(pairsPtr)
 		buf.WriteByte('}')
 		return nil
 	case *runtime.Instance:
@@ -427,11 +476,17 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 	}
 }
 
-// encodeJSONString writes a JSON-quoted string directly into buf. The
-// common path (strings with no control chars, quotes, backslashes, or
-// bytes >= 0x80) is a single buf.Grow + raw copy. Slow path drops to
-// json.Marshal so the spec-corner behaviour (UTF-8 escaping, surrogate
-// pairs, etc.) stays identical to encoding/json.
+// encodeJSONString writes a JSON-quoted string directly into buf.
+// Fast path: strings with no escape-required bytes (control chars,
+// quote, backslash) emit as a single buf.Grow + raw copy. Bytes
+// >= 0x80 pass through verbatim - RFC 8259 §3 specifies UTF-8 as
+// the default JSON encoding, so valid multi-byte runes do not need
+// escaping. Slow path walks byte-by-byte emitting the RFC-mandated
+// escapes (" and \\ always, control chars 0x00-0x1F via standard
+// short escapes or \uXXXX). Skips the HTML / JS-line-separator
+// escapes that encoding/json emits by default (those are JS-embed
+// safety, not JSON spec; matches Geblang's existing fast-path
+// behaviour for ASCII chars like < > &).
 func encodeJSONString(buf *bytes.Buffer, s string) error {
 	if jsonStringIsSafe(s) {
 		buf.Grow(len(s) + 2)
@@ -440,13 +495,47 @@ func encodeJSONString(buf *bytes.Buffer, s string) error {
 		buf.WriteByte('"')
 		return nil
 	}
-	encoded, err := json.Marshal(s)
-	if err != nil {
-		return err
+	buf.Grow(len(s) + 4)
+	buf.WriteByte('"')
+	start := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 0x20 && c != '"' && c != '\\' {
+			continue
+		}
+		if start < i {
+			buf.WriteString(s[start:i])
+		}
+		switch c {
+		case '"':
+			buf.WriteString(`\"`)
+		case '\\':
+			buf.WriteString(`\\`)
+		case '\b':
+			buf.WriteString(`\b`)
+		case '\f':
+			buf.WriteString(`\f`)
+		case '\n':
+			buf.WriteString(`\n`)
+		case '\r':
+			buf.WriteString(`\r`)
+		case '\t':
+			buf.WriteString(`\t`)
+		default:
+			buf.WriteString(`\u00`)
+			buf.WriteByte(jsonHexChars[c>>4])
+			buf.WriteByte(jsonHexChars[c&0x0F])
+		}
+		start = i + 1
 	}
-	buf.Write(encoded)
+	if start < len(s) {
+		buf.WriteString(s[start:])
+	}
+	buf.WriteByte('"')
 	return nil
 }
+
+const jsonHexChars = "0123456789abcdef"
 
 // jsonDictPair / jsonDictPairs back the typed sort path the JSON
 // encoder uses to alphabetise dict keys without paying for
@@ -463,14 +552,14 @@ func (p jsonDictPairs) Less(i, j int) bool { return p[i].key < p[j].key }
 func (p jsonDictPairs) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 
 // jsonStringIsSafe reports whether s can be JSON-encoded by surrounding
-// it with quotes verbatim - no escape sequences required. Returns false
-// for any byte < 0x20, `"`, `\`, or any non-ASCII byte (which
-// encoding/json would have escaped with `\u` sequences for invalid
-// UTF-8 and forced the canonical UTF-8 form for valid runes).
+// it with quotes verbatim - no escape sequences required. Returns
+// false for any byte < 0x20, `"`, or `\\`. Non-ASCII bytes (>= 0x80)
+// pass through (raw UTF-8); the caller relies on Geblang strings
+// being valid UTF-8.
 func jsonStringIsSafe(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if c < 0x20 || c == '"' || c == '\\' || c >= 0x80 {
+		if c < 0x20 || c == '"' || c == '\\' {
 			return false
 		}
 	}
