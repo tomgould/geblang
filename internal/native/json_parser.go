@@ -65,7 +65,11 @@ func (p *jsonParser) parseValue() (runtime.Value, error) {
 
 func (p *jsonParser) parseObject() (runtime.Value, error) {
 	p.pos++ // skip {
-	entries := map[string]runtime.DictEntry{}
+	// Hint a typical JSON-object size so the first few inserts skip
+	// the rehash cycle. Most JSON objects in real payloads have at
+	// least four-five entries; the bench's per-record object has
+	// five. Map grows past this hint if needed.
+	entries := make(map[string]runtime.DictEntry, 8)
 	p.skipWhitespace()
 	if p.pos < len(p.src) && p.src[p.pos] == '}' {
 		p.pos++
@@ -111,7 +115,9 @@ func (p *jsonParser) parseObject() (runtime.Value, error) {
 
 func (p *jsonParser) parseArray() (runtime.Value, error) {
 	p.pos++ // skip [
-	var elements []runtime.Value
+	// Hint a typical JSON-array size so the first few appends skip
+	// the slice-grow path.
+	elements := make([]runtime.Value, 0, 8)
 	p.skipWhitespace()
 	if p.pos < len(p.src) && p.src[p.pos] == ']' {
 		p.pos++
@@ -313,8 +319,19 @@ func (p *jsonParser) parseNumber() (runtime.Value, error) {
 	if isFloat {
 		return runtime.NewDecimalLiteral(text)
 	}
-	// Integer: fits int64 -> use big.Int via runtime.NewIntLiteral so
-	// the type matches the existing path (runtime.Int holding the value).
+	// Fast path: integers that fit int64 (the JSON common case for
+	// ids, counts, scores) skip the big.Int parse via SetString and
+	// build a `runtime.Int` directly from int64. Keeping the
+	// runtime type as `Int` rather than `SmallInt` matters because
+	// the evaluator path's equality / arithmetic dispatcher is
+	// keyed on `Int` (`SmallInt` is a VM-side optimisation that
+	// doesn't have full evaluator support yet); a parser that
+	// produced `SmallInt` would diverge under VM/evaluator parity.
+	if n := p.pos - start; n <= 18 {
+		if v, err := strconv.ParseInt(text, 10, 64); err == nil {
+			return runtime.NewInt64(v), nil
+		}
+	}
 	value, ok := new(big.Int).SetString(text, 10)
 	if !ok {
 		return nil, fmt.Errorf("invalid integer literal %q", text)

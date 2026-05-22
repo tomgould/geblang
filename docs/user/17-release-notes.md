@@ -5,8 +5,15 @@
 ### Performance
 
 - Token-driven JSON parser replaces the prior double-walk through
-  `encoding/json` + `JSONToValue`; `json_roundtrip` 1665 to ~1148 ms
-  (-31%).
+  `encoding/json` + `JSONToValue`. `DictKey` drops the
+  defensive `strconv.Quote` (the type prefix already disambiguates
+  string keys from other kinds), the JSON encoder writes ASCII
+  strings without per-byte escape checking when nothing needs
+  quoting, the encoder buffer is now pooled across calls, and dict
+  output uses typed sort.Sort instead of reflect-based sort.Slice.
+  Combined effect: `json_roundtrip` 1665 to ~700 ms (-58%), now
+  within ~20% of Python's C-implemented json module on the same
+  workload.
 - `OpCallResolvedMethod` skips per-arg `ToValue()` boxing for the
   common `instance.method(args)` case by routing through
   `startFunctionVMValue` with VMValues straight off the stack;

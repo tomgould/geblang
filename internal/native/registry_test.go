@@ -47,10 +47,10 @@ func TestParseErrorValue(t *testing.T) {
 	parseErr := native.NewParseError("bad data", "{\n  bad", 5)
 	value := native.ParseErrorValue(parseErr)
 	dict := value.(runtime.Dict)
-	if dict.Entries["string:\"message\""].Value.Inspect() != "bad data" {
-		t.Fatalf("message: got %q", dict.Entries["string:\"message\""].Value.Inspect())
+	if dict.Entries["string:message"].Value.Inspect() != "bad data" {
+		t.Fatalf("message: got %q", dict.Entries["string:message"].Value.Inspect())
 	}
-	if dict.Entries["string:\"line\""].Value.Inspect() != "2" {
-		t.Fatalf("line: got %q", dict.Entries["string:\"line\""].Value.Inspect())
+	if dict.Entries["string:line"].Value.Inspect() != "2" {
+		t.Fatalf("line: got %q", dict.Entries["string:line"].Value.Inspect())
 	}
 }

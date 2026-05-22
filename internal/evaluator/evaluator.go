@@ -22062,6 +22062,20 @@ func evalBoolInfix(operator string, left runtime.Value, right runtime.Value) (ru
 }
 
 func evalNumericInfix(operator string, left runtime.Value, right runtime.Value) (runtime.Value, error) {
+	// Promote SmallInt to Int so the rest of this dispatcher (and
+	// the cascading per-type infix paths) only has to handle the
+	// big.Int representation. SmallInt arrives here from native
+	// integer sources (json parser, csv, etc.) that produce the
+	// runtime's interface-inline int. The conversion allocates
+	// O(1) big.Int per arithmetic step; the storage benefit of
+	// SmallInt at parse-time pays for it as long as the loop body
+	// doesn't run arithmetic on every value.
+	if s, ok := left.(runtime.SmallInt); ok {
+		left = runtime.NewInt64(s.Value)
+	}
+	if s, ok := right.(runtime.SmallInt); ok {
+		right = runtime.NewInt64(s.Value)
+	}
 	switch l := left.(type) {
 	case runtime.Int:
 		switch r := right.(type) {
@@ -22366,7 +22380,7 @@ func dictKey(value runtime.Value) string {
 		}
 		return "float:" + strconv.FormatFloat(floatValue, 'g', -1, 64)
 	case runtime.String:
-		return "string:" + strconv.Quote(value.Value)
+		return "string:" + value.Value
 	case runtime.Bytes:
 		return "bytes:" + hex.EncodeToString(value.Value)
 	case runtime.List:

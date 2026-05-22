@@ -11082,7 +11082,7 @@ func stripModulePrefix(typeName string) string {
 func dictKeyFor(value runtime.Value) string {
 	switch v := value.(type) {
 	case runtime.String:
-		return "string:" + strconv.Quote(v.Value)
+		return "string:" + v.Value
 	case runtime.SmallInt:
 		return "int:" + strconv.FormatInt(v.Value, 10)
 	}

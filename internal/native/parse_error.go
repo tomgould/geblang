@@ -3,7 +3,6 @@ package native
 import (
 	"encoding/json"
 	"errors"
-	"strconv"
 
 	"geblang/internal/runtime"
 )
@@ -101,5 +100,5 @@ func lineColumn(text string, offset int64) (int64, int64) {
 }
 
 func dictKey(key string) string {
-	return "string:" + strconv.Quote(key)
+	return "string:" + key
 }

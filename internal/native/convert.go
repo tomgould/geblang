@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -132,7 +133,14 @@ func DictKey(value runtime.Value) string {
 		}
 		return "float:" + strconv.FormatFloat(floatValue, 'g', -1, 64)
 	case runtime.String:
-		return "string:" + strconv.Quote(value.Value)
+		// Dict-key uniqueness relies on the "string:" prefix to keep
+		// distinct types from colliding (e.g. int 5 vs string "5").
+		// strconv.Quote here was defensive-only; the prefix already
+		// separates string keys from every other kind, so we skip
+		// quoting and concat the raw bytes directly. This trims a
+		// substantial chunk of CPU off `json_roundtrip` (the parser
+		// builds one of these keys per object entry).
+		return "string:" + value.Value
 	case runtime.Bytes:
 		return "bytes:" + hex.EncodeToString(value.Value)
 	case runtime.List:
@@ -291,13 +299,28 @@ func JSONToValue(value any) (runtime.Value, error) {
 // EncodeJSONValue serialises a runtime.Value as a JSON string directly,
 // without the runtime.Value -> any -> json.Encoder intermediate of
 // ValueToJSON. Skips the map[string]any allocations json.stringify
-// otherwise pays per dict (heavy on json_roundtrip).
+// otherwise pays per dict (heavy on json_roundtrip). The output
+// buffer comes from a sync.Pool so successive calls re-use the
+// underlying byte slab instead of every call paying for a fresh
+// allocation + grow cycle.
 func EncodeJSONValue(value runtime.Value) (string, error) {
-	var buf bytes.Buffer
-	if err := encodeJSONValueInto(&buf, value); err != nil {
+	buf := jsonEncodeBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	if err := encodeJSONValueInto(buf, value); err != nil {
+		jsonEncodeBufPool.Put(buf)
 		return "", err
 	}
-	return buf.String(), nil
+	out := buf.String()
+	jsonEncodeBufPool.Put(buf)
+	return out, nil
+}
+
+var jsonEncodeBufPool = sync.Pool{
+	New: func() any {
+		buf := &bytes.Buffer{}
+		buf.Grow(4096)
+		return buf
+	},
 }
 
 func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
@@ -357,27 +380,32 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 		return nil
 	case runtime.Dict:
 		buf.WriteByte('{')
-		// Sort keys so output is deterministic (json.Marshal of a Go
-		// map alphabetises by default; downstream code relies on it).
-		keys := make([]string, 0, len(v.Entries))
-		for k, entry := range v.Entries {
-			if _, ok := entry.Key.(runtime.String); !ok {
+		// Sort entries so output is deterministic. Build a typed
+		// []jsonDictPair and sort.Sort (faster than sort.Slice's
+		// reflect-based path used by the previous version).
+		n := len(v.Entries)
+		if n == 0 {
+			buf.WriteByte('}')
+			return nil
+		}
+		pairs := make(jsonDictPairs, 0, n)
+		for _, entry := range v.Entries {
+			key, ok := entry.Key.(runtime.String)
+			if !ok {
 				return fmt.Errorf("json.stringify only supports dicts with string keys")
 			}
-			keys = append(keys, k)
+			pairs = append(pairs, jsonDictPair{key: key.Value, value: entry.Value})
 		}
-		sort.Strings(keys)
-		for i, k := range keys {
-			entry := v.Entries[k]
-			key := entry.Key.(runtime.String)
+		sort.Sort(pairs)
+		for i, p := range pairs {
 			if i > 0 {
 				buf.WriteByte(',')
 			}
-			if err := encodeJSONString(buf, key.Value); err != nil {
+			if err := encodeJSONString(buf, p.key); err != nil {
 				return err
 			}
 			buf.WriteByte(':')
-			if err := encodeJSONValueInto(buf, entry.Value); err != nil {
+			if err := encodeJSONValueInto(buf, p.value); err != nil {
 				return err
 			}
 		}
@@ -399,13 +427,54 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 	}
 }
 
+// encodeJSONString writes a JSON-quoted string directly into buf. The
+// common path (strings with no control chars, quotes, backslashes, or
+// bytes >= 0x80) is a single buf.Grow + raw copy. Slow path drops to
+// json.Marshal so the spec-corner behaviour (UTF-8 escaping, surrogate
+// pairs, etc.) stays identical to encoding/json.
 func encodeJSONString(buf *bytes.Buffer, s string) error {
+	if jsonStringIsSafe(s) {
+		buf.Grow(len(s) + 2)
+		buf.WriteByte('"')
+		buf.WriteString(s)
+		buf.WriteByte('"')
+		return nil
+	}
 	encoded, err := json.Marshal(s)
 	if err != nil {
 		return err
 	}
 	buf.Write(encoded)
 	return nil
+}
+
+// jsonDictPair / jsonDictPairs back the typed sort path the JSON
+// encoder uses to alphabetise dict keys without paying for
+// sort.Slice's reflect-based comparator on every entry.
+type jsonDictPair struct {
+	key   string
+	value runtime.Value
+}
+
+type jsonDictPairs []jsonDictPair
+
+func (p jsonDictPairs) Len() int           { return len(p) }
+func (p jsonDictPairs) Less(i, j int) bool { return p[i].key < p[j].key }
+func (p jsonDictPairs) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+
+// jsonStringIsSafe reports whether s can be JSON-encoded by surrounding
+// it with quotes verbatim - no escape sequences required. Returns false
+// for any byte < 0x20, `"`, `\`, or any non-ASCII byte (which
+// encoding/json would have escaped with `\u` sequences for invalid
+// UTF-8 and forced the canonical UTF-8 form for valid runes).
+func jsonStringIsSafe(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x20 || c == '"' || c == '\\' || c >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 // ValueToJSON converts a runtime.Value to a plain Go value suitable for JSON encoding.
