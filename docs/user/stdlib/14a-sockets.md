@@ -2,7 +2,7 @@
 
 The `sockets` module (1.2.0) is the high-level TCP / TLS interface,
 sitting on top of the lower-level `net.*` primitives. Sockets are
-`streams.IOStream`-shaped, so the F3 stream methods and dunder
+`streams.IOStream`-shaped, so the stream methods and dunder
 protocol apply directly. For raw byte-oriented operations or UDP,
 keep using the `net` module.
 
@@ -34,8 +34,9 @@ Returns a `Socket` with:
 - `close()` - shut the connection (idempotent).
 - `isClosed()` - state check.
 - `localAddr()` / `remoteAddr()` - peer addresses.
-- F3 dunders `__read` / `__write` / `__close` / `__iter` so
-  `streams.copy(sock, dst)` and `for (line in sock)` work directly.
+- Stream-protocol dunders `__read` / `__write` / `__close` /
+  `__iter` so `streams.copy(sock, dst)` and `for (line in sock)`
+  work directly.
 
 ## Server side
 
@@ -89,4 +90,4 @@ matching the certificate (SNI is set from the host argument).
 | Talk to a TCP/TLS server line-by-line | `sockets.dial` |
 | Build a TCP server with a callback handler | `sockets.serve` |
 | Raw bytes, custom framing, UDP, deadlines, DNS helpers | `net.*` |
-| Streaming a socket alongside files / processes | `sockets` (F3 protocol) |
+| Streaming a socket alongside files / processes | `sockets` (uses the stream protocol) |

@@ -5,7 +5,7 @@
 ### Stdlib
 
 - New `sockets` module: `sockets.dial(host, port, opts)` opens a
-  TCP or TLS connection and returns a `Socket` wrapping the F3
+  TCP or TLS connection and returns a `Socket` wrapping the
   stream protocol. `sockets.serve(host, port, handler)` binds a
   listener and dispatches each accepted connection to the handler
   callback. `server.close()` joins the accept goroutine so reads

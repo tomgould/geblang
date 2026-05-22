@@ -2,7 +2,7 @@
 
 The `ssh` module (1.2.0) is a Geblang-native SSH client. It runs
 commands, streams I/O, transfers files via SFTP, and forwards
-ports - all on top of the F3 stream protocol so SSH sessions
+ports - all on top of the stream protocol so SSH sessions
 behave the same as files, pipes, and TCP sockets.
 
 ## Connect
@@ -64,7 +64,7 @@ s.kill();
 
 `spawn` returns an `SSHSession` with `stdin` / `stdout` / `stderr`
 as `streams.IOStream` values - the same shape as
-`proc.Process` from F4. Use it for long-running commands or when
+`proc.Process`. Use it for long-running commands or when
 you need to stream input through stdin.
 
 | Method | Returns | Description |

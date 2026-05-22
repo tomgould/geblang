@@ -44,6 +44,8 @@ Core runtime and host integration:
   file handles, directories, and filesystem operations.
 - [System, Environment, And Processes](sys.html): environment variables,
   process metadata, permissions, temp files, subprocesses, and shell integration.
+- [Subprocess Streaming](proc.html): `proc.spawn` with concurrent stdin /
+  stdout / stderr streams, signals, and PTY support.
 - [Paths](path.html): path manipulation and object-oriented path helpers.
 - [Watch](watch.html): filesystem watching.
 
@@ -76,6 +78,10 @@ Application building:
 - [HTTP, Networking, And WebSockets](http-net.html): HTTP client/server,
   sockets, networking helpers, WebSocket client/server support, and SSE
   primitives.
+- [TCP/TLS Sockets](sockets.html): `sockets.dial` / `sockets.serve` for
+  stream-protocol-shaped TCP and TLS clients and servers.
+- [SSH Client](ssh.html): connect with password / key / agent auth, run
+  commands, stream sessions, transfer files via SFTP, and forward ports.
 - [Mailer And SMTP](mailer-smtp.html): mail messages, alternatives,
   attachments, and SMTP delivery.
 - [Web Modules](web-router.html): request/response wrappers, routing,
