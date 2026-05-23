@@ -1,0 +1,120 @@
+/**
+ * @title PCRE module test
+ * @summary pcre.* exposes a PCRE-compatible engine that supports
+ * lookahead, lookbehind, backreferences, named groups, and the
+ * imsx flag set. PHP-style (?P<name>...) is auto-translated to
+ * the .NET (?<name>...) form.
+ */
+import test;
+import pcre;
+
+class PCRETest extends test.Test {
+    @test
+    func test(): void {
+        this.assertTrue(pcre.test('\d+', "abc123"));
+        this.assertFalse(pcre.test('\d+', "abc"));
+    }
+
+    @test
+    func find(): void {
+        this.assertEquals("WORLD", pcre.find('[A-Z]+', "hello WORLD"));
+        this.assertNull(pcre.find('[A-Z]+', "hello world"));
+    }
+
+    @test
+    func findAll(): void {
+        let all = pcre.findAll('\d+', "1 two 3 four 56");
+        this.assertEquals(["1", "3", "56"], all);
+    }
+
+    @test
+    func match(): void {
+        let m = pcre.match('(\w+) (\w+)', "hello world");
+        this.assertEquals("hello world", m["text"]);
+        this.assertEquals("hello", (m["groups"] as list<string>)[1]);
+        this.assertEquals("world", (m["groups"] as list<string>)[2]);
+    }
+
+    @test
+    func namedGroupsNetStyle(): void {
+        let m = pcre.match('(?<word>[a-z]+)(?<num>[0-9]+)', "abc123");
+        this.assertEquals("abc", (m["named"] as dict<string, any>)["word"]);
+        this.assertEquals("123", (m["named"] as dict<string, any>)["num"]);
+    }
+
+    @test
+    func namedGroupsPhpStyle(): void {
+        # (?P<name>...) is the PHP / Python syntax. The pcre module
+        # translates it to the .NET (?<name>...) form regexp2 uses,
+        # so PHP patterns work unchanged.
+        let m = pcre.match('(?P<word>[a-z]+)(?P<num>[0-9]+)', "abc123");
+        this.assertEquals("abc", (m["named"] as dict<string, any>)["word"]);
+        this.assertEquals("123", (m["named"] as dict<string, any>)["num"]);
+    }
+
+    @test
+    func lookahead(): void {
+        # RE2 cannot do this; PCRE can.
+        this.assertEquals("swimm", pcre.find('\w+(?=ing\b)', "swimming and running"));
+        this.assertTrue(pcre.test('foo(?!bar)', "foobaz"));
+        this.assertFalse(pcre.test('foo(?!bar)', "foobar"));
+    }
+
+    @test
+    func lookbehind(): void {
+        this.assertEquals("42", pcre.find('(?<=\$)\d+', "price is \$42 plus tax"));
+    }
+
+    @test
+    func backref(): void {
+        this.assertTrue(pcre.test('(\w+)\s+\1', "hello hello"));
+        this.assertFalse(pcre.test('(\w+)\s+\1', "hello world"));
+    }
+
+    @test
+    func flagInsensitive(): void {
+        this.assertTrue(pcre.test('hello', "HELLO", "i"));
+        this.assertFalse(pcre.test('hello', "HELLO", ""));
+    }
+
+    @test
+    func flagDotall(): void {
+        this.assertEquals("a\nb", pcre.find('a.b', "a\nb", "s"));
+        this.assertNull(pcre.find('a.b', "a\nb"));
+    }
+
+    @test
+    func flagMultiline(): void {
+        this.assertEquals("bar", pcre.find('^bar', "foo\nbar\nbaz", "m"));
+    }
+
+    @test
+    func replaceNumbered(): void {
+        this.assertEquals("world hello", pcre.replace('(\w+) (\w+)', "$2 $1", "hello world"));
+    }
+
+    @test
+    func replaceLiteral(): void {
+        this.assertEquals("v*.*.*", pcre.replace('\d+', "*", "v1.2.3"));
+    }
+
+    @test
+    func split(): void {
+        this.assertEquals(["a", "b", "c", "d"], pcre.split('\s*,\s*', "a, b ,c,  d"));
+    }
+
+    @test
+    func quote(): void {
+        this.assertEquals("a\\.b\\+c\\*d", pcre.quote("a.b+c*d"));
+        # The quoted output is then safe to use as a literal in a
+        # pattern.
+        this.assertTrue(pcre.test(pcre.quote("a.b+c"), "xxx a.b+c yyy"));
+    }
+
+    @test
+    func unknownFlag(): void {
+        this.assertThrows(func(): void {
+            pcre.test('foo', "foobar", "q");
+        });
+    }
+}

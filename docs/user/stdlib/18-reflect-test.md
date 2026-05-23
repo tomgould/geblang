@@ -190,6 +190,7 @@ failure, and the test runner records the thrown error as a failed test.
 | `assertGreaterThanOrEqual(expected, actual)` | Ordered numeric or string comparison |
 | `assertLessThan(expected, actual)` | Ordered numeric or string comparison |
 | `assertLessThanOrEqual(expected, actual)` | Ordered numeric or string comparison |
+| `assertThrows(callable)` / `assertThrows(callable, substring)` | Fails unless the no-arg callable raises; the optional `substring` must appear in the error message |
 | `fail()` / `fail(message)` | Fails immediately |
 
 Prefer the `assert...` names in new tests. The shorter legacy names remain

@@ -51,7 +51,11 @@ func IsInt(v runtime.Value) bool {
 	return ok1 || ok2
 }
 
-// NumericCompare compares two numeric values, returning -1, 0, or 1.
+// NumericCompare compares two ordered values, returning -1, 0, or 1.
+// Despite the name, it also supports lexicographic comparison
+// between two runtime.String values (the evaluator's compareValues
+// has the same coverage; this is the VM-side path - they should
+// stay in sync).
 func NumericCompare(left runtime.Value, right runtime.Value) (int, error) {
 	// Fast path: both SmallInt
 	if l, ok := left.(runtime.SmallInt); ok {
@@ -95,6 +99,16 @@ func NumericCompare(left runtime.Value, right runtime.Value) (int, error) {
 		}
 	case runtime.Float:
 		if r, ok := right.(runtime.Float); ok {
+			if l.Value < r.Value {
+				return -1, nil
+			}
+			if l.Value > r.Value {
+				return 1, nil
+			}
+			return 0, nil
+		}
+	case runtime.String:
+		if r, ok := right.(runtime.String); ok {
 			if l.Value < r.Value {
 				return -1, nil
 			}

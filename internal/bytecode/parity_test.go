@@ -8301,3 +8301,126 @@ io.println(r["body"]);
 http.shutdown(server);
 `, "200\ngot: streamed-payload\n")
 }
+
+// TestParityPCREBasic exercises the pcre module's PHP-compatible
+// regex engine. Most patterns here also work with re/RE2; the
+// PCRE-only features are covered by the lookahead / lookbehind /
+// backref tests below.
+func TestParityPCREBasic(t *testing.T) {
+	runParity(t, `import pcre;
+import io;
+io.println(pcre.test("\\d+", "abc123") as string);
+io.println(pcre.test("\\d+", "abc") as string);
+io.println(pcre.find("[A-Z]+", "hello WORLD") ?? "null");
+let all = pcre.findAll("\\d+", "1 two 3 four 56");
+for (let i = 0; i < all.length(); i = i + 1) {
+    io.println(all[i] as string);
+}
+`, "true\nfalse\nWORLD\n1\n3\n56\n")
+}
+
+// TestParityPCRELookahead verifies PCRE-only lookahead assertions,
+// which RE2 does not support.
+func TestParityPCRELookahead(t *testing.T) {
+	runParity(t, `import pcre;
+import io;
+io.println(pcre.find("\\w+(?=ing\\b)", "swimming and running") ?? "null");
+io.println(pcre.test("foo(?!bar)", "foobaz") as string);
+io.println(pcre.test("foo(?!bar)", "foobar") as string);
+`, "swimm\ntrue\nfalse\n")
+}
+
+// TestParityPCRELookbehind verifies PCRE-only lookbehind, which
+// RE2 does not support.
+func TestParityPCRELookbehind(t *testing.T) {
+	runParity(t, `import pcre;
+import io;
+io.println(pcre.find("(?<=\\$)\\d+", "price is $42 plus tax") ?? "null");
+`, "42\n")
+}
+
+// TestParityPCREBackref verifies backreferences in the pattern,
+// which RE2 does not support.
+func TestParityPCREBackref(t *testing.T) {
+	runParity(t, `import pcre;
+import io;
+io.println(pcre.test("(\\w+)\\s+\\1", "hello hello") as string);
+io.println(pcre.test("(\\w+)\\s+\\1", "hello world") as string);
+`, "true\nfalse\n")
+}
+
+// TestParityPCREFlags verifies the imsx modifier letters.
+func TestParityPCREFlags(t *testing.T) {
+	runParity(t, `import pcre;
+import io;
+io.println(pcre.test("hello", "HELLO", "i") as string);
+io.println(pcre.test("hello", "HELLO", "") as string);
+io.println(pcre.find("a.b", "a\nb", "s") ?? "null");
+io.println(pcre.find("^bar", "foo\nbar\nbaz", "m") ?? "null");
+`, "true\nfalse\na\nb\nbar\n")
+}
+
+// TestParityPCREReplaceBackref verifies $1 / $2 backref expansion
+// in replacements.
+func TestParityPCREReplaceBackref(t *testing.T) {
+	runParity(t, `import pcre;
+import io;
+io.println(pcre.replace("(\\w+) (\\w+)", "$2 $1", "hello world"));
+io.println(pcre.replace("(\\d+)", "[$1]", "x=42 y=99"));
+`, "world hello\nx=[42] y=[99]\n")
+}
+
+// TestParityPCREMatchDict verifies the {text, groups, named}
+// shape matches the re.match contract.
+func TestParityPCREMatchDict(t *testing.T) {
+	runParity(t, `import pcre;
+import io;
+let m = pcre.match("(?P<word>[a-z]+)(?P<num>[0-9]+)", "abc123");
+io.println(m["text"] as string);
+io.println(m["groups"][1] as string);
+io.println(m["groups"][2] as string);
+io.println(m["named"]["word"] as string);
+io.println(m["named"]["num"] as string);
+`, "abc123\nabc\n123\nabc\n123\n")
+}
+
+// TestParityPCRESplitAndQuote verifies pcre.split and pcre.quote.
+func TestParityPCRESplitAndQuote(t *testing.T) {
+	runParity(t, `import pcre;
+import io;
+let parts = pcre.split("\\s*,\\s*", "a, b ,c,  d");
+for (let i = 0; i < parts.length(); i = i + 1) {
+    io.println(parts[i] as string);
+}
+io.println(pcre.quote("a.b+c"));
+`, "a\nb\nc\nd\na\\.b\\+c\n")
+}
+
+// TestParityPCREBadFlag verifies unknown flag letters error out
+// on both backends rather than getting silently dropped.
+func TestParityPCREBadFlag(t *testing.T) {
+	runErrorParity(t, `import pcre;
+pcre.test("foo", "foobar", "q");
+`, "unknown pcre flag")
+}
+
+// TestParityStringRelational verifies lexicographic string
+// comparison via <, <=, >, >= works on both backends. Previously
+// the VM dispatched relational ops only through NumericCompare,
+// rejecting strings with "comparison expects compatible numeric
+// operands"; the evaluator's compareValues handled them via
+// runtime.String. Now both share native.NumericCompare which
+// covers strings too.
+func TestParityStringRelational(t *testing.T) {
+	runParity(t, `import io;
+io.println(("apple" < "banana") as string);
+io.println(("apple" <= "apple") as string);
+io.println(("zebra" > "apple") as string);
+io.println(("zebra" >= "zebra") as string);
+io.println(("apple" > "zebra") as string);
+let ch = "5";
+io.println((ch >= "0" && ch <= "9") as string);
+let letter = "m";
+io.println((letter >= "a" && letter <= "z") as string);
+`, "true\ntrue\ntrue\ntrue\nfalse\ntrue\ntrue\n")
+}

@@ -22,6 +22,11 @@ func (s *server) completions(params CompletionParams) []CompletionItem {
 	if mod, ok := moduleMemberContext(prefix); ok {
 		return moduleCompletionItems(mod)
 	}
+	// `this.<TAB>` inside a class extending test.Test -> the builtin
+	// assertion methods on the Test base class.
+	if testThisContext(prefix, source) {
+		return testMethodCompletionItems()
+	}
 	// Try primitive-type method completion: `someDecimal.<TAB>` -> the
 	// methods registered for `decimal`. Type is inferred from the most
 	// recent `<primitiveType> <name>` declaration in the file (a
@@ -29,12 +34,50 @@ func (s *server) completions(params CompletionParams) []CompletionItem {
 	if typ, ok := primitiveMemberContext(prefix, source); ok {
 		return primitiveMethodCompletionItems(typ)
 	}
+	// Stdlib class method completion: `someReq.<TAB>` where `someReq`
+	// is declared as `http.Request someReq;` surfaces the catalogued
+	// methods on http.Request.
+	if qualified, ok := classMemberContext(prefix, source); ok {
+		return classMethodCompletionItems(qualified)
+	}
 	if importPrefix, ok := importContext(prefix); ok {
 		return moduleNameCompletionItems(importPrefix)
 	}
 	idPrefix := identifierPrefix(prefix)
 	items := topLevelCompletionItems(idPrefix)
 	items = append(items, userSymbolCompletionItems(source, idPrefix)...)
+	return items
+}
+
+// testThisContext reports whether the cursor sits on a `this.`
+// selector inside a class that extends `test.Test`. The check is
+// lexical: any class declaration in the document with `extends
+// test.Test` enables the path. False negatives (deeper class
+// hierarchies) are acceptable - autocomplete is best-effort.
+func testThisContext(prefix, source string) bool {
+	trimmed := strings.TrimRightFunc(prefix, isIdentRune)
+	if !strings.HasSuffix(trimmed, "this.") {
+		return false
+	}
+	return strings.Contains(source, "extends test.Test")
+}
+
+func testMethodCompletionItems() []CompletionItem {
+	names := make([]string, 0, len(testBaseMethods))
+	for name := range testBaseMethods {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	items := make([]CompletionItem, 0, len(names))
+	for _, name := range names {
+		method := testBaseMethods[name]
+		items = append(items, CompletionItem{
+			Label:         name,
+			Kind:          completionKindFunction,
+			Detail:        method.signature(),
+			Documentation: method.doc,
+		})
+	}
 	return items
 }
 
@@ -47,6 +90,21 @@ func (s *server) signatureHelp(params SignatureHelpParams) SignatureHelp {
 	module, name, argPrefix, ok := callContext(prefix)
 	if !ok {
 		return SignatureHelp{}
+	}
+	// First try a class-method lookup: if `module` actually names a
+	// typed local variable (`http.Request req; req.header(...)`),
+	// resolve via the catalogued class methods. lookupFunction
+	// otherwise falls back to module-level functions.
+	if fn, ok := lookupClassMethod(source, module, name); ok {
+		return SignatureHelp{
+			Signatures: []SignatureInformation{{
+				Label:         fn.signature(),
+				Documentation: fn.doc,
+				Parameters:    parameterInformation(fn.params),
+			}},
+			ActiveSignature: 0,
+			ActiveParameter: activeParameter(argPrefix, len(fn.params)),
+		}
 	}
 	fn, ok := lookupFunction(module, name)
 	if !ok {
@@ -61,6 +119,26 @@ func (s *server) signatureHelp(params SignatureHelpParams) SignatureHelp {
 		ActiveSignature: 0,
 		ActiveParameter: activeParameter(argPrefix, len(fn.params)),
 	}
+}
+
+// lookupClassMethod resolves <varName>.<method> via the file's
+// typed-variable table and the catalogued class method tables.
+// Returns false when varName is not a typed stdlib-class local.
+func lookupClassMethod(source, varName, method string) (functionDoc, bool) {
+	if varName == "" || method == "" {
+		return functionDoc{}, false
+	}
+	types := fileVarTypes(source)
+	typ, ok := types[varName]
+	if !ok {
+		return functionDoc{}, false
+	}
+	methods := lookupClassMethods(typ)
+	if methods == nil {
+		return functionDoc{}, false
+	}
+	fn, ok := methods[method]
+	return fn, ok
 }
 
 func (s *server) document(uri string) (string, bool) {
@@ -245,6 +323,59 @@ func primitiveMemberContext(prefix, source string) (string, bool) {
 	return typ, true
 }
 
+// classMemberContext mirrors primitiveMemberContext for qualified
+// stdlib classes. Returns the fully-qualified class name (e.g.
+// "http.Request") when the cursor is on `<var>.<TAB>` and var was
+// declared as a stdlib class type.
+func classMemberContext(prefix, source string) (string, bool) {
+	trimmed := strings.TrimRightFunc(prefix, isIdentRune)
+	if !strings.HasSuffix(trimmed, ".") {
+		return "", false
+	}
+	beforeDot := strings.TrimSpace(strings.TrimSuffix(trimmed, "."))
+	name := trailingIdentifier(beforeDot)
+	if name == "" {
+		return "", false
+	}
+	types := fileVarTypes(source)
+	typ, ok := types[name]
+	if !ok {
+		return "", false
+	}
+	if _, _, isQualified := splitQualifiedClass(typ); !isQualified {
+		return "", false
+	}
+	if lookupClassMethods(typ) == nil {
+		return "", false
+	}
+	return typ, true
+}
+
+// classMethodCompletionItems returns the LSP CompletionItems for
+// every method on the given qualified stdlib class.
+func classMethodCompletionItems(qualified string) []CompletionItem {
+	methods := lookupClassMethods(qualified)
+	if methods == nil {
+		return []CompletionItem{}
+	}
+	names := make([]string, 0, len(methods))
+	for name := range methods {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	items := make([]CompletionItem, 0, len(names))
+	for _, name := range names {
+		method := methods[name]
+		items = append(items, CompletionItem{
+			Label:         name,
+			Kind:          completionKindFunction,
+			Detail:        method.signature(),
+			Documentation: method.doc,
+		})
+	}
+	return items
+}
+
 // primitiveMethodCompletionItems returns the LSP CompletionItems for
 // every method registered on the given primitive type. Sorted for
 // determinism so the editor always shows the same order.
@@ -301,16 +432,19 @@ func fileVarTypes(source string) map[string]string {
 				line = strings.TrimSpace(line)
 			}
 		}
-		// Look for `TYPE NAME` where TYPE is a primitive keyword and
-		// NAME is a simple identifier. The line must continue with
-		// `=` or `;` (declaration) - we don't want to misread function
-		// parameter lists or expressions.
+		// Look for `TYPE NAME` where TYPE is a primitive keyword or a
+		// `module.ClassName` qualified stdlib type, and NAME is a
+		// simple identifier. The line must continue with `=` or `;`
+		// (declaration) - we don't want to misread function parameter
+		// lists or expressions.
 		parts := strings.Fields(line)
 		if len(parts) < 2 {
 			continue
 		}
 		typ := parts[0]
-		if _, ok := primitiveTypeNames[typ]; !ok {
+		_, isPrimitive := primitiveTypeNames[typ]
+		_, _, isQualifiedClass := splitQualifiedClass(typ)
+		if !isPrimitive && !isQualifiedClass {
 			continue
 		}
 		name := parts[1]

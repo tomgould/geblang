@@ -103,7 +103,7 @@ var builtinModuleNames = map[string]bool{
 	"schema": true, "serde": true, "metrics": true,
 	"trace": true, "profile": true, "crypt": true,
 	"encoding": true, "compress": true, "template": true,
-	"re": true, "markdown": true, "datetime": true, "uuid": true,
+	"re": true, "pcre": true, "markdown": true, "datetime": true, "uuid": true,
 	"dotenv": true, "cli": true, "http": true,
 	"websocket": true, "smtp": true, "db": true,
 	"reflect": true, "log": true,

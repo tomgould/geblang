@@ -1,5 +1,59 @@
 # Release Notes
 
+## 1.3.0
+
+### Stdlib
+
+- New `pcre` module: PCRE-compatible regex engine for patterns
+  that need lookahead, lookbehind, backreferences, atomic groups,
+  or named captures via either `(?P<name>...)` or `(?<name>...)`.
+  Surface mirrors `re.*` (test, find, findAll, match, matchAll,
+  replace, split, quote) with an optional flags string (`imsx`).
+  Coexists with the existing `re` module (RE2, linear-time, no
+  catastrophic backtracking) - reach for `pcre` only when you
+  need PCRE-only features.
+
+### Language
+
+- `test.Test.assertThrows(callable, expectedSubstring = "")` is
+  now a built-in assertion on both the evaluator and the VM.
+  Fails if the no-arg callable returns without raising; when the
+  optional substring is given it must appear in the error
+  message.
+- `test.run(class, opts)` accepts a new `methods` option (a list
+  of method names) so tooling can run a single test.
+- `geblang test --class ClassName` and `--method methodName`
+  flags filter to a single class or method within the discovered
+  test files.
+- `geblang test --format teamcity` emits `##teamcity[...]`
+  service messages (with `locationHint='geblang_test://Class/
+  method'`) so JetBrains IDE test runners parse events natively.
+  Replaces the verbose PASS/FAIL output for IDE integration.
+
+### Fixes
+
+- VM: string `<`, `<=`, `>`, `>=` now work the same way they did
+  in the evaluator (lexicographic comparison). Previously the VM
+  dispatched relational ops through `native.NumericCompare` which
+  rejected strings with "comparison expects compatible numeric
+  operands"; the evaluator's own `compareValues` already covered
+  it. Both paths now share the extended `NumericCompare`. New
+  parity test guards the behaviour.
+
+### Tooling
+
+- LSP: `this.<TAB>` inside a class extending `test.Test` now
+  surfaces every inherited assertion (assertEquals, assertTrue,
+  assertThrows, fail, etc.).
+- LSP: `<typedVar>.<TAB>` and `<typedVar>.<method>(<cursor>)` on
+  stdlib-class locals (http.Request, db.Connection, datetime.Instant,
+  url.URL, streams.IOStream, proc.Process, sockets.Socket/Listener,
+  ssh.SSHClient/SSHSession/SSHTunnel, strbuilder.StringBuilder,
+  random.Generator, websocket.Connection, template.Template/Engine,
+  log.Logger) surfaces methods with parameter and return types.
+  Triggers when the local is declared via `<module>.<Class> name;`.
+- VS Code: new `assertThrows` snippet under the Geblang language.
+
 ## 1.2.0
 
 ### Stdlib

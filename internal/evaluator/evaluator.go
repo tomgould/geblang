@@ -2526,9 +2526,10 @@ func (e *Evaluator) installBuiltinTypes(env *runtime.Environment) error {
 		"assertGreaterThanOrEqual",
 		"assertLessThan",
 		"assertLessThanOrEqual",
+		"assertThrows",
 		"fail",
 	} {
-		testClass.Methods[strings.ToLower(methodName)] = []runtime.Function{{Name: methodName, Native: nativeTestAssertion(methodName)}}
+		testClass.Methods[strings.ToLower(methodName)] = []runtime.Function{{Name: methodName, Native: e.nativeTestAssertion(methodName)}}
 	}
 	e.testClass = testClass
 	classes := httpObjectClasses(env)
@@ -7323,6 +7324,16 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"replace":  e.registryBuiltin("re", "replace"),
 			"split":    e.registryBuiltin("re", "split"),
 		},
+		"pcre": {
+			"test":     e.registryBuiltin("pcre", "test"),
+			"find":     e.registryBuiltin("pcre", "find"),
+			"findAll":  e.registryBuiltin("pcre", "findAll"),
+			"match":    e.registryBuiltin("pcre", "match"),
+			"matchAll": e.registryBuiltin("pcre", "matchAll"),
+			"replace":  e.registryBuiltin("pcre", "replace"),
+			"split":    e.registryBuiltin("pcre", "split"),
+			"quote":    e.registryBuiltin("pcre", "quote"),
+		},
 		"markdown": {
 			"parse":      e.registryBuiltin("markdown", "parse"),
 			"renderHtml": e.registryBuiltin("markdown", "renderHtml"),
@@ -10338,7 +10349,7 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 	failed := int64(0)
 	failures := []runtime.Value{}
 	tests := []runtime.Value{}
-	methods := filterTestMethods(decoratedMethods(class, "test"), options.tags)
+	methods := filterTestMethods(decoratedMethods(class, "test"), options.tags, options.methods)
 	if err := e.applyOptionalTestHook(instance, "setupClass"); err != nil {
 		failed = int64(len(methods))
 		for _, method := range methods {
@@ -10402,7 +10413,8 @@ func testCaseDict(name string, passed bool, message string) runtime.Value {
 }
 
 type testRunOptions struct {
-	tags map[string]bool
+	tags    map[string]bool
+	methods map[string]bool
 }
 
 func testRunOptionsFromArgs(call *ast.CallExpression, args []runtime.Value) (testRunOptions, error) {
@@ -10428,15 +10440,36 @@ func testRunOptionsFromArgs(call *ast.CallExpression, args []runtime.Value) (tes
 			options.tags[strings.ToLower(tag.Value)] = true
 		}
 	}
+	if value, ok := dictField(dict, "methods"); ok {
+		list, ok := value.(runtime.List)
+		if !ok {
+			return options, fmt.Errorf("%s options.methods must be list<string>", call.Callee.String())
+		}
+		options.methods = map[string]bool{}
+		for _, element := range list.Elements {
+			name, ok := element.(runtime.String)
+			if !ok {
+				return options, fmt.Errorf("%s options.methods must be list<string>", call.Callee.String())
+			}
+			options.methods[name.Value] = true
+		}
+	}
 	return options, nil
 }
 
-func filterTestMethods(methods []runtime.Function, tags map[string]bool) []runtime.Function {
-	if len(tags) == 0 {
+func filterTestMethods(methods []runtime.Function, tags map[string]bool, names map[string]bool) []runtime.Function {
+	if len(tags) == 0 && len(names) == 0 {
 		return methods
 	}
 	filtered := []runtime.Function{}
 	for _, method := range methods {
+		if len(names) > 0 && !names[method.Name] {
+			continue
+		}
+		if len(tags) == 0 {
+			filtered = append(filtered, method)
+			continue
+		}
 		for _, tag := range testMethodTags(method) {
 			if tags[strings.ToLower(tag)] {
 				filtered = append(filtered, method)
@@ -23703,14 +23736,45 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 	}
 }
 
-func nativeTestAssertion(name string) func(*runtime.Instance, []runtime.Value) (runtime.Value, error) {
+func (e *Evaluator) nativeTestAssertion(name string) func(*runtime.Instance, []runtime.Value) (runtime.Value, error) {
 	return func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if strings.EqualFold(name, "assertThrows") {
+			return e.assertThrowsImpl(args)
+		}
 		value, handled, err := runtime.RunTestAssertion(name, args)
 		if !handled {
 			return nil, fmt.Errorf("unknown test assertion %s", name)
 		}
 		return value, err
 	}
+}
+
+// assertThrowsImpl invokes the callable arg and asserts it raises.
+// Signature: assertThrows(callable) or assertThrows(callable, expectedSubstring).
+func (e *Evaluator) assertThrowsImpl(args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 1 || len(args) > 2 {
+		return nil, fmt.Errorf("Test.assertThrows expects (callable[, expectedSubstring])")
+	}
+	fn, ok := args[0].(runtime.Function)
+	if !ok {
+		return nil, fmt.Errorf("Test.assertThrows expects a callable as the first argument")
+	}
+	var expectedSub string
+	if len(args) == 2 {
+		s, ok := args[1].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("Test.assertThrows: second argument must be a string substring")
+		}
+		expectedSub = s.Value
+	}
+	_, err := e.applyFunction(fn, nil)
+	if err == nil {
+		return nil, fmt.Errorf("expected callable to throw, but it returned normally")
+	}
+	if expectedSub != "" && !strings.Contains(err.Error(), expectedSub) {
+		return nil, fmt.Errorf("expected error containing %q, got %q", expectedSub, err.Error())
+	}
+	return runtime.Null{}, nil
 }
 
 func evalBoolInfix(operator string, left runtime.Value, right runtime.Value) (runtime.Value, error) {

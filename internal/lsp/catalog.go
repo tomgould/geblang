@@ -6,8 +6,9 @@ import (
 )
 
 type moduleDoc struct {
-	functions map[string]functionDoc
-	classes   map[string]string
+	functions    map[string]functionDoc
+	classes      map[string]string
+	classMethods map[string]map[string]functionDoc
 }
 
 type functionDoc struct {
@@ -36,6 +37,85 @@ func moduleNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// lookupClassMethods returns the method table for a fully-qualified
+// class name like "http.Request" or "db.Connection", or nil if the
+// class is not catalogued.
+func lookupClassMethods(qualified string) map[string]functionDoc {
+	module, class, ok := splitQualifiedClass(qualified)
+	if !ok {
+		return nil
+	}
+	mod, ok := stdlibCatalog[module]
+	if !ok {
+		return nil
+	}
+	if mod.classMethods == nil {
+		return nil
+	}
+	methods, ok := mod.classMethods[class]
+	if !ok {
+		return nil
+	}
+	return methods
+}
+
+// splitQualifiedClass parses "module.Class" -> ("module", "Class").
+// Returns false for any other shape.
+func splitQualifiedClass(qualified string) (string, string, bool) {
+	idx := strings.IndexByte(qualified, '.')
+	if idx <= 0 || idx == len(qualified)-1 {
+		return "", "", false
+	}
+	module := qualified[:idx]
+	class := qualified[idx+1:]
+	if !isIdentLike(module) || !isIdentLike(class) {
+		return "", "", false
+	}
+	return module, class, true
+}
+
+func isIdentLike(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if i == 0 && (r >= '0' && r <= '9') {
+			return false
+		}
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// testBaseMethods enumerates the assertion methods every class
+// extending `test.Test` inherits from the builtin Test base. The
+// list mirrors the assertions registered in
+// internal/evaluator/evaluator.go installBuiltinTypes; keep them
+// in sync. Surfaced by completion.go on `this.<TAB>` inside a
+// test.Test subclass.
+var testBaseMethods = map[string]functionDoc{
+	"assertEquals":             fn([]string{"any expected", "any actual"}, "void", "Deep equality for primitives, lists, dicts, sets, enum variants, and object fields."),
+	"assertEqual":              fn([]string{"any expected", "any actual"}, "void", "Alias for assertEquals."),
+	"assertNotEquals":          fn([]string{"any expected", "any actual"}, "void", "Fails when values are deeply equal."),
+	"assertNotEqual":           fn([]string{"any expected", "any actual"}, "void", "Alias for assertNotEquals."),
+	"assertTrue":               fn([]string{"bool value"}, "void", "Fails unless value is true."),
+	"assertFalse":              fn([]string{"bool value"}, "void", "Fails unless value is false."),
+	"assertNull":               fn([]string{"any value"}, "void", "Fails unless value is null."),
+	"assertNotNull":            fn([]string{"any value"}, "void", "Fails when value is null."),
+	"assertContains":           fn([]string{"any haystack", "any needle"}, "void", "String substring, bytes byte/subsequence, list item, dict key, or set member."),
+	"assertNotContains":        fn([]string{"any haystack", "any needle"}, "void", "Inverse of assertContains."),
+	"assertEmpty":              fn([]string{"any value"}, "void", "Empty string, bytes, list, dict, set, range, or null."),
+	"assertNotEmpty":           fn([]string{"any value"}, "void", "Inverse of assertEmpty."),
+	"assertGreaterThan":        fn([]string{"any expected", "any actual"}, "void", "Ordered numeric or string comparison."),
+	"assertGreaterThanOrEqual": fn([]string{"any expected", "any actual"}, "void", "Ordered numeric or string comparison."),
+	"assertLessThan":           fn([]string{"any expected", "any actual"}, "void", "Ordered numeric or string comparison."),
+	"assertLessThanOrEqual":    fn([]string{"any expected", "any actual"}, "void", "Ordered numeric or string comparison."),
+	"assertThrows":             fn([]string{"callable fn", "string expectedSubstring = \"\""}, "void", "Fails unless the no-arg callable raises. Optional substring must appear in the error message."),
+	"fail":                     fn([]string{"string message = \"\""}, "void", "Fails immediately with an optional message."),
 }
 
 // primitiveMethods enumerates the instance methods the LSP surfaces for
@@ -283,7 +363,46 @@ var stdlibCatalog = map[string]moduleDoc{
 		"configure": fn([]string{"Connection conn", "dict<string, any> options"}, "void", "Configures connection pool options."),
 		"stats":     fn([]string{"Connection conn"}, "dict<string, any>", "Returns connection statistics."),
 		"close":     fn([]string{"Connection conn"}, "void", "Closes a database connection."),
-	}, classes: map[string]string{"Connection": "database connection"}},
+	}, classes: map[string]string{
+		"Connection":  "Database connection. Open via db.connect(driver, dsn) or db.Connection(...).",
+		"Transaction": "In-flight SQL transaction. Returned by Connection.begin(); call .commit() or .rollback().",
+		"Statement":   "Prepared SQL statement. Returned by Connection.prepare().",
+		"Rows":        "Streamed query result. Iterate via .next() / .row() or call .all() to materialise.",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Connection": {
+			"exec":      fn([]string{"string sql", "...any args"}, "Result", "Executes a non-query statement."),
+			"query":     fn([]string{"string sql", "...any args"}, "Rows", "Runs a query and returns a streaming Rows handle."),
+			"begin":     fn([]string{}, "Transaction", "Starts a new transaction."),
+			"prepare":   fn([]string{"string sql"}, "Statement", "Prepares a reusable statement."),
+			"configure": fn([]string{"dict<string, any> options"}, "void", "Configures connection pool options (maxOpenConns, maxIdleConns, etc.)."),
+			"stats":     fn([]string{}, "dict<string, any>", "Returns connection-pool statistics."),
+			"migrate":   fn([]string{"list<string> statements"}, "void", "Applies the given DDL statements, tracking versions."),
+			"close":     fn([]string{}, "void", "Closes the connection and releases pool resources."),
+		},
+		"Transaction": {
+			"exec":     fn([]string{"string sql", "...any args"}, "Result", "Executes within the transaction."),
+			"query":    fn([]string{"string sql", "...any args"}, "Rows", "Runs a query within the transaction."),
+			"commit":   fn([]string{}, "void", "Commits the transaction."),
+			"rollback": fn([]string{}, "void", "Rolls back the transaction."),
+		},
+		"Statement": {
+			"exec":  fn([]string{"...any args"}, "Result", "Executes the prepared statement."),
+			"query": fn([]string{"...any args"}, "Rows", "Runs the prepared statement as a query."),
+			"close": fn([]string{}, "void", "Releases the statement."),
+		},
+		"Rows": {
+			"next":    fn([]string{}, "bool", "Advances to the next row. Returns false past end."),
+			"row":     fn([]string{}, "?dict<string, any>", "Current row as a dict, or null when exhausted."),
+			"columns": fn([]string{}, "list<string>", "Column names in order."),
+			"close":   fn([]string{}, "void", "Closes the result set early."),
+			"all":     fn([]string{}, "list<dict<string, any>>", "Materialises every remaining row."),
+			"length":  fn([]string{}, "int", "Total row count (consumes the rows)."),
+			"isEmpty": fn([]string{}, "bool", "True if the result set has no rows."),
+			"get":     fn([]string{"int index"}, "dict<string, any>", "Returns the row at index."),
+			"first":   fn([]string{}, "?dict<string, any>", "First row or null."),
+			"toList":  fn([]string{}, "list<dict<string, any>>", "Alias for all()."),
+		},
+	}},
 	"http": {functions: map[string]functionDoc{
 		"serve":              fn([]string{"string addr", "func handler"}, "void", "Starts an HTTP server."),
 		"listen":             fn([]string{"string addr", "func handler"}, "Server", "Starts an HTTP server handle."),
@@ -303,6 +422,57 @@ var stdlibCatalog = map[string]moduleDoc{
 		"newClient":          fn([]string{"dict<string, any> options = {}"}, "Client", "Builds a reusable HTTP client. Options: timeoutMs, baseUrl, headers, cookieJar (CookieJar | true), keepAlive, maxIdleConns, proxy, proxyFromEnv."),
 		"newCookieJar":       fn([]string{}, "CookieJar", "Returns a new in-memory cookie jar to share across requests."),
 		"build":              fn([]string{"string url"}, "Builder", "Starts a fluent request builder."),
+	}, classes: map[string]string{
+		"Request":  "Incoming HTTP request. Fields: method, path, query, remoteAddr, body, headers.",
+		"Response": "Outgoing HTTP response. Fields: status, body, headers.",
+		"Client":   "Reusable HTTP client. Build via http.newClient(opts).",
+		"Builder":  "Fluent request builder. Start with http.build(url) and chain header/body/send/timeoutMs/etc.",
+		"CookieJar": "Cookie jar shared across requests. Build via http.newCookieJar().",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Request": {
+			"header":    fn([]string{"string name"}, "?string", "Returns the first value of the named header, or null."),
+			"json":      fn([]string{}, "any", "Parses the request body as JSON."),
+			"bodyText":  fn([]string{}, "string", "Returns the body as a UTF-8 string."),
+			"bodyBytes": fn([]string{}, "bytes", "Returns the body as raw bytes."),
+			"toDict":    fn([]string{}, "dict<string, any>", "Snapshots the request as a plain dict."),
+			"inspect":   fn([]string{}, "string", "Human-readable representation."),
+		},
+		"Response": {
+			"withHeader": fn([]string{"string name", "string value"}, "Response", "Returns a new response with the header set."),
+			"withBody":   fn([]string{"any body"}, "Response", "Returns a new response with the body replaced."),
+			"withStatus": fn([]string{"int status"}, "Response", "Returns a new response with the status replaced."),
+			"toDict":     fn([]string{}, "dict<string, any>", "Snapshots the response as a plain dict."),
+			"inspect":    fn([]string{}, "string", "Human-readable representation."),
+		},
+		"Client": {
+			"get":       fn([]string{"string url", "dict<string, any> options = {}"}, "Response", "Performs a GET via the client."),
+			"post":      fn([]string{"string url", "any body = null", "dict<string, any> options = {}"}, "Response", "Performs a POST via the client."),
+			"put":       fn([]string{"string url", "any body = null", "dict<string, any> options = {}"}, "Response", "Performs a PUT via the client."),
+			"delete":    fn([]string{"string url", "dict<string, any> options = {}"}, "Response", "Performs a DELETE via the client."),
+			"patch":     fn([]string{"string url", "any body = null", "dict<string, any> options = {}"}, "Response", "Performs a PATCH via the client."),
+			"head":      fn([]string{"string url", "dict<string, any> options = {}"}, "Response", "Performs a HEAD via the client."),
+			"options":   fn([]string{"string url", "dict<string, any> options = {}"}, "Response", "Performs an OPTIONS via the client."),
+			"request":   fn([]string{"string method", "string url", "dict<string, any> options = {}"}, "Response", "Performs an arbitrary request via the client."),
+			"send":      fn([]string{"dict<string, any> request"}, "Response", "Sends a fully specified request dict."),
+			"close":     fn([]string{}, "void", "Releases the client and its connection pool."),
+			"cookieJar": fn([]string{}, "CookieJar", "Returns the client's cookie jar."),
+		},
+		"Builder": {
+			"method":    fn([]string{"string method"}, "Builder", "Sets the HTTP method."),
+			"header":    fn([]string{"string name", "string value"}, "Builder", "Adds a header."),
+			"query":     fn([]string{"string name", "string value"}, "Builder", "Appends a query-string parameter."),
+			"body":      fn([]string{"any body"}, "Builder", "Sets the request body (string / bytes / dict / stream)."),
+			"json":      fn([]string{"any payload"}, "Builder", "Sets a JSON body."),
+			"form":      fn([]string{"dict<string, any> fields"}, "Builder", "Sets a urlencoded form body."),
+			"multipart": fn([]string{"dict<string, any> fields"}, "Builder", "Sets a multipart/form-data body."),
+			"timeoutMs": fn([]string{"int ms"}, "Builder", "Per-request timeout."),
+			"send":      fn([]string{}, "Response", "Performs the request."),
+		},
+		"CookieJar": {
+			"setCookie":  fn([]string{"string url", "any cookie"}, "void", "Stores a cookie scoped to the URL."),
+			"cookiesFor": fn([]string{"string url"}, "list<dict<string, any>>", "Returns cookies that match the URL."),
+			"clear":      fn([]string{}, "void", "Removes every cookie."),
+		},
 	}},
 	"io": {functions: map[string]functionDoc{
 		"print":          fn([]string{"any value"}, "void", "Writes a value to stdout."),
@@ -355,6 +525,16 @@ var stdlibCatalog = map[string]moduleDoc{
 		"error":  fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes an error log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger."),
 		"debug":  fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes a debug log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger."),
 		"close":  fn([]string{"Logger logger"}, "void", "Closes a logger."),
+	}, classes: map[string]string{
+		"Logger": "A logging sink. Construct via log.stdout() / log.stderr() / log.file(path) / log.custom(handler).",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Logger": {
+			"info":  fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes an info-level event."),
+			"warn":  fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes a warn-level event."),
+			"error": fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes an error-level event."),
+			"debug": fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes a debug-level event."),
+			"close": fn([]string{}, "void", "Flushes and closes the logger."),
+		},
 	}},
 	"math": {functions: map[string]functionDoc{
 		"abs":        fn([]string{"number value"}, "number", "Absolute value."),
@@ -391,6 +571,16 @@ var stdlibCatalog = map[string]moduleDoc{
 		"replace":  fn([]string{"string pattern", "string text", "string replacement"}, "string", "Replaces matches."),
 		"split":    fn([]string{"string pattern", "string text"}, "list<string>", "Splits text by pattern."),
 	}},
+	"pcre": {functions: map[string]functionDoc{
+		"test":     fn([]string{"string pattern", "string text", "string flags = \"\""}, "bool", "PCRE-compatible test. Supports lookarounds and backreferences. Flags: imsx."),
+		"find":     fn([]string{"string pattern", "string text", "string flags = \"\""}, "?string", "Returns the first PCRE match or null."),
+		"findAll":  fn([]string{"string pattern", "string text", "string flags = \"\""}, "list<string>", "Returns all PCRE matches."),
+		"match":    fn([]string{"string pattern", "string text", "string flags = \"\""}, "?dict<string, any>", "First PCRE match with text, groups, and named fields."),
+		"matchAll": fn([]string{"string pattern", "string text", "string flags = \"\""}, "list<dict<string, any>>", "Every non-overlapping PCRE match."),
+		"replace":  fn([]string{"string pattern", "string replacement", "string text", "string flags = \"\""}, "string", "Replaces PCRE matches; replacement uses $1, $2, ${name} backrefs."),
+		"split":    fn([]string{"string pattern", "string text", "string flags = \"\""}, "list<string>", "Splits text by PCRE pattern."),
+		"quote":    fn([]string{"string text"}, "string", "Escapes regex metacharacters in a literal string."),
+	}},
 	"profiler": {functions: map[string]functionDoc{
 		"snapshot": fn([]string{}, "dict<string, any>", "Captures wall clock, heap allocation, peak allocation, GC count, and CPU nanoseconds."),
 		"delta":    fn([]string{"dict<string, any> snapshot"}, "dict<string, any>", "Returns elapsed_ms, cpu_ms, heap_alloc, allocs, and gc_count since the snapshot."),
@@ -425,7 +615,7 @@ var stdlibCatalog = map[string]moduleDoc{
 	}},
 	"test": {functions: map[string]functionDoc{
 		"run": fn([]string{"Type testClass", "dict<string, any> options = {}"}, "dict<string, any>", "Runs tests for a class."),
-	}},
+	}, classes: map[string]string{"Test": "Base class for unit tests. Subclass and annotate methods with @test. Use this.assertEquals / assertTrue / assertThrows / etc. inside test bodies."}},
 	"web": {functions: map[string]functionDoc{
 		"new":        fn([]string{}, "App", "Creates a web application."),
 		"use":        fn([]string{"App app", "func middleware"}, "App", "Adds middleware."),
@@ -446,7 +636,15 @@ var stdlibCatalog = map[string]moduleDoc{
 		"sendBytes": fn([]string{"Connection conn", "bytes data"}, "void", "Sends a binary frame."),
 		"readBytes": fn([]string{"Connection conn"}, "bytes", "Reads a binary frame."),
 		"close":     fn([]string{"Connection conn"}, "void", "Closes a WebSocket connection."),
-	}, classes: map[string]string{"Connection": "WebSocket connection"}},
+	}, classes: map[string]string{"Connection": "WebSocket connection"}, classMethods: map[string]map[string]functionDoc{
+		"Connection": {
+			"sendText":  fn([]string{"string message"}, "void", "Sends a text frame."),
+			"readText":  fn([]string{}, "string", "Reads a text frame."),
+			"sendBytes": fn([]string{"bytes data"}, "void", "Sends a binary frame."),
+			"readBytes": fn([]string{}, "bytes", "Reads a binary frame."),
+			"close":     fn([]string{}, "void", "Closes the connection."),
+		},
+	}},
 	"compress": {functions: map[string]functionDoc{
 		"gzip":   fn([]string{"bytes data"}, "bytes", "Compresses bytes with gzip."),
 		"gunzip": fn([]string{"bytes data"}, "bytes", "Decompresses gzip-compressed bytes."),
@@ -513,6 +711,38 @@ var stdlibCatalog = map[string]moduleDoc{
 		"Instant":  "Immutable point-in-time value.",
 		"Duration": "Immutable duration value.",
 		"Zone":     "Time zone identifier.",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Instant": {
+			"toUnix":        fn([]string{}, "int", "Unix seconds."),
+			"toUnixMillis":  fn([]string{}, "int", "Unix milliseconds."),
+			"toUnixNanos":   fn([]string{}, "int", "Unix nanoseconds."),
+			"format":        fn([]string{"string layout"}, "string", "Formats with a layout string."),
+			"formatRFC3339": fn([]string{}, "string", "Renders RFC3339."),
+			"formatHTTP":    fn([]string{}, "string", "Renders an HTTP-date (RFC 1123)."),
+			"add":           fn([]string{"Duration duration"}, "Instant", "Returns a new Instant offset by the duration."),
+			"sub":           fn([]string{"Duration duration"}, "Instant", "Returns a new Instant offset back by the duration."),
+			"diff":          fn([]string{"Instant other"}, "Duration", "Returns the duration between two Instants."),
+			"isBefore":      fn([]string{"Instant other"}, "bool", "Reports whether this Instant is earlier."),
+			"isAfter":       fn([]string{"Instant other"}, "bool", "Reports whether this Instant is later."),
+			"equals":        fn([]string{"Instant other"}, "bool", "Reports whether two Instants are equal."),
+			"inZone":        fn([]string{"Zone zone"}, "dict<string, any>", "Returns date/time parts in the zone."),
+			"toString":      fn([]string{}, "string", "Default string rendering (RFC3339)."),
+		},
+		"Duration": {
+			"inSeconds": fn([]string{}, "int", "Whole seconds."),
+			"inMillis":  fn([]string{}, "int", "Whole milliseconds."),
+			"inNanos":   fn([]string{}, "int", "Whole nanoseconds."),
+			"abs":       fn([]string{}, "Duration", "Absolute value."),
+			"negate":    fn([]string{}, "Duration", "Returns the negated duration."),
+			"add":       fn([]string{"Duration other"}, "Duration", "Sum of two durations."),
+			"sub":       fn([]string{"Duration other"}, "Duration", "Difference of two durations."),
+			"toString":  fn([]string{}, "string", "Human-readable rendering (e.g. \"1h2m3s\")."),
+		},
+		"Zone": {
+			"name":     fn([]string{}, "string", "Zone name (e.g. \"UTC\", \"America/New_York\")."),
+			"offset":   fn([]string{"Instant at"}, "int", "Offset from UTC in seconds at the given Instant."),
+			"toString": fn([]string{}, "string", "Zone name."),
+		},
 	}},
 	"encoding": {functions: map[string]functionDoc{
 		"base64Encode": fn([]string{"any value"}, "string", "Standard Base64 encode (string or bytes input)."),
@@ -554,7 +784,17 @@ var stdlibCatalog = map[string]moduleDoc{
 		"bool":     fn([]string{}, "bool", "Returns a pseudo-random bool."),
 		"choice":   fn([]string{"list<any> items"}, "any", "Returns a random element."),
 		"shuffle":  fn([]string{"list<any> items"}, "list<any>", "Returns a shuffled copy."),
-	}, classes: map[string]string{"Generator": "Stateful PRNG handle."}},
+	}, classes: map[string]string{"Generator": "Stateful PRNG handle."}, classMethods: map[string]map[string]functionDoc{
+		"Generator": {
+			"next":     fn([]string{}, "int", "Next pseudo-random int."),
+			"intRange": fn([]string{"int min", "int max"}, "int", "Pseudo-random int in [min, max]."),
+			"float":    fn([]string{}, "float", "Pseudo-random float in [0, 1)."),
+			"bool":     fn([]string{}, "bool", "Pseudo-random bool."),
+			"choice":   fn([]string{"list<any> items"}, "any", "Random element."),
+			"shuffle":  fn([]string{"list<any> items"}, "list<any>", "Shuffled copy."),
+			"seed":     fn([]string{"int seed"}, "void", "Re-seeds this generator."),
+		},
+	}},
 	"streams": {functions: map[string]functionDoc{
 		"of":      fn([]string{"any source"}, "Stream", "Wraps any iterable in a Stream for fluent chaining (1.0.6)."),
 		"open":    fn([]string{"string path", "string mode = \"r\""}, "IOStream", "Opens a file and wraps it in an IOStream (1.1.0)."),
@@ -567,6 +807,33 @@ var stdlibCatalog = map[string]moduleDoc{
 	}, classes: map[string]string{
 		"Stream":   "Lazy-by-default fluent pipeline over an iterable. Intermediate ops (map / filter / take) return a new Stream; terminal ops (toList / toSet / count / first / reduce / forEach / anyMatch / allMatch) drive iteration. Implements __iter() so a Stream is itself iterable.",
 		"IOStream": "Handle-backed stream wrapper (1.1.0 F3). Methods: read(n) / readAll() / readLine() / lines() / write(buf) / writeln(buf) / flush() / close() / isClosed(). Memory-backed instances also expose toString(). Dunder protocol: __read / __write / __close / __iter (yields lines).",
+	}, classMethods: map[string]map[string]functionDoc{
+		"IOStream": {
+			"read":     fn([]string{"int n"}, "string", "Reads up to n characters; returns less at EOF."),
+			"readAll":  fn([]string{}, "string", "Reads to EOF."),
+			"readLine": fn([]string{}, "?string", "Reads a single line including the newline, or null at EOF."),
+			"lines":    fn([]string{}, "Stream", "Returns a Stream over the remaining lines."),
+			"write":    fn([]string{"any buf"}, "int", "Writes bytes/string; returns bytes written."),
+			"writeln":  fn([]string{"any buf"}, "int", "Writes buf + newline."),
+			"flush":    fn([]string{}, "void", "Flushes any buffered output."),
+			"close":    fn([]string{}, "void", "Closes the underlying handle."),
+			"isClosed": fn([]string{}, "bool", "Reports whether the stream is closed."),
+			"toString": fn([]string{}, "string", "Memory-backed streams: returns the buffer contents."),
+		},
+		"Stream": {
+			"map":      fn([]string{"callable transform"}, "Stream", "Lazy element transformation."),
+			"filter":   fn([]string{"callable predicate"}, "Stream", "Lazy element filtering."),
+			"take":     fn([]string{"int n"}, "Stream", "Limits to the first n elements."),
+			"skip":     fn([]string{"int n"}, "Stream", "Drops the first n elements."),
+			"toList":   fn([]string{}, "list<any>", "Materialises every remaining element."),
+			"toSet":    fn([]string{}, "set<any>", "Materialises every element into a set."),
+			"count":    fn([]string{}, "int", "Counts the remaining elements."),
+			"first":    fn([]string{}, "?any", "Returns the first element or null."),
+			"reduce":   fn([]string{"any seed", "callable combiner"}, "any", "Folds the stream."),
+			"forEach":  fn([]string{"callable action"}, "void", "Iterates each element."),
+			"anyMatch": fn([]string{"callable predicate"}, "bool", "True if any element satisfies the predicate."),
+			"allMatch": fn([]string{"callable predicate"}, "bool", "True if every element satisfies the predicate."),
+		},
 	}},
 	"watch": {functions: map[string]functionDoc{
 		"snapshot": fn([]string{"string path"}, "dict<string, any>", "Capture the current state of a file or directory for polling-based change detection."),
@@ -578,6 +845,12 @@ var stdlibCatalog = map[string]moduleDoc{
 		"spawn": fn([]string{"string command", "list<string> args = []", "dict<string, any> options = {}"}, "Process", "Spawn a child process and return a Process. Options: {pty: bool, cwd: string, env: dict<string, string>} (1.1.0 F4)."),
 	}, classes: map[string]string{
 		"Process": "Running child process (1.1.0 F4). Fields: pid, handle, stdin (IOStream), stdout (IOStream), stderr (IOStream or null in pty mode). Methods: wait() returns the exit code, kill() sends SIGKILL, signal(name) sends a named signal.",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Process": {
+			"wait":   fn([]string{}, "int", "Waits for the process to exit and returns the exit code."),
+			"kill":   fn([]string{}, "void", "Sends SIGKILL."),
+			"signal": fn([]string{"string name"}, "void", "Sends a named signal (e.g. \"SIGTERM\", \"SIGHUP\")."),
+		},
 	}},
 	"sockets": {functions: map[string]functionDoc{
 		"dial":  fn([]string{"string host", "int port", "dict<string, any> opts = {}"}, "Socket", "Open a TCP (or TLS via opts.tls) connection. Returns a Socket implementing the F3 stream protocol (1.2.0)."),
@@ -585,6 +858,23 @@ var stdlibCatalog = map[string]moduleDoc{
 	}, classes: map[string]string{
 		"Socket":   "TCP / TLS connection wrapped in the F3 stream protocol (1.2.0). Methods: read(n) / readAll() / readLine() / lines() / write(buf) / writeln(buf) / close() / isClosed() / localAddr() / remoteAddr(). Dunders: __read / __write / __close / __iter.",
 		"Listener": "TCP listener owning an accept-loop goroutine (1.2.0). close() stops accepting and joins; localAddr() returns the bound address (useful when port is 0).",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Socket": {
+			"read":       fn([]string{"int n"}, "string", "Reads up to n bytes; less at peer close."),
+			"readAll":    fn([]string{}, "string", "Reads until the peer closes."),
+			"readLine":   fn([]string{}, "?string", "Reads a single line, or null at EOF."),
+			"lines":      fn([]string{}, "Stream", "Stream over remaining lines."),
+			"write":      fn([]string{"any buf"}, "int", "Writes bytes/string."),
+			"writeln":    fn([]string{"any buf"}, "int", "Writes buf + newline."),
+			"close":      fn([]string{}, "void", "Closes the connection."),
+			"isClosed":   fn([]string{}, "bool", "Reports whether the socket is closed."),
+			"localAddr":  fn([]string{}, "string", "Local \"host:port\"."),
+			"remoteAddr": fn([]string{}, "string", "Remote \"host:port\"."),
+		},
+		"Listener": {
+			"close":     fn([]string{}, "void", "Stops accepting and joins the accept goroutine."),
+			"localAddr": fn([]string{}, "string", "Bound \"host:port\" (useful when port was 0)."),
+		},
 	}},
 	"ssh": {functions: map[string]functionDoc{
 		"connect": fn([]string{"string target", "dict<string, any> opts = {}"}, "SSHClient", "Connect to an SSH server. Target is \"user@host\" or \"host\". Auth opts: password / privateKey / privateKeyFile / passphrase / agent. Host key opts: knownHostsFile / insecureSkipHostKey. Other: port, timeoutMs (1.2.0)."),
@@ -593,6 +883,29 @@ var stdlibCatalog = map[string]moduleDoc{
 		"SSHSession": "Long-running remote command (1.2.0). Fields: handle, stdin / stdout / stderr (IOStream). Methods: wait() returns exit code, kill() sends SIGKILL, signal(name) sends a named signal.",
 		"SSHTunnel":  "Local or remote port forward (1.2.0). addr() returns the bound address; close() stops the accept loop and joins.",
 		"ExecResult": "Result of SSHClient.exec(cmd) (1.2.0). Fields: stdout (string), stderr (string), exitCode (int).",
+	}, classMethods: map[string]map[string]functionDoc{
+		"SSHClient": {
+			"exec":          fn([]string{"string cmd"}, "ExecResult", "Runs cmd remotely; returns stdout/stderr/exitCode."),
+			"spawn":         fn([]string{"string cmd"}, "SSHSession", "Starts cmd with streaming stdin/stdout/stderr pipes."),
+			"upload":        fn([]string{"string localPath", "string remotePath"}, "void", "SFTP upload."),
+			"download":      fn([]string{"string remotePath", "string localPath"}, "void", "SFTP download."),
+			"sftpList":      fn([]string{"string remotePath"}, "list<dict<string, any>>", "Lists a remote directory."),
+			"sftpRemove":    fn([]string{"string remotePath"}, "void", "Deletes a remote file."),
+			"sftpMkdir":     fn([]string{"string remotePath"}, "void", "Creates a remote directory."),
+			"sftpOpen":      fn([]string{"string remotePath", "string mode = \"r\""}, "IOStream", "Opens a remote file as an IOStream."),
+			"forwardLocal":  fn([]string{"int localPort", "string remoteHost", "int remotePort"}, "SSHTunnel", "Local -> remote port forward."),
+			"forwardRemote": fn([]string{"int remotePort", "string localHost", "int localPort"}, "SSHTunnel", "Remote -> local port forward."),
+			"close":         fn([]string{}, "void", "Closes the SSH connection."),
+		},
+		"SSHSession": {
+			"wait":   fn([]string{}, "int", "Waits for the remote command to finish; returns exit code."),
+			"kill":   fn([]string{}, "void", "Sends SIGKILL to the remote process."),
+			"signal": fn([]string{"string name"}, "void", "Sends a named signal to the remote process."),
+		},
+		"SSHTunnel": {
+			"addr":  fn([]string{}, "string", "Bound \"host:port\"."),
+			"close": fn([]string{}, "void", "Stops the tunnel and joins the accept loop."),
+		},
 	}},
 	"strings": {classes: map[string]string{
 		"StringBuilder": "Builder-backed string accumulator. Amortised O(n) append for tight-loop assembly; call dispose() to release the handle in long-running processes.",
@@ -605,6 +918,17 @@ var stdlibCatalog = map[string]moduleDoc{
 		"length":     fn([]string{"StringBuilder sb"}, "int", "Current byte length."),
 		"clear":      fn([]string{"StringBuilder sb"}, "StringBuilder", "Resets the buffer to empty."),
 		"dispose":    fn([]string{"StringBuilder sb"}, "void", "Releases the handle. Safe to call multiple times."),
+	}, classes: map[string]string{
+		"StringBuilder": "Builder-backed string accumulator. Amortised O(n) append for tight-loop assembly; call dispose() to release the handle in long-running processes.",
+	}, classMethods: map[string]map[string]functionDoc{
+		"StringBuilder": {
+			"append":     fn([]string{"string s"}, "StringBuilder", "Appends a fragment; returns the same handle."),
+			"appendLine": fn([]string{"string s"}, "StringBuilder", "Appends a fragment followed by a newline."),
+			"build":      fn([]string{}, "string", "Materialises the accumulated content."),
+			"length":     fn([]string{}, "int", "Current byte length."),
+			"clear":      fn([]string{}, "StringBuilder", "Resets the buffer to empty."),
+			"dispose":    fn([]string{}, "void", "Releases the handle."),
+		},
 	}},
 	"path": {functions: map[string]functionDoc{
 		"join":  fn([]string{"string ...parts"}, "string", "Joins path segments using the platform separator."),
@@ -636,6 +960,18 @@ var stdlibCatalog = map[string]moduleDoc{
 	}, classes: map[string]string{
 		"Template": "Compiled template.",
 		"Engine":   "Template engine with reusable configuration.",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Template": {
+			"render":      fn([]string{"dict<string, any> context"}, "string", "Renders the template against a context dict."),
+			"renderToFile": fn([]string{"string path", "dict<string, any> context"}, "void", "Renders and writes to a file."),
+			"name":        fn([]string{}, "string", "Returns the template name."),
+		},
+		"Engine": {
+			"load":      fn([]string{"string path"}, "Template", "Loads and compiles a template from disk."),
+			"parse":     fn([]string{"string source"}, "Template", "Compiles an inline template string."),
+			"register":  fn([]string{"string name", "callable helper"}, "void", "Registers a named helper available to all templates."),
+			"directory": fn([]string{"string path"}, "Engine", "Sets the template root directory; returns the engine."),
+		},
 	}},
 	"time": {functions: map[string]functionDoc{
 		"now":     fn([]string{}, "int", "High-resolution timestamp in milliseconds (monotonic)."),
@@ -656,7 +992,25 @@ var stdlibCatalog = map[string]moduleDoc{
 		"encode":    fn([]string{"string text"}, "string", "URL-encodes a string."),
 		"decode":    fn([]string{"string text"}, "string", "URL-decodes a string."),
 		"joinPath":  fn([]string{"string base", "string ...parts"}, "string", "Joins URL path segments."),
-	}, classes: map[string]string{"URL": "Parsed URL value with scheme/host/path/query parts."}},
+	}, classes: map[string]string{"URL": "Parsed URL value with scheme/host/path/query parts."}, classMethods: map[string]map[string]functionDoc{
+		"URL": {
+			"scheme":       fn([]string{}, "string", "Returns the URL scheme."),
+			"host":         fn([]string{}, "string", "Returns the host without port."),
+			"port":         fn([]string{}, "string", "Returns the port (empty when default)."),
+			"path":         fn([]string{}, "string", "Returns the path component."),
+			"query":        fn([]string{}, "dict<string, string>", "Returns the query parameters as a dict."),
+			"fragment":     fn([]string{}, "string", "Returns the fragment after #."),
+			"toString":     fn([]string{}, "string", "Returns the full URL as a string."),
+			"toDict":       fn([]string{}, "dict<string, any>", "Returns a dict with scheme/host/port/path/query/fragment keys."),
+			"withScheme":   fn([]string{"string scheme"}, "URL", "Returns a new URL with the scheme replaced."),
+			"withHost":     fn([]string{"string host"}, "URL", "Returns a new URL with the host replaced."),
+			"withPath":     fn([]string{"string path"}, "URL", "Returns a new URL with the path replaced."),
+			"withQuery":    fn([]string{"any query"}, "URL", "Returns a new URL with the query replaced (dict or raw string)."),
+			"withFragment": fn([]string{"string fragment"}, "URL", "Returns a new URL with the fragment replaced."),
+			"resolve":      fn([]string{"any ref"}, "URL", "Resolves a reference URL against this base."),
+			"normalize":    fn([]string{}, "URL", "Cleans the path and re-encodes the query string."),
+		},
+	}},
 	"uuid": {functions: map[string]functionDoc{
 		"v1":            fn([]string{}, "bytes", "Time-based UUIDv1."),
 		"v4":            fn([]string{}, "bytes", "Random UUIDv4."),

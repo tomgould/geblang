@@ -161,6 +161,15 @@
         ],
         "description": "@test-decorated method"
     },
+    "assertThrows": {
+        "prefix": "assertThrows",
+        "body": [
+            "this.assertThrows(func(): void {",
+            "\t${1:/* code that should raise */}",
+            "});"
+        ],
+        "description": "Assert that a no-arg callable raises"
+    },
     "@immutable class": {
         "prefix": "immutable",
         "body": [

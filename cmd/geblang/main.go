@@ -22,7 +22,7 @@ import (
 	"geblang/internal/semantic"
 )
 
-const version = "1.2.0"
+const version = "1.3.0"
 const bannerString = "Geblang Version %s, ©2026 David Gebler.\n==========================================\n"
 
 type executionMode int
@@ -378,17 +378,23 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "  geblang --vm-strict -m app.main --verbose")
 		return true
 	case "test":
-		fmt.Fprintln(writer, "usage: geblang test [--tag name] [--verbose|-v] <file-or-dir>")
+		fmt.Fprintln(writer, "usage: geblang test [--tag name] [--class ClassName] [--method methodName]")
+		fmt.Fprintln(writer, "                    [--verbose|-v|--format <summary|verbose|teamcity>] <file-or-dir>")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Runs Geblang test files. Directory paths discover *_test.gb files recursively.")
 		fmt.Fprintln(writer, "--tag name runs only tests decorated with the given tag. Repeat to include multiple tags.")
+		fmt.Fprintln(writer, "--class ClassName restricts the run to that test class.")
+		fmt.Fprintln(writer, "--method methodName restricts the run to that method (repeat for multiple methods).")
 		fmt.Fprintln(writer, "--verbose / -v prints each test class and method with PASS/FAIL status (testdox-style).")
+		fmt.Fprintln(writer, "--format teamcity emits ##teamcity[...] service messages for JetBrains IDE test runners.")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Examples:")
 		fmt.Fprintln(writer, "  geblang test tests/user_test.gb")
 		fmt.Fprintln(writer, "  geblang test tests/")
 		fmt.Fprintln(writer, "  geblang test --tag integration tests/")
 		fmt.Fprintln(writer, "  geblang test --verbose tests/")
+		fmt.Fprintln(writer, "  geblang test --format teamcity tests/")
+		fmt.Fprintln(writer, "  geblang test --class UserTest --method login tests/user_test.gb")
 		return true
 	case "check":
 		fmt.Fprintln(writer, "usage: geblang check [--json] [--no-lint] [--strict] <file-or-dir>")
@@ -1652,8 +1658,10 @@ func bytecodeCacheStats() (cacheStats, error) {
 
 func runTests(args []string) {
 	tags := []string{}
+	classFilter := ""
+	methodFilters := []string{}
 	paths := []string{}
-	verbose := false
+	format := "summary"
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--tag":
@@ -1663,14 +1671,41 @@ func runTests(args []string) {
 			}
 			tags = append(tags, args[i+1])
 			i++
+		case "--class":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "geblang test --class expects a class name")
+				os.Exit(2)
+			}
+			classFilter = args[i+1]
+			i++
+		case "--method":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "geblang test --method expects a method name")
+				os.Exit(2)
+			}
+			methodFilters = append(methodFilters, args[i+1])
+			i++
 		case "--verbose", "-v":
-			verbose = true
+			format = "verbose"
+		case "--format":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "geblang test --format expects one of summary, verbose, teamcity")
+				os.Exit(2)
+			}
+			format = args[i+1]
+			i++
 		default:
 			paths = append(paths, args[i])
 		}
 	}
+	switch format {
+	case "summary", "verbose", "teamcity":
+	default:
+		fmt.Fprintf(os.Stderr, "geblang test --format must be one of summary, verbose, teamcity (got %q)\n", format)
+		os.Exit(2)
+	}
 	if len(paths) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: geblang test [--tag name] [--verbose] <file-or-dir>")
+		fmt.Fprintln(os.Stderr, "usage: geblang test [--tag name] [--verbose|--format <summary|verbose|teamcity>] <file-or-dir>")
 		os.Exit(2)
 	}
 	files, err := discoverTestFiles(paths[0])
@@ -1685,7 +1720,7 @@ func runTests(args []string) {
 	total := int64(0)
 	failed := int64(0)
 	for _, file := range files {
-		fileTotal, fileFailed, err := runTestFile(file, tags, verbose)
+		fileTotal, fileFailed, err := runTestFile(file, tags, classFilter, methodFilters, format)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
 			os.Exit(1)
@@ -1693,7 +1728,11 @@ func runTests(args []string) {
 		total += fileTotal
 		failed += fileFailed
 	}
-	fmt.Printf("tests: total=%d failed=%d passed=%d\n", total, failed, total-failed)
+	if format == "teamcity" {
+		fmt.Printf("##teamcity[message text='tests: total=%d failed=%d passed=%d' status='NORMAL']\n", total, failed, total-failed)
+	} else {
+		fmt.Printf("tests: total=%d failed=%d passed=%d\n", total, failed, total-failed)
+	}
 	if failed > 0 {
 		os.Exit(1)
 	}
@@ -1723,7 +1762,7 @@ func discoverTestFiles(path string) ([]string, error) {
 	return files, err
 }
 
-func runTestFile(path string, tags []string, verbose bool) (int64, int64, error) {
+func runTestFile(path string, tags []string, classFilter string, methodFilters []string, format string) (int64, int64, error) {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		return 0, 0, err
@@ -1733,10 +1772,19 @@ func runTestFile(path string, tags []string, verbose bool) (int64, int64, error)
 		return 0, 0, err
 	}
 	classes := testClasses(program)
+	if classFilter != "" {
+		filtered := classes[:0]
+		for _, name := range classes {
+			if name == classFilter {
+				filtered = append(filtered, name)
+			}
+		}
+		classes = filtered
+	}
 	if len(classes) == 0 {
 		return 0, 0, nil
 	}
-	runner := buildTestRunner(classes, tags, verbose)
+	runner := buildTestRunner(classes, tags, methodFilters, format)
 	program, err = parseAndAnalyze(string(source) + "\n" + runner)
 	if err != nil {
 		return 0, 0, err
@@ -1800,10 +1848,31 @@ func testClasses(program *ast.Program) []string {
 	return classes
 }
 
-func buildTestRunner(classes []string, tags []string, verbose bool) string {
+func buildTestRunner(classes []string, tags []string, methodFilters []string, format string) string {
 	var b strings.Builder
 	b.WriteString("import io;\nimport sys;\nimport test;\n")
 	b.WriteString("let __geb_total = 0;\nlet __geb_failed = 0;\n")
+	if format == "teamcity" {
+		// Helper that escapes a string per the TeamCity service-message
+		// spec: | -> ||, ' -> |', [ -> |[, ] -> |], \n -> |n, \r -> |r.
+		// IDEs reject unescaped messages, so this must run on every
+		// name / message / details value we splice into the output.
+		b.WriteString("func __geb_tc_escape(any value): string {\n")
+		b.WriteString("    string s = value as string;\n")
+		b.WriteString("    string out = \"\";\n")
+		b.WriteString("    for (let i = 0; i < s.length(); i = i + 1) {\n")
+		b.WriteString("        string c = s.substring(i, i + 1);\n")
+		b.WriteString("        if (c == \"|\") { out = out + \"||\"; }\n")
+		b.WriteString("        else if (c == \"'\") { out = out + \"|'\"; }\n")
+		b.WriteString("        else if (c == \"[\") { out = out + \"|[\"; }\n")
+		b.WriteString("        else if (c == \"]\") { out = out + \"|]\"; }\n")
+		b.WriteString("        else if (c == \"\\n\") { out = out + \"|n\"; }\n")
+		b.WriteString("        else if (c == \"\\r\") { out = out + \"|r\"; }\n")
+		b.WriteString("        else { out = out + c; }\n")
+		b.WriteString("    }\n")
+		b.WriteString("    return out;\n")
+		b.WriteString("}\n")
+	}
 	tagList := "[]"
 	if len(tags) > 0 {
 		quoted := make([]string, 0, len(tags))
@@ -1812,15 +1881,35 @@ func buildTestRunner(classes []string, tags []string, verbose bool) string {
 		}
 		tagList = "[" + strings.Join(quoted, ", ") + "]"
 	}
+	methodList := "[]"
+	if len(methodFilters) > 0 {
+		quoted := make([]string, 0, len(methodFilters))
+		for _, name := range methodFilters {
+			quoted = append(quoted, strconvQuote(name))
+		}
+		methodList = "[" + strings.Join(quoted, ", ") + "]"
+	}
 	for i, className := range classes {
 		resultName := fmt.Sprintf("__geb_result_%d", i)
-		fmt.Fprintf(&b, "let %s = test.run(%s, {\"tags\": %s});\n", resultName, className, tagList)
+		fmt.Fprintf(&b, "let %s = test.run(%s, {\"tags\": %s, \"methods\": %s});\n", resultName, className, tagList, methodList)
 		fmt.Fprintf(&b, "__geb_total = __geb_total + %s[\"total\"];\n", resultName)
 		fmt.Fprintf(&b, "__geb_failed = __geb_failed + %s[\"failed\"];\n", resultName)
-		if verbose {
-			// Emit per-test pass/fail lines in testdox style. The class
-			// name comes first, then each method on its own line. Names
-			// are kept verbatim so they read like the source.
+		switch format {
+		case "teamcity":
+			classTC := strconvQuote(className)
+			fmt.Fprintf(&b, "io.println(\"##teamcity[testSuiteStarted name='\" + __geb_tc_escape(%s) + \"' locationHint='geblang_test://\" + __geb_tc_escape(%s) + \"']\");\n", classTC, classTC)
+			fmt.Fprintf(&b, "for (__geb_case in %s[\"tests\"]) {\n", resultName)
+			b.WriteString("    string __geb_tc_name = __geb_tc_escape(__geb_case[\"name\"]);\n")
+			fmt.Fprintf(&b, "    string __geb_tc_loc = \"geblang_test://\" + __geb_tc_escape(%s) + \"/\" + __geb_tc_name;\n", classTC)
+			b.WriteString("    io.println(\"##teamcity[testStarted name='\" + __geb_tc_name + \"' locationHint='\" + __geb_tc_loc + \"' captureStandardOutput='true']\");\n")
+			b.WriteString("    if (!__geb_case[\"passed\"]) {\n")
+			b.WriteString("        string __geb_tc_msg = __geb_tc_escape(__geb_case[\"message\"]);\n")
+			b.WriteString("        io.println(\"##teamcity[testFailed name='\" + __geb_tc_name + \"' message='\" + __geb_tc_msg + \"']\");\n")
+			b.WriteString("    }\n")
+			b.WriteString("    io.println(\"##teamcity[testFinished name='\" + __geb_tc_name + \"']\");\n")
+			b.WriteString("}\n")
+			fmt.Fprintf(&b, "io.println(\"##teamcity[testSuiteFinished name='\" + __geb_tc_escape(%s) + \"']\");\n", classTC)
+		case "verbose":
 			fmt.Fprintf(&b, "io.println(%q);\n", className)
 			fmt.Fprintf(&b, "for (__geb_case in %s[\"tests\"]) {\n", resultName)
 			b.WriteString("  if (__geb_case[\"passed\"]) {\n")
@@ -1829,7 +1918,7 @@ func buildTestRunner(classes []string, tags []string, verbose bool) string {
 			b.WriteString("    io.println(\"  FAIL \" + __geb_case[\"name\"] + \": \" + __geb_case[\"message\"]);\n")
 			b.WriteString("  }\n")
 			b.WriteString("}\n")
-		} else {
+		default:
 			fmt.Fprintf(&b, "for (__geb_failure in %s[\"failures\"]) { io.println(\"FAIL %s: \" + __geb_failure); }\n", resultName, className)
 		}
 	}

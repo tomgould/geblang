@@ -295,6 +295,73 @@ io.println(re.test("(?s)foo.bar", "foo\nbar"));      # true
 
 ---
 
+## PCRE-compatible regex: `pcre`
+
+Import `pcre`. `pcre` runs a PCRE-style engine (backed by .NET's
+regex syntax) that supports the features RE2 omits: lookahead,
+lookbehind, backreferences, atomic groups, possessive quantifiers,
+and named captures via either `(?P<name>...)` (PHP / Python) or
+`(?<name>...)` (.NET / PCRE2) syntax. Use it when porting PHP
+code or when the pattern needs features RE2 can't express.
+
+`re` and `pcre` coexist. Prefer `re` for hot paths or any input
+that may be user-controlled (RE2 has linear-time matching and no
+catastrophic backtracking); reach for `pcre` when you need the
+richer syntax.
+
+Every function accepts an optional flags string as the last
+argument:
+
+| Flag | Meaning |
+|------|---------|
+| `i` | Case-insensitive |
+| `m` | Multiline (`^` / `$` match line boundaries) |
+| `s` | Dotall (`.` matches newlines) |
+| `x` | Extended (whitespace ignored, `#` comments allowed) |
+
+### Functions
+
+- `test(pattern, text, flags = "")` - returns `bool`.
+- `find(pattern, text, flags = "")` - first match as a `string`, or `null`.
+- `findAll(pattern, text, flags = "")` - every non-overlapping match as `list<string>`.
+- `match(pattern, text, flags = "")` - dict with `text` / `groups` / `named` (same shape as `re.match`), or `null`.
+- `matchAll(pattern, text, flags = "")` - `list<dict>`.
+- `replace(pattern, replacement, text, flags = "")` - returns a `string`. Use `$1`, `$2`, `${name}` for backrefs.
+- `split(pattern, text, flags = "")` - returns a `list<string>`.
+- `quote(text)` - escapes regex metacharacters in a literal string.
+
+### Examples
+
+```gb
+import pcre;
+import io;
+
+# Lookahead: PCRE-only.
+io.println(pcre.find('\w+(?=ing\b)', "swimming and running"));  # swimm
+
+# Lookbehind: PCRE-only.
+io.println(pcre.find('(?<=\$)\d+', "price is $42"));            # 42
+
+# Backreferences: PCRE-only.
+io.println(pcre.test('(\w+)\s+\1', "hello hello"));             # true
+
+# PHP-style (?P<name>...) syntax works unchanged.
+let m = pcre.match('(?P<word>[a-z]+)(?P<num>\d+)', "abc123");
+io.println(m["named"]["word"]);                                  # abc
+
+# Numbered backreference in replacement.
+io.println(pcre.replace('(\w+) (\w+)', "$2 $1", "hello world")); # world hello
+
+# Case-insensitive via flags.
+io.println(pcre.test("hello", "HELLO", "i"));                    # true
+
+# Escape user input before splicing into a pattern.
+let needle = pcre.quote("a.b+c");
+io.println(pcre.test(needle, "x a.b+c y"));                      # true
+```
+
+---
+
 ## Markdown: `markdown`
 
 Import `markdown`. The module supports full [GitHub Flavored Markdown](https://github.github.com/gfm/) (GFM) - tables, strikethrough, task lists, autolinks, ordered lists, blockquotes, horizontal rules, setext headings, and raw HTML passthrough.

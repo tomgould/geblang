@@ -1,6 +1,9 @@
 package lsp
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestCompletionOffersPrimitiveMethodsForDecimal verifies the new
 // primitive-method completion path: typing `d.<TAB>` after declaring
@@ -140,6 +143,133 @@ func TestSignatureHelpForModuleFunction(t *testing.T) {
 	}
 	if help.ActiveParameter != 1 {
 		t.Fatalf("expected active parameter 1, got %d", help.ActiveParameter)
+	}
+}
+
+// TestCompletionOffersTestBaseMethods verifies the new `this.<TAB>`
+// inside a test.Test subclass surfaces the inherited assertion
+// methods (assertEquals, assertThrows, etc.).
+func TestCompletionOffersTestBaseMethods(t *testing.T) {
+	src := "import test;\n\nclass MyTest extends test.Test {\n\t@test\n\tfunc check(): void {\n\t\tthis."
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 5, Character: 7},
+	}})
+	for _, want := range []string{"assertEquals", "assertTrue", "assertNull", "assertThrows", "fail"} {
+		if !hasCompletion(items, want) {
+			t.Fatalf("expected `%s` in test.Test this.<> completions, got %#v", want, items)
+		}
+	}
+}
+
+// TestCompletionOffersHttpRequestMethods verifies `<req>.<TAB>`
+// when req is declared as `http.Request req;` surfaces the
+// Request class methods (header, json, bodyText, etc.).
+func TestCompletionOffersHttpRequestMethods(t *testing.T) {
+	src := "http.Request req;\nreq."
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 1, Character: 4},
+	}})
+	for _, want := range []string{"header", "json", "bodyText", "bodyBytes", "toDict"} {
+		if !hasCompletion(items, want) {
+			t.Fatalf("expected `%s` in http.Request.<> completions, got %#v", want, items)
+		}
+	}
+}
+
+// TestCompletionOffersDbConnectionMethods covers db.Connection.<>.
+func TestCompletionOffersDbConnectionMethods(t *testing.T) {
+	src := "db.Connection conn;\nconn."
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 1, Character: 5},
+	}})
+	for _, want := range []string{"exec", "query", "begin", "prepare", "close"} {
+		if !hasCompletion(items, want) {
+			t.Fatalf("expected `%s` in db.Connection.<> completions, got %#v", want, items)
+		}
+	}
+}
+
+// TestCompletionOffersUrlURLMethods covers url.URL.<>.
+func TestCompletionOffersUrlURLMethods(t *testing.T) {
+	src := "url.URL u;\nu."
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 1, Character: 2},
+	}})
+	for _, want := range []string{"scheme", "host", "path", "query", "withScheme", "toString"} {
+		if !hasCompletion(items, want) {
+			t.Fatalf("expected `%s` in url.URL.<> completions, got %#v", want, items)
+		}
+	}
+}
+
+// TestCompletionOffersDatetimeInstantMethods covers datetime.Instant.<>.
+func TestCompletionOffersDatetimeInstantMethods(t *testing.T) {
+	src := "datetime.Instant moment;\nmoment."
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 1, Character: 7},
+	}})
+	for _, want := range []string{"toUnix", "formatRFC3339", "add", "diff", "inZone"} {
+		if !hasCompletion(items, want) {
+			t.Fatalf("expected `%s` in datetime.Instant.<> completions, got %#v", want, items)
+		}
+	}
+}
+
+// TestCompletionClassContextFallsThroughForUnknownClass verifies
+// that an unrecognised qualified type (e.g. `mymod.Mine x;`) falls
+// through to identifier completion rather than returning empty.
+func TestCompletionClassContextFallsThroughForUnknownClass(t *testing.T) {
+	src := "mymod.Mine x;\nx."
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 1, Character: 2},
+	}})
+	if hasCompletion(items, "header") {
+		t.Fatalf("did not expect http.Request methods for an unknown class, got %#v", items)
+	}
+}
+
+// TestCompletionThisOutsideTestClassFallsThrough verifies the
+// path doesn't fire when `extends test.Test` isn't in the source -
+// `this.` should not surface assertion methods in regular classes.
+func TestCompletionThisOutsideTestClassFallsThrough(t *testing.T) {
+	src := "class Plain {\n\tfunc check(): void {\n\t\tthis."
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 2, Character: 7},
+	}})
+	if hasCompletion(items, "assertEquals") {
+		t.Fatalf("did not expect assertEquals outside test.Test subclass, got %#v", items)
+	}
+}
+
+// TestSignatureHelpForClassMethod verifies signatureHelp resolves
+// `<typedVar>.<method>(<cursor>` against the catalogued class
+// method tables.
+func TestSignatureHelpForClassMethod(t *testing.T) {
+	src := "http.Request req;\nreq.header("
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	help := s.signatureHelp(SignatureHelpParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 1, Character: 11},
+	}})
+	if len(help.Signatures) != 1 {
+		t.Fatalf("expected one signature for http.Request.header, got %d (%#v)", len(help.Signatures), help)
+	}
+	if !strings.Contains(help.Signatures[0].Label, "string name") || !strings.Contains(help.Signatures[0].Label, "?string") {
+		t.Errorf("signature should reference `string name` param and `?string` return, got %q", help.Signatures[0].Label)
 	}
 }
 

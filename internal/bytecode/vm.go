@@ -11547,7 +11547,36 @@ func (vm *VM) callBuiltinParentMethod(classInfo ClassInfo, instance *runtime.Ins
 	if !vm.hasTestAncestor(classInfo) {
 		return nil, false, nil
 	}
+	if strings.EqualFold(name, "assertThrows") {
+		value, err := vm.assertThrowsImpl(args)
+		return value, true, err
+	}
 	return runtime.RunTestAssertion(name, args)
+}
+
+// assertThrowsImpl mirrors the evaluator's assertThrows so VM-mode
+// tests can use the same helper. Signature:
+// assertThrows(callable) or assertThrows(callable, expectedSubstring).
+func (vm *VM) assertThrowsImpl(args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 1 || len(args) > 2 {
+		return nil, fmt.Errorf("Test.assertThrows expects (callable[, expectedSubstring])")
+	}
+	var expectedSub string
+	if len(args) == 2 {
+		s, ok := args[1].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("Test.assertThrows: second argument must be a string substring")
+		}
+		expectedSub = s.Value
+	}
+	_, err := vm.callCallable(args[0], nil)
+	if err == nil {
+		return nil, fmt.Errorf("expected callable to throw, but it returned normally")
+	}
+	if expectedSub != "" && !strings.Contains(err.Error(), expectedSub) {
+		return nil, fmt.Errorf("expected error containing %q, got %q", expectedSub, err.Error())
+	}
+	return runtime.Null{}, nil
 }
 
 // HasInstanceMethod reports whether instance has a method with the given name,

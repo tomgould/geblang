@@ -179,6 +179,9 @@ var pureBuiltins = map[string]map[string]struct{}{
 	"re": {
 		"match": {}, "matchAll": {}, "find": {}, "findAll": {}, "replace": {}, "split": {}, "test": {},
 	},
+	"pcre": {
+		"match": {}, "matchAll": {}, "find": {}, "findAll": {}, "replace": {}, "split": {}, "test": {}, "quote": {},
+	},
 	"markdown": {
 		"parse": {}, "renderHtml": {}, "stripText": {},
 	},

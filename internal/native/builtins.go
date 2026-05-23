@@ -78,6 +78,7 @@ func NewBuiltinRegistry() *Registry {
 	registerURL(r)
 	registerUUID(r)
 	registerRe(r)
+	registerPCRE(r)
 	registerMarkdown(r)
 	registerTemplate(r)
 	registerSys(r)
