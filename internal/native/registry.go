@@ -10,10 +10,16 @@ type Function func(args []runtime.Value) (runtime.Value, error)
 
 type Registry struct {
 	functions map[string]Function
+	// patches overlays functions for the duration of a test;
+	// CallKey checks here first, falls back to functions. Used by
+	// test.mock(...) to swap out stdlib implementations with
+	// user-supplied callables. The engine clears patches
+	// automatically between @test methods.
+	patches map[string]Function
 }
 
 func NewRegistry() *Registry {
-	return &Registry{functions: map[string]Function{}}
+	return &Registry{functions: map[string]Function{}, patches: map[string]Function{}}
 }
 
 func Key(module, name string) string {
@@ -25,6 +31,9 @@ func (r *Registry) Register(module, name string, fn Function) {
 }
 
 func (r *Registry) Call(module, name string, args []runtime.Value) (runtime.Value, error) {
+	if patch, ok := r.patches[Key(module, name)]; ok {
+		return patch(args)
+	}
 	fn, ok := r.functions[Key(module, name)]
 	if !ok {
 		return nil, fmt.Errorf("unsupported native call %s.%s", module, name)
@@ -38,11 +47,52 @@ func (r *Registry) Has(module, name string) bool {
 }
 
 func (r *Registry) CallKey(key string, args []runtime.Value) (runtime.Value, error) {
+	if patch, ok := r.patches[key]; ok {
+		return patch(args)
+	}
 	fn, ok := r.functions[key]
 	if !ok {
 		return nil, fmt.Errorf("unsupported native call %s", key)
 	}
 	return fn(args)
+}
+
+// Patch installs an override that shadows the registered function
+// for the given module.name key. Used by test.mock; the engine
+// pairs it with Snapshot/Restore so patches roll back at @test
+// method boundaries.
+func (r *Registry) Patch(module, name string, fn Function) {
+	r.patches[Key(module, name)] = fn
+}
+
+// Unpatch removes a single override, falling back to the
+// originally-registered function for subsequent calls.
+func (r *Registry) Unpatch(module, name string) {
+	delete(r.patches, Key(module, name))
+}
+
+// Snapshot returns a copy of the current patch map. The engine
+// captures one snapshot before each @test method and Restore()s
+// it after, so tests don't leak mocks into the next case.
+func (r *Registry) Snapshot() map[string]Function {
+	out := make(map[string]Function, len(r.patches))
+	for k, v := range r.patches {
+		out[k] = v
+	}
+	return out
+}
+
+// Restore replaces the active patch map with the given snapshot.
+// Pass an empty / nil map to clear all patches.
+func (r *Registry) Restore(snapshot map[string]Function) {
+	if snapshot == nil {
+		r.patches = map[string]Function{}
+		return
+	}
+	r.patches = make(map[string]Function, len(snapshot))
+	for k, v := range snapshot {
+		r.patches[k] = v
+	}
 }
 
 func IsPureBuiltin(module, name string) bool {
@@ -91,7 +141,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 	},
 	"crypt": {
 		"md5": {}, "sha1": {}, "sha256": {}, "sha512": {}, "sha3_256": {},
-		"blake2b": {}, "crc32": {}, "hmacSha256": {}, "randomHex": {},
+		"blake2b": {}, "crc32": {}, "hmacSha256": {}, "hmacSha256Bytes": {}, "randomHex": {},
 		"bcryptHash": {}, "bcryptVerify": {}, "argon2idHash": {}, "argon2idVerify": {},
 		"base64Encode": {}, "base64Decode": {},
 		"jwtSign": {}, "jwtVerify": {}, "jwtDecode": {},

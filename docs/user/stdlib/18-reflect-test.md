@@ -236,3 +236,64 @@ class MessageTest extends test.Test {
     }
 }
 ```
+
+## Mocking stdlib functions
+
+`test.mock(moduleName, dict)` swaps stdlib functions for the
+duration of the current `@test` method. The runner snapshots
+patches before each method and restores them after, so mocks
+from one test never leak into the next.
+
+```gb
+import test;
+import datetime;
+import crypt;
+
+class TokenTest extends test.Test {
+    @test
+    func usesFrozenClock(): void {
+        test.mock("datetime", {
+            "nowUnix": func(): int { return 1_700_000_000; }
+        });
+        let token = generateToken("ada");
+        /* Token now embeds the mocked timestamp deterministically. */
+        this.assertTrue(token.contains("1700000000"));
+    }
+}
+```
+
+Patch multiple functions on the same module in one call:
+
+```gb
+test.mock("http", {
+    "get":  func(string url): dict<string, any> { return {"status": 200, "body": "{\"ok\":true}"}; },
+    "post": func(string url, any body): dict<string, any> { return {"status": 201}; }
+});
+```
+
+Manual cleanup helpers are available when you need to assert
+both "with the mock" and "after the mock" behaviour in a single
+method:
+
+| Helper | Effect |
+|--------|--------|
+| `test.mock(module, dict)` | Install patches; auto-restored at method end. |
+| `test.restore(module, fname)` | Remove a single patch immediately. |
+| `test.restoreAll()` | Remove every patch immediately. |
+
+Patches dispatch through whichever engine is active (evaluator
+or VM); a mock installed inside an `@test` method is visible to
+all subsequent stdlib calls in that method, including nested
+function calls.
+
+Notes:
+
+- The patched callable receives positional arguments only. Named
+  argument forms aren't supported in v1; the underlying stdlib
+  surface generally doesn't use them.
+- `test.mock` patches the *Geblang-visible* native dispatch. It
+  doesn't intercept calls made by Go-side stateful natives that
+  bypass the registry (rare; mostly internal plumbing).
+- For instance-method or DI-resolved-service patching, prefer
+  constructor injection - replace the dependency in the test's
+  setup rather than reaching for `test.mock`.

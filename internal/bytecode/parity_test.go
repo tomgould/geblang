@@ -281,6 +281,11 @@ func runParityWithStdlib(t *testing.T, source string, want string) {
 	loader.hasMainChunk = true
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetStatefulNativeCaller(stateful)
+	/* Without the dispatcher wiring, the evaluator can't reach
+	 * back into the VM for test.mock + RunTestClass. Production
+	 * (cmd/geblang/main.go) sets this; the parity harness
+	 * mirrors that so feature-parity coverage is honest. */
+	stateful.SetMethodDispatcher(vm)
 	if err := vm.Run(); err != nil {
 		t.Fatalf("vm error: %v", err)
 	}
@@ -8423,4 +8428,43 @@ io.println((ch >= "0" && ch <= "9") as string);
 let letter = "m";
 io.println((letter >= "a" && letter <= "z") as string);
 `, "true\ntrue\ntrue\ntrue\nfalse\ntrue\ntrue\n")
+}
+
+// TestParityTestMock verifies test.mock works identically on
+// both engines: a patched stdlib function dispatches to the
+// user-supplied callable rather than the real native.
+// Uses runParityWithStdlib because test.mock dispatches through
+// the evaluator's stateful native bridge.
+func TestParityTestMock(t *testing.T) {
+	runParityWithStdlib(t, `import test;
+import crypt;
+import io;
+test.mock("crypt", {"sha256": func(string s): string { return "mocked-" + s; }});
+io.println(crypt.sha256("hello"));
+test.restoreAll();
+let real = crypt.sha256("hello");
+/* Real sha256 of "hello" is well-known; we just confirm it
+ * is no longer "mocked-hello" after restoreAll. */
+io.println((real != "mocked-hello") as string);
+`, "mocked-hello\ntrue\n")
+}
+
+// TestParityHmacSha256Bytes verifies the raw-bytes HMAC variant
+// produces the AWS sigv4 reference kDate value when fed the
+// documented test inputs (AWS docs sample for
+// "AWS4SECRET" + "20150830" -> kDate is a known hex digest).
+// This guards against accidental signature drift between the
+// evaluator and the VM and confirms the Bytes-typed return.
+func TestParityHmacSha256Bytes(t *testing.T) {
+	// Reference: AWS Signature V4 "Examples of How to Derive a
+	// Signing Key" - kDate when secretAccessKey is
+	// "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" and dateStamp is
+	// "20150830". Expected kDate hex:
+	//   0138c7a6cbd60aa727b2f653a522567439dfb9f3e72b21f9b25941a42f04a7cd
+	runParity(t, `import crypt;
+import bytes;
+import io;
+let kDate = crypt.hmacSha256Bytes("AWS4wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "20150830");
+io.println(bytes.toHex(kDate));
+`, "0138c7a6cbd60aa727b2f653a522567439dfb9f3e72b21f9b25941a42f04a7cd\n")
 }

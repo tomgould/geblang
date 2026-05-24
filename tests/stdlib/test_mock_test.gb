@@ -1,0 +1,83 @@
+/**
+ * @title test.mock (1.3.0)
+ * @summary `test.mock(moduleName, {fname: callable})` swaps stdlib
+ * functions for the duration of the @test method. Patches roll
+ * back automatically between methods so one test can't leak
+ * mocks into the next.
+ */
+import test;
+import datetime;
+import crypt;
+import io;
+
+class TestMockTest extends test.Test {
+    @test
+    func patchSingleFunction(): void {
+        test.mock("datetime", {"nowUnix": func(): int { return 42; }});
+        this.assertEquals(42, datetime.nowUnix());
+    }
+
+    @test
+    func patchAutoRestoredBetweenMethods(): void {
+        /* If the previous test's patch leaked, datetime.nowUnix
+         * would still be 42. Real time should be way above that. */
+        this.assertTrue(datetime.nowUnix() > 1_000_000_000);
+    }
+
+    @test
+    func patchMultipleFunctionsOnOneModule(): void {
+        test.mock("crypt", {
+            "sha256": func(string s): string { return "deadbeef"; },
+            "md5":    func(string s): string { return "cafef00d"; }
+        });
+        this.assertEquals("deadbeef", crypt.sha256("anything"));
+        this.assertEquals("cafef00d", crypt.md5("anything"));
+    }
+
+    @test
+    func mockReceivesArgs(): void {
+        test.mock("crypt", {
+            "sha256": func(string s): string {
+                if (s == "key") { return "matched"; }
+                return "default";
+            }
+        });
+        this.assertEquals("matched", crypt.sha256("key"));
+        this.assertEquals("default", crypt.sha256("other"));
+    }
+
+    @test
+    func restoreOneFunction(): void {
+        test.mock("datetime", {"nowUnix": func(): int { return 0; }});
+        this.assertEquals(0, datetime.nowUnix());
+        test.restore("datetime", "nowUnix");
+        this.assertTrue(datetime.nowUnix() > 1_000_000_000);
+    }
+
+    @test
+    func restoreAllClearsEverything(): void {
+        test.mock("datetime", {"nowUnix": func(): int { return 0; }});
+        test.mock("crypt", {"sha256": func(string s): string { return "mocked"; }});
+        test.restoreAll();
+        this.assertTrue(datetime.nowUnix() > 1_000_000_000);
+        this.assertNotEquals("mocked", crypt.sha256("anything"));
+    }
+
+    @test
+    func nestedCallsSeeThePatch(): void {
+        test.mock("datetime", {"nowUnix": func(): int { return 99; }});
+        let nested = func(): int {
+            return datetime.nowUnix();
+        };
+        this.assertEquals(99, nested());
+    }
+
+    @test
+    func unknownModuleStillReachable(): void {
+        /* Patching a never-registered module is fine - the patch
+         * just sits in the table. */
+        test.mock("noSuchModule", {"x": func(): int { return 1; }});
+        /* No crash. */
+        this.assertTrue(true);
+    }
+}

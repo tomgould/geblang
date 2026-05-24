@@ -219,6 +219,10 @@ type MethodDispatcher interface {
 	HasInstanceMethod(instance *runtime.Instance, name string) bool
 	CallInstanceMethod(instance *runtime.Instance, name string, args []runtime.Value) (runtime.Value, error)
 	RunTestClass(classIndex int64, tagFilter []string) (runtime.Value, error)
+	PatchNative(module, name string, fn native.Function)
+	UnpatchNative(module, name string)
+	NativeSnapshot() map[string]native.Function
+	RestoreNatives(snapshot map[string]native.Function)
 }
 
 type httpClientHandle struct {
@@ -7259,6 +7263,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"blake2b":                e.registryBuiltin("crypt", "blake2b"),
 			"crc32":                  e.registryBuiltin("crypt", "crc32"),
 			"hmacSha256":             e.registryBuiltin("crypt", "hmacSha256"),
+			"hmacSha256Bytes":        e.registryBuiltin("crypt", "hmacSha256Bytes"),
 			"bcryptHash":             e.registryBuiltin("crypt", "bcryptHash"),
 			"bcryptVerify":           e.registryBuiltin("crypt", "bcryptVerify"),
 			"argon2idHash":           e.registryBuiltin("crypt", "argon2idHash"),
@@ -7493,7 +7498,10 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"closeListener": e.netCloseListener,
 		},
 		"test": {
-			"run": e.testRun,
+			"run":        e.testRun,
+			"mock":       e.testMock,
+			"restore":    e.testRestore,
+			"restoreAll": e.testRestoreAll,
 		},
 		"reflect": {
 			"decorators":       reflectDecorators,
@@ -10360,6 +10368,15 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 	} else {
 		for _, method := range methods {
 			total++
+			/* Snapshot test.mock patches before each method so
+			 * mocks from one test don't leak into the next.
+			 * Both the evaluator's registry and the VM's (when
+			 * present) need to roll back. */
+			patchSnapshot := e.natives.Snapshot()
+			var vmSnapshot map[string]native.Function
+			if e.vmDispatcher != nil {
+				vmSnapshot = e.vmDispatcher.NativeSnapshot()
+			}
 			testErr := e.applyOptionalTestHook(instance, "setup")
 			if testErr == nil {
 				_, testErr = e.applyFunctionWithThis(method, nil, instance)
@@ -10370,6 +10387,10 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 				} else {
 					testErr = fmt.Errorf("teardown: %w", teardownErr)
 				}
+			}
+			e.natives.Restore(patchSnapshot)
+			if e.vmDispatcher != nil {
+				e.vmDispatcher.RestoreNatives(vmSnapshot)
 			}
 			if testErr != nil {
 				failed++
@@ -10398,6 +10419,99 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 	putDict(entries, "failures", runtime.List{Elements: failures})
 	putDict(entries, "tests", runtime.List{Elements: tests})
 	return runtime.Dict{Entries: entries}, nil
+}
+
+// testMock(moduleName, {"fname": callable, ...}) installs patches
+// on the registry shared by all native calls so subsequent
+// invocations of those module functions dispatch to the user's
+// callable instead. Patches roll back automatically at the end
+// of each @test method via the snapshot/restore in testRun.
+func (e *Evaluator) testMock(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects (moduleName, dict<string, callable>)", call.Callee.String())
+	}
+	moduleName, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s moduleName must be a string", call.Callee.String())
+	}
+	replacements, ok := args[1].(runtime.Dict)
+	if !ok {
+		return nil, fmt.Errorf("%s second argument must be a dict<string, callable>", call.Callee.String())
+	}
+	for _, entry := range replacements.Entries {
+		fnameValue, ok := entry.Key.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s dict keys must be strings", call.Callee.String())
+		}
+		fname := fnameValue.Value
+		callable := entry.Value
+		patch := e.makeMockPatch(call, callable)
+		e.natives.Patch(moduleName.Value, fname, patch)
+		/* When running with the bytecode VM as the primary engine,
+		 * the VM has its own registry; mirror the patch there so
+		 * test.mock works on either dispatch path. */
+		if e.vmDispatcher != nil {
+			e.vmDispatcher.PatchNative(moduleName.Value, fname, patch)
+		}
+	}
+	return runtime.Null{}, nil
+}
+
+// testRestore(module, fname) removes a single patch.
+func (e *Evaluator) testRestore(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects (moduleName, fname)", call.Callee.String())
+	}
+	moduleName, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s moduleName must be a string", call.Callee.String())
+	}
+	fname, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s fname must be a string", call.Callee.String())
+	}
+	e.natives.Unpatch(moduleName.Value, fname.Value)
+	if e.vmDispatcher != nil {
+		e.vmDispatcher.UnpatchNative(moduleName.Value, fname.Value)
+	}
+	return runtime.Null{}, nil
+}
+
+// testRestoreAll() clears every active patch. The test runner
+// also calls this implicitly between methods.
+func (e *Evaluator) testRestoreAll(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
+	}
+	e.natives.Restore(nil)
+	if e.vmDispatcher != nil {
+		e.vmDispatcher.RestoreNatives(nil)
+	}
+	return runtime.Null{}, nil
+}
+
+// makeMockPatch wraps a Geblang callable as a native.Function so
+// the registry can dispatch native-call sites through it. The
+// callable runs back through the evaluator via applyCallableValue.
+func (e *Evaluator) makeMockPatch(call *ast.CallExpression, callable runtime.Value) native.Function {
+	return func(args []runtime.Value) (runtime.Value, error) {
+		return e.invokeMockCallable(call, callable, args)
+	}
+}
+
+func (e *Evaluator) invokeMockCallable(call *ast.CallExpression, callable runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	switch fn := callable.(type) {
+	case runtime.Function:
+		return e.applyFunction(fn, args)
+	case runtime.OverloadedFunction:
+		for _, overload := range fn.Overloads {
+			if len(overload.Parameters) == len(args) {
+				return e.applyFunction(overload, args)
+			}
+		}
+		return nil, fmt.Errorf("test.mock: no matching overload for %d arguments", len(args))
+	}
+	return nil, fmt.Errorf("test.mock: replacement is not callable")
 }
 
 // testCaseDict builds a per-test result entry with name, passed, and

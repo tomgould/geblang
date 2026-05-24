@@ -29,6 +29,16 @@
   service messages (with `locationHint='geblang_test://Class/
   method'`) so JetBrains IDE test runners parse events natively.
   Replaces the verbose PASS/FAIL output for IDE integration.
+- `test.mock(moduleName, {fname: callable})` swaps stdlib
+  functions for the duration of the current `@test` method;
+  the runner snapshots patches before each method and restores
+  them after, so mocks never leak across tests. Pair with
+  `test.restore(module, fname)` / `test.restoreAll()` for mid-
+  method toggling.
+- New `crypt.hmacSha256Bytes(key, message): bytes` returns the
+  raw HMAC output (instead of hex). Useful when the HMAC output
+  is the next round's key - sigv4, HKDF, TLS PRF, etc. Verified
+  against the AWS sigv4 reference vector.
 
 ### Fixes
 

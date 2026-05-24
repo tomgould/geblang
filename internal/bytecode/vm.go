@@ -11599,6 +11599,31 @@ func (vm *VM) CallInstanceMethod(instance *runtime.Instance, name string, args [
 }
 
 // RunTestClass runs all @test-decorated methods on a bytecode class and returns a result dict.
+// PatchNative installs a registry override so subsequent calls
+// to `module.name` dispatch through `fn` instead of the originally
+// registered native. Used by test.mock; the evaluator pairs this
+// with NativeSnapshot / RestoreNatives so patches roll back at
+// @test method boundaries.
+func (vm *VM) PatchNative(module, name string, fn native.Function) {
+	vm.natives.Patch(module, name, fn)
+}
+
+// UnpatchNative removes a single patch.
+func (vm *VM) UnpatchNative(module, name string) {
+	vm.natives.Unpatch(module, name)
+}
+
+// NativeSnapshot returns the active patch map.
+func (vm *VM) NativeSnapshot() map[string]native.Function {
+	return vm.natives.Snapshot()
+}
+
+// RestoreNatives replaces the active patch map with `snapshot`.
+// Pass nil to clear every patch.
+func (vm *VM) RestoreNatives(snapshot map[string]native.Function) {
+	vm.natives.Restore(snapshot)
+}
+
 func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value, error) {
 	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
 		return nil, fmt.Errorf("class index out of range")

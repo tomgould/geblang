@@ -614,7 +614,10 @@ var stdlibCatalog = map[string]moduleDoc{
 		"homedir":  fn([]string{}, "string", "Returns the home directory."),
 	}},
 	"test": {functions: map[string]functionDoc{
-		"run": fn([]string{"Type testClass", "dict<string, any> options = {}"}, "dict<string, any>", "Runs tests for a class."),
+		"run":        fn([]string{"Type testClass", "dict<string, any> options = {}"}, "dict<string, any>", "Runs tests for a class."),
+		"mock":       fn([]string{"string moduleName", "dict<string, callable> replacements"}, "void", "Patch stdlib functions with user-supplied callables for the duration of the current @test method. Auto-restored between methods."),
+		"restore":    fn([]string{"string moduleName", "string fname"}, "void", "Remove a single test.mock patch."),
+		"restoreAll": fn([]string{}, "void", "Clear every active test.mock patch."),
 	}, classes: map[string]string{"Test": "Base class for unit tests. Subclass and annotate methods with @test. Use this.assertEquals / assertTrue / assertThrows / etc. inside test bodies."}},
 	"web": {functions: map[string]functionDoc{
 		"new":        fn([]string{}, "App", "Creates a web application."),
@@ -658,6 +661,7 @@ var stdlibCatalog = map[string]moduleDoc{
 		"blake2b":                fn([]string{"string text"}, "string", "BLAKE2b hash as lowercase hex."),
 		"crc32":                  fn([]string{"string text"}, "int", "CRC32 checksum (not cryptographic)."),
 		"hmacSha256":             fn([]string{"string secret", "string message"}, "string", "HMAC-SHA256 as lowercase hex."),
+		"hmacSha256Bytes":        fn([]string{"string secret", "string message"}, "bytes", "HMAC-SHA256 as raw bytes. Use when the HMAC output is the next round's key (sigv4, HKDF)."),
 		"randomHex":              fn([]string{"int byteCount"}, "string", "Cryptographically random hex string of 2N chars. Prefer secrets.randomHex."),
 		"bcryptHash":             fn([]string{"string password", "int cost = 10"}, "string", "Hashes a password with bcrypt."),
 		"bcryptVerify":           fn([]string{"string password", "string hash"}, "bool", "Verifies a bcrypt password hash."),

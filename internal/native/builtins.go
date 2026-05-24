@@ -755,6 +755,22 @@ func registerCrypt(r *Registry) {
 		_, _ = mac.Write([]byte(text.Value))
 		return runtime.String{Value: hex.EncodeToString(mac.Sum(nil))}, nil
 	})
+	r.Register("crypt", "hmacSha256Bytes", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("crypt.hmacSha256Bytes expects exactly two arguments")
+		}
+		key, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("crypt.hmacSha256Bytes key must be string")
+		}
+		text, ok := args[1].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("crypt.hmacSha256Bytes message must be string")
+		}
+		mac := hmac.New(sha256.New, []byte(key.Value))
+		_, _ = mac.Write([]byte(text.Value))
+		return runtime.Bytes{Value: mac.Sum(nil)}, nil
+	})
 	r.Register("crypt", "bcryptHash", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 && len(args) != 2 {
 			return nil, fmt.Errorf("crypt.bcryptHash expects password and optional cost")
