@@ -15,7 +15,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(58)
+	Version = uint16(59)
 )
 
 type Op byte
@@ -112,6 +112,12 @@ const (
 	OpIterClose
 	OpTypeAssert
 	OpShallowFreeze
+	// OpMatchListShape pops the top-of-stack value and pushes a Bool:
+	// true when the value is a runtime.List with exactly Operand[0]
+	// elements; false otherwise. Used by match list-pattern compile
+	// (case [a, b, ...]) so the structural test stays a single
+	// dispatch.
+	OpMatchListShape
 	// Type-specialized integer arithmetic and comparison opcodes.
 	// These are emitted by the compiler when both operands are statically typed
 	// as int. The VM fast-path skips type dispatch and handles SmallInt inline.

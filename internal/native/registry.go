@@ -146,7 +146,8 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"base64Encode": {}, "base64Decode": {},
 		"jwtSign": {}, "jwtVerify": {}, "jwtDecode": {},
 		"generateRsaKey": {}, "generateEcKey": {}, "generateEd25519Key": {},
-		"publicKey": {}, "generateSelfSignedCert": {}, "generateCsr": {}, "parseCert": {},
+		"publicKey": {}, "generateSelfSignedCert": {}, "generateCsr": {}, "parseCert": {}, "signCertificate": {}, "pkcs12Decode": {},
+		"jweEncrypt": {}, "jweDecrypt": {},
 		"jwtSignRS256": {}, "jwtVerifyRS256": {}, "jwtSignES256": {}, "jwtVerifyES256": {},
 		"aesEncrypt": {}, "aesDecrypt": {},
 		"chacha20Encrypt": {}, "chacha20Decrypt": {},
@@ -204,6 +205,11 @@ var pureBuiltins = map[string]map[string]struct{}{
 	},
 	"compress": {
 		"gzip": {}, "gunzip": {},
+	},
+	"archive": {
+		"zipRead": {}, "zipWrite": {},
+		"tarRead": {}, "tarWrite": {},
+		"tarGzRead": {}, "tarGzWrite": {},
 	},
 	"encoding": {
 		"base64Encode": {}, "base64Decode": {},

@@ -74,6 +74,7 @@ type VM struct {
 	typeSpecCache       map[string]vmTypeSpec
 	typeAssertSpecs     map[int64]vmTypeSpec
 	localsFree          [][]runtime.VMValue
+	callArgsFree        [][]runtime.Value
 	// pendingTypeBindings carries an inherited type-binding map from a
 	// closure callsite into the next startFunctionWithValidation call.
 	// startFunctionWithBindings sets it; startFunctionWithValidation
@@ -325,6 +326,12 @@ const (
 	vmTypeDict
 	vmTypeCallable
 	vmTypeGenerator
+	// vmTypeUnion holds a `T | U | ...` shape: spec.args carries the
+	// branches; a value matches when any branch matches.
+	vmTypeUnion
+	// vmTypeIntersection holds a `T & U & ...` shape: spec.args carries
+	// the branches; a value matches only when every branch matches.
+	vmTypeIntersection
 )
 
 func NewVM(chunk Chunk, stdout io.Writer) *VM {
@@ -666,6 +673,31 @@ func (vm *VM) releaseLocalsBuffer(buf []runtime.VMValue) {
 	}
 	clear(buf)
 	vm.localsFree = append(vm.localsFree, buf[:0])
+}
+
+// takeCallArgsBuffer returns a []runtime.Value of length size, reusing
+// a previously released slice from the per-VM free list when one with
+// sufficient capacity is available. Pair every call with
+// releaseCallArgsBuffer; the slice must not escape the call boundary.
+func (vm *VM) takeCallArgsBuffer(size int) []runtime.Value {
+	for i := len(vm.callArgsFree) - 1; i >= 0; i-- {
+		buf := vm.callArgsFree[i]
+		if cap(buf) < size {
+			continue
+		}
+		vm.callArgsFree[i] = vm.callArgsFree[len(vm.callArgsFree)-1]
+		vm.callArgsFree = vm.callArgsFree[:len(vm.callArgsFree)-1]
+		return buf[:size]
+	}
+	return make([]runtime.Value, size)
+}
+
+func (vm *VM) releaseCallArgsBuffer(buf []runtime.Value) {
+	if cap(buf) == 0 {
+		return
+	}
+	clear(buf)
+	vm.callArgsFree = append(vm.callArgsFree, buf[:0])
 }
 
 func (vm *VM) SetModuleName(name string) {
@@ -1341,6 +1373,22 @@ func (vm *VM) Run() (err error) {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
 			vm.push(runtime.ShallowFreeze(value))
+		case OpMatchListShape:
+			if len(instruction.Operands) != 1 {
+				return vm.runtimeError(instruction, "match-list-shape instruction has invalid operands")
+			}
+			expected := instruction.Operands[0]
+			vmv, err := vm.popVM()
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
+			ok := false
+			if vmv.Kind == runtime.VMKindBoxed {
+				if list, isList := vmv.Boxed.(runtime.List); isList && int64(len(list.Elements)) == expected {
+					ok = true
+				}
+			}
+			vm.pushVM(runtime.VMValueBool(ok))
 		case OpUnpackList:
 			if err := vm.unpackList(instruction); err != nil {
 				return err
@@ -1372,17 +1420,29 @@ func (vm *VM) Run() (err error) {
 				return err
 			}
 		case OpTypeOf:
-			value, err := vm.pop()
+			vmv, err := vm.popVM()
 			if err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
-			switch v := value.(type) {
-			case *runtime.Class:
-				vm.push(runtime.Type{Name: v.Name})
-			case runtime.BytecodeClass:
-				vm.push(runtime.Type{Name: v.Name})
+			switch vmv.Kind {
+			case runtime.VMKindSmallInt:
+				vm.pushVM(runtime.VMValueFromValue(runtime.Type{Name: "int"}))
+			case runtime.VMKindBool:
+				vm.pushVM(runtime.VMValueFromValue(runtime.Type{Name: "bool"}))
+			case runtime.VMKindFloat:
+				vm.pushVM(runtime.VMValueFromValue(runtime.Type{Name: "float"}))
+			case runtime.VMKindNull, runtime.VMKindUnset:
+				vm.pushVM(runtime.VMValueFromValue(runtime.Type{Name: "null"}))
 			default:
-				vm.push(runtime.Type{Name: value.TypeName()})
+				value := vmv.ToValue()
+				switch v := value.(type) {
+				case *runtime.Class:
+					vm.push(runtime.Type{Name: v.Name})
+				case runtime.BytecodeClass:
+					vm.push(runtime.Type{Name: v.Name})
+				default:
+					vm.push(runtime.Type{Name: value.TypeName()})
+				}
 			}
 		case OpInstanceOf:
 			if err := vm.instanceOf(instruction); err != nil {
@@ -2004,29 +2064,25 @@ func (vm *VM) Run() (err error) {
 				ip = nextIP
 			}
 		case OpNullCoalesce:
-			top, err := vm.peek()
+			top, err := vm.peekVM()
 			if err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
-			if _, isNull := top.(runtime.Null); !isNull {
-				// Non-null: jump past the right-side code.
+			if top.Kind != runtime.VMKindNull && top.Kind != runtime.VMKindUnset {
 				ip = int(instruction.Operands[0]) - 1
 			} else {
-				// Null: pop it and fall through to evaluate right side.
-				if _, err := vm.pop(); err != nil {
+				if _, err := vm.popVM(); err != nil {
 					return vm.runtimeError(instruction, "%s", err.Error())
 				}
 			}
 		case OpOptionalChain:
-			top, err := vm.peek()
+			top, err := vm.peekVM()
 			if err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
-			if _, isNull := top.(runtime.Null); isNull {
-				// Null: leave null on stack and jump past the field/method access.
+			if top.Kind == runtime.VMKindNull || top.Kind == runtime.VMKindUnset {
 				ip = int(instruction.Operands[0]) - 1
 			}
-			// Non-null: fall through; value remains on stack as receiver.
 		case OpCallSpread:
 			if len(instruction.Operands) != 2 {
 				return vm.runtimeError(instruction, "call-spread instruction has invalid operands")
@@ -4621,10 +4677,26 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 			}
 		}
 	}
-	args := make([]runtime.Value, argc)
+	// Async / generator / callable branches let args escape into a
+	// worker goroutine or stored task, so they keep the raw make().
+	// The terminal startFunction path copies args into locals before
+	// returning, so it can ride the call-args pool.
+	asyncEscape := function.Async && !vm.syncMode
+	generatorEscape := function.IsGenerator && !vm.generatorExecution
+	callableEscape := hasDecorated && !vm.rawFunctionCalls[index]
+	canPool := !asyncEscape && !generatorEscape && !callableEscape
+	var args []runtime.Value
+	if canPool {
+		args = vm.takeCallArgsBuffer(int(argc))
+	} else {
+		args = make([]runtime.Value, argc)
+	}
 	for i := int(argc) - 1; i >= 0; i-- {
 		value, err := vm.pop()
 		if err != nil {
+			if canPool {
+				vm.releaseCallArgsBuffer(args)
+			}
 			return 0, vm.runtimeError(instruction, "%s", err.Error())
 		}
 		args[i] = value
@@ -4651,7 +4723,9 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 		vm.push(vm.lazyGenerator(index, args))
 		return ip, nil
 	}
-	return vm.startFunction(instruction, ip, function, args, nil)
+	nextIP, err := vm.startFunction(instruction, ip, function, args, nil)
+	vm.releaseCallArgsBuffer(args)
+	return nextIP, err
 }
 
 func (vm *VM) startAsyncFunction(index int64, args []runtime.Value) *runtime.Task {
@@ -4849,12 +4923,16 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	fastPath := !function.Variadic && argc == paramCount && returnOverride == nil
 	if !fastPath {
 		// Materialise the args as []runtime.Value and let the legacy
-		// path handle defaults/variadic/etc.
-		args := make([]runtime.Value, argc)
+		// path handle defaults/variadic/etc. startFunctionWithValidation
+		// copies into locals before returning so the args slice is
+		// safe to recycle once it returns.
+		args := vm.takeCallArgsBuffer(argc)
 		for i, a := range stackArgs {
 			args[i] = a.ToValue()
 		}
-		return vm.startFunctionWithValidation(instruction, ip, function, args, returnOverride, true)
+		nextIP, err := vm.startFunctionWithValidation(instruction, ip, function, args, returnOverride, true)
+		vm.releaseCallArgsBuffer(args)
+		return nextIP, err
 	}
 
 	// Type validation, inline against VMValues. Skips the spec lookup
@@ -4882,11 +4960,13 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 				// Fall back to the slow path so the existing error
 				// reporting (which formats runtime.Value descriptions)
 				// runs uniformly.
-				args := make([]runtime.Value, argc)
+				args := vm.takeCallArgsBuffer(argc)
 				for j, a := range stackArgs {
 					args[j] = a.ToValue()
 				}
-				return vm.startFunctionWithValidation(instruction, ip, function, args, returnOverride, true)
+				nextIP, err := vm.startFunctionWithValidation(instruction, ip, function, args, returnOverride, true)
+				vm.releaseCallArgsBuffer(args)
+				return nextIP, err
 			}
 		}
 	}
@@ -4960,6 +5040,9 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 func (vm *VM) matchVMValueToTypeSpec(typeParams map[string]bool, value runtime.VMValue, spec vmTypeSpec) bool {
 	if typeParams[spec.baseLower] {
 		return true
+	}
+	if spec.kind == vmTypeUnion || spec.kind == vmTypeIntersection {
+		return vm.matchValueToTypeSpec(typeParams, value.ToValue(), spec)
 	}
 	if value.Kind == runtime.VMKindUnset || value.Kind == runtime.VMKindNull {
 		return spec.nullable
@@ -5189,10 +5272,13 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 				if suffix != "" {
 					gotName = arg.TypeName()
 				}
+				var msg string
 				if paramName != "" {
-					return 0, vm.runtimeError(instruction, "%s expects %s for parameter '%s', got %s%s", function.Name, function.ParamTypes[i], paramName, gotName, suffix)
+					msg = fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, function.ParamTypes[i], paramName, gotName, suffix)
+				} else {
+					msg = fmt.Sprintf("%s expects %s, got %s%s", function.Name, function.ParamTypes[i], gotName, suffix)
 				}
-				return 0, vm.runtimeError(instruction, "%s expects %s, got %s%s", function.Name, function.ParamTypes[i], gotName, suffix)
+				return vm.throwTyped(instruction, ip, "RuntimeError", msg)
 			}
 		}
 	}
@@ -10001,6 +10087,37 @@ func parseTypeStr(s string) (base, inner string, hasInner bool) {
 	return s, "", false
 }
 
+// splitTopLevelTypeOp scans for the supplied operator byte ('|' or
+// '&') at depth zero in a type-string and splits on every
+// occurrence. Returns ok=true and the trimmed branch list when the
+// operator was found at the top level; ok=false leaves the input
+// untouched. Generic argument lists (`<...>`) are skipped so that
+// `dict<int, string>` doesn't tokenise its inner comma or any
+// nested generic operators.
+func splitTopLevelTypeOp(s string, op byte) ([]string, bool) {
+	depth := 0
+	var parts []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '<':
+			depth++
+		case '>':
+			depth--
+		case op:
+			if depth == 0 {
+				parts = append(parts, strings.TrimSpace(s[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return nil, false
+	}
+	parts = append(parts, strings.TrimSpace(s[start:]))
+	return parts, true
+}
+
 // splitTypeArgs splits a comma-separated type argument list respecting nested angle brackets.
 // e.g. "string,dict<string,int>" → ["string", "dict<string,int>"]
 func splitTypeArgs(s string) []string {
@@ -10071,6 +10188,31 @@ func (vm *VM) typeSpec(typ string) vmTypeSpec {
 
 func parseVMTypeSpec(typ string) vmTypeSpec {
 	raw := strings.TrimSpace(typ)
+	// Top-level `|` or `&` (outside angle brackets) builds a
+	// union / intersection spec whose args are the branches.
+	if branches, op := splitTopLevelTypeOp(raw, '|'); op {
+		spec := vmTypeSpec{raw: raw, kind: vmTypeUnion}
+		for _, b := range branches {
+			spec.args = append(spec.args, parseVMTypeSpec(b))
+		}
+		// A union is "nullable" when any branch is the explicit
+		// null type or a ?T sigil. This lets the early-return
+		// for VMKindNull in matchValueToTypeSpec stay accurate.
+		for _, arg := range spec.args {
+			if arg.nullable || arg.baseLower == "null" {
+				spec.nullable = true
+				break
+			}
+		}
+		return spec
+	}
+	if branches, op := splitTopLevelTypeOp(raw, '&'); op {
+		spec := vmTypeSpec{raw: raw, kind: vmTypeIntersection}
+		for _, b := range branches {
+			spec.args = append(spec.args, parseVMTypeSpec(b))
+		}
+		return spec
+	}
 	baseTyp, innerTyp, hasInner := parseTypeStr(raw)
 	base := strings.TrimSpace(baseTyp)
 	nullable := strings.HasPrefix(base, "?")
@@ -10130,6 +10272,25 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 		return true
 	}
 	if spec.kind == vmTypeAny {
+		return true
+	}
+	if spec.kind == vmTypeUnion {
+		if _, isNull := value.(runtime.Null); isNull && spec.nullable {
+			return true
+		}
+		for _, branch := range spec.args {
+			if vm.matchValueToTypeSpec(typeParams, value, branch) {
+				return true
+			}
+		}
+		return false
+	}
+	if spec.kind == vmTypeIntersection {
+		for _, branch := range spec.args {
+			if !vm.matchValueToTypeSpec(typeParams, value, branch) {
+				return false
+			}
+		}
 		return true
 	}
 	// Null is assignable to any nullable type, regardless of element
@@ -13924,6 +14085,16 @@ func (vm *VM) peek() (runtime.Value, error) {
 		return nil, fmt.Errorf("stack underflow")
 	}
 	return vm.stack[len(vm.stack)-1].ToValue(), nil
+}
+
+// peekVM returns the top VMValue without converting to runtime.Value.
+// Use when the caller only needs Kind/AsBool/I64 access and would
+// otherwise pay an interface boxing in peek().
+func (vm *VM) peekVM() (runtime.VMValue, error) {
+	if len(vm.stack) == 0 {
+		return runtime.VMValueNull, fmt.Errorf("stack underflow")
+	}
+	return vm.stack[len(vm.stack)-1], nil
 }
 
 func bitwiseMagicName(op Op) (string, bool) {

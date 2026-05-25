@@ -1,0 +1,266 @@
+/**
+ * @title JWT unified surface test (1.4.0)
+ * @summary Exercises crypt.jwtSign and crypt.jwtVerify across
+ * every supported algorithm (HS / RS / ES / EdDSA), confirms
+ * the alg-confusion defence, the explicit "none" rejection,
+ * and back-compat with the deprecated per-alg shims.
+ */
+import test;
+import crypt;
+
+class JwtUnifiedTest extends test.Test {
+    @test
+    func hs256RoundTripDefault(): void {
+        /* No opts.alg: default is HS256, preserving the old 2-arg
+         * crypt.jwtSign(payload, secret) shape. */
+        let token = crypt.jwtSign({"sub": "ada", "n": 42}, "shh");
+        let claims = crypt.jwtVerify(token, "shh");
+        this.assertNotNull(claims);
+        this.assertEquals("ada", claims["sub"]);
+        this.assertEquals(42, claims["n"]);
+    }
+
+    @test
+    func hs256RoundTripExplicit(): void {
+        let token = crypt.jwtSign({"u": "x"}, "shh", {"alg": "HS256"});
+        let claims = crypt.jwtVerify(token, "shh");
+        this.assertEquals("x", claims["u"]);
+    }
+
+    @test
+    func hs384RoundTrip(): void {
+        let token = crypt.jwtSign({"u": "y"}, "shh", {"alg": "HS384"});
+        let claims = crypt.jwtVerify(token, "shh");
+        this.assertEquals("y", claims["u"]);
+    }
+
+    @test
+    func hs512RoundTrip(): void {
+        let token = crypt.jwtSign({"u": "z"}, "shh", {"alg": "HS512"});
+        let claims = crypt.jwtVerify(token, "shh");
+        this.assertEquals("z", claims["u"]);
+    }
+
+    @test
+    func rs256RoundTrip(): void {
+        let priv = crypt.generateRsaKey(2048);
+        let pub = crypt.publicKey(priv);
+        let token = crypt.jwtSign({"u": "rsa256"}, priv, {"alg": "RS256"});
+        let claims = crypt.jwtVerify(token, pub);
+        this.assertEquals("rsa256", claims["u"]);
+    }
+
+    @test
+    func rs384RoundTrip(): void {
+        let priv = crypt.generateRsaKey(2048);
+        let pub = crypt.publicKey(priv);
+        let token = crypt.jwtSign({"u": "rsa384"}, priv, {"alg": "RS384"});
+        let claims = crypt.jwtVerify(token, pub);
+        this.assertEquals("rsa384", claims["u"]);
+    }
+
+    @test
+    func rs512RoundTrip(): void {
+        let priv = crypt.generateRsaKey(2048);
+        let pub = crypt.publicKey(priv);
+        let token = crypt.jwtSign({"u": "rsa512"}, priv, {"alg": "RS512"});
+        let claims = crypt.jwtVerify(token, pub);
+        this.assertEquals("rsa512", claims["u"]);
+    }
+
+    @test
+    func es256RoundTrip(): void {
+        let priv = crypt.generateEcKey("P-256");
+        let pub = crypt.publicKey(priv);
+        let token = crypt.jwtSign({"u": "ec256"}, priv, {"alg": "ES256"});
+        let claims = crypt.jwtVerify(token, pub);
+        this.assertEquals("ec256", claims["u"]);
+    }
+
+    @test
+    func es384RoundTrip(): void {
+        let priv = crypt.generateEcKey("P-384");
+        let pub = crypt.publicKey(priv);
+        let token = crypt.jwtSign({"u": "ec384"}, priv, {"alg": "ES384"});
+        let claims = crypt.jwtVerify(token, pub);
+        this.assertEquals("ec384", claims["u"]);
+    }
+
+    @test
+    func es512RoundTrip(): void {
+        let priv = crypt.generateEcKey("P-521");
+        let pub = crypt.publicKey(priv);
+        let token = crypt.jwtSign({"u": "ec512"}, priv, {"alg": "ES512"});
+        let claims = crypt.jwtVerify(token, pub);
+        this.assertEquals("ec512", claims["u"]);
+    }
+
+    @test
+    func es256RejectsWrongCurve(): void {
+        /* ES256 must use P-256; ES384 keys are not interchangeable. */
+        let priv = crypt.generateEcKey("P-384");
+        this.assertThrows(func(): void {
+            crypt.jwtSign({"u": "x"}, priv, {"alg": "ES256"});
+        });
+    }
+
+    @test
+    func eddsaRoundTrip(): void {
+        let priv = crypt.generateEd25519Key();
+        let pub = crypt.publicKey(priv);
+        let token = crypt.jwtSign({"u": "ed25519"}, priv, {"alg": "EdDSA"});
+        let claims = crypt.jwtVerify(token, pub);
+        this.assertEquals("ed25519", claims["u"]);
+    }
+
+    @test
+    func wrongSecretFailsHS(): void {
+        let token = crypt.jwtSign({"u": "x"}, "right", {"alg": "HS256"});
+        this.assertNull(crypt.jwtVerify(token, "wrong"));
+    }
+
+    @test
+    func wrongKeyFailsRS(): void {
+        let signing = crypt.generateRsaKey(2048);
+        let other = crypt.generateRsaKey(2048);
+        let token = crypt.jwtSign({"u": "x"}, signing, {"alg": "RS256"});
+        this.assertNull(crypt.jwtVerify(token, crypt.publicKey(other)));
+    }
+
+    @test
+    func algConfusionDefenseAllowedAlgsBlocks(): void {
+        /* Caller insists on RS256; an HS256 token must be rejected
+         * even when the supplied "key" would superficially verify. */
+        let token = crypt.jwtSign({"u": "x"}, "shh", {"alg": "HS256"});
+        let claims = crypt.jwtVerify(token, "shh", {"allowedAlgs": ["RS256"]});
+        this.assertNull(claims);
+    }
+
+    @test
+    func algConfusionDefenseAllowedAlgsPermits(): void {
+        let token = crypt.jwtSign({"u": "x"}, "shh", {"alg": "HS256"});
+        let claims = crypt.jwtVerify(token, "shh", {"allowedAlgs": ["HS256", "RS256"]});
+        this.assertNotNull(claims);
+        this.assertEquals("x", claims["u"]);
+    }
+
+    @test
+    func noneAlgRejectedOnSignByDefault(): void {
+        this.assertThrows(func(): void {
+            crypt.jwtSign({"u": "x"}, "shh", {"alg": "none"});
+        });
+    }
+
+    @test
+    func noneAlgRequiresExplicitOptInOnSign(): void {
+        /* Pass "none" in allowedAlgs to opt in. The result is a
+         * three-part token whose signature segment is empty. */
+        let token = crypt.jwtSign({"u": "x"}, "", {
+            "alg": "none",
+            "allowedAlgs": ["none"]
+        });
+        this.assertTrue(token.endsWith("."));
+        this.assertEquals(2, token.split(".").length - 1);
+    }
+
+    @test
+    func noneAlgRejectedOnVerifyByDefault(): void {
+        /* Hand-craft an unsigned token (header.payload.) and confirm
+         * the default verify path returns null - no signature, no
+         * trust. */
+        let token = crypt.jwtSign({"u": "x"}, "", {
+            "alg": "none",
+            "allowedAlgs": ["none"]
+        });
+        this.assertNull(crypt.jwtVerify(token, ""));
+    }
+
+    @test
+    func noneAlgVerifiesWhenAllowedAlgsContainsNone(): void {
+        let token = crypt.jwtSign({"u": "x"}, "", {
+            "alg": "none",
+            "allowedAlgs": ["none"]
+        });
+        let claims = crypt.jwtVerify(token, "", {"allowedAlgs": ["none"]});
+        this.assertNotNull(claims);
+        this.assertEquals("x", claims["u"]);
+    }
+
+    @test
+    func mixedAllowedAlgsAcceptsBothSignedAndNone(): void {
+        /* A verifier accepting HS256 OR none must reject anything
+         * else (e.g. RS256) but pass either listed alg. */
+        let signed = crypt.jwtSign({"u": "h"}, "shh", {"alg": "HS256"});
+        let unsigned = crypt.jwtSign({"u": "n"}, "", {
+            "alg": "none",
+            "allowedAlgs": ["none"]
+        });
+        this.assertNotNull(crypt.jwtVerify(signed, "shh", {"allowedAlgs": ["HS256", "none"]}));
+        this.assertNotNull(crypt.jwtVerify(unsigned, "", {"allowedAlgs": ["HS256", "none"]}));
+    }
+
+    @test
+    func signAllowedAlgsBlocksHS256(): void {
+        /* If caller restricts sign to RS256, an HS256 sign attempt
+         * must throw - mirrors the verify-side guard. */
+        this.assertThrows(func(): void {
+            crypt.jwtSign({"u": "x"}, "shh", {
+                "alg": "HS256",
+                "allowedAlgs": ["RS256"]
+            });
+        });
+    }
+
+    @test
+    func unknownAlgRejectedOnSign(): void {
+        this.assertThrows(func(): void {
+            crypt.jwtSign({"u": "x"}, "shh", {"alg": "MD5"});
+        });
+    }
+
+    @test
+    func jwtDecodeUnchanged(): void {
+        let token = crypt.jwtSign({"u": "ada"}, "shh");
+        let parts = crypt.jwtDecode(token);
+        this.assertEquals("HS256", parts["header"]["alg"]);
+        this.assertEquals("ada", parts["payload"]["u"]);
+    }
+
+    @test
+    func deprecatedRS256ShimStillSigns(): void {
+        let priv = crypt.generateRsaKey(2048);
+        let pub = crypt.publicKey(priv);
+        let token = crypt.jwtSignRS256({"u": "shim"}, priv);
+        let claims = crypt.jwtVerifyRS256(token, pub);
+        this.assertEquals("shim", claims["u"]);
+    }
+
+    @test
+    func deprecatedES256ShimStillSigns(): void {
+        let priv = crypt.generateEcKey("P-256");
+        let pub = crypt.publicKey(priv);
+        let token = crypt.jwtSignES256({"u": "shim"}, priv);
+        let claims = crypt.jwtVerifyES256(token, pub);
+        this.assertEquals("shim", claims["u"]);
+    }
+
+    @test
+    func unifiedVerifyAcceptsShimSignedToken(): void {
+        /* Sanity check: the deprecated shim signs the same wire
+         * format the unified verify can read. */
+        let priv = crypt.generateEcKey("P-256");
+        let pub = crypt.publicKey(priv);
+        let token = crypt.jwtSignES256({"u": "interop"}, priv);
+        let claims = crypt.jwtVerify(token, pub);
+        this.assertEquals("interop", claims["u"]);
+    }
+
+    @test
+    func unifiedSignReadableByDeprecatedShim(): void {
+        let priv = crypt.generateRsaKey(2048);
+        let pub = crypt.publicKey(priv);
+        let token = crypt.jwtSign({"u": "interop"}, priv, {"alg": "RS256"});
+        let claims = crypt.jwtVerifyRS256(token, pub);
+        this.assertEquals("interop", claims["u"]);
+    }
+}

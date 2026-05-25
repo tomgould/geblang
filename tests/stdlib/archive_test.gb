@@ -1,0 +1,95 @@
+/**
+ * @title Archive stdlib test (1.4.0)
+ * @summary Round-trip zip / tar / tar.gz with the entry-dict API.
+ */
+import test;
+import archive;
+import bytes;
+
+class ArchiveTest extends test.Test {
+    @test
+    func zipRoundTripStringData(): void {
+        let raw = archive.zipWrite([
+            {"name": "hello.txt", "data": "hello world"},
+            {"name": "nested/inside.txt", "data": "nested"}
+        ]);
+        this.assertTrue(raw.length() > 0);
+        let entries = archive.zipRead(raw);
+        this.assertEquals(2, entries.length);
+        let names = [entries[0]["name"], entries[1]["name"]];
+        this.assertContains(names, "hello.txt");
+        this.assertContains(names, "nested/inside.txt");
+        for (e in entries) {
+            if (e["name"] == "hello.txt") {
+                this.assertEquals("hello world", bytes.toString(e["data"] as bytes));
+            }
+        }
+    }
+
+    @test
+    func zipRoundTripBytesData(): void {
+        let payload = bytes.fromString("binary-payload\0with-nul");
+        let raw = archive.zipWrite([{"name": "blob", "data": payload}]);
+        let entries = archive.zipRead(raw);
+        this.assertEquals(1, entries.length);
+        this.assertEquals("blob", entries[0]["name"]);
+        this.assertEquals(bytes.toHex(payload), bytes.toHex(entries[0]["data"] as bytes));
+    }
+
+    @test
+    func zipReadInvalidThrows(): void {
+        this.assertThrows(func(): void {
+            archive.zipRead(bytes.fromString("not a zip"));
+        });
+    }
+
+    @test
+    func tarRoundTrip(): void {
+        let raw = archive.tarWrite([
+            {"name": "first.txt", "data": "1"},
+            {"name": "second.txt", "data": "2"}
+        ]);
+        let entries = archive.tarRead(raw);
+        this.assertEquals(2, entries.length);
+        /* tar entries deterministic by name. */
+        this.assertEquals("first.txt", entries[0]["name"]);
+        this.assertEquals("1", bytes.toString(entries[0]["data"] as bytes));
+        this.assertEquals("second.txt", entries[1]["name"]);
+        this.assertEquals("2", bytes.toString(entries[1]["data"] as bytes));
+    }
+
+    @test
+    func tarGzRoundTrip(): void {
+        let raw = archive.tarGzWrite([
+            {"name": "a", "data": "alpha"},
+            {"name": "b", "data": "beta"}
+        ]);
+        /* tar.gz output is shorter than plain tar for compressible
+         * payloads; here we just verify the round-trip. */
+        let entries = archive.tarGzRead(raw);
+        this.assertEquals(2, entries.length);
+        this.assertEquals("alpha", bytes.toString(entries[0]["data"] as bytes));
+        this.assertEquals("beta", bytes.toString(entries[1]["data"] as bytes));
+    }
+
+    @test
+    func zipMissingNameThrows(): void {
+        this.assertThrows(func(): void {
+            archive.zipWrite([{"data": "no name here"}]);
+        });
+    }
+
+    @test
+    func zipMissingDataThrows(): void {
+        this.assertThrows(func(): void {
+            archive.zipWrite([{"name": "x"}]);
+        });
+    }
+
+    @test
+    func tarGzReadInvalidThrows(): void {
+        this.assertThrows(func(): void {
+            archive.tarGzRead(bytes.fromString("not a gzip"));
+        });
+    }
+}

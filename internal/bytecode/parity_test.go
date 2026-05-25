@@ -8449,6 +8449,204 @@ io.println((real != "mocked-hello") as string);
 `, "mocked-hello\ntrue\n")
 }
 
+// TestParityCryptS3WalkthroughCertAndJwe walks the three S3
+// follow-up surfaces (signCertificate, jweEncrypt+Decrypt for
+// dir, jweEncrypt+Decrypt for RSA-OAEP-256) on both backends so
+// any future divergence in the native dispatch shape is caught.
+func TestParityCryptS3WalkthroughCertAndJwe(t *testing.T) {
+	runParity(t, `import io;
+import crypt;
+import bytes;
+
+let caKey = crypt.generateEcKey("P-256");
+let caBundle = crypt.generateSelfSignedCert({
+    "subject": {"commonName": "ParityCA"},
+    "key": caKey
+});
+let leafKey = crypt.generateEcKey("P-256");
+let csr = crypt.generateCsr({
+    "key": leafKey,
+    "subject": {"commonName": "parity.leaf"}
+});
+let signed = crypt.signCertificate({
+    "csr": csr,
+    "caCert": caBundle["cert"],
+    "caKey": caKey
+});
+let parsed = crypt.parseCert(signed);
+io.println(parsed["issuer"]["commonName"] as string);
+io.println(parsed["subject"]["commonName"] as string);
+
+let cek = bytes.fromHex(crypt.randomHex(32));
+let dirTok = crypt.jweEncrypt("dir-payload", cek, {"alg": "dir", "enc": "A256GCM"});
+io.println(dirTok.split(".").length as string);
+io.println(bytes.toString(crypt.jweDecrypt(dirTok, cek)));
+
+let rsaKey = crypt.generateRsaKey(2048);
+let rsaPub = crypt.publicKey(rsaKey);
+let rsaTok = crypt.jweEncrypt("rsa-payload", rsaPub, {"alg": "RSA-OAEP-256", "enc": "A256GCM"});
+io.println(bytes.toString(crypt.jweDecrypt(rsaTok, rsaKey)));
+`, "ParityCA\nparity.leaf\n5\ndir-payload\nrsa-payload\n")
+}
+
+// TestParityUnionTypeAcceptsAndRejects walks T | U | V at
+// parameter and return positions on both backends. Each accept
+// path returns the matching branch's value; the reject path
+// goes through xs[0] (statically opaque element type) and is
+// caught by a user-level try/catch - confirming the VM throws
+// param-validation errors as catchable RuntimeError (matching
+// the evaluator) rather than fatally aborting.
+func TestParityUnionTypeAcceptsAndRejects(t *testing.T) {
+	runParity(t, `import io;
+
+func tag(int | string | bool v): string {
+    if (v instanceof int)    { return "int "  + (v as string); }
+    if (v instanceof string) { return "str "  + (v as string); }
+    return "bool " + (v as string);
+}
+
+func pickInt(): int | string { return 1; }
+func pickStr(): int | string { return "x"; }
+
+io.println(tag(42));
+io.println(tag("ada"));
+io.println(tag(true));
+io.println(pickInt() as string);
+io.println(pickStr() as string);
+
+let xs = [1.5];
+try {
+    io.println(tag(xs[0]));
+} catch (RuntimeError e) {
+    io.println("rejected");
+}
+`, "int 42\nstr ada\nbool true\n1\nx\nrejected\n")
+}
+
+// TestParityMatchListPatterns exercises tuple-shape patterns in
+// match: structural shape check, per-element type guard, _
+// wildcard, length-mismatch fall-through, and the
+// non-list-value case. Both backends must produce identical
+// output for each branch.
+func TestParityMatchListPatterns(t *testing.T) {
+	runParity(t, `import io;
+
+let pair = [3, 7];
+io.println(match (pair) {
+    case [int x, int y] if (x > y) => "first";
+    case [int x, int y] if (x == y) => "tie";
+    case [int x, int y] => "second";
+    default => "n/a";
+});
+
+let mixed = ["ada", 37];
+io.println(match (mixed) {
+    case [int a, int b] => "two ints";
+    case [string s, int n] => s + "=" + (n as string);
+    default => "other";
+});
+
+let triple = [1, 2, 3];
+io.println(match (triple) {
+    case [int a, int b] => "two";
+    case [int a, _, int c] => "wild-mid:" + ((a + c) as string);
+    default => "other";
+});
+
+let notAList = "scalar";
+io.println(match (notAList) {
+    case [int a, int b] => "list";
+    case string s => "string:" + s;
+    default => "other";
+});
+
+let empty = [];
+io.println(match (empty) {
+    case [] => "empty";
+    case [int a] => "one";
+    default => "other";
+});
+`, "second\nada=37\nwild-mid:4\nstring:scalar\nempty\n")
+}
+
+// TestParityJwtUnifiedSurface exercises the alg-dispatching
+// crypt.jwtSign / crypt.jwtVerify pair across HMAC and asymmetric
+// algorithms; the assertion that both backends produce a token
+// that the other can verify proves the dispatch and key handling
+// line up. The allowedAlgs guard against alg-confusion is also
+// hit so a divergence in the dispatch table is caught.
+func TestParityJwtUnifiedSurface(t *testing.T) {
+	runParity(t, `import crypt;
+import io;
+
+let hs = crypt.jwtSign({"u": "ada"}, "shh", {"alg": "HS512"});
+let claims = crypt.jwtVerify(hs, "shh");
+io.println(claims["u"] as string);
+
+let priv = crypt.generateEcKey("P-256");
+let pub = crypt.publicKey(priv);
+let es = crypt.jwtSign({"u": "ec"}, priv, {"alg": "ES256"});
+io.println(crypt.jwtVerify(es, pub)["u"] as string);
+
+let blocked = crypt.jwtVerify(hs, "shh", {"allowedAlgs": ["RS256"]});
+if (blocked == null) {
+    io.println("blocked");
+} else {
+    io.println("leaked");
+}
+
+let unsigned = crypt.jwtSign({"u": "n"}, "", {"alg": "none", "allowedAlgs": ["none"]});
+let defaultVerify = crypt.jwtVerify(unsigned, "");
+if (defaultVerify == null) {
+    io.println("none-default-blocked");
+} else {
+    io.println("none-default-leaked");
+}
+let optedIn = crypt.jwtVerify(unsigned, "", {"allowedAlgs": ["none"]});
+io.println(optedIn["u"] as string);
+`, "ada\nec\nblocked\nnone-default-blocked\nn\n")
+}
+
+// TestParityArchiveZipRoundTrip exercises the archive.zip{Read,Write}
+// pair on both backends with the same source: write a two-entry
+// archive, read it back, print the names and decoded text. The
+// expected output is identical regardless of which engine ran it.
+func TestParityArchiveZipRoundTrip(t *testing.T) {
+	runParity(t, `import archive;
+import bytes;
+import io;
+let raw = archive.zipWrite([
+    {"name": "a.txt", "data": "alpha"},
+    {"name": "b.txt", "data": "beta"}
+]);
+let entries = archive.zipRead(raw);
+io.println(entries.length as string);
+io.println(entries[0]["name"] as string);
+io.println(bytes.toString(entries[0]["data"] as bytes));
+io.println(entries[1]["name"] as string);
+io.println(bytes.toString(entries[1]["data"] as bytes));
+`, "2\na.txt\nalpha\nb.txt\nbeta\n")
+}
+
+// TestParityArchiveTarGzRoundTrip covers the gzip-wrapped tar
+// helpers; tar writers sort by name for determinism so the entry
+// order is stable across backends.
+func TestParityArchiveTarGzRoundTrip(t *testing.T) {
+	runParity(t, `import archive;
+import bytes;
+import io;
+let raw = archive.tarGzWrite([
+    {"name": "second", "data": "two"},
+    {"name": "first", "data": "one"}
+]);
+let entries = archive.tarGzRead(raw);
+io.println(entries[0]["name"] as string);
+io.println(bytes.toString(entries[0]["data"] as bytes));
+io.println(entries[1]["name"] as string);
+io.println(bytes.toString(entries[1]["data"] as bytes));
+`, "first\none\nsecond\ntwo\n")
+}
+
 // TestParityHmacSha256Bytes verifies the raw-bytes HMAC variant
 // produces the AWS sigv4 reference kDate value when fed the
 // documented test inputs (AWS docs sample for

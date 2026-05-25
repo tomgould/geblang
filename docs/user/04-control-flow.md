@@ -255,6 +255,53 @@ let text = match (result) {
 };
 ```
 
+### List patterns
+
+A bracketed pattern matches a list of exactly that length and
+binds each element. Bindings may be typed (the element must match)
+or untyped (matches any value); `_` is a wildcard that skips
+binding. Length mismatch and type mismatch both fall through to
+the next case.
+
+```gb
+let pair = [3, 7];
+let label = match (pair) {
+    case [int x, int y] if (x > y)   => "first wins";
+    case [int x, int y] if (x == y)  => "tie";
+    case [int x, int y]              => "second wins";
+    default                          => "no match";
+};
+```
+
+Mixed-type rows and wildcard slots:
+
+```gb
+let mixed = ["ada", 37];
+let greet = match (mixed) {
+    case [string name, int age]      => name + " (" + (age as string) + ")";
+    default                          => "unknown";
+};
+
+let xs = [99, 100];
+let first = match (xs) {
+    case [int kept, _]               => kept;     # discard second element
+    default                          => 0;
+};
+```
+
+A non-list value (string, dict, int, ...) never matches a list
+pattern; the case falls through to whichever later case (typed,
+literal, or default) can handle it.
+
+```gb
+let value = "hello";
+match (value) {
+    case [int a, int b] => io.println("a pair");
+    case string s       => io.println("a string: " + s);
+}
+# prints: a string: hello
+```
+
 ## Defer
 
 `defer` registers a call to run when the surrounding function or top-level

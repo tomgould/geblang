@@ -1467,6 +1467,8 @@ func (p *Parser) parseMatchExpression() *ast.MatchExpression {
 			p.nextToken()
 			if p.isEnumDestructuringPattern() {
 				c.EnumVariant = p.parseEnumVariantPattern()
+			} else if p.curTokenIs(token.LBracket) {
+				c.ListPattern = p.parseMatchListPattern()
 			} else if p.isTypePattern() {
 				c.Type = p.parseTypeRefFromCurrent()
 				if p.peekTokenIs(token.Ident) {
@@ -1880,6 +1882,43 @@ func (p *Parser) isForInClause() bool {
 
 func (p *Parser) isTypePattern() bool {
 	return p.curTokenIs(token.Question) || p.curTokenIs(token.Ident) && p.peekTokenIs(token.Ident) || isTypeStartToken(p.curToken.Type)
+}
+
+// parseMatchListPattern parses `[ binding (',' binding)* ]` where each
+// binding is `type? name`. cur token is the opening `[`.
+//
+//	case [int x, int y]           => ...
+//	case [string label, _]        => ...    // underscore = wildcard
+//	case [user.User u]            => ...    // single-element with type
+//	case []                       => ...    // empty-list literal pattern
+func (p *Parser) parseMatchListPattern() *ast.ListPatternMatch {
+	out := &ast.ListPatternMatch{Token: p.curToken}
+	if p.peekTokenIs(token.RBracket) {
+		p.nextToken() // consume ']'
+		return out
+	}
+	for {
+		p.nextToken() // step onto first token of next binding
+		binding := ast.ListPatternBinding{}
+		if isTypeStartToken(p.curToken.Type) && p.peekTokenIs(token.Ident) {
+			binding.Type = p.parseTypeRefFromCurrent()
+			p.nextToken() // step onto the name
+		}
+		if !p.curTokenIs(token.Ident) {
+			p.errorf(p.curToken, "expected list-pattern binding name, got %s", p.curToken.Type)
+			return out
+		}
+		binding.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		out.Bindings = append(out.Bindings, binding)
+		if p.peekTokenIs(token.Comma) {
+			p.nextToken()
+			continue
+		}
+		if !p.expectPeek(token.RBracket) {
+			return out
+		}
+		return out
+	}
 }
 
 func isTypeStartToken(t token.Type) bool {

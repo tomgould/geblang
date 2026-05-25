@@ -2281,6 +2281,29 @@ func (e *Evaluator) matchCase(value runtime.Value, c ast.MatchCase, env *runtime
 				return nil, false, err
 			}
 		}
+	case c.ListPattern != nil:
+		list, ok := value.(runtime.List)
+		if !ok {
+			matched = false
+			break
+		}
+		if len(list.Elements) != len(c.ListPattern.Bindings) {
+			matched = false
+			break
+		}
+		matched = true
+		for i, binding := range c.ListPattern.Bindings {
+			elem := list.Elements[i]
+			if binding.Type != nil && !e.valueMatchesType(elem, binding.Type.Name) {
+				matched = false
+				break
+			}
+			if binding.Name != nil && binding.Name.Value != "_" {
+				if err := caseEnv.Define(binding.Name.Value, elem, false); err != nil {
+					return nil, false, err
+				}
+			}
+		}
 	case c.Pattern != nil:
 		pattern, err := e.evalExpression(c.Pattern, env)
 		if err != nil {
@@ -7281,6 +7304,10 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"generateSelfSignedCert": e.registryBuiltin("crypt", "generateSelfSignedCert"),
 			"generateCsr":            e.registryBuiltin("crypt", "generateCsr"),
 			"parseCert":              e.registryBuiltin("crypt", "parseCert"),
+			"signCertificate":        e.registryBuiltin("crypt", "signCertificate"),
+			"pkcs12Decode":           e.registryBuiltin("crypt", "pkcs12Decode"),
+			"jweEncrypt":             e.registryBuiltin("crypt", "jweEncrypt"),
+			"jweDecrypt":             e.registryBuiltin("crypt", "jweDecrypt"),
 			"jwtSignRS256":           e.registryBuiltin("crypt", "jwtSignRS256"),
 			"jwtVerifyRS256":         e.registryBuiltin("crypt", "jwtVerifyRS256"),
 			"jwtSignES256":           e.registryBuiltin("crypt", "jwtSignES256"),
@@ -7305,6 +7332,14 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 		"compress": {
 			"gzip":   e.registryBuiltin("compress", "gzip"),
 			"gunzip": e.registryBuiltin("compress", "gunzip"),
+		},
+		"archive": {
+			"zipRead":    e.registryBuiltin("archive", "zipRead"),
+			"zipWrite":   e.registryBuiltin("archive", "zipWrite"),
+			"tarRead":    e.registryBuiltin("archive", "tarRead"),
+			"tarWrite":   e.registryBuiltin("archive", "tarWrite"),
+			"tarGzRead":  e.registryBuiltin("archive", "tarGzRead"),
+			"tarGzWrite": e.registryBuiltin("archive", "tarGzWrite"),
 		},
 		"url": {
 			"URL":       e.registryBuiltin("url", "URL"),
@@ -22718,7 +22753,16 @@ func valueMatchesFunctionTypeRef(fn runtime.Function, value runtime.Value, typ *
 // typeParams is the pre-computed generic type parameter set (nil for non-generic contexts); a nil
 // map is safe — Go map lookups on nil maps return the zero value.
 func matchValueToTypeRef(typeParams map[string]bool, value runtime.Value, typ *ast.TypeRef) bool {
-	if typ == nil || typ.Operator != "" || typ.Name == "any" {
+	if typ == nil || typ.Name == "any" {
+		return true
+	}
+	if typ.Operator == "|" {
+		return matchValueToTypeRef(typeParams, value, typ.Left) || matchValueToTypeRef(typeParams, value, typ.Right)
+	}
+	if typ.Operator == "&" {
+		return matchValueToTypeRef(typeParams, value, typ.Left) && matchValueToTypeRef(typeParams, value, typ.Right)
+	}
+	if typ.Operator != "" {
 		return true
 	}
 	// A null value is assignable to any nullable type, regardless of element

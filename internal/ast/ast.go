@@ -542,6 +542,21 @@ type MatchCase struct {
 	Value       Expression
 	Default     bool
 	EnumVariant *EnumVariantPattern
+	ListPattern *ListPatternMatch
+}
+
+// ListPatternMatch describes a list-shape match pattern such as
+// `case [int x, int y] => ...`. Bindings are positional; each may
+// declare an optional type guard and a name to bind into the case
+// scope. The name "_" suppresses binding (wildcard slot).
+type ListPatternMatch struct {
+	Token    token.Token
+	Bindings []ListPatternBinding
+}
+
+type ListPatternBinding struct {
+	Type *TypeRef    // optional element type guard
+	Name *Identifier // required; "_" means "don't bind"
 }
 
 type MatchStatement struct {

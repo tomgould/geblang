@@ -74,6 +74,7 @@ func NewBuiltinRegistry() *Registry {
 	registerString(r)
 	registerStringBuilder(r)
 	registerCompress(r)
+	registerArchive(r)
 	registerEncoding(r)
 	registerURL(r)
 	registerUUID(r)
@@ -892,62 +893,44 @@ func registerCrypt(r *Registry) {
 		return runtime.String{Value: string(decoded)}, nil
 	})
 	r.Register("crypt", "jwtSign", func(args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("crypt.jwtSign expects payload and secret")
+		if len(args) < 2 || len(args) > 3 {
+			return nil, fmt.Errorf("crypt.jwtSign expects payload, key, and optional opts")
 		}
-		secret, ok := args[1].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("crypt.jwtSign secret must be string")
+		alg := "HS256"
+		var allowed []string
+		if len(args) == 3 {
+			a, err := jwtOptsAlg(args[2], "crypt.jwtSign")
+			if err != nil {
+				return nil, err
+			}
+			if a != "" {
+				alg = a
+			}
+			al, err := jwtOptsAllowedAlgs(args[2], "crypt.jwtSign")
+			if err != nil {
+				return nil, err
+			}
+			allowed = al
 		}
-		payloadJSON, err := ValueToJSON(args[0])
-		if err != nil {
-			return nil, fmt.Errorf("crypt.jwtSign payload: %w", err)
-		}
-		payloadBytes, err := json.Marshal(payloadJSON)
-		if err != nil {
-			return nil, fmt.Errorf("crypt.jwtSign payload encoding: %w", err)
-		}
-		header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
-		payload := base64.RawURLEncoding.EncodeToString(payloadBytes)
-		sigInput := header + "." + payload
-		mac := hmac.New(sha256.New, []byte(secret.Value))
-		mac.Write([]byte(sigInput))
-		sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-		return runtime.String{Value: sigInput + "." + sig}, nil
+		return jwtSignWithAlg(args[0], args[1], alg, allowed, "crypt.jwtSign")
 	})
 	r.Register("crypt", "jwtVerify", func(args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("crypt.jwtVerify expects token and secret")
+		if len(args) < 2 || len(args) > 3 {
+			return nil, fmt.Errorf("crypt.jwtVerify expects token, key, and optional opts")
 		}
 		token, ok := args[0].(runtime.String)
 		if !ok {
 			return nil, fmt.Errorf("crypt.jwtVerify token must be string")
 		}
-		secret, ok := args[1].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("crypt.jwtVerify secret must be string")
+		var allowed []string
+		if len(args) == 3 {
+			a, err := jwtOptsAllowedAlgs(args[2], "crypt.jwtVerify")
+			if err != nil {
+				return nil, err
+			}
+			allowed = a
 		}
-		parts := strings.SplitN(token.Value, ".", 3)
-		if len(parts) != 3 {
-			return runtime.Null{}, nil
-		}
-		sigInput := parts[0] + "." + parts[1]
-		mac := hmac.New(sha256.New, []byte(secret.Value))
-		mac.Write([]byte(sigInput))
-		expected := mac.Sum(nil)
-		actual, err := base64.RawURLEncoding.DecodeString(parts[2])
-		if err != nil || !hmac.Equal(actual, expected) {
-			return runtime.Null{}, nil
-		}
-		payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
-		if err != nil {
-			return runtime.Null{}, nil
-		}
-		value, parseErr := ParseJSONText(string(payloadBytes))
-		if parseErr != nil {
-			return runtime.Null{}, nil
-		}
-		return value, nil
+		return jwtVerifyWithAlg(token.Value, args[1], allowed, "crypt.jwtVerify")
 	})
 	r.Register("crypt", "jwtDecode", func(args []runtime.Value) (runtime.Value, error) {
 		token, err := singleString(args, "crypt.jwtDecode")

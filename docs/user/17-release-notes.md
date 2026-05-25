@@ -1,5 +1,83 @@
 # Release Notes
 
+## 1.4.0
+
+### Performance
+
+- Recursion bundle: flat-stack locals via `vm.localsStack` +
+  `frame.basePointer`, sync.Pool for per-call arg slices, and a
+  split VMValue layout that keeps primitive locals 16-byte
+  inline. `recursive_fib` from ~75 ms to TBD; allocs/op TBD.
+- Per-call allocation pressure: pooled dict/set literal element
+  maps, slab-allocated `Instance.Fields` for stable classes,
+  tighter http-handler closure clone path.
+- Opt-in event-loop reactor for HTTP and raw sockets via
+  `http.listen(addr, handler, {reactor: true})`. Default mode
+  remains goroutine-per-connection.
+
+### Language
+
+- List-shape patterns in `match`:
+  `case [int x, int y] if x > y => ...`. Each binding may be
+  typed (must match) or untyped (any value); `_` is a wildcard
+  that skips binding. Length and type mismatches both fall
+  through to the next case. New `OpMatchListShape` opcode keeps
+  the structural check in a single dispatch (chunk version
+  bumped 58 to 59).
+- Union types (`T | U`) at parameter and return positions:
+  `func get(int | string id): User | NotFoundError`. The runtime
+  enforces "any branch matches" and throws a catchable
+  `RuntimeError` on mismatch (parameter-validation errors now
+  go through the standard throw path on the VM, matching the
+  evaluator). Intersection (`T & U`) supported with "every
+  branch matches" semantics. Variable-level unions deferred.
+- Structured concurrency via `async.TaskGroup` and
+  `async.scope(fn)`. First-error cancels siblings; cancellation
+  propagates from group context.
+
+### Stdlib
+
+- New `archive` module with eager zip / tar / tar.gz readers
+  and writers: `archive.zipRead` / `zipWrite` /
+  `tarRead` / `tarWrite` / `tarGzRead` / `tarGzWrite`. Entries
+  are dicts with `name`, `data` (bytes), `isDir`, and `size`;
+  writers accept string or bytes payloads and sort tar entries
+  by name for deterministic output. Streaming cursor variants
+  queued as a follow-up.
+- New `metrics` module (counter / gauge / histogram +
+  Prometheus exporter) and `tracing` module (OpenTelemetry-
+  compatible spans + `@Traced` decorator + OTLP exporter).
+- `log` module gains structured-field helpers (`log.json`,
+  `log.toFile`, `log.toStream`, `KV`).
+- `crypt.jwtSign(payload, key, opts?)` and
+  `crypt.jwtVerify(token, key, opts?)` now dispatch on the
+  `alg` option (or the token header) and cover every supported
+  algorithm in one pair: HS256 / HS384 / HS512, RS256 / RS384 /
+  RS512, ES256 / ES384 / ES512, and EdDSA (Ed25519). Pass
+  `opts.allowedAlgs` to defend against alg-confusion attacks.
+  The default allow-list excludes `none` on both sign and
+  verify; opt in by passing `"none"` inside `opts.allowedAlgs`
+  when you genuinely need unsigned tokens.
+  `crypt.jwtSignRS256` / `jwtVerifyRS256` / `jwtSignES256` /
+  `jwtVerifyES256` remain as deprecated shims for 1.5.0 removal.
+- New `crypt.jweEncrypt(payload, key, opts)` and
+  `crypt.jweDecrypt(token, key)` for encrypted JWTs. Key-wrap
+  algorithms: `dir` (32-byte CEK) and `RSA-OAEP-256` (wraps a
+  fresh CEK with an RSA public key). Content encryption is
+  `A256GCM`. Tampered tokens fail the AEAD authentication and
+  throw.
+- New `crypt.pkcs12Decode(pfx, password)` returning
+  `{key, cert, caCerts}` where `key` is a PKCS#8 PEM and the
+  certificate fields are CERTIFICATE PEM strings. Encoding to
+  PFX is not in scope for 1.4.0.
+- New `crypt.signCertificate(options)` signs a CSR with a CA
+  certificate and key, returning the issued certificate PEM.
+  Options: `csr`, `caCert`, `caKey` (all PEMs), `validDays`
+  (default 365), `isCA` (default false), `dnsNames`,
+  `ipAddresses`, `serialBits` (default 128). Completes the
+  CSR-to-issued-cert pipeline (`generateCsr` to
+  `signCertificate` to `parseCert`).
+
 ## 1.3.0
 
 ### Stdlib

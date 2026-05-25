@@ -74,6 +74,65 @@ a non-null value. Optional chaining is useful when absence is acceptable:
 let city = user?.address?.city ?? "unknown";
 ```
 
+## Union types
+
+A parameter or return type can list alternatives separated by `|`. The
+caller may pass any value matching one of the branches; the runtime
+enforces "any branch matches".
+
+```gb
+func get(int | string id): User {
+    if (id instanceof string) { return User.byName(id as string); }
+    return User.byId(id as int);
+}
+
+get(42);        # int branch
+get("ada");     # string branch
+```
+
+Union types compose with nullability: `?int | string` is a three-way
+union of `int`, `string`, and `null`. You can write the `?` on the
+union as a whole or on individual branches; the meaning is the same.
+
+```gb
+func parseAge(?int | string raw): int {
+    if (raw == null)            { return 0; }
+    if (raw instanceof int)     { return raw as int; }
+    return (raw as string).toInt();
+}
+```
+
+Returns work the same way. The body must produce a value matching one
+of the declared branches; the caller can narrow with `instanceof` /
+`as` or just consume the union directly when an `any`-typed slot
+suffices.
+
+```gb
+func lookup(string key): User | NotFoundError {
+    let row = db.findByKey(key);
+    if (row == null) { return NotFoundError("no user with key " + key); }
+    return User.fromRow(row);
+}
+```
+
+When a mismatching value reaches the function boundary, the runtime
+throws a `RuntimeError` with the expected and actual types:
+
+```
+get expects int | string for parameter 'id', got bool
+```
+
+Catch with the standard `try` / `catch (RuntimeError e)` form.
+
+The intersection operator `&` is also supported in parameter and
+return positions: a value must match every branch. It's mainly useful
+for interface intersection, e.g. `Comparable & Hashable`.
+
+Variable-level unions (`let x: int | string;`) are deferred to a
+future release; today the union form is only enforced at the function
+boundary. Inside a function body, a union-typed parameter can be
+narrowed with `instanceof` and re-bound via `as`.
+
 ## Casts And Type Checks
 
 ```gb

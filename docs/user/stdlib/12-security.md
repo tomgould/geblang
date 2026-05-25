@@ -122,10 +122,29 @@ let strongHash = crypt.bcryptHash("hunter2", 12);
 Bcrypt is well-supported but limited to 72-byte passwords and has lower
 memory-hardness than Argon2id. Prefer Argon2id for new code.
 
-### JWT - symmetric (HS256)
+### JWT - unified sign and verify
 
-`crypt.jwtSign(payload, secret)` produces a signed JWT using HMAC-SHA256.
-The payload is any dict (or value serialisable to JSON):
+`crypt.jwtSign(payload, key, opts?)` and `crypt.jwtVerify(token, key, opts?)`
+handle every supported algorithm through a single pair. The third `opts`
+argument is optional; when omitted, signing defaults to HS256 and verify
+trusts whatever algorithm the token header claims.
+
+Supported algorithms: `HS256`, `HS384`, `HS512`, `RS256`, `RS384`, `RS512`,
+`ES256`, `ES384`, `ES512`, `EdDSA` (Ed25519), plus `none` (only when
+explicitly opted in - see "The `none` algorithm" below). The default
+sign and verify policy never accepts `none` unless the caller passes
+it inside `opts.allowedAlgs`.
+
+The key shape depends on the algorithm:
+
+| Algorithm family | Key for sign | Key for verify |
+|------------------|--------------|----------------|
+| HS256 / HS384 / HS512 | shared secret (string or bytes) | same shared secret |
+| RS256 / RS384 / RS512 | RSA private key PEM | RSA public key PEM (or certificate PEM) |
+| ES256 / ES384 / ES512 | EC private key PEM (P-256 / P-384 / P-521 respectively) | EC public key PEM (or certificate PEM) |
+| EdDSA | Ed25519 private key PEM | Ed25519 public key PEM |
+
+#### Symmetric example (HS256)
 
 ```gb
 let token = crypt.jwtSign({
@@ -134,24 +153,78 @@ let token = crypt.jwtSign({
     "exp":  datetime.nowUnix() + 3600
 }, "my-signing-secret");
 
-io.println(token);   # eyJhbGci...
-```
-
-`crypt.jwtVerify(token, secret)` verifies the signature and returns the decoded
-payload as a dict, or `null` if the signature is invalid:
-
-```gb
 let payload = crypt.jwtVerify(token, "my-signing-secret");
 if (payload != null) {
     io.println(payload["sub"]);   # user-42
 }
 ```
 
-`jwtVerify` returns `null` for any invalid token - bad format, wrong secret,
-or corrupted signature. Expiry checking is not automatic; verify `exp` yourself:
+#### Asymmetric example (RS256 or ES256)
 
 ```gb
-let payload = crypt.jwtVerify(token, secret);
+import crypt;
+
+let priv = crypt.generateEcKey("P-256");
+let pub  = crypt.publicKey(priv);
+
+let token = crypt.jwtSign({"sub": "user-42"}, priv, {"alg": "ES256"});
+let claims = crypt.jwtVerify(token, pub);
+```
+
+#### Algorithm-confusion defence
+
+The default verify policy already excludes `none`, but it still trusts
+whichever HS / RS / ES / EdDSA algorithm the token header declares. In
+production, narrow that further by passing `opts.allowedAlgs` so the
+dispatcher rejects anything outside the allow-list before loading the
+key:
+
+```gb
+let claims = crypt.jwtVerify(token, pubPem, {"allowedAlgs": ["ES256"]});
+```
+
+The same `allowedAlgs` field is enforced on the sign side, so a
+shared "this service only uses ES256" constant can flow through both
+calls and a typo on either side raises immediately instead of
+producing tokens the matching verifier rejects.
+
+`jwtVerify` returns `null` for any invalid token - bad format, disallowed
+algorithm, wrong key, or corrupted signature.
+
+#### The `none` algorithm
+
+A JWT signed with `alg: "none"` carries no signature and exists in the
+spec only for unsigned tokens. Accepting one is equivalent to trusting
+arbitrary input, so the default policy on both sides rejects it:
+
+```gb
+crypt.jwtSign({"u": "x"}, "shh", {"alg": "none"});
+# throws: alg "none" rejected by default; pass opts.allowedAlgs
+# containing "none" to opt in
+```
+
+If you genuinely need unsigned tokens (test fixtures, signed-elsewhere
+formats), opt in explicitly:
+
+```gb
+let unsigned = crypt.jwtSign(claims, "", {
+    "alg":         "none",
+    "allowedAlgs": ["none"]
+});
+
+let payload = crypt.jwtVerify(unsigned, "", {"allowedAlgs": ["none"]});
+```
+
+A verifier that should accept both signed and unsigned tokens lists
+each algorithm it tolerates:
+
+```gb
+crypt.jwtVerify(token, secret, {"allowedAlgs": ["HS256", "none"]});
+``` Expiry checking is not
+automatic; verify `exp` yourself:
+
+```gb
+let payload = crypt.jwtVerify(token, secret, {"allowedAlgs": ["HS256"]});
 if (payload == null) {
     # reject
 } else if (payload["exp"] < datetime.nowUnix()) {
@@ -173,48 +246,17 @@ io.println(parts["payload"]);   # {"sub": "user-42", ...}
 Never trust the payload from `jwtDecode` for access control - always use
 `jwtVerify` instead.
 
-### JWT - asymmetric (RS256 and ES256)
+#### Deprecated per-algorithm helpers
 
-Asymmetric JWTs let you sign with a private key and verify with a public key.
-This is useful when the verifier (e.g. a microservice) should not have access
-to the signing key.
+The earlier per-algorithm API stays as a thin shim and will be removed in
+1.5.0. Replace each call with the unified surface:
 
-#### RS256 (RSA + SHA-256)
-
-```gb
-import crypt;
-
-let privPem = crypt.generateRsaKey(2048);       # or load from a file
-let pubPem  = crypt.publicKey(privPem);
-
-let token = crypt.jwtSignRS256({
-    "sub":  "user-42",
-    "exp":  datetime.nowUnix() + 3600
-}, privPem);
-
-let payload = crypt.jwtVerifyRS256(token, pubPem);
-if (payload != null) {
-    io.println(payload["sub"]);   # user-42
-}
-```
-
-`jwtVerifyRS256` also accepts a certificate PEM in place of a public key PEM.
-
-#### ES256 (ECDSA P-256 + SHA-256)
-
-```gb
-let privPem = crypt.generateEcKey("P-256");
-let pubPem  = crypt.publicKey(privPem);
-
-let token   = crypt.jwtSignES256({"sub": "user-42"}, privPem);
-let payload = crypt.jwtVerifyES256(token, pubPem);
-```
-
-ES256 produces smaller signatures than RS256 and is preferred for new
-asymmetric JWT work.
-
-Both `jwtVerifyRS256` and `jwtVerifyES256` return `null` on any failure
-(wrong key, bad format, corrupted signature).
+| Deprecated | Replacement |
+|------------|-------------|
+| `crypt.jwtSignRS256(payload, priv)` | `crypt.jwtSign(payload, priv, {"alg": "RS256"})` |
+| `crypt.jwtVerifyRS256(token, pub)` | `crypt.jwtVerify(token, pub, {"allowedAlgs": ["RS256"]})` |
+| `crypt.jwtSignES256(payload, priv)` | `crypt.jwtSign(payload, priv, {"alg": "ES256"})` |
+| `crypt.jwtVerifyES256(token, pub)` | `crypt.jwtVerify(token, pub, {"allowedAlgs": ["ES256"]})` |
 
 ### Key generation
 
@@ -312,6 +354,38 @@ let csr = crypt.generateCsr({
 io.println(csr);   # -----BEGIN CERTIFICATE REQUEST-----...
 ```
 
+#### Signing a CSR with a CA
+
+`crypt.signCertificate(options)` takes a CSR, a CA certificate, and the CA's
+private key, and returns the issued certificate PEM. The CSR's subject,
+DNS names, IP addresses, email addresses, and URIs are copied across; the
+issuer is the CA's subject.
+
+```gb
+let caKey    = crypt.generateEcKey("P-256");
+let caBundle = crypt.generateSelfSignedCert({
+    "subject": {"commonName": "Acme Root CA"},
+    "key":     caKey
+});
+
+let leafKey = crypt.generateEcKey("P-256");
+let csr = crypt.generateCsr({
+    "key":      leafKey,
+    "subject":  {"commonName": "api.example.com"},
+    "dnsNames": ["api.example.com"]
+});
+let leafPem = crypt.signCertificate({
+    "csr":       csr,
+    "caCert":    caBundle["cert"],
+    "caKey":     caKey,
+    "validDays": 90
+});
+```
+
+`isCA: true` issues an intermediate CA certificate (sets `BasicConstraints
+isCA=true` and adds `KeyUsageCertSign`). The default is a leaf certificate
+suitable for server / client authentication.
+
 #### Parsing certificates
 
 `crypt.parseCert(pem)` decodes an X.509 certificate PEM and returns a dict:
@@ -339,6 +413,72 @@ if (expiry < datetime.nowUnix()) {
     io.println("certificate has expired");
 }
 ```
+
+#### Decoding PKCS#12 / PFX archives
+
+`crypt.pkcs12Decode(pfx, password)` decodes a PFX byte string and returns
+a dict carrying the private key, the leaf certificate, and any
+intermediate CA certificates. The password defaults to an empty string;
+common server PFX bundles use a non-empty password.
+
+```gb
+let pfx     = io.readBytes("server.pfx");
+let bundle  = crypt.pkcs12Decode(pfx, "changeit");
+
+io.println(bundle["key"]);              # PKCS#8 PEM
+io.println(bundle["cert"]);             # CERTIFICATE PEM (or null)
+io.println(bundle["caCerts"].length);   # int - intermediates
+```
+
+Encoding to PFX is not in scope for 1.4.0; export from a CA tool
+(`openssl pkcs12 -export ...`) and decode on the Geblang side.
+
+### Encrypted JWT (JWE)
+
+`crypt.jweEncrypt(payload, key, opts?)` and
+`crypt.jweDecrypt(token, key)` round-trip a payload through a JWE compact
+token (`header.encryptedKey.iv.ciphertext.tag`). The payload may be a
+string or `bytes`; `jweDecrypt` always returns `bytes`.
+
+Supported key wrap (`opts.alg`): `dir` and `RSA-OAEP-256`.
+Supported content encryption (`opts.enc`): `A256GCM` only.
+
+#### Direct mode (shared 32-byte key)
+
+```gb
+import crypt;
+import bytes;
+
+let cek    = bytes.fromHex(crypt.randomHex(32));   # 32-byte Content Encryption Key
+let token  = crypt.jweEncrypt("payload data", cek, {
+    "alg": "dir",
+    "enc": "A256GCM"
+});
+let plain  = crypt.jweDecrypt(token, cek);
+io.println(bytes.toString(plain));   # payload data
+```
+
+`dir` requires exactly a 32-byte CEK (AES-256 key size); any other length
+is rejected on encrypt and decrypt.
+
+#### RSA-OAEP-256 key wrap
+
+```gb
+let priv = crypt.generateRsaKey(2048);
+let pub  = crypt.publicKey(priv);
+
+let token = crypt.jweEncrypt("payload", pub, {
+    "alg": "RSA-OAEP-256",
+    "enc": "A256GCM"
+});
+let plain = crypt.jweDecrypt(token, priv);
+```
+
+The CEK is generated automatically per token and wrapped with the supplied
+RSA public key. Decryption uses the matching private key.
+
+A tampered token (modified ciphertext, IV, or tag) fails the AES-GCM
+authentication check and `jweDecrypt` throws.
 
 ### Symmetric encryption
 

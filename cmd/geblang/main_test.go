@@ -116,8 +116,8 @@ func TestWriteCacheStatsJSON(t *testing.T) {
 }
 
 func TestVersionIsCurrentRelease(t *testing.T) {
-	if version != "1.3.0" {
-		t.Fatalf("version: got %q, want 1.3.0", version)
+	if version != "1.4.0" {
+		t.Fatalf("version: got %q, want 1.4.0", version)
 	}
 }
 
@@ -425,7 +425,7 @@ func TestCollectAndWriteDoctorReportShowsManifestCacheAndGo(t *testing.T) {
 	writeDoctorReport(&out, report)
 	output := out.String()
 	for _, want := range []string{
-		"geblang: 1.3.0",
+		"geblang: 1.4.0",
 		"working directory: " + dir,
 		"go: /usr/bin/go",
 		"manifest: " + filepath.Join(dir, "geblang.yaml"),

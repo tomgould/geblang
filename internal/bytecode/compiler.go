@@ -1745,35 +1745,63 @@ func (c *Compiler) compileMatchCaseCondition(valueSlot int64, matchCase ast.Matc
 		}
 		return []int{jp}, nil
 	}
-	c.emitAt(OpGetLocal, matchCase.Token.Line, matchCase.Token.Column, valueSlot)
+	line, col := matchCase.Token.Line, matchCase.Token.Column
+	c.emitAt(OpGetLocal, line, col, valueSlot)
 	switch {
 	case matchCase.EnumVariant != nil:
 		ev := matchCase.EnumVariant
 		typeName := ev.Enum.Value + "." + ev.Variant.Value
-		c.emitConstant(runtime.String{Value: typeName}, matchCase.Token.Line, matchCase.Token.Column)
-		c.emitAt(OpInstanceOf, matchCase.Token.Line, matchCase.Token.Column)
+		c.emitConstant(runtime.String{Value: typeName}, line, col)
+		c.emitAt(OpInstanceOf, line, col)
 	case matchCase.Type != nil:
-		c.emitConstant(runtime.String{Value: matchCase.Type.Name}, matchCase.Token.Line, matchCase.Token.Column)
-		c.emitAt(OpInstanceOf, matchCase.Token.Line, matchCase.Token.Column)
+		c.emitConstant(runtime.String{Value: matchCase.Type.Name}, line, col)
+		c.emitAt(OpInstanceOf, line, col)
+	case matchCase.ListPattern != nil:
+		c.emitAt(OpMatchListShape, line, col, int64(len(matchCase.ListPattern.Bindings)))
 	case matchCase.Pattern != nil:
 		if err := c.compileExpression(matchCase.Pattern); err != nil {
 			return nil, err
 		}
-		c.emitAt(OpEqual, matchCase.Token.Line, matchCase.Token.Column)
+		c.emitAt(OpEqual, line, col)
 	default:
 		return nil, fmt.Errorf("match case has no pattern")
 	}
-	nextJumps := []int{c.emitJump(OpJumpIfFalse, matchCase.Token.Line, matchCase.Token.Column)}
+	nextJumps := []int{c.emitJump(OpJumpIfFalse, line, col)}
 	if matchCase.EnumVariant != nil {
 		for i, param := range matchCase.EnumVariant.Params {
 			if param.Name != nil {
-				c.emitAt(OpGetLocal, matchCase.Token.Line, matchCase.Token.Column, valueSlot)
+				c.emitAt(OpGetLocal, line, col, valueSlot)
 				idxName := strconv.Itoa(i)
 				nameIndex := int64(len(c.chunk.Constants))
 				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: idxName})
-				c.emitAt(OpGetField, matchCase.Token.Line, matchCase.Token.Column, nameIndex)
-				c.emitAt(OpDefineLocal, matchCase.Token.Line, matchCase.Token.Column, c.defineLocal(param.Name.Value))
+				c.emitAt(OpGetField, line, col, nameIndex)
+				c.emitAt(OpDefineLocal, line, col, c.defineLocal(param.Name.Value))
 			}
+		}
+	}
+	if matchCase.ListPattern != nil {
+		for i, binding := range matchCase.ListPattern.Bindings {
+			isWildcard := binding.Name == nil || binding.Name.Value == "_"
+			if binding.Type == nil && isWildcard {
+				continue
+			}
+			c.emitAt(OpGetLocal, line, col, valueSlot)
+			c.emitConstant(runtime.SmallInt{Value: int64(i)}, line, col)
+			c.emitAt(OpIndex, line, col)
+			if binding.Type != nil {
+				c.emitConstant(runtime.String{Value: binding.Type.Name}, line, col)
+				c.emitAt(OpInstanceOf, line, col)
+				nextJumps = append(nextJumps, c.emitJump(OpJumpIfFalse, line, col))
+				if !isWildcard {
+					c.emitAt(OpGetLocal, line, col, valueSlot)
+					c.emitConstant(runtime.SmallInt{Value: int64(i)}, line, col)
+					c.emitAt(OpIndex, line, col)
+				}
+			}
+			if isWildcard {
+				continue
+			}
+			c.emitAt(OpDefineLocal, line, col, c.defineLocal(binding.Name.Value))
 		}
 	}
 	if matchCase.Name != nil {
@@ -4273,6 +4301,35 @@ func (c *Compiler) staticTypeAssignable(target string, actual string) bool {
 	if target == "" || strings.EqualFold(target, "any") || actual == "" {
 		return true
 	}
+	// Union target: value is assignable when it matches any branch.
+	if branches, ok := splitTopLevelTypeOp(target, '|'); ok {
+		for _, b := range branches {
+			if c.staticTypeAssignable(b, actual) {
+				return true
+			}
+		}
+		return false
+	}
+	// Intersection target: value is assignable only when it matches
+	// every branch. (Rare at the parameter boundary; mainly here for
+	// symmetry with the runtime check.)
+	if branches, ok := splitTopLevelTypeOp(target, '&'); ok {
+		for _, b := range branches {
+			if !c.staticTypeAssignable(b, actual) {
+				return false
+			}
+		}
+		return true
+	}
+	// Union actual: every branch must be assignable to the target.
+	if branches, ok := splitTopLevelTypeOp(actual, '|'); ok {
+		for _, b := range branches {
+			if !c.staticTypeAssignable(target, b) {
+				return false
+			}
+		}
+		return true
+	}
 	target = normalizeCallableTypeName(target)
 	actual = normalizeCallableTypeName(actual)
 	nullable := strings.HasPrefix(target, "?")
@@ -5095,7 +5152,17 @@ func statementContainsYield(stmt ast.Statement) bool {
 }
 
 func (c *Compiler) bytecodeTypeName(typ *ast.TypeRef) string {
-	if typ == nil || typ.Operator != "" || strings.EqualFold(typ.Name, "any") {
+	if typ == nil || strings.EqualFold(typ.Name, "any") {
+		return "any"
+	}
+	if typ.Operator == "|" || typ.Operator == "&" {
+		// Preserve union / intersection shape so the VM type-spec
+		// parser can split on the top-level operator. Other binary
+		// operators (legacy / unknown) keep the historical
+		// "any" fallback.
+		return c.bytecodeTypeName(typ.Left) + " " + typ.Operator + " " + c.bytecodeTypeName(typ.Right)
+	}
+	if typ.Operator != "" {
 		return "any"
 	}
 	typ = c.resolveTypeRef(typ)

@@ -1,0 +1,130 @@
+/**
+ * @title Union types beyond ?T (1.4.0)
+ * @summary Parameter and return positions accept T | U syntax;
+ * runtime enforces "any branch matches"; default policy is
+ * any-fail-fast at static and runtime boundaries.
+ */
+import test;
+
+class UnionTypesTest extends test.Test {
+    @test
+    func paramAcceptsFirstBranch(): void {
+        this.assertEquals("id 42", this.classify(42));
+    }
+
+    @test
+    func paramAcceptsSecondBranch(): void {
+        this.assertEquals("name ada", this.classify("ada"));
+    }
+
+    @test
+    func paramAcceptsAllBranchesInTriple(): void {
+        this.assertEquals("int 1", this.tag(1));
+        this.assertEquals("str x", this.tag("x"));
+        this.assertEquals("bool true", this.tag(true));
+    }
+
+    @test
+    func paramRejectsOutOfUnionViaListElement(): void {
+        /* Pass a bool through a list<bool> so the static checker
+         * keeps the type opaque; runtime gate must reject. */
+        let xs = [true];
+        this.assertThrows(func(): void {
+            this.classify(xs[0]);
+        });
+    }
+
+    @test
+    func returnUnionAccepted(): void {
+        /* Returning either branch from a `T | U` return must work. */
+        this.assertEquals(42, this.pickInt());
+        this.assertEquals("ada", this.pickString());
+    }
+
+    @test
+    func instanceofWithinUnionBranch(): void {
+        /* Caller can narrow inside a function whose body takes the
+         * union without compile-time complaint. */
+        let result = this.classify("hello");
+        this.assertTrue(result.startsWith("name"));
+    }
+
+    @test
+    func nullableUnionAcceptsNull(): void {
+        /* `?int | string` is a nullable union; null passes. */
+        this.assertEquals("got null", this.nullableUnion(null));
+        this.assertEquals("got 5", this.nullableUnion(5));
+        this.assertEquals("got hi", this.nullableUnion("hi"));
+    }
+
+    @test
+    func tripleUnionRejectsFourthType(): void {
+        /* int | string | bool rejects float at runtime via list-element. */
+        let xs = [1.5];
+        this.assertThrows(func(): void {
+            this.tag(xs[0]);
+        });
+    }
+
+    @test
+    func intersectionRejectsValueMissingOneBranch(): void {
+        /* Intersection: every branch must match. For an instance
+         * of A that does NOT implement B, the call must be
+         * rejected. */
+        let a = OnlyA();
+        this.assertThrows(func(): void {
+            this.needsBoth(a);
+        });
+    }
+
+    @test
+    func intersectionAcceptsValueMatchingAllBranches(): void {
+        let both = ImplementsBoth();
+        this.assertEquals("ok", this.needsBoth(both));
+    }
+
+    func classify(int | string id): string {
+        if (id instanceof string) { return "name " + (id as string); }
+        return "id " + (id as string);
+    }
+
+    func tag(int | string | bool v): string {
+        if (v instanceof int)    { return "int "  + (v as string); }
+        if (v instanceof string) { return "str "  + (v as string); }
+        return "bool " + (v as string);
+    }
+
+    func pickInt(): int | string {
+        return 42;
+    }
+
+    func pickString(): int | string {
+        return "ada";
+    }
+
+    func nullableUnion(?int | string v): string {
+        if (v == null) { return "got null"; }
+        return "got " + (v as string);
+    }
+
+    func needsBoth(A & B v): string {
+        return "ok";
+    }
+}
+
+interface A {
+    func a(): void;
+}
+
+interface B {
+    func b(): void;
+}
+
+class OnlyA implements A {
+    func a(): void {}
+}
+
+class ImplementsBoth implements A, B {
+    func a(): void {}
+    func b(): void {}
+}

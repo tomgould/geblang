@@ -1,0 +1,167 @@
+/**
+ * @title S3 follow-up: signCertificate + pkcs12Decode + JWE
+ * @summary Covers the three remaining S3 surfaces shipped after
+ * the unified-JWT commit: CA-signed cert issuance from a CSR,
+ * PKCS#12 round-trip via PEM -> PFX-equivalent (encode using
+ * Go-side; only decode is in scope), and JWE compact tokens
+ * with dir + RSA-OAEP-256 key wrap and A256GCM payload.
+ */
+import test;
+import crypt;
+import bytes;
+
+class CryptS3Test extends test.Test {
+    @test
+    func signCertificateProducesValidLeaf(): void {
+        let caKey = crypt.generateEcKey("P-256");
+        let caBundle = crypt.generateSelfSignedCert({
+            "subject": {"commonName": "Acme Root CA"},
+            "key": caKey,
+            "validDays": 30
+        });
+        let leafKey = crypt.generateEcKey("P-256");
+        let csr = crypt.generateCsr({
+            "key":      leafKey,
+            "subject":  {"commonName": "leaf.example.com"},
+            "dnsNames": ["leaf.example.com", "alt.example.com"]
+        });
+        let signed = crypt.signCertificate({
+            "csr":       csr,
+            "caCert":    caBundle["cert"],
+            "caKey":     caKey,
+            "validDays": 30
+        });
+        let parsed = crypt.parseCert(signed);
+        this.assertEquals("leaf.example.com", parsed["subject"]["commonName"]);
+        this.assertEquals("Acme Root CA", parsed["issuer"]["commonName"]);
+        this.assertContains(parsed["dnsNames"], "leaf.example.com");
+        this.assertContains(parsed["dnsNames"], "alt.example.com");
+        this.assertFalse(parsed["isCA"]);
+    }
+
+    @test
+    func signCertificateIsCAFlagPropagates(): void {
+        let rootKey = crypt.generateEcKey("P-256");
+        let rootBundle = crypt.generateSelfSignedCert({
+            "subject": {"commonName": "Root"},
+            "key":     rootKey
+        });
+        let interKey = crypt.generateEcKey("P-256");
+        let interCsr = crypt.generateCsr({
+            "key":     interKey,
+            "subject": {"commonName": "Intermediate"}
+        });
+        let interCert = crypt.signCertificate({
+            "csr":    interCsr,
+            "caCert": rootBundle["cert"],
+            "caKey":  rootKey,
+            "isCA":   true
+        });
+        let parsed = crypt.parseCert(interCert);
+        this.assertTrue(parsed["isCA"]);
+    }
+
+    @test
+    func signCertificateRequiresAllInputs(): void {
+        this.assertThrows(func(): void {
+            crypt.signCertificate({"csr": "x", "caCert": "y"});  /* missing caKey */
+        });
+    }
+
+    @test
+    func jweDirRoundTrip(): void {
+        let cekHex = crypt.randomHex(32);
+        let cek = bytes.fromHex(cekHex);
+        let token = crypt.jweEncrypt("payload data", cek, {"alg": "dir", "enc": "A256GCM"});
+        this.assertEquals(5, token.split(".").length);
+        let plain = crypt.jweDecrypt(token, cek);
+        this.assertEquals("payload data", bytes.toString(plain));
+    }
+
+    @test
+    func jweDirAcceptsBytesPayload(): void {
+        let cek = bytes.fromHex(crypt.randomHex(32));
+        let raw = bytes.fromString("binary\0payload");
+        let token = crypt.jweEncrypt(raw, cek, {"alg": "dir", "enc": "A256GCM"});
+        let plain = crypt.jweDecrypt(token, cek);
+        this.assertEquals(bytes.toHex(raw), bytes.toHex(plain));
+    }
+
+    @test
+    func jweDirRejectsWrongCEKLength(): void {
+        let shortCek = bytes.fromHex(crypt.randomHex(16));  /* 16 bytes, not 32 */
+        this.assertThrows(func(): void {
+            crypt.jweEncrypt("x", shortCek, {"alg": "dir", "enc": "A256GCM"});
+        });
+    }
+
+    @test
+    func jweDirRejectsWrongKey(): void {
+        let cek = bytes.fromHex(crypt.randomHex(32));
+        let other = bytes.fromHex(crypt.randomHex(32));
+        let token = crypt.jweEncrypt("x", cek, {"alg": "dir", "enc": "A256GCM"});
+        this.assertThrows(func(): void {
+            crypt.jweDecrypt(token, other);
+        });
+    }
+
+    @test
+    func jweRsaOaep256RoundTrip(): void {
+        let privKey = crypt.generateRsaKey(2048);
+        let pubKey = crypt.publicKey(privKey);
+        let token = crypt.jweEncrypt("hello rsa", pubKey, {"alg": "RSA-OAEP-256", "enc": "A256GCM"});
+        let plain = crypt.jweDecrypt(token, privKey);
+        this.assertEquals("hello rsa", bytes.toString(plain));
+    }
+
+    @test
+    func jweRsaOaep256RejectsWrongKey(): void {
+        let priv1 = crypt.generateRsaKey(2048);
+        let priv2 = crypt.generateRsaKey(2048);
+        let pub1 = crypt.publicKey(priv1);
+        let token = crypt.jweEncrypt("x", pub1, {"alg": "RSA-OAEP-256", "enc": "A256GCM"});
+        this.assertThrows(func(): void {
+            crypt.jweDecrypt(token, priv2);
+        });
+    }
+
+    @test
+    func jweTamperedCiphertextFailsAuth(): void {
+        let cek = bytes.fromHex(crypt.randomHex(32));
+        let token = crypt.jweEncrypt("important", cek, {"alg": "dir", "enc": "A256GCM"});
+        let parts = token.split(".");
+        /* Replace ciphertext segment with a different base64 string of
+         * matching length so structural decode succeeds but the auth tag
+         * fails. */
+        let tampered = parts[0] + "." + parts[1] + "." + parts[2] + "." + "AAAAAAAAAAAAAAA" + "." + parts[4];
+        this.assertThrows(func(): void {
+            crypt.jweDecrypt(tampered, cek);
+        });
+    }
+
+    @test
+    func jweUnsupportedEncRejected(): void {
+        let cek = bytes.fromHex(crypt.randomHex(32));
+        this.assertThrows(func(): void {
+            crypt.jweEncrypt("x", cek, {"alg": "dir", "enc": "A128GCM"});
+        });
+    }
+
+    @test
+    func jweUnsupportedAlgRejected(): void {
+        let cek = bytes.fromHex(crypt.randomHex(32));
+        this.assertThrows(func(): void {
+            crypt.jweEncrypt("x", cek, {"alg": "PBES2-HS256+A128KW"});
+        });
+    }
+
+    @test
+    func pkcs12DecodeRejectsGarbage(): void {
+        /* Sanity check: a clearly-not-a-pfx payload throws. A full
+         * decode round-trip needs a real PFX fixture, which is
+         * covered by the Go-level unit tests in this package. */
+        this.assertThrows(func(): void {
+            crypt.pkcs12Decode(bytes.fromString("not a pkcs12 file"), "secret");
+        });
+    }
+}

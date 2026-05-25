@@ -2,24 +2,31 @@ package native
 
 import (
 	gocrypto "crypto"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"hash"
 	"math/big"
 	"net"
 	"strings"
 	"time"
 
 	"geblang/internal/runtime"
+
+	pkcs12 "software.sslmate.com/src/go-pkcs12"
 )
 
 func registerCryptPKI(r *Registry) {
@@ -269,36 +276,276 @@ func registerCryptPKI(r *Registry) {
 		return runtime.Dict{Entries: entries}, nil
 	})
 
-	// Asymmetric JWT
+	r.Register("crypt", "signCertificate", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("crypt.signCertificate expects an options dict")
+		}
+		opts, ok := args[0].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("crypt.signCertificate options must be dict")
+		}
+		csrPEM := dictStr(opts, "csr")
+		if csrPEM == "" {
+			return nil, fmt.Errorf("crypt.signCertificate options must include 'csr'")
+		}
+		caCertPEM := dictStr(opts, "caCert")
+		if caCertPEM == "" {
+			return nil, fmt.Errorf("crypt.signCertificate options must include 'caCert'")
+		}
+		caKeyPEM := dictStr(opts, "caKey")
+		if caKeyPEM == "" {
+			return nil, fmt.Errorf("crypt.signCertificate options must include 'caKey'")
+		}
+
+		csrBlock, _ := pem.Decode([]byte(csrPEM))
+		if csrBlock == nil || csrBlock.Type != "CERTIFICATE REQUEST" {
+			return nil, fmt.Errorf("crypt.signCertificate csr must be a CERTIFICATE REQUEST PEM")
+		}
+		csr, err := x509.ParseCertificateRequest(csrBlock.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("crypt.signCertificate parse csr: %w", err)
+		}
+		if err := csr.CheckSignature(); err != nil {
+			return nil, fmt.Errorf("crypt.signCertificate csr signature: %w", err)
+		}
+
+		caCertBlock, _ := pem.Decode([]byte(caCertPEM))
+		if caCertBlock == nil || caCertBlock.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("crypt.signCertificate caCert must be a CERTIFICATE PEM")
+		}
+		caCert, err := x509.ParseCertificate(caCertBlock.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("crypt.signCertificate parse caCert: %w", err)
+		}
+		caKey, err := parsePrivKeyPEM(caKeyPEM, "crypt.signCertificate")
+		if err != nil {
+			return nil, err
+		}
+
+		validDays := dictInt(opts, "validDays", 365)
+		isCA := dictBool(opts, "isCA")
+		serialBits := dictInt(opts, "serialBits", 128)
+		if serialBits < 32 {
+			serialBits = 128
+		}
+		serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), uint(serialBits)))
+		if err != nil {
+			return nil, fmt.Errorf("crypt.signCertificate serial: %w", err)
+		}
+
+		now := time.Now()
+		keyUsage := x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment
+		if isCA {
+			keyUsage |= x509.KeyUsageCertSign
+		}
+		tmpl := &x509.Certificate{
+			SerialNumber:          serial,
+			Subject:               csr.Subject,
+			NotBefore:             now,
+			NotAfter:              now.Add(time.Duration(validDays) * 24 * time.Hour),
+			KeyUsage:              keyUsage,
+			ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+			BasicConstraintsValid: true,
+			IsCA:                  isCA,
+			DNSNames:              csr.DNSNames,
+			IPAddresses:           csr.IPAddresses,
+			EmailAddresses:        csr.EmailAddresses,
+			URIs:                  csr.URIs,
+		}
+		if extraDNS := parseDNSNames(opts); len(extraDNS) > 0 {
+			tmpl.DNSNames = append(tmpl.DNSNames, extraDNS...)
+		}
+		if extraIPs := parseIPAddresses(opts); len(extraIPs) > 0 {
+			tmpl.IPAddresses = append(tmpl.IPAddresses, extraIPs...)
+		}
+
+		certDER, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, csr.PublicKey, caKey)
+		if err != nil {
+			return nil, fmt.Errorf("crypt.signCertificate: %w", err)
+		}
+		certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
+		return runtime.String{Value: certPEM}, nil
+	})
+
+	r.Register("crypt", "pkcs12Decode", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) < 1 || len(args) > 2 {
+			return nil, fmt.Errorf("crypt.pkcs12Decode expects pfx bytes and optional password")
+		}
+		pfxData, err := aeadBytesArg(args[0], "crypt.pkcs12Decode pfx")
+		if err != nil {
+			return nil, err
+		}
+		password := ""
+		if len(args) == 2 {
+			ps, ok := args[1].(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("crypt.pkcs12Decode password must be string")
+			}
+			password = ps.Value
+		}
+		privKey, leafCert, caCerts, err := pkcs12.DecodeChain(pfxData, password)
+		if err != nil {
+			return nil, fmt.Errorf("crypt.pkcs12Decode: %w", err)
+		}
+		keyPEM, err := marshalPrivKeyPEM(privKey)
+		if err != nil {
+			return nil, err
+		}
+		certPEMs := []string{}
+		if leafCert != nil {
+			certPEMs = append(certPEMs, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafCert.Raw})))
+		}
+		caElems := make([]runtime.Value, 0, len(caCerts))
+		for _, c := range caCerts {
+			caElems = append(caElems, runtime.String{Value: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Raw}))})
+		}
+		entries := map[string]runtime.DictEntry{}
+		setEntry := func(key string, val runtime.Value) {
+			k := runtime.String{Value: key}
+			entries[DictKey(k)] = runtime.DictEntry{Key: k, Value: val}
+		}
+		setEntry("key", keyPEM)
+		if len(certPEMs) > 0 {
+			setEntry("cert", runtime.String{Value: certPEMs[0]})
+		} else {
+			setEntry("cert", runtime.Null{})
+		}
+		setEntry("caCerts", runtime.List{Elements: caElems})
+		return runtime.Dict{Entries: entries}, nil
+	})
+
+	r.Register("crypt", "jweEncrypt", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) < 2 || len(args) > 3 {
+			return nil, fmt.Errorf("crypt.jweEncrypt expects payload, key, and optional opts")
+		}
+		alg := "dir"
+		enc := "A256GCM"
+		if len(args) == 3 {
+			a, err := jwtOptsAlg(args[2], "crypt.jweEncrypt")
+			if err != nil {
+				return nil, err
+			}
+			if a != "" {
+				alg = a
+			}
+			e, err := jweOptsString(args[2], "enc", "crypt.jweEncrypt")
+			if err != nil {
+				return nil, err
+			}
+			if e != "" {
+				enc = e
+			}
+		}
+		if enc != "A256GCM" {
+			return nil, fmt.Errorf("crypt.jweEncrypt unsupported enc %q (supported: A256GCM)", enc)
+		}
+		payload, err := jwePayloadBytes(args[0], "crypt.jweEncrypt")
+		if err != nil {
+			return nil, err
+		}
+		cek, encryptedKey, err := jweWrapKey(alg, args[1], "crypt.jweEncrypt")
+		if err != nil {
+			return nil, err
+		}
+		header := fmt.Sprintf(`{"alg":%q,"enc":%q}`, alg, enc)
+		headerB64 := base64.RawURLEncoding.EncodeToString([]byte(header))
+		block, err := aes.NewCipher(cek)
+		if err != nil {
+			return nil, fmt.Errorf("crypt.jweEncrypt cipher: %w", err)
+		}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return nil, fmt.Errorf("crypt.jweEncrypt gcm: %w", err)
+		}
+		iv := make([]byte, gcm.NonceSize())
+		if _, err := rand.Read(iv); err != nil {
+			return nil, fmt.Errorf("crypt.jweEncrypt iv: %w", err)
+		}
+		sealed := gcm.Seal(nil, iv, payload, []byte(headerB64))
+		tag := sealed[len(sealed)-gcm.Overhead():]
+		ciphertext := sealed[:len(sealed)-gcm.Overhead()]
+		token := strings.Join([]string{
+			headerB64,
+			base64.RawURLEncoding.EncodeToString(encryptedKey),
+			base64.RawURLEncoding.EncodeToString(iv),
+			base64.RawURLEncoding.EncodeToString(ciphertext),
+			base64.RawURLEncoding.EncodeToString(tag),
+		}, ".")
+		return runtime.String{Value: token}, nil
+	})
+
+	r.Register("crypt", "jweDecrypt", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("crypt.jweDecrypt expects token and key")
+		}
+		tokenStr, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("crypt.jweDecrypt token must be string")
+		}
+		parts := strings.Split(tokenStr.Value, ".")
+		if len(parts) != 5 {
+			return nil, fmt.Errorf("crypt.jweDecrypt: token must have 5 segments")
+		}
+		headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+		if err != nil {
+			return nil, fmt.Errorf("crypt.jweDecrypt header: %w", err)
+		}
+		var hdr struct {
+			Alg string `json:"alg"`
+			Enc string `json:"enc"`
+		}
+		if err := json.Unmarshal(headerBytes, &hdr); err != nil {
+			return nil, fmt.Errorf("crypt.jweDecrypt header json: %w", err)
+		}
+		if hdr.Enc != "A256GCM" {
+			return nil, fmt.Errorf("crypt.jweDecrypt unsupported enc %q (supported: A256GCM)", hdr.Enc)
+		}
+		encryptedKey, err := base64.RawURLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return nil, fmt.Errorf("crypt.jweDecrypt encryptedKey: %w", err)
+		}
+		iv, err := base64.RawURLEncoding.DecodeString(parts[2])
+		if err != nil {
+			return nil, fmt.Errorf("crypt.jweDecrypt iv: %w", err)
+		}
+		ciphertext, err := base64.RawURLEncoding.DecodeString(parts[3])
+		if err != nil {
+			return nil, fmt.Errorf("crypt.jweDecrypt ciphertext: %w", err)
+		}
+		tag, err := base64.RawURLEncoding.DecodeString(parts[4])
+		if err != nil {
+			return nil, fmt.Errorf("crypt.jweDecrypt tag: %w", err)
+		}
+		cek, err := jweUnwrapKey(hdr.Alg, args[1], encryptedKey, "crypt.jweDecrypt")
+		if err != nil {
+			return nil, err
+		}
+		block, err := aes.NewCipher(cek)
+		if err != nil {
+			return nil, fmt.Errorf("crypt.jweDecrypt cipher: %w", err)
+		}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return nil, fmt.Errorf("crypt.jweDecrypt gcm: %w", err)
+		}
+		sealed := append(ciphertext, tag...)
+		plaintext, err := gcm.Open(nil, iv, sealed, []byte(parts[0]))
+		if err != nil {
+			return nil, fmt.Errorf("crypt.jweDecrypt: %w", err)
+		}
+		return runtime.Bytes{Value: plaintext}, nil
+	})
+
+	// Per-algorithm JWT functions are deprecated thin shims that
+	// delegate to the unified crypt.jwtSign / crypt.jwtVerify pair.
+	// Kept for one release window; remove in 1.5.0.
 
 	r.Register("crypt", "jwtSignRS256", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("crypt.jwtSignRS256 expects payload and privatePem")
 		}
-		pemStr, ok := args[1].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("crypt.jwtSignRS256 privatePem must be string")
-		}
-		priv, err := parsePrivKeyPEM(pemStr.Value, "crypt.jwtSignRS256")
-		if err != nil {
-			return nil, err
-		}
-		rsaKey, ok := priv.(*rsa.PrivateKey)
-		if !ok {
-			return nil, fmt.Errorf("crypt.jwtSignRS256 key must be RSA")
-		}
-		sigInput, err := jwtBuildSigInput(args[0], "RS256")
-		if err != nil {
-			return nil, fmt.Errorf("crypt.jwtSignRS256: %w", err)
-		}
-		digest := sha256Sum(sigInput)
-		sig, err := rsa.SignPKCS1v15(rand.Reader, rsaKey, gocrypto.SHA256, digest)
-		if err != nil {
-			return nil, fmt.Errorf("crypt.jwtSignRS256 sign: %w", err)
-		}
-		return runtime.String{Value: sigInput + "." + base64.RawURLEncoding.EncodeToString(sig)}, nil
+		return jwtSignWithAlg(args[0], args[1], "RS256", nil, "crypt.jwtSignRS256")
 	})
-
 	r.Register("crypt", "jwtVerifyRS256", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("crypt.jwtVerifyRS256 expects token and publicPem")
@@ -307,65 +554,14 @@ func registerCryptPKI(r *Registry) {
 		if !ok {
 			return nil, fmt.Errorf("crypt.jwtVerifyRS256 token must be string")
 		}
-		pemStr, ok := args[1].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("crypt.jwtVerifyRS256 publicPem must be string")
-		}
-		parts := strings.SplitN(token.Value, ".", 3)
-		if len(parts) != 3 {
-			return runtime.Null{}, nil
-		}
-		sigBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
-		if err != nil {
-			return runtime.Null{}, nil
-		}
-		digest := sha256Sum(parts[0] + "." + parts[1])
-		pub, err := parsePublicKeyPEM(pemStr.Value, "crypt.jwtVerifyRS256")
-		if err != nil {
-			return nil, err
-		}
-		rsaPub, ok := pub.(*rsa.PublicKey)
-		if !ok {
-			return runtime.Null{}, nil
-		}
-		if err := rsa.VerifyPKCS1v15(rsaPub, gocrypto.SHA256, digest, sigBytes); err != nil {
-			return runtime.Null{}, nil
-		}
-		return jwtDecodePayload(parts[1])
+		return jwtVerifyWithAlg(token.Value, args[1], []string{"RS256"}, "crypt.jwtVerifyRS256")
 	})
-
 	r.Register("crypt", "jwtSignES256", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("crypt.jwtSignES256 expects payload and privatePem")
 		}
-		pemStr, ok := args[1].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("crypt.jwtSignES256 privatePem must be string")
-		}
-		priv, err := parsePrivKeyPEM(pemStr.Value, "crypt.jwtSignES256")
-		if err != nil {
-			return nil, err
-		}
-		ecKey, ok := priv.(*ecdsa.PrivateKey)
-		if !ok {
-			return nil, fmt.Errorf("crypt.jwtSignES256 key must be EC")
-		}
-		sigInput, err := jwtBuildSigInput(args[0], "ES256")
-		if err != nil {
-			return nil, fmt.Errorf("crypt.jwtSignES256: %w", err)
-		}
-		digest := sha256Sum(sigInput)
-		rVal, sVal, err := ecdsa.Sign(rand.Reader, ecKey, digest)
-		if err != nil {
-			return nil, fmt.Errorf("crypt.jwtSignES256 sign: %w", err)
-		}
-		keySize := (ecKey.Curve.Params().N.BitLen() + 7) / 8
-		sig := make([]byte, 2*keySize)
-		rVal.FillBytes(sig[:keySize])
-		sVal.FillBytes(sig[keySize:])
-		return runtime.String{Value: sigInput + "." + base64.RawURLEncoding.EncodeToString(sig)}, nil
+		return jwtSignWithAlg(args[0], args[1], "ES256", nil, "crypt.jwtSignES256")
 	})
-
 	r.Register("crypt", "jwtVerifyES256", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("crypt.jwtVerifyES256 expects token and publicPem")
@@ -374,34 +570,7 @@ func registerCryptPKI(r *Registry) {
 		if !ok {
 			return nil, fmt.Errorf("crypt.jwtVerifyES256 token must be string")
 		}
-		pemStr, ok := args[1].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("crypt.jwtVerifyES256 publicPem must be string")
-		}
-		parts := strings.SplitN(token.Value, ".", 3)
-		if len(parts) != 3 {
-			return runtime.Null{}, nil
-		}
-		sigBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
-		if err != nil || len(sigBytes) == 0 || len(sigBytes)%2 != 0 {
-			return runtime.Null{}, nil
-		}
-		digest := sha256Sum(parts[0] + "." + parts[1])
-		pub, err := parsePublicKeyPEM(pemStr.Value, "crypt.jwtVerifyES256")
-		if err != nil {
-			return nil, err
-		}
-		ecPub, ok := pub.(*ecdsa.PublicKey)
-		if !ok {
-			return runtime.Null{}, nil
-		}
-		half := len(sigBytes) / 2
-		rVal := new(big.Int).SetBytes(sigBytes[:half])
-		sVal := new(big.Int).SetBytes(sigBytes[half:])
-		if !ecdsa.Verify(ecPub, digest, rVal, sVal) {
-			return runtime.Null{}, nil
-		}
-		return jwtDecodePayload(parts[1])
+		return jwtVerifyWithAlg(token.Value, args[1], []string{"ES256"}, "crypt.jwtVerifyES256")
 	})
 }
 
@@ -668,4 +837,466 @@ func jwtDecodePayload(b64 string) (runtime.Value, error) {
 		return runtime.Null{}, nil
 	}
 	return value, nil
+}
+
+// jwtHashForAlg returns the digest algorithm + bytes the supplied alg
+// signs over. EdDSA and "none" do not parameterise a hash function;
+// the caller handles them through dedicated code paths.
+func jwtHashForAlg(alg string) (gocrypto.Hash, func() hash.Hash, error) {
+	switch alg {
+	case "HS256", "RS256", "ES256":
+		return gocrypto.SHA256, sha256.New, nil
+	case "HS384", "RS384", "ES384":
+		return gocrypto.SHA384, sha512.New384, nil
+	case "HS512", "RS512", "ES512":
+		return gocrypto.SHA512, sha512.New, nil
+	case "EdDSA":
+		return 0, nil, nil
+	case "none":
+		return 0, nil, nil
+	default:
+		return 0, nil, fmt.Errorf("unsupported alg %q", alg)
+	}
+}
+
+// jwtAlgIsAllowed enforces the alg allow-list semantics. allowedAlgs
+// nil means "default policy": every supported algorithm EXCEPT
+// "none" passes. A non-nil allowedAlgs is a strict membership check;
+// callers must include "none" in the list to opt in to unsigned
+// tokens. This is the standard defence against alg-confusion
+// attacks AND keeps "none" off the default code path on both the
+// sign and verify sides.
+func jwtAlgIsAllowed(alg string, allowedAlgs []string) bool {
+	if allowedAlgs == nil {
+		return alg != "none"
+	}
+	return stringInSlice(alg, allowedAlgs)
+}
+
+// jwtKeyBytes extracts a byte slice from a String or Bytes runtime
+// value. Used by HMAC sign / verify which accept either key shape.
+func jwtKeyBytes(key runtime.Value, label string) ([]byte, error) {
+	switch k := key.(type) {
+	case runtime.String:
+		return []byte(k.Value), nil
+	case runtime.Bytes:
+		return k.Value, nil
+	default:
+		return nil, fmt.Errorf("%s key must be string or bytes", label)
+	}
+}
+
+// jwtKeyPEM extracts a PEM-encoded key string. PEM is text by
+// convention so we require runtime.String here; bytes values are
+// converted with `bytes.toString` at the call site if needed.
+func jwtKeyPEM(key runtime.Value, label string) (string, error) {
+	s, ok := key.(runtime.String)
+	if !ok {
+		return "", fmt.Errorf("%s key must be a PEM string", label)
+	}
+	return s.Value, nil
+}
+
+// jwtSignWithAlg dispatches the payload + key onto the alg-specific
+// signing routine and returns the compact JWT serialisation.
+// allowedAlgs guards which alg the caller is permitted to sign with;
+// nil means "default policy" (everything except "none"). Pass
+// []string{"none"} (or include "none" in your list) to explicitly
+// produce an unsigned token.
+func jwtSignWithAlg(payloadVal runtime.Value, key runtime.Value, alg string, allowedAlgs []string, label string) (runtime.Value, error) {
+	if !jwtAlgIsAllowed(alg, allowedAlgs) {
+		if alg == "none" {
+			return nil, fmt.Errorf("%s: alg \"none\" rejected by default; pass opts.allowedAlgs containing \"none\" to opt in", label)
+		}
+		return nil, fmt.Errorf("%s: alg %q not in opts.allowedAlgs", label, alg)
+	}
+	hashID, newHash, err := jwtHashForAlg(alg)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", label, err)
+	}
+	sigInput, err := jwtBuildSigInput(payloadVal, alg)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", label, err)
+	}
+	if alg == "none" {
+		// Unsigned token: trailing dot, empty signature.
+		return runtime.String{Value: sigInput + "."}, nil
+	}
+	var sig []byte
+	switch {
+	case strings.HasPrefix(alg, "HS"):
+		secret, err := jwtKeyBytes(key, label)
+		if err != nil {
+			return nil, err
+		}
+		mac := hmac.New(newHash, secret)
+		mac.Write([]byte(sigInput))
+		sig = mac.Sum(nil)
+	case strings.HasPrefix(alg, "RS"):
+		pem, err := jwtKeyPEM(key, label)
+		if err != nil {
+			return nil, err
+		}
+		priv, err := parsePrivKeyPEM(pem, label)
+		if err != nil {
+			return nil, err
+		}
+		rsaKey, ok := priv.(*rsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("%s key must be RSA for %s", label, alg)
+		}
+		h := newHash()
+		h.Write([]byte(sigInput))
+		sig, err = rsa.SignPKCS1v15(rand.Reader, rsaKey, hashID, h.Sum(nil))
+		if err != nil {
+			return nil, fmt.Errorf("%s sign: %w", label, err)
+		}
+	case strings.HasPrefix(alg, "ES"):
+		pem, err := jwtKeyPEM(key, label)
+		if err != nil {
+			return nil, err
+		}
+		priv, err := parsePrivKeyPEM(pem, label)
+		if err != nil {
+			return nil, err
+		}
+		ecKey, ok := priv.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("%s key must be EC for %s", label, alg)
+		}
+		if err := jwtCheckECCurveForAlg(alg, ecKey.Curve, label); err != nil {
+			return nil, err
+		}
+		h := newHash()
+		h.Write([]byte(sigInput))
+		rVal, sVal, err := ecdsa.Sign(rand.Reader, ecKey, h.Sum(nil))
+		if err != nil {
+			return nil, fmt.Errorf("%s sign: %w", label, err)
+		}
+		keySize := (ecKey.Curve.Params().N.BitLen() + 7) / 8
+		sig = make([]byte, 2*keySize)
+		rVal.FillBytes(sig[:keySize])
+		sVal.FillBytes(sig[keySize:])
+	case alg == "EdDSA":
+		pem, err := jwtKeyPEM(key, label)
+		if err != nil {
+			return nil, err
+		}
+		priv, err := parsePrivKeyPEM(pem, label)
+		if err != nil {
+			return nil, err
+		}
+		edKey, ok := priv.(ed25519.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("%s key must be Ed25519 for EdDSA", label)
+		}
+		sig = ed25519.Sign(edKey, []byte(sigInput))
+	}
+	return runtime.String{Value: sigInput + "." + base64.RawURLEncoding.EncodeToString(sig)}, nil
+}
+
+// jwtVerifyWithAlg reads the supplied token's header to pick a
+// verifier. allowedAlgs (when non-empty) gates which algorithms the
+// token header may declare - this is the standard defence against
+// "alg confusion" attacks where a token claims `none` or an HMAC alg
+// while the caller expects an asymmetric scheme.
+func jwtVerifyWithAlg(token string, key runtime.Value, allowedAlgs []string, label string) (runtime.Value, error) {
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) != 3 {
+		return runtime.Null{}, nil
+	}
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return runtime.Null{}, nil
+	}
+	var header struct {
+		Alg string `json:"alg"`
+	}
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return runtime.Null{}, nil
+	}
+	if !jwtAlgIsAllowed(header.Alg, allowedAlgs) {
+		// Disallowed alg (including "none" by default): silent
+		// verification failure, same shape as a bad signature.
+		return runtime.Null{}, nil
+	}
+	hashID, newHash, err := jwtHashForAlg(header.Alg)
+	if err != nil {
+		return runtime.Null{}, nil
+	}
+	if header.Alg == "none" {
+		// Caller opted in to unsigned tokens; trust the claims.
+		// The third part must be empty per RFC 7519.
+		if parts[2] != "" {
+			return runtime.Null{}, nil
+		}
+		return jwtDecodePayload(parts[1])
+	}
+	sigBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return runtime.Null{}, nil
+	}
+	sigInput := parts[0] + "." + parts[1]
+	switch {
+	case strings.HasPrefix(header.Alg, "HS"):
+		secret, err := jwtKeyBytes(key, label)
+		if err != nil {
+			return nil, err
+		}
+		mac := hmac.New(newHash, secret)
+		mac.Write([]byte(sigInput))
+		if !hmac.Equal(sigBytes, mac.Sum(nil)) {
+			return runtime.Null{}, nil
+		}
+	case strings.HasPrefix(header.Alg, "RS"):
+		pem, err := jwtKeyPEM(key, label)
+		if err != nil {
+			return nil, err
+		}
+		pub, err := parsePublicKeyPEM(pem, label)
+		if err != nil {
+			return nil, err
+		}
+		rsaPub, ok := pub.(*rsa.PublicKey)
+		if !ok {
+			return runtime.Null{}, nil
+		}
+		h := newHash()
+		h.Write([]byte(sigInput))
+		if err := rsa.VerifyPKCS1v15(rsaPub, hashID, h.Sum(nil), sigBytes); err != nil {
+			return runtime.Null{}, nil
+		}
+	case strings.HasPrefix(header.Alg, "ES"):
+		if len(sigBytes) == 0 || len(sigBytes)%2 != 0 {
+			return runtime.Null{}, nil
+		}
+		pem, err := jwtKeyPEM(key, label)
+		if err != nil {
+			return nil, err
+		}
+		pub, err := parsePublicKeyPEM(pem, label)
+		if err != nil {
+			return nil, err
+		}
+		ecPub, ok := pub.(*ecdsa.PublicKey)
+		if !ok {
+			return runtime.Null{}, nil
+		}
+		if err := jwtCheckECCurveForAlg(header.Alg, ecPub.Curve, label); err != nil {
+			return runtime.Null{}, nil
+		}
+		h := newHash()
+		h.Write([]byte(sigInput))
+		half := len(sigBytes) / 2
+		rVal := new(big.Int).SetBytes(sigBytes[:half])
+		sVal := new(big.Int).SetBytes(sigBytes[half:])
+		if !ecdsa.Verify(ecPub, h.Sum(nil), rVal, sVal) {
+			return runtime.Null{}, nil
+		}
+	case header.Alg == "EdDSA":
+		pem, err := jwtKeyPEM(key, label)
+		if err != nil {
+			return nil, err
+		}
+		pub, err := parsePublicKeyPEM(pem, label)
+		if err != nil {
+			return nil, err
+		}
+		edPub, ok := pub.(ed25519.PublicKey)
+		if !ok {
+			return runtime.Null{}, nil
+		}
+		if !ed25519.Verify(edPub, []byte(sigInput), sigBytes) {
+			return runtime.Null{}, nil
+		}
+	}
+	return jwtDecodePayload(parts[1])
+}
+
+func jwtCheckECCurveForAlg(alg string, curve elliptic.Curve, label string) error {
+	want := ""
+	switch alg {
+	case "ES256":
+		want = "P-256"
+	case "ES384":
+		want = "P-384"
+	case "ES512":
+		want = "P-521"
+	default:
+		return nil
+	}
+	if curve.Params().Name != want {
+		return fmt.Errorf("%s expects %s for %s, got %s", label, want, alg, curve.Params().Name)
+	}
+	return nil
+}
+
+func stringInSlice(s string, ss []string) bool {
+	for _, x := range ss {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// jwtOptsAlg pulls opts["alg"] from a dict argument.
+func jwtOptsAlg(v runtime.Value, label string) (string, error) {
+	dict, ok := v.(runtime.Dict)
+	if !ok {
+		return "", fmt.Errorf("%s opts must be a dict", label)
+	}
+	for _, entry := range dict.Entries {
+		key, ok := entry.Key.(runtime.String)
+		if !ok || key.Value != "alg" {
+			continue
+		}
+		alg, ok := entry.Value.(runtime.String)
+		if !ok {
+			return "", fmt.Errorf("%s opts.alg must be a string", label)
+		}
+		return alg.Value, nil
+	}
+	return "", nil
+}
+
+// jwtOptsAllowedAlgs pulls opts["allowedAlgs"] (list<string>) from a dict.
+func jwtOptsAllowedAlgs(v runtime.Value, label string) ([]string, error) {
+	dict, ok := v.(runtime.Dict)
+	if !ok {
+		return nil, fmt.Errorf("%s opts must be a dict", label)
+	}
+	for _, entry := range dict.Entries {
+		key, ok := entry.Key.(runtime.String)
+		if !ok || key.Value != "allowedAlgs" {
+			continue
+		}
+		list, ok := entry.Value.(runtime.List)
+		if !ok {
+			return nil, fmt.Errorf("%s opts.allowedAlgs must be a list", label)
+		}
+		out := make([]string, 0, len(list.Elements))
+		for i, el := range list.Elements {
+			s, ok := el.(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("%s opts.allowedAlgs[%d] must be string", label, i)
+			}
+			out = append(out, s.Value)
+		}
+		return out, nil
+	}
+	return nil, nil
+}
+
+// jweOptsString pulls a generic string-typed opts field (used for
+// JWE's "enc" parameter and similar). Returns "" when the field is
+// absent.
+func jweOptsString(v runtime.Value, field, label string) (string, error) {
+	dict, ok := v.(runtime.Dict)
+	if !ok {
+		return "", fmt.Errorf("%s opts must be a dict", label)
+	}
+	for _, entry := range dict.Entries {
+		key, ok := entry.Key.(runtime.String)
+		if !ok || key.Value != field {
+			continue
+		}
+		s, ok := entry.Value.(runtime.String)
+		if !ok {
+			return "", fmt.Errorf("%s opts.%s must be a string", label, field)
+		}
+		return s.Value, nil
+	}
+	return "", nil
+}
+
+// jwePayloadBytes accepts a string or bytes payload for JWE
+// encryption. Strings are interpreted as UTF-8; bytes pass through.
+func jwePayloadBytes(v runtime.Value, label string) ([]byte, error) {
+	switch p := v.(type) {
+	case runtime.String:
+		return []byte(p.Value), nil
+	case runtime.Bytes:
+		return p.Value, nil
+	}
+	return nil, fmt.Errorf("%s payload must be string or bytes", label)
+}
+
+// jweWrapKey produces the Content Encryption Key (CEK) and the
+// encrypted-key segment of a JWE compact serialisation. For alg "dir"
+// the supplied key IS the CEK and the encrypted-key segment is empty.
+// For alg "RSA-OAEP" / "RSA-OAEP-256" a fresh 32-byte CEK is generated
+// and wrapped with the supplied RSA public key.
+func jweWrapKey(alg string, key runtime.Value, label string) (cek, encryptedKey []byte, err error) {
+	switch alg {
+	case "dir":
+		cek, err = jwtKeyBytes(key, label)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(cek) != 32 {
+			return nil, nil, fmt.Errorf("%s dir CEK must be 32 bytes for A256GCM, got %d", label, len(cek))
+		}
+		return cek, nil, nil
+	case "RSA-OAEP-256":
+		cek = make([]byte, 32)
+		if _, err := rand.Read(cek); err != nil {
+			return nil, nil, fmt.Errorf("%s cek: %w", label, err)
+		}
+		pemStr, err := jwtKeyPEM(key, label)
+		if err != nil {
+			return nil, nil, err
+		}
+		pub, err := parsePublicKeyPEM(pemStr, label)
+		if err != nil {
+			return nil, nil, err
+		}
+		rsaPub, ok := pub.(*rsa.PublicKey)
+		if !ok {
+			return nil, nil, fmt.Errorf("%s %s requires an RSA public key", label, alg)
+		}
+		encryptedKey, err = rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPub, cek, nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s rsa-oaep: %w", label, err)
+		}
+		return cek, encryptedKey, nil
+	}
+	return nil, nil, fmt.Errorf("%s unsupported alg %q (supported: dir, RSA-OAEP-256)", label, alg)
+}
+
+// jweUnwrapKey is the verify-side companion of jweWrapKey.
+func jweUnwrapKey(alg string, key runtime.Value, encryptedKey []byte, label string) ([]byte, error) {
+	switch alg {
+	case "dir":
+		cek, err := jwtKeyBytes(key, label)
+		if err != nil {
+			return nil, err
+		}
+		if len(cek) != 32 {
+			return nil, fmt.Errorf("%s dir CEK must be 32 bytes for A256GCM, got %d", label, len(cek))
+		}
+		if len(encryptedKey) != 0 {
+			return nil, fmt.Errorf("%s dir tokens must have empty encryptedKey segment", label)
+		}
+		return cek, nil
+	case "RSA-OAEP-256":
+		pemStr, err := jwtKeyPEM(key, label)
+		if err != nil {
+			return nil, err
+		}
+		priv, err := parsePrivKeyPEM(pemStr, label)
+		if err != nil {
+			return nil, err
+		}
+		rsaPriv, ok := priv.(*rsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("%s %s requires an RSA private key", label, alg)
+		}
+		cek, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, rsaPriv, encryptedKey, nil)
+		if err != nil {
+			return nil, fmt.Errorf("%s rsa-oaep: %w", label, err)
+		}
+		return cek, nil
+	}
+	return nil, fmt.Errorf("%s unsupported alg %q", label, alg)
 }

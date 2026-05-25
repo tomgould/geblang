@@ -1,0 +1,141 @@
+/**
+ * @title Match list-pattern test (1.4.0)
+ * @summary Tuple-shape patterns in match: case [int x, int y]
+ * with optional types and guards, _ wildcards, length-mismatch
+ * fall-through, and nested-with-existing case forms.
+ */
+import test;
+
+class MatchListPatternTest extends test.Test {
+    @test
+    func basicTwoElementBinding(): void {
+        let pair = [3, 7];
+        let label = match (pair) {
+            case [int x, int y] if (x > y) => "first wins";
+            case [int x, int y] if (x == y) => "tie";
+            case [int x, int y] => "second wins";
+            default => "no match";
+        };
+        this.assertEquals("second wins", label);
+    }
+
+    @test
+    func threeElementSum(): void {
+        let triple = [1, 2, 3];
+        let s = match (triple) {
+            case [int a, int b, int c] => a + b + c;
+            default => 0;
+        };
+        this.assertEquals(6, s);
+    }
+
+    @test
+    func mixedTypeBindings(): void {
+        let mixed = ["ada", 37];
+        let greet = match (mixed) {
+            case [string name, int age] => name + " is " + (age as string);
+            default => "unknown";
+        };
+        this.assertEquals("ada is 37", greet);
+    }
+
+    @test
+    func wildcardSuppressesBinding(): void {
+        let wild = [99, 100];
+        let keep = match (wild) {
+            case [int kept, _] => kept;
+            default => 0;
+        };
+        this.assertEquals(99, keep);
+    }
+
+    @test
+    func untypedBindingMatchesAnyElement(): void {
+        let xs = ["alpha", 42];
+        let first = match (xs) {
+            case [a, _] => a;
+            default => "";
+        };
+        this.assertEquals("alpha", first);
+    }
+
+    @test
+    func lengthMismatchFallsThrough(): void {
+        let triple = [1, 2, 3];
+        let label = match (triple) {
+            case [int a, int b] => "two";
+            case [int a, int b, int c] => "three";
+            default => "other";
+        };
+        this.assertEquals("three", label);
+    }
+
+    @test
+    func typeMismatchFallsThrough(): void {
+        let mixed = [3, "seven"];
+        let label = match (mixed) {
+            case [int a, int b] => "two ints";
+            case [int a, string b] => "int and string";
+            default => "other";
+        };
+        this.assertEquals("int and string", label);
+    }
+
+    @test
+    func nonListValueFallsThrough(): void {
+        let value = "not a list";
+        let label = match (value) {
+            case [int a, int b] => "matched";
+            case string s => "string " + s;
+            default => "other";
+        };
+        this.assertEquals("string not a list", label);
+    }
+
+    @test
+    func emptyListPattern(): void {
+        let empty = [];
+        let label = match (empty) {
+            case [] => "empty";
+            case [int a] => "one";
+            default => "other";
+        };
+        this.assertEquals("empty", label);
+    }
+
+    @test
+    func singleElementPattern(): void {
+        let one = [42];
+        let label = match (one) {
+            case [] => "empty";
+            case [int a] => "one: " + (a as string);
+            default => "other";
+        };
+        this.assertEquals("one: 42", label);
+    }
+
+    @test
+    func guardAfterListPattern(): void {
+        let xs = [10, 20];
+        let label = match (xs) {
+            case [int a, int b] if (a + b > 100) => "big";
+            case [int a, int b] => "small";
+            default => "other";
+        };
+        this.assertEquals("small", label);
+    }
+
+    @test
+    func listPatternInMatchStatement(): void {
+        /* Statement form (case ... : body) instead of arrow form. */
+        let xs = [5, 10];
+        string result = "";
+        match (xs) {
+            case [int a, int b]:
+                result = "sum=" + ((a + b) as string);
+            default:
+                result = "none";
+        }
+        this.assertEquals("sum=15", result);
+    }
+}

@@ -1,0 +1,27 @@
+/**
+ * @title Archive zip / tar / tar.gz example
+ * @summary Build a zip archive in memory, read it back, then
+ * round-trip the same payload through a gzipped tar.
+ */
+import archive;
+import bytes;
+import io;
+
+let entries = [
+    {"name": "README.md", "data": "# Demo archive\n"},
+    {"name": "src/main.gb", "data": "io.println(\"hello\");\n"}
+];
+
+let zipped = archive.zipWrite(entries);
+io.println("zip bytes: " + ((zipped.length()) as string));
+
+for (e in archive.zipRead(zipped)) {
+    io.println("zip entry: " + (e["name"] as string));
+}
+
+let tgz = archive.tarGzWrite(entries);
+io.println("tar.gz bytes: " + ((tgz.length()) as string));
+
+for (e in archive.tarGzRead(tgz)) {
+    io.println("tgz entry: " + (e["name"] as string) + " -> " + bytes.toString(e["data"] as bytes));
+}
