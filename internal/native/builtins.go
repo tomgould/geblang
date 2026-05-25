@@ -34,6 +34,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"geblang/internal/runtime"
@@ -55,9 +56,41 @@ import (
 	yamllib "gopkg.in/yaml.v3"
 )
 
+// builtinFunctionsOnce ensures the read-only functions map of the
+// builtin registry is constructed exactly once per process. Per-VM
+// NewBuiltinRegistry calls then share the same map and only pay for
+// the small per-VM patches overlay - shaving ~500 string allocs
+// per VM creation that the registerX cascade would otherwise repeat.
+var (
+	builtinFunctionsOnce sync.Once
+	builtinFunctions     map[string]Function
+)
+
+func ensureBuiltinFunctions() map[string]Function {
+	builtinFunctionsOnce.Do(func() {
+		r := NewRegistry()
+		registerAllBuiltins(r)
+		builtinFunctions = r.functions
+	})
+	return builtinFunctions
+}
+
 // NewBuiltinRegistry returns a Registry pre-populated with all pure built-in functions.
+// The function map is built once per process and shared across VMs;
+// each call still allocates a fresh per-VM patches overlay so tests
+// can install mocks without disturbing other VMs.
 func NewBuiltinRegistry() *Registry {
-	r := NewRegistry()
+	return &Registry{
+		functions: ensureBuiltinFunctions(),
+		patches:   map[string]Function{},
+	}
+}
+
+// registerAllBuiltins is the original NewBuiltinRegistry body, lifted
+// out so the one-time initialisation in ensureBuiltinFunctions can
+// reuse it. Direct callers should not invoke this - go through
+// NewBuiltinRegistry.
+func registerAllBuiltins(r *Registry) {
 	registerMath(r)
 	registerJSON(r)
 	registerCSV(r)
@@ -87,7 +120,6 @@ func NewBuiltinRegistry() *Registry {
 	registerErrors(r)
 	registerFreeze(r)
 	registerProfiler(r)
-	return r
 }
 
 // PureModuleNames returns the function names registered in a pure module, plus a found flag.
@@ -3209,15 +3241,17 @@ func reMatchDict(re *regexp.Regexp, match []string) runtime.Dict {
 	return runtime.Dict{Entries: entries}
 }
 
-// regexCache memoises compiled patterns across re.* calls. Tight
-// loops calling re.test / re.find with the same pattern (regex_match
-// bench) used to recompile per call.
 var (
-	regexCacheMu sync.Mutex
-	regexCache   = map[string]*regexp.Regexp{}
+	regexCache atomic.Pointer[map[string]*regexp.Regexp]
+	regexCacheWriteMu sync.Mutex
 )
 
 const regexCacheMaxEntries = 256
+
+func init() {
+	empty := map[string]*regexp.Regexp{}
+	regexCache.Store(&empty)
+}
 
 // CompileCachedRegex exposes the package-internal regex cache to other
 // packages that want the same compile-once behaviour.
@@ -3226,25 +3260,28 @@ func CompileCachedRegex(pattern string) (*regexp.Regexp, error) {
 }
 
 func compileCachedRegex(pattern string) (*regexp.Regexp, error) {
-	regexCacheMu.Lock()
-	re, ok := regexCache[pattern]
-	regexCacheMu.Unlock()
-	if ok {
+	current := *regexCache.Load()
+	if re, ok := current[pattern]; ok {
 		return re, nil
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return nil, err
 	}
-	regexCacheMu.Lock()
-	if len(regexCache) >= regexCacheMaxEntries {
-		for k := range regexCache {
-			delete(regexCache, k)
-			break
+	regexCacheWriteMu.Lock()
+	defer regexCacheWriteMu.Unlock()
+	current = *regexCache.Load()
+	if existing, ok := current[pattern]; ok {
+		return existing, nil
+	}
+	next := make(map[string]*regexp.Regexp, len(current)+1)
+	if len(current) < regexCacheMaxEntries {
+		for k, v := range current {
+			next[k] = v
 		}
 	}
-	regexCache[pattern] = re
-	regexCacheMu.Unlock()
+	next[pattern] = re
+	regexCache.Store(&next)
 	return re, nil
 }
 

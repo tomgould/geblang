@@ -6,11 +6,18 @@
 import io;
 import trace;
 
-let span = trace.start("request", {"path": "/health"});
-trace.event(span, "db", {"query": "select 1"});
-let ended = trace.end(span);
+let root = trace.start("request", {"path": "/health"});
+let dbSpan = trace.start("db.query", {"db.statement": "select 1"}, {"parent": root});
+trace.event(dbSpan, "row-fetched", {"count": 1});
+trace.end(dbSpan);
+let ended = trace.end(root);
 
 io.println(ended["name"]);
 io.println(ended["ended"]);
-io.println(ended["events"][0]["name"]);
 io.println(trace.snapshot().length());
+
+/* Serialise the spans as OTLP/HTTP JSON. In a real deployment,
+ * trace.exportOtlp("http://localhost:4318") POSTs this to a
+ * collector and returns {status, ok}. */
+let otlp = trace.toOtlpJson({"serviceName": "demo"});
+io.println(otlp.length() > 0);

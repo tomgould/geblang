@@ -1,0 +1,73 @@
+/**
+ * @title messaging.stomp backend (1.4.0)
+ * @summary STOMP 1.2 backend covering ActiveMQ natively and
+ * RabbitMQ when its STOMP plugin is enabled. Tests cover the
+ * connect-path validation and the dial-error path; a full
+ * publish / receive round-trip needs a real STOMP broker
+ * and is left for manual integration testing per
+ * docs/user/stdlib/21-messaging.md.
+ */
+import test;
+import messaging;
+
+class MessagingStompTest extends test.Test {
+    @test
+    func missingHostIsRejected(): void {
+        this.assertThrows(func(): void {
+            messaging.connect({
+                "driver":      "stomp",
+                "port":        61613,
+                "destination": "/queue/test"
+            });
+        });
+    }
+
+    @test
+    func missingPortIsRejected(): void {
+        this.assertThrows(func(): void {
+            messaging.connect({
+                "driver":      "stomp",
+                "host":        "127.0.0.1",
+                "destination": "/queue/test"
+            });
+        });
+    }
+
+    @test
+    func missingDestinationIsRejected(): void {
+        this.assertThrows(func(): void {
+            messaging.connect({
+                "driver": "stomp",
+                "host":   "127.0.0.1",
+                "port":   61613
+            });
+        });
+    }
+
+    @test
+    func unreachableBrokerThrows(): void {
+        this.assertThrows(func(): void {
+            messaging.connect({
+                "driver":      "stomp",
+                "host":        "127.0.0.1",
+                "port":        1,
+                "destination": "/queue/test"
+            });
+        });
+    }
+
+    @test
+    func activemqDriverAliasIsAccepted(): void {
+        /* The "activemq" driver alias routes to the same backend
+         * as "stomp". Use a definitely-closed port so we hit the
+         * dial-error path immediately. */
+        this.assertThrows(func(): void {
+            messaging.connect({
+                "driver":      "activemq",
+                "host":        "127.0.0.1",
+                "port":        1,
+                "destination": "/queue/test"
+            });
+        });
+    }
+}

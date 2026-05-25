@@ -62,11 +62,11 @@ build-with-path: build
 # Alias of build-with-path for muscle memory.
 install: build-with-path
 
-bench:
-	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto ./benchmarks/run.sh
+bench: build
+	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto GEBLANG_BIN=$(PWD)/$(BINARY) ./benchmarks/run.sh
 
-bench-docker:
-	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto ./benchmarks/run.sh --docker
+bench-docker: build
+	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto GEBLANG_BIN=$(PWD)/$(BINARY) ./benchmarks/run.sh --docker
 
 docs:
 	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto $(GO) run ./cmd/docsite $(DOCS_SRC) $(DOCS_OUT) $(DOCS_API_SRC) --examples $(DOCS_EXAMPLES_SRC)

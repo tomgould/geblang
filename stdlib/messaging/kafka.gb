@@ -1,0 +1,177 @@
+module messaging.kafka;
+
+import bytes;
+import datetime;
+import json;
+import kafka;
+
+/**
+ * Kafka backend speaking the native Kafka protocol via the
+ * underlying segmentio/kafka-go library. Each KafkaQueue owns one
+ * writer (producer) and one reader (consumer group member); they
+ * stay open for the queue handle's lifetime.
+ *
+ * Duck-types `messaging.MessageQueue`. The "queue" abstraction
+ * maps onto a single Kafka topic with a stable consumer-group id;
+ * publishing produces records and receiving fetches the next
+ * record assigned to this group member.
+ */
+export class KafkaQueue {
+    int writer;
+    int reader;
+    string topic;
+    bool _closed;
+
+    func publish(any payload): void {
+        let body = payloadToBytes(payload);
+        kafka.write(this.writer, body);
+    }
+
+    func receive(int timeoutMs): ?dict<string, any> {
+        let msg = kafka.read(this.reader, timeoutMs);
+        if (msg == null) {
+            return null;
+        }
+        let m = msg as dict<string, any>;
+        return {
+            "body":   m["value"],
+            "id":     (m["offset"] as string),
+            "handle": m["offset"]
+        };
+    }
+
+    func ack(any messageId): void {
+        /* Kafka commits the LAST fetched message on commit, not by
+         * id. The id is informational so callers can log it. */
+        kafka.commit(this.reader);
+    }
+
+    func consume(callable handler): void {
+        while (this._closed == false) {
+            let msg = this.receive(30000);
+            if (msg == null) { continue; }
+            handler(msg);
+            this.ack(msg["handle"]);
+        }
+    }
+
+    func close(): void {
+        if (this._closed) { return; }
+        this._closed = true;
+        kafka.close(this.writer);
+        kafka.close(this.reader);
+    }
+}
+
+/**
+ * Build a KafkaQueue from a messaging.connect options dict.
+ *
+ * Required:
+ *   brokers list<string> bootstrap broker host:port pairs
+ *   topic   string       Kafka topic name
+ *   groupId string       consumer group id (the consumer side)
+ *
+ * Optional:
+ *   autoCreateTopic bool default false
+ */
+export func connect(dict<string, any> opts): KafkaQueue {
+    if (opts.contains("brokers") == false) {
+        throw RuntimeError("messaging.kafka: opts.brokers is required");
+    }
+    if (opts.contains("topic") == false) {
+        throw RuntimeError("messaging.kafka: opts.topic is required");
+    }
+    if (opts.contains("groupId") == false) {
+        throw RuntimeError("messaging.kafka: opts.groupId is required");
+    }
+    let topic = opts["topic"] as string;
+    let writer = kafka.writer(opts);
+    let reader = kafka.reader(opts);
+
+    let q = KafkaQueue();
+    q.writer = writer;
+    q.reader = reader;
+    q.topic = topic;
+    q._closed = false;
+    return q;
+}
+
+func payloadToBytes(any payload): bytes {
+    if (payload instanceof string) { return bytes.fromString(payload as string); }
+    if (payload instanceof bytes)  { return payload as bytes; }
+    return bytes.fromString(json.stringify(payload));
+}
+
+/**
+ * Kafka pub/sub topic. Each subscribe() call opens its own
+ * consumer group so every subscriber receives every published
+ * record - Kafka's native topic semantics already deliver to all
+ * groups, the difference vs the queue API is just that each
+ * subscriber gets a fresh group id rather than sharing one.
+ */
+export class KafkaTopic {
+    int writer;
+    string topic;
+    list<string> brokers;
+    int subSeq;
+    bool _closed;
+
+    func publish(any payload): void {
+        let body = payloadToBytes(payload);
+        kafka.write(this.writer, body);
+    }
+
+    func subscribe(callable handler): void {
+        /* Each call to subscribe spawns a fresh consumer group so
+         * concurrent subscribers see every message. The group id
+         * embeds a counter so two concurrent subscribe calls on
+         * the same topic handle stay distinct. */
+        this.subSeq = this.subSeq + 1;
+        let groupId = "geblang-topic-sub-" + (this.subSeq as string) + "-" +
+            (datetime.nowUnix() as string);
+        let reader = kafka.reader({
+            "brokers": this.brokers,
+            "topic":   this.topic,
+            "groupId": groupId
+        });
+        try {
+            while (this._closed == false) {
+                let msg = kafka.read(reader, 30000);
+                if (msg == null) { continue; }
+                let m = msg as dict<string, any>;
+                handler({
+                    "body":   m["value"],
+                    "id":     (m["offset"] as string),
+                    "handle": m["offset"]
+                });
+                kafka.commit(reader);
+            }
+        } catch (RuntimeError e) {
+            kafka.close(reader);
+            throw e;
+        }
+        kafka.close(reader);
+    }
+
+    func close(): void {
+        if (this._closed) { return; }
+        this._closed = true;
+        kafka.close(this.writer);
+    }
+}
+
+export func topic(dict<string, any> opts): KafkaTopic {
+    if (opts.contains("brokers") == false) {
+        throw RuntimeError("messaging.kafka.topic: opts.brokers is required");
+    }
+    if (opts.contains("topic") == false) {
+        throw RuntimeError("messaging.kafka.topic: opts.topic is required");
+    }
+    let t = KafkaTopic();
+    t.topic = opts["topic"] as string;
+    t.brokers = opts["brokers"] as list<string>;
+    t.subSeq = 0;
+    t._closed = false;
+    t.writer = kafka.writer(opts);
+    return t;
+}

@@ -160,6 +160,44 @@ try {
 }
 ```
 
+## Structured concurrency: `async.scope`
+
+`async.scope.scope(body)` runs `body` with a fresh `TaskGroup` and
+guarantees that every child task spawned inside the body is awaited
+before the call returns. If the body throws, or any child task
+throws, the remaining children are cancelled and the first error is
+rethrown after the drain completes. Tasks that don't surface a
+cancellation signal still run to completion - `async.cancel` is
+cooperative.
+
+```gb
+import async;
+import async.scope as ascope;
+
+let users = ascope.scope(func(any group): list<dict<string, any>> {
+    let a = group.spawn(func(): dict<string, any> { return fetchUser(1); });
+    let b = group.spawn(func(): dict<string, any> { return fetchUser(2); });
+    return [async.await(a), async.await(b)];
+});
+```
+
+The group exposes two methods directly:
+
+- `group.spawn(callable fn)` - starts `fn` as a new task and returns
+  the `Task` value. Throws if the group has already been cancelled.
+- `group.cancel()` - flags the group cancelled and signals every
+  in-flight child.
+
+Spawned tasks are no different from those returned by `async.run` - use
+`async.await(task)` to read their result and `async.done(task)` to
+poll. The benefit of running them under a group is the
+scope-bounded lifetime: nothing leaks past `async.scope` returning.
+
+Use `async.scope` when fan-out work must complete together: parallel
+fetches in a request handler, concurrent file reads, building a batch
+of results where any single failure should cancel the rest. For
+fire-and-forget background tasks, stick to `async.run`.
+
 ## Async I/O submodules
 
 The `async.io`, `async.http`, `async.net`, and `async.stream` source modules

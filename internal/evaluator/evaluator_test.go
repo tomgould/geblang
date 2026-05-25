@@ -5626,6 +5626,21 @@ let table = cli.table([
 io.println(table.contains("name"));
 io.println(table.contains("Ada"));
 
+/* Options-dict form (matches docs/user/stdlib/13-cli.md): columns
+ * picks the dict fields, headers controls labels, separator
+ * customises the column gap. */
+let opts = cli.table([
+    {"name": "Ada", "role": "admin", "active": "yes"},
+    {"name": "Bob", "role": "user", "active": "no"}
+], {
+    "columns": ["name", "role", "active"],
+    "headers": ["Name", "Role", "Active"],
+    "separator": " | "
+});
+io.println(opts.contains("Name | Role"));
+io.println(opts.contains("Ada"));
+io.println(!opts.contains("name | role"));
+
 let parsed = cli.parseArgs(["--verbose", "--count", "3", "file.txt"], {
     "verbose": {"type": "bool", "short": "v"},
     "count": {"type": "int", "default": 1}
@@ -5647,7 +5662,7 @@ io.println(cli.help("tool", {"verbose": {"type": "bool", "short": "v"}}).contain
 	if err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
-	want := "ok\ntrue\ntrue\ntrue\ntrue\n3\nfile.txt\ntrue\n"
+	want := "ok\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n3\nfile.txt\ntrue\n"
 	if out.String() != want {
 		t.Fatalf("output: got %q, want %q", out.String(), want)
 	}

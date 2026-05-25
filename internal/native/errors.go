@@ -167,7 +167,7 @@ func ErrorStackTraceMethod(trace runtime.ErrorStackTrace, name string, args []ru
 		if len(args) != 0 {
 			return nil, fmt.Errorf("errors.StackTrace.length expects no arguments")
 		}
-		return runtime.NewInt64(int64(len(trace.Frames))), nil
+		return runtime.SmallInt{Value: int64(len(trace.Frames))}, nil
 	case "first":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("errors.StackTrace.first expects no arguments")

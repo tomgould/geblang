@@ -1,0 +1,53 @@
+/**
+ * @title messaging.rabbitmq backend (1.4.0)
+ * @summary RabbitMQ AMQP 0.9.1 backend - tests cover the
+ * connect-path validation and the dial-error path. A full
+ * publish / receive round-trip needs a real broker and is
+ * covered by manual integration tests against a local
+ * RabbitMQ container (see docs/user/stdlib/21-messaging.md).
+ */
+import test;
+import messaging;
+
+class MessagingRabbitMQTest extends test.Test {
+    @test
+    func missingUrlIsRejected(): void {
+        this.assertThrows(func(): void {
+            messaging.connect({
+                "driver": "rabbitmq",
+                "queue":  "orders"
+            });
+        });
+    }
+
+    @test
+    func missingQueueIsRejected(): void {
+        this.assertThrows(func(): void {
+            messaging.connect({
+                "driver": "rabbitmq",
+                "url":    "amqp://localhost/"
+            });
+        });
+    }
+
+    @test
+    func unreachableBrokerThrows(): void {
+        /* Port 1 is the official "tcpmux" service - effectively
+         * guaranteed not to be a RabbitMQ broker. The dial errors
+         * out; the error surfaces as a RuntimeError. */
+        this.assertThrows(func(): void {
+            messaging.connect({
+                "driver": "rabbitmq",
+                "url":    "amqp://127.0.0.1:1/",
+                "queue":  "test"
+            });
+        });
+    }
+
+    @test
+    func unknownDriverIsRejected(): void {
+        this.assertThrows(func(): void {
+            messaging.connect({"driver": "magic"});
+        });
+    }
+}

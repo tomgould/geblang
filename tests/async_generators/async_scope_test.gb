@@ -1,0 +1,82 @@
+/**
+ * @title async.scope task groups (1.4.0)
+ * @summary Structured concurrency primitive. scope() runs a body
+ * with a TaskGroup; spawned children are awaited at scope exit;
+ * the first error cancels siblings and rethrows after drain.
+ */
+import test;
+import async;
+import async.scope as ascope;
+
+class AsyncScopeTest extends test.Test {
+    @test
+    func sumsTwoChildren(): void {
+        let result = ascope.scope(func(any group): int {
+            let a = group.spawn(func(): int { return 10; });
+            let b = group.spawn(func(): int { return 32; });
+            return async.await(a) + async.await(b);
+        });
+        this.assertEquals(42, result);
+    }
+
+    @test
+    func returnsBodyValueWhenNoSpawn(): void {
+        /* Spawn-less scope still runs the body and returns its value. */
+        let result = ascope.scope(func(any group): string {
+            return "no-children";
+        });
+        this.assertEquals("no-children", result);
+    }
+
+    @test
+    func rethrowsBodyError(): void {
+        this.assertThrows(func(): void {
+            ascope.scope(func(any group): int {
+                throw RuntimeError("body-fail");
+            });
+        });
+    }
+
+    @test
+    func rethrowsChildError(): void {
+        this.assertThrows(func(): void {
+            ascope.scope(func(any group): int {
+                let _ = group.spawn(func(): int { return 1; });
+                let bad = group.spawn(func(): int { throw RuntimeError("child-fail"); });
+                return async.await(bad);
+            });
+        });
+    }
+
+    @test
+    func cancelStopsAcceptingSpawns(): void {
+        ascope.scope(func(any group): void {
+            group.cancel();
+            this.assertThrows(func(): void {
+                group.spawn(func(): int { return 1; });
+            });
+        });
+    }
+
+    @test
+    func drainsAllChildrenEvenOnBodyError(): void {
+        /* When the body throws before awaiting, the scope must still
+         * wait for spawned children to complete so they don't leak
+         * past the scope's lifetime. The drained task surfaces its
+         * own completion state via .done(). */
+        any leakedTask = null;
+        try {
+            ascope.scope(func(any group): void {
+                leakedTask = group.spawn(func(): int {
+                    async.sleep(10);
+                    return 7;
+                });
+                throw RuntimeError("early-exit");
+            });
+        } catch (RuntimeError e) {
+            /* expected - body threw */
+        }
+        this.assertNotNull(leakedTask);
+        this.assertTrue(async.done(leakedTask));
+    }
+}

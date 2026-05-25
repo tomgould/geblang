@@ -1,0 +1,105 @@
+/**
+ * @title metrics module (1.4.0 observability)
+ * @summary `metrics.counter` / `gauge` / `histogram` declare typed
+ * metrics with labels; `metrics.toPrometheus()` emits the standard
+ * v0.0.4 text exposition format.
+ */
+import test;
+import metrics;
+
+class MetricsTest extends test.Test {
+    func setUp(): void {
+        /* metrics state is process-wide; reset between tests so they
+         * don't leak into each other. */
+        metrics.reset();
+    }
+
+    @test
+    func legacyFlatCounterStillWorks(): void {
+        metrics.inc("hits");
+        metrics.inc("hits");
+        metrics.inc("hits", 5);
+        /* metrics.get returns a float; compare via the int cast since
+         * `7.0` literals in Geblang are parsed as decimal, not float. */
+        this.assertEquals(7, metrics.get("hits") as int);
+    }
+
+    @test
+    func counterWithLabelsExposesPerCombo(): void {
+        let _ = metrics.counter("http_requests_total", {
+            "help":   "Total HTTP requests",
+            "labels": ["path", "status"]
+        });
+        metrics.inc("http_requests_total", 1, {"path": "/api", "status": "200"});
+        metrics.inc("http_requests_total", 2, {"path": "/api", "status": "200"});
+        metrics.inc("http_requests_total", 1, {"path": "/api", "status": "500"});
+        let text = metrics.toPrometheus();
+        this.assertTrue(text.contains("# TYPE http_requests_total counter"));
+        this.assertTrue(text.contains("http_requests_total{path=\"/api\",status=\"200\"} 3"));
+        this.assertTrue(text.contains("http_requests_total{path=\"/api\",status=\"500\"} 1"));
+    }
+
+    @test
+    func gaugeAcceptsSetAndInc(): void {
+        let _ = metrics.gauge("queue_depth", {"help": "Queue depth"});
+        metrics.set("queue_depth", 10);
+        metrics.inc("queue_depth", 5);
+        let text = metrics.toPrometheus();
+        this.assertTrue(text.contains("# TYPE queue_depth gauge"));
+        this.assertTrue(text.contains("queue_depth 15"));
+    }
+
+    @test
+    func histogramBucketsAreCumulative(): void {
+        let _ = metrics.histogram("rt_seconds", {
+            "buckets": [0.1, 0.5, 1]
+        });
+        metrics.observe("rt_seconds", 0.05);
+        metrics.observe("rt_seconds", 0.3);
+        metrics.observe("rt_seconds", 1.5);
+        let text = metrics.toPrometheus();
+        /* Cumulative: 0.05 in [.1] and above; 0.3 in [.5] and above;
+         * 1.5 only in +Inf. */
+        this.assertTrue(text.contains("rt_seconds_bucket{le=\"0.1\"} 1"));
+        this.assertTrue(text.contains("rt_seconds_bucket{le=\"0.5\"} 2"));
+        this.assertTrue(text.contains("rt_seconds_bucket{le=\"1\"} 2"));
+        this.assertTrue(text.contains("rt_seconds_bucket{le=\"+Inf\"} 3"));
+        this.assertTrue(text.contains("rt_seconds_count 3"));
+    }
+
+    @test
+    func undeclaredLabelIsRejected(): void {
+        let _ = metrics.counter("scoped", {"labels": ["region"]});
+        this.assertThrows(func(): void {
+            metrics.inc("scoped", 1, {"region": "us", "stage": "prod"});
+        });
+    }
+
+    @test
+    func observingOnNonHistogramThrows(): void {
+        let _ = metrics.counter("not_a_hist");
+        this.assertThrows(func(): void {
+            metrics.observe("not_a_hist", 1);
+        });
+    }
+
+    @test
+    func redeclareWithDifferentKindThrows(): void {
+        let _ = metrics.counter("conflict");
+        this.assertThrows(func(): void {
+            metrics.gauge("conflict");
+        });
+    }
+
+    @test
+    func prometheusOutputCoversLegacyAndDeclared(): void {
+        let _ = metrics.counter("declared", {"help": "A declared metric"});
+        metrics.inc("declared", 4);
+        metrics.inc("legacy_only", 7);
+        let text = metrics.toPrometheus();
+        this.assertTrue(text.contains("# TYPE declared counter"));
+        this.assertTrue(text.contains("declared 4"));
+        this.assertTrue(text.contains("# TYPE legacy_only untyped"));
+        this.assertTrue(text.contains("legacy_only 7"));
+    }
+}

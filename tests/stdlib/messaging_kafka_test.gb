@@ -1,0 +1,57 @@
+/**
+ * @title messaging.kafka backend (1.4.0)
+ * @summary Kafka backend over the native Kafka protocol via
+ * segmentio/kafka-go. Tests cover the connect-path validation
+ * paths. A publish / receive round-trip needs a real Kafka
+ * cluster; see docs/user/stdlib/21-messaging.md for the
+ * manual integration recipe.
+ */
+import test;
+import messaging;
+
+class MessagingKafkaTest extends test.Test {
+    @test
+    func missingBrokersIsRejected(): void {
+        this.assertThrows(func(): void {
+            messaging.connect({
+                "driver":  "kafka",
+                "topic":   "events",
+                "groupId": "consumer-1"
+            });
+        });
+    }
+
+    @test
+    func missingTopicIsRejected(): void {
+        this.assertThrows(func(): void {
+            messaging.connect({
+                "driver":  "kafka",
+                "brokers": ["127.0.0.1:9092"],
+                "groupId": "consumer-1"
+            });
+        });
+    }
+
+    @test
+    func missingGroupIdIsRejected(): void {
+        this.assertThrows(func(): void {
+            messaging.connect({
+                "driver":  "kafka",
+                "brokers": ["127.0.0.1:9092"],
+                "topic":   "events"
+            });
+        });
+    }
+
+    @test
+    func emptyBrokerListIsRejected(): void {
+        this.assertThrows(func(): void {
+            messaging.connect({
+                "driver":  "kafka",
+                "brokers": [],
+                "topic":   "events",
+                "groupId": "consumer-1"
+            });
+        });
+    }
+}

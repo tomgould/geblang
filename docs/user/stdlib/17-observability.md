@@ -30,7 +30,22 @@ log.info(logger, "server started", {"port": 8080});
 | `stdout()` | logger handle | Write JSON log lines to stdout |
 | `stderr()` | logger handle | Write JSON log lines to stderr |
 | `file(path)` | logger handle | Append JSON log lines to a file |
+| `toStream(stream)` | logger handle | Write JSON log lines to any `streams.IOStream` (memory buffer, TCP socket, pipe, ...) |
 | `close(logger)` | `void` | Close and unregister a logger |
+
+`toStream` leaves the underlying stream alone on `log.close`, so the same
+stream can back multiple loggers or stay open for non-log traffic. Pair it
+with `streams.memory()` for in-process capture in tests, or with a network
+stream to ship logs to a TCP/TLS log collector.
+
+```gb
+import streams;
+let buf = streams.memory();
+let capture = log.toStream(buf);
+log.info(capture, "captured", {"k": "v"});
+log.close(capture);
+io.println(buf.toString());     # the JSON line(s) just written
+```
 
 ```gb
 let out = log.stdout();
@@ -238,6 +253,60 @@ metrics.set("job.durationMs", metrics.duration(start));
 Metrics are in-process. Export snapshots to logs, HTTP endpoints, or external
 collectors when you need persistence.
 
+### Labelled metrics and Prometheus exposition
+
+For Prometheus-compatible scraping, declare the metric kind explicitly. Labels
+are declared up front and label values pick a per-combo slot:
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `counter(name, opts)` | `string` | Declare a counter. opts.help (string), opts.labels (list<string>) |
+| `gauge(name, opts)` | `string` | Declare a gauge. Same opts shape as counter. |
+| `histogram(name, opts)` | `string` | Declare a histogram. opts.buckets (ascending list<float>) overrides the default set. |
+| `observe(name, value, labels?)` | `void` | Record a histogram sample. |
+| `toPrometheus()` | `string` | Emit every registered metric in Prometheus v0.0.4 text format. |
+
+```gb
+metrics.counter("http_requests_total", {
+    "help":   "Total HTTP requests",
+    "labels": ["path", "status"]
+});
+
+metrics.inc("http_requests_total", 1, {"path": "/api", "status": "200"});
+metrics.inc("http_requests_total", 2, {"path": "/api", "status": "200"});
+
+metrics.histogram("request_seconds", {
+    "labels":  ["path"],
+    "buckets": [0.005, 0.01, 0.025, 0.05, 0.1, 0.5, 1]
+});
+metrics.observe("request_seconds", 0.012, {"path": "/api"});
+
+io.println(metrics.toPrometheus());
+```
+
+Output:
+
+```
+# HELP http_requests_total Total HTTP requests
+# TYPE http_requests_total counter
+http_requests_total{path="/api",status="200"} 3
+# TYPE request_seconds histogram
+request_seconds_bucket{path="/api",le="0.005"} 0
+request_seconds_bucket{path="/api",le="0.01"} 0
+request_seconds_bucket{path="/api",le="0.025"} 1
+... (cumulative buckets up to +Inf, plus _sum and _count)
+```
+
+Legacy label-less metrics (recorded via `metrics.inc(name)` without a prior
+`metrics.counter` declaration) appear in the Prometheus output with TYPE
+`untyped`. Mix the two styles freely - the declared metrics get full HELP +
+TYPE headers; the legacy ones get the simple form.
+
+Histogram defaults: when no `opts.buckets` is given the metric uses the
+Prometheus client-library default set: 0.005, 0.01, 0.025, 0.05, 0.1, 0.25,
+0.5, 1, 2.5, 5, 10. Override with a list of ascending upper bounds; the
+`+Inf` bucket is added automatically.
+
 ## Trace
 
 Import `trace` for lightweight span-based tracing. Spans are handles while they
@@ -273,6 +342,67 @@ Completed span dictionaries contain:
 | `events` | `list<dict>` | Span events |
 
 Event dictionaries contain `name`, `fields`, and `timeUnix`.
+
+### Parent / child spans
+
+A child span shares its parent's `traceId` and records the parent's
+`spanId` in its `parentSpanId`. Pass the parent's handle via opts on
+`trace.start`:
+
+```gb
+let root = trace.start("handle-request", {"http.method": "GET"});
+let dbSpan = trace.start("db.query", {}, {"parent": root});
+trace.event(dbSpan, "row-fetched", {"count": 42});
+trace.end(dbSpan);
+trace.end(root);
+```
+
+Root spans (no `opts.parent`) get a fresh 16-byte traceId; child spans
+inherit it. Span IDs are 8 random bytes per span. IDs are exposed in
+OTLP output only - the `snapshot()` dict surface stays the same shape
+as before.
+
+### OTLP export
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `toOtlpJson(opts?)` | `string` | Serializes recorded spans as an OTLP/HTTP JSON request body |
+| `exportOtlp(endpoint, opts?)` | `dict` | POSTs the OTLP/HTTP body to a collector and returns `{status, ok}` |
+
+`opts` for both functions accepts:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `serviceName` | `string` | `"geblang"` | The `service.name` resource attribute |
+| `scopeName` | `string` | `"geblang.trace"` | InstrumentationScope name |
+| `scopeVersion` | `string` | `"1.4.0"` | InstrumentationScope version |
+| `resource` | `dict<string, string>` | `{}` | Extra resource attributes |
+| `headers` | `dict<string, string>` | `{}` | Extra HTTP headers (exportOtlp only). Use to set `Authorization`, `X-Api-Key`, etc. |
+| `timeoutMs` | `int` | `10000` | HTTP timeout (exportOtlp only) |
+
+`endpoint` is the collector base URL (e.g. `http://localhost:4318`);
+`/v1/traces` is appended automatically. The collector returning a
+non-2xx status sets `result.ok = false` but does NOT throw, so the
+caller can decide whether to retry / buffer.
+
+```gb
+import trace;
+
+let span = trace.start("checkout");
+trace.end(span);
+
+let result = trace.exportOtlp("http://localhost:4318", {
+    "serviceName": "checkout-service",
+    "headers":     {"Authorization": "Bearer ..."}
+});
+if (!result["ok"]) {
+    log.error(stderr, "OTLP export failed", {"status": result["status"]});
+}
+```
+
+Compatible with any collector that accepts OTLP/HTTP JSON: the
+OpenTelemetry Collector, Jaeger (with the OTLP receiver enabled),
+Tempo, Datadog Agent, Honeycomb, etc.
 
 ## Profile
 

@@ -69,6 +69,9 @@ io.println(c);
 }
 
 // BenchmarkRecursiveFib measures recursive function calls with typed int.
+// Each iteration is one full fib(25) run with a fresh VM; allocs/op
+// includes per-iteration NewVM setup (native registry, class index, ...).
+// For steady-state per-call alloc accounting see BenchmarkRecursiveFibSteady.
 func BenchmarkRecursiveFib(b *testing.B) {
 	const src = `
 func fib(int n): int {
@@ -82,4 +85,28 @@ int result = fib(25);
 	for range b.N {
 		runChunk(b, chunk)
 	}
+}
+
+// BenchmarkRecursiveFibSteady amortizes the per-iteration NewVM
+// allocation away by invoking fib(25) many times inside one chunk.
+// Reports allocs / wall-clock for the recursion path alone.
+func BenchmarkRecursiveFibSteady(b *testing.B) {
+	const inner = 64
+	const src = `
+func fib(int n): int {
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+int total = 0;
+for (int i = 0; i < 64; i++) {
+    total = total + fib(25);
+}
+`
+	chunk := compileSource(b, src)
+	b.ResetTimer()
+	for range b.N {
+		runChunk(b, chunk)
+	}
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*inner), "ns/fib")
+	b.ReportMetric(float64(b.N*inner), "fibs")
 }

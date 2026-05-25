@@ -1,0 +1,90 @@
+module async.scope;
+
+import async;
+
+/**
+ * Tracks a set of concurrently running tasks under a single scope.
+ * Use `async.scope(body)` instead of constructing this directly: scope
+ * wires up the await-all-on-exit and cancel-siblings-on-error semantics
+ * the structured-concurrency pattern expects.
+ */
+export class TaskGroup {
+    list<any> tasks;
+    bool cancelled;
+
+    func TaskGroup() {
+        this.tasks = [];
+        this.cancelled = false;
+    }
+
+    /**
+     * Spawns a child task running the supplied no-arg callable.
+     * Returns the Task value so the caller can await it directly when
+     * a result is needed.
+     */
+    func spawn(callable fn): any {
+        if (this.cancelled) {
+            throw RuntimeError("task group is cancelled");
+        }
+        let task = async.run(fn);
+        this.tasks = this.tasks.push(task);
+        return task;
+    }
+
+    /**
+     * Marks the group cancelled and signals every child task. Workers
+     * that observe their cancellation token can exit early; workers
+     * that don't run to completion.
+     */
+    func cancel(): void {
+        this.cancelled = true;
+        for (t in this.tasks) {
+            if (!async.done(t)) {
+                async.cancel(t);
+            }
+        }
+    }
+}
+
+/**
+ * Runs `body` inside a fresh TaskGroup, awaiting every child task
+ * before returning. If `body` throws or any child task throws, the
+ * remaining children are cancelled and the first error is rethrown
+ * once the wait completes.
+ *
+ * Usage:
+ *
+ *     let results = async.scope(func(group): list<int> {
+ *         let a = group.spawn(func(): int { return fetchUser(1); });
+ *         let b = group.spawn(func(): int { return fetchUser(2); });
+ *         return [async.await(a), async.await(b)];
+ *     });
+ */
+export func scope(callable body): any {
+    let group = TaskGroup();
+    any result = null;
+    any firstErr = null;
+    try {
+        result = body(group);
+    } catch (RuntimeError e) {
+        firstErr = e;
+        group.cancel();
+    }
+    /* Drain every spawned task. Catch failures so the loop completes
+     * even when several children error; record the first error and
+     * cancel the rest. */
+    for (t in group.tasks) {
+        try {
+            async.await(t);
+        } catch (RuntimeError taskErr) {
+            if (firstErr == null) {
+                firstErr = taskErr;
+                group.cancel();
+            }
+        }
+    }
+    if (firstErr != null) {
+        throw firstErr;
+    }
+    return result;
+}

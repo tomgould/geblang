@@ -1,0 +1,114 @@
+/**
+ * @title trace OTLP exporter (1.4.0 observability)
+ * @summary `trace.toOtlpJson` emits the OTLP/HTTP request body for
+ * recorded spans; `trace.exportOtlp` POSTs that body to a collector.
+ * Parent linkage is via opts.parent on `trace.start`.
+ */
+import test;
+import trace;
+import json;
+import http;
+
+
+class TraceOtlpTest extends test.Test {
+    func setUp(): void {
+        trace.reset();
+    }
+
+    @test
+    func emitsValidOtlpJsonForSingleSpan(): void {
+        let span = trace.start("op", {"x": "y"});
+        trace.end(span);
+        let body = trace.toOtlpJson();
+        let parsed = json.parse(body) as dict<string, any>;
+        let spans = parsed["resourceSpans"][0]["scopeSpans"][0]["spans"] as list<any>;
+        this.assertEquals(1, spans.length());
+        let s = spans[0] as dict<string, any>;
+        /* OTLP requires 32-hex traceId, 16-hex spanId. */
+        this.assertEquals(32, (s["traceId"] as string).length());
+        this.assertEquals(16, (s["spanId"] as string).length());
+        this.assertEquals("op", s["name"] as string);
+    }
+
+    @test
+    func childInheritsParentTraceId(): void {
+        let root = trace.start("root");
+        let child = trace.start("child", {}, {"parent": root});
+        trace.end(child);
+        trace.end(root);
+        let parsed = json.parse(trace.toOtlpJson()) as dict<string, any>;
+        let spans = parsed["resourceSpans"][0]["scopeSpans"][0]["spans"] as list<any>;
+        let rootSpan = spans[0] as dict<string, any>;
+        let childSpan = spans[1] as dict<string, any>;
+        this.assertEquals(rootSpan["traceId"] as string, childSpan["traceId"] as string);
+        this.assertEquals(rootSpan["spanId"] as string, childSpan["parentSpanId"] as string);
+    }
+
+    @test
+    func eventsAreSerialisedWithAttrs(): void {
+        let span = trace.start("with-events");
+        trace.event(span, "step-1", {"detail": "first"});
+        trace.event(span, "step-2", {"detail": "second"});
+        trace.end(span);
+        let parsed = json.parse(trace.toOtlpJson()) as dict<string, any>;
+        let events = (parsed["resourceSpans"][0]["scopeSpans"][0]["spans"][0] as dict<string, any>)["events"] as list<any>;
+        this.assertEquals(2, events.length());
+        this.assertEquals("step-1", (events[0] as dict<string, any>)["name"] as string);
+    }
+
+    @test
+    func resourceServiceNameRoundTrips(): void {
+        let span = trace.start("svc");
+        trace.end(span);
+        let body = trace.toOtlpJson({"serviceName": "my-service"});
+        let parsed = json.parse(body) as dict<string, any>;
+        let attrs = (parsed["resourceSpans"][0]["resource"] as dict<string, any>)["attributes"] as list<any>;
+        let svcName = (attrs[0] as dict<string, any>)["value"] as dict<string, any>;
+        this.assertEquals("service.name", (attrs[0] as dict<string, any>)["key"] as string);
+        this.assertEquals("my-service", svcName["stringValue"] as string);
+    }
+
+    @test
+    func exportOtlpHitsTheCollectorEndpoint(): void {
+        /* Spin up an in-process HTTP server that returns 200 to
+         * any POST. We can't inspect the handler-side capture
+         * from a test (worker-VM isolation freezes the closure's
+         * dict), so this test verifies only the round-trip status
+         * and the result dict shape. The toOtlpJson output is
+         * verified separately by the other tests. */
+        let handler = func(any req): dict<string, any> {
+            return {"status": 200, "body": "{}"};
+        };
+        let listenHandle = http.listen("127.0.0.1:0", handler);
+        let endpoint = "http://" + http.serverAddr(listenHandle);
+
+        let span = trace.start("exported");
+        trace.end(span);
+        let result = trace.exportOtlp(endpoint);
+
+        http.close(listenHandle);
+
+        this.assertEquals(200, result["status"] as int);
+        this.assertTrue(result["ok"] as bool);
+    }
+
+    @test
+    func exportOtlpReturnsCollectorErrorStatus(): void {
+        /* When the collector returns a non-2xx code, ok is false
+         * but the call doesn't throw. */
+        let handler = func(any req): dict<string, any> {
+            return {"status": 503, "body": "service unavailable"};
+        };
+        let listenHandle = http.listen("127.0.0.1:0", handler);
+        let endpoint = "http://" + http.serverAddr(listenHandle);
+
+        let span = trace.start("rejected");
+        trace.end(span);
+        let result = trace.exportOtlp(endpoint);
+
+        http.close(listenHandle);
+
+        this.assertEquals(503, result["status"] as int);
+        this.assertEquals(false, result["ok"] as bool);
+    }
+}

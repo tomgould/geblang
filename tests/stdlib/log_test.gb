@@ -5,6 +5,8 @@
  */
 import test;
 import log;
+import streams;
+import json;
 
 class LogTest extends test.Test {
     @test
@@ -32,5 +34,34 @@ class LogTest extends test.Test {
         log.warn(stream, "via handle warning", {"k": "v"});
         log.close(stream);
         this.assertTrue(true);
+    }
+
+    @test
+    func toStreamWritesJsonLinesIntoBuffer(): void {
+        let buf = streams.memory();
+        let logger = log.toStream(buf);
+        log.info(logger, "hello", {"user": "ada"});
+        log.warn(logger, "low disk", {"freeMb": 120});
+        log.close(logger);
+        let captured = buf.toString();
+        let lines = captured.split("\n");
+        /* Trailing newline yields an empty final entry; expect 2 real lines. */
+        this.assertTrue(lines.length() >= 2);
+        let first = json.parse(lines[0] as string) as dict<string, any>;
+        this.assertEquals("info", first["level"] as string);
+        this.assertEquals("hello", first["message"] as string);
+        this.assertEquals("ada", (first["fields"] as dict<string, any>)["user"] as string);
+        let second = json.parse(lines[1] as string) as dict<string, any>;
+        this.assertEquals("warn", second["level"] as string);
+        this.assertEquals("low disk", second["message"] as string);
+    }
+
+    @test
+    func toStreamRejectsReadOnlyStream(): void {
+        /* stdin is read-only - log.toStream should fail. */
+        let stdin = streams.stdin();
+        this.assertThrows(func(): void {
+            log.toStream(stdin);
+        });
     }
 }

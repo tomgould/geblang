@@ -1,0 +1,120 @@
+module messaging;
+
+import messaging.sqs as sqs;
+import messaging.rabbitmq as rabbitmq;
+import messaging.stomp as stomp;
+import messaging.kafka as kafka;
+
+/**
+ * Common shape every backend implements. Concrete backends (SQS,
+ * RabbitMQ, ActiveMQ, Kafka) sit behind this interface so application
+ * code can swap brokers without changing its publish / receive call
+ * sites.
+ *
+ * Messages flowing through this surface are dicts with at least:
+ *   `body`   the payload (string or bytes depending on the broker)
+ *   `id`     a broker-specific identifier needed for ack / delete
+ *
+ * `receive(timeoutMs)` blocks up to the timeout. Returns `null` when
+ * no message arrived inside the window. `consume(handler)` loops:
+ * each delivered message is passed to `handler` which should return
+ * normally to ack or throw to nack (where the backend supports it).
+ */
+export interface MessageQueue {
+    func publish(any payload): void;
+    func receive(int timeoutMs): ?dict<string, any>;
+    func ack(any messageId): void;
+    func consume(callable handler): void;
+    func close(): void;
+}
+
+/**
+ * Pub/sub topic. Multiple subscribers each see every published
+ * message - in contrast to MessageQueue where each message is
+ * delivered to exactly one consumer. The backend chosen by the
+ * `driver` option determines how the fan-out is implemented
+ * (RabbitMQ fanout exchange, Kafka unique consumer groups, STOMP
+ * topic destinations).
+ *
+ * `subscribe(handler)` runs the handler for each delivered message
+ * and blocks until the caller closes the topic.
+ */
+export interface MessageTopic {
+    func publish(any payload): void;
+    func subscribe(callable handler): void;
+    func close(): void;
+}
+
+/**
+ * Build a queue handle from a backend-agnostic options dict. The
+ * dict's `driver` key picks the implementation; remaining keys are
+ * backend-specific and validated by the chosen backend.
+ *
+ *     let q = messaging.connect({
+ *         "driver":    "sqs",
+ *         "region":    "us-east-1",
+ *         "queueUrl":  "https://sqs.us-east-1.amazonaws.com/123/orders",
+ *         "accessKey": env.get("AWS_ACCESS_KEY_ID"),
+ *         "secretKey": env.get("AWS_SECRET_ACCESS_KEY")
+ *     });
+ *     q.publish({"orderId": 42});
+ */
+export func connect(dict<string, any> opts): MessageQueue {
+    if (opts.contains("driver") == false) {
+        throw RuntimeError("messaging.connect: options must include 'driver'");
+    }
+    let driver = opts["driver"] as string;
+    if (driver == "sqs") {
+        return sqs.connect(opts);
+    }
+    if (driver == "rabbitmq") {
+        return rabbitmq.connect(opts);
+    }
+    if (driver == "stomp" || driver == "activemq") {
+        return stomp.connect(opts);
+    }
+    if (driver == "kafka") {
+        return kafka.connect(opts);
+    }
+    throw RuntimeError("messaging.connect: unknown driver " + driver +
+        " (supported: sqs, rabbitmq, stomp, activemq, kafka)");
+}
+
+/**
+ * Build a topic handle from a backend-agnostic options dict.
+ * Topics broadcast each published message to every active
+ * subscriber. The dict's `driver` key picks the backend; the same
+ * connection-shape options as `connect()` apply.
+ *
+ *     let topic = messaging.topic({
+ *         "driver": "rabbitmq",
+ *         "url":    "amqp://localhost/",
+ *         "topic":  "events.user.signup"
+ *     });
+ *     topic.publish({"userId": 42});
+ *     topic.subscribe(func(any msg): void { ... });
+ *
+ * SQS does not provide pub/sub directly - use the AWS SNS API for
+ * fan-out; SQS subscriptions can receive messages from SNS topics
+ * but pub/sub publishing is an SNS concern.
+ */
+export func topic(dict<string, any> opts): MessageTopic {
+    if (opts.contains("driver") == false) {
+        throw RuntimeError("messaging.topic: options must include 'driver'");
+    }
+    let driver = opts["driver"] as string;
+    if (driver == "rabbitmq") {
+        return rabbitmq.topic(opts);
+    }
+    if (driver == "stomp" || driver == "activemq") {
+        return stomp.topic(opts);
+    }
+    if (driver == "kafka") {
+        return kafka.topic(opts);
+    }
+    if (driver == "sqs") {
+        throw RuntimeError("messaging.topic: SQS does not support pub/sub. Use AWS SNS for fan-out; SQS subscriptions can be created as SNS topic targets.");
+    }
+    throw RuntimeError("messaging.topic: unknown driver " + driver +
+        " (supported: rabbitmq, stomp, activemq, kafka)");
+}

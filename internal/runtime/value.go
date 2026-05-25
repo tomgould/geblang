@@ -563,8 +563,8 @@ type BytecodeFunction struct {
 	Decorators     []DecoratorMetadata
 	// DefLine / DefColumn capture the source position of the
 	// function declaration, surfaced by reflect.location.
-	DefLine        int64
-	DefColumn      int64
+	DefLine   int64
+	DefColumn int64
 }
 
 func (v BytecodeFunction) TypeName() string { return "function" }
@@ -637,8 +637,8 @@ type BytecodeClass struct {
 	Immutable           bool
 	// DefLine / DefColumn capture the source position of the
 	// class declaration, surfaced by reflect.location.
-	DefLine             int64
-	DefColumn           int64
+	DefLine   int64
+	DefColumn int64
 }
 
 func (v BytecodeClass) TypeName() string { return "class" }
@@ -694,13 +694,13 @@ type TaskResult struct {
 }
 
 type Task struct {
-	once        sync.Once
-	cancelOnce  sync.Once
-	done        chan struct{}
-	cancel      chan struct{}
-	mu          sync.Mutex
-	result      TaskResult
-	cancelled   bool
+	once       sync.Once
+	cancelOnce sync.Once
+	done       chan struct{}
+	cancel     chan struct{}
+	mu         sync.Mutex
+	result     TaskResult
+	cancelled  bool
 }
 
 func NewTask() *Task {
@@ -862,23 +862,23 @@ type Class struct {
 	// declaration time. For `class Sub extends Base<string, int>` this
 	// is ["string", "int"]. Empty when the parent is non-generic or
 	// declared without type args.
-	ParentArguments      []string
-	Implements           []*Interface
-	Decorators           []ast.Decorator
-	Fields               []Field
-	Methods              map[string][]Function
-	StaticMethods        map[string][]Function
-	MethodMetadata       map[string][]FunctionMetadata
-	StaticMetadata       map[string][]FunctionMetadata
-	StaticValues         map[string]Value
-	Constructors         []Function
+	ParentArguments []string
+	Implements      []*Interface
+	Decorators      []ast.Decorator
+	Fields          []Field
+	Methods         map[string][]Function
+	StaticMethods   map[string][]Function
+	MethodMetadata  map[string][]FunctionMetadata
+	StaticMetadata  map[string][]FunctionMetadata
+	StaticValues    map[string]Value
+	Constructors    []Function
 	// Destructor is the optional `func ~ClassName()` cleanup method.
 	// Nil when the class doesn't declare one. The runtime invokes it
 	// at `with`-block exit (and via explicit cleanup paths added by
 	// future work) - see the executor's WithStatement handling.
-	Destructor           *Function
-	Env                  *Environment
-	Immutable            bool
+	Destructor *Function
+	Env        *Environment
+	Immutable  bool
 	// DefinitionModule / DefinitionLine / DefinitionColumn capture the
 	// source position of the class declaration, surfaced by
 	// reflect.location.

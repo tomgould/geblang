@@ -27,3 +27,13 @@ let custom = log.custom(capture);
 log.error(custom, "custom", {"id": "3"});
 io.println(capture.last);
 io.println(capture instanceof log.LogInterface);
+
+/* log.toStream pipes JSON lines into any IOStream - including an
+ * in-memory buffer for tests or a network stream to ship to a
+ * remote collector. */
+import streams;
+let buf = streams.memory();
+let toBuf = log.toStream(buf);
+log.info(toBuf, "captured", {"id": "4"});
+log.close(toBuf);
+io.println(buf.toString().contains("\"captured\""));

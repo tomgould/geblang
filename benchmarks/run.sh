@@ -68,10 +68,10 @@ if ! [[ "$REPEATS" =~ ^[0-9]+$ ]] || [ "$REPEATS" -lt 1 ]; then
     exit 2
 fi
 
-# ---- Build geblang if the harness binary is missing. ----
-GEBLANG_BIN="${GEBLANG_BIN:-$ROOT/build/geblang-bench}"
+# ---- Bench against the binary `make build` produces. Override
+#      GEBLANG_BIN to compare against a different build. ----
+GEBLANG_BIN="${GEBLANG_BIN:-$ROOT/geblang}"
 if [ ! -x "$GEBLANG_BIN" ]; then
-    mkdir -p "$(dirname "$GEBLANG_BIN")"
     ( cd "$ROOT" && GOCACHE="${GOCACHE:-/tmp/geblang-go-cache}" \
         GOTOOLCHAIN="${GOTOOLCHAIN:-auto}" \
         go build -o "$GEBLANG_BIN" ./cmd/geblang )

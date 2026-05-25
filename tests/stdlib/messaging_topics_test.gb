@@ -1,0 +1,80 @@
+/**
+ * @title messaging.topic facade (1.4.0)
+ * @summary Pub/sub topic API - tests cover the dispatch
+ * facade's validation paths (driver required, SQS rejected
+ * with a helpful message, per-backend required-keys
+ * enforced). Round-trip publish/subscribe against real
+ * brokers is exercised by manual integration tests; see
+ * docs/user/stdlib/21-messaging.md.
+ */
+import test;
+import messaging;
+
+class MessagingTopicsTest extends test.Test {
+    @test
+    func missingDriverIsRejected(): void {
+        this.assertThrows(func(): void {
+            messaging.topic({"topic": "events"});
+        });
+    }
+
+    @test
+    func unknownDriverIsRejected(): void {
+        this.assertThrows(func(): void {
+            messaging.topic({"driver": "carrier-pigeon", "topic": "events"});
+        });
+    }
+
+    @test
+    func sqsRejectedWithSnsHint(): void {
+        /* SQS itself doesn't fan-out; the facade rejects with a
+         * pointer to AWS SNS as the proper pub/sub primitive. */
+        let threw = false;
+        try {
+            messaging.topic({"driver": "sqs", "topic": "events"});
+        } catch (RuntimeError e) {
+            threw = true;
+            this.assertTrue(e.message.contains("SNS"));
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func rabbitTopicRequiresUrl(): void {
+        this.assertThrows(func(): void {
+            messaging.topic({"driver": "rabbitmq", "topic": "events"});
+        });
+    }
+
+    @test
+    func rabbitTopicRequiresTopicName(): void {
+        this.assertThrows(func(): void {
+            messaging.topic({"driver": "rabbitmq", "url": "amqp://localhost/"});
+        });
+    }
+
+    @test
+    func stompTopicRequiresDestination(): void {
+        this.assertThrows(func(): void {
+            messaging.topic({
+                "driver": "stomp",
+                "host":   "localhost",
+                "port":   61613
+            });
+        });
+    }
+
+    @test
+    func kafkaTopicRequiresBrokers(): void {
+        this.assertThrows(func(): void {
+            messaging.topic({"driver": "kafka", "topic": "events"});
+        });
+    }
+
+    @test
+    func kafkaTopicRequiresTopicName(): void {
+        this.assertThrows(func(): void {
+            messaging.topic({"driver": "kafka", "brokers": ["127.0.0.1:9092"]});
+        });
+    }
+}

@@ -1,0 +1,153 @@
+/**
+ * @title messaging.sqs backend (1.4.0)
+ * @summary Round-trips publish / receive / ack against an
+ * in-process mock SQS server. The mock captures the
+ * Authorization header so we can assert sigv4 was applied
+ * correctly; it does not re-verify the signature itself
+ * (covered separately by the gebweb S3 sigv4 tests, since the
+ * signing chain is the same crypt.hmacSha256Bytes ladder).
+ */
+import test;
+import http;
+import sys;
+import io;
+import path;
+import messaging;
+
+func startMockSqs(): dict<string, any> {
+    /* http.listen handler closures cannot share state with the
+     * test body because the handler runs in a cloned evaluator.
+     * The disk-backed mock pattern from storage_s3_test.gb works
+     * the same way here. */
+    let dir = io.tempDir("sqsmock_");
+    let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+        let headers = req["headers"] as dict<string, any>;
+        io.writeText(path.join(dir, "lastAuth"), (headers["Authorization"] ?? "") as string);
+        let body = req["body"] as string;
+        if (body.contains("Action=SendMessage")) {
+            io.writeText(path.join(dir, "lastBody"), body);
+            return {"status": 200, "headers": {}, "body": "<SendMessageResponse><SendMessageResult><MessageId>m-published</MessageId></SendMessageResult></SendMessageResponse>"};
+        }
+        if (body.contains("Action=ReceiveMessage")) {
+            if (io.exists(path.join(dir, "delivered"))) {
+                return {"status": 200, "headers": {}, "body": "<ReceiveMessageResponse><ReceiveMessageResult></ReceiveMessageResult></ReceiveMessageResponse>"};
+            }
+            io.writeText(path.join(dir, "delivered"), "1");
+            return {"status": 200, "headers": {}, "body":
+                "<ReceiveMessageResponse><ReceiveMessageResult><Message>" +
+                "<MessageId>m-1</MessageId><ReceiptHandle>handle-abc</ReceiptHandle>" +
+                "<Body>payload data</Body></Message></ReceiveMessageResult></ReceiveMessageResponse>"};
+        }
+        if (body.contains("Action=DeleteMessage")) {
+            io.writeText(path.join(dir, "acked"), "1");
+            return {"status": 200, "headers": {}, "body": "<DeleteMessageResponse/>"};
+        }
+        return {"status": 400, "headers": {}, "body": "unknown action"};
+    });
+    let addr = http.serverAddr(server);
+    sys.sleep(20);
+    return {"server": server, "url": "http://" + addr + "/123/test", "dir": dir};
+}
+
+func newSqs(string url): any {
+    return messaging.connect({
+        "driver":    "sqs",
+        "region":    "us-east-1",
+        "queueUrl":  url,
+        "accessKey": "AKIAEXAMPLE",
+        "secretKey": "secret-key"
+    });
+}
+
+class MessagingSqsTest extends test.Test {
+    @test
+    func publishStringBody(): void {
+        let mock = startMockSqs();
+        let q = newSqs(mock["url"] as string);
+        q.publish("hello world");
+        let body = io.readText(path.join(mock["dir"] as string, "lastBody"));
+        this.assertTrue(body.contains("MessageBody=hello+world") || body.contains("MessageBody=hello%20world"));
+        http.shutdown(mock["server"]);
+    }
+
+    @test
+    func publishJsonEncodesDict(): void {
+        let mock = startMockSqs();
+        let q = newSqs(mock["url"] as string);
+        q.publish({"orderId": 42, "amount": 100});
+        let body = io.readText(path.join(mock["dir"] as string, "lastBody"));
+        /* JSON-encoded body, URL-escaped into the form field. */
+        this.assertTrue(body.contains("orderId") || body.contains("orderId"));
+        http.shutdown(mock["server"]);
+    }
+
+    @test
+    func receiveReturnsMessageDict(): void {
+        let mock = startMockSqs();
+        let q = newSqs(mock["url"] as string);
+        let msg = q.receive(100);
+        this.assertNotNull(msg);
+        this.assertEquals("payload data", msg["body"]);
+        this.assertEquals("handle-abc", msg["handle"]);
+        this.assertEquals("m-1", msg["id"]);
+        http.shutdown(mock["server"]);
+    }
+
+    @test
+    func receiveReturnsNullOnEmpty(): void {
+        let mock = startMockSqs();
+        let q = newSqs(mock["url"] as string);
+        let _ = q.receive(100);   /* drains the one message */
+        let again = q.receive(100);
+        this.assertNull(again);
+        http.shutdown(mock["server"]);
+    }
+
+    @test
+    func ackAcceptsHandleString(): void {
+        let mock = startMockSqs();
+        let q = newSqs(mock["url"] as string);
+        let msg = q.receive(100);
+        q.ack(msg["handle"]);
+        this.assertTrue(io.exists(path.join(mock["dir"] as string, "acked")));
+        http.shutdown(mock["server"]);
+    }
+
+    @test
+    func ackAcceptsMessageDict(): void {
+        let mock = startMockSqs();
+        let q = newSqs(mock["url"] as string);
+        let msg = q.receive(100);
+        q.ack(msg);
+        this.assertTrue(io.exists(path.join(mock["dir"] as string, "acked")));
+        http.shutdown(mock["server"]);
+    }
+
+    @test
+    func authorizationHeaderHasSigv4Shape(): void {
+        let mock = startMockSqs();
+        let q = newSqs(mock["url"] as string);
+        q.publish("x");
+        let auth = io.readText(path.join(mock["dir"] as string, "lastAuth"));
+        this.assertTrue(auth.startsWith("AWS4-HMAC-SHA256"));
+        this.assertTrue(auth.contains("Credential=AKIAEXAMPLE/"));
+        this.assertTrue(auth.contains("/us-east-1/sqs/aws4_request"));
+        this.assertTrue(auth.contains("SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date"));
+        this.assertTrue(auth.contains("Signature="));
+        http.shutdown(mock["server"]);
+    }
+
+    @test
+    func connectRequiresAllOpts(): void {
+        this.assertThrows(func(): void {
+            messaging.connect({"driver": "sqs"});  /* missing region/url/keys */
+        });
+    }
+
+    @test
+    func connectRejectsUnknownDriver(): void {
+        this.assertThrows(func(): void {
+            messaging.connect({"driver": "magic-bus"});
+        });
+    }
+}

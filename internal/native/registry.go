@@ -46,6 +46,15 @@ func (r *Registry) Has(module, name string) bool {
 	return ok
 }
 
+// Returns nil when a test patch shadows the key; the caller must
+// fall back to Call/CallKey so patches still win.
+func (r *Registry) LookupKey(key string) Function {
+	if _, patched := r.patches[key]; patched {
+		return nil
+	}
+	return r.functions[key]
+}
+
 func (r *Registry) CallKey(key string, args []runtime.Value) (runtime.Value, error) {
 	if patch, ok := r.patches[key]; ok {
 		return patch(args)

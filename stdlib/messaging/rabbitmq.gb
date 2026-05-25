@@ -1,0 +1,232 @@
+module messaging.rabbitmq;
+
+import amqp;
+import bytes;
+import json;
+
+/**
+ * RabbitMQ backend speaking AMQP 0.9.1. Each RabbitQueue owns one
+ * connection and one channel for the queue's lifetime, declares the
+ * queue durably on construction, and routes publish / receive / ack
+ * through the channel.
+ *
+ * Duck-types `messaging.MessageQueue`. The explicit `implements`
+ * clause is omitted to avoid a circular module import.
+ */
+export class RabbitQueue {
+    int conn;
+    int ch;
+    string queue;
+    string exchange;
+    string routingKey;
+    bool _closed;
+
+    func publish(any payload): void {
+        let body = payloadToBytes(payload);
+        amqp.publish(this.ch, this.exchange, this.routingKey, body, {
+            "contentType": contentTypeOf(payload),
+            "persistent":  true
+        });
+    }
+
+    func receive(int timeoutMs): ?dict<string, any> {
+        /* AMQP basic.get is non-blocking. For a timeoutMs budget we
+         * poll with a short sleep loop rather than wiring a separate
+         * consumer goroutine. */
+        int deadline = timeoutMs;
+        while (deadline >= 0) {
+            let msg = amqp.get(this.ch, this.queue, false);
+            if (msg != null) {
+                return {
+                    "body":   msg["body"],
+                    "id":     (msg["deliveryTag"] as string),
+                    "handle": msg["deliveryTag"]
+                };
+            }
+            if (deadline == 0) { break; }
+            int step = 50;
+            if (step > deadline) { step = deadline; }
+            async.sleep(step);
+            deadline = deadline - step;
+        }
+        return null;
+    }
+
+    func ack(any messageId): void {
+        int tag = 0;
+        if (messageId instanceof int) {
+            tag = messageId as int;
+        } else if (messageId instanceof dict) {
+            let d = messageId as dict<string, any>;
+            tag = d["handle"] as int;
+        } else {
+            throw RuntimeError("rabbitmq.ack: messageId must be a deliveryTag int or message dict");
+        }
+        amqp.ack(this.ch, tag);
+    }
+
+    func consume(callable handler): void {
+        while (this._closed == false) {
+            let msg = this.receive(1000);
+            if (msg == null) { continue; }
+            handler(msg);
+            this.ack(msg["handle"]);
+        }
+    }
+
+    func close(): void {
+        if (this._closed) { return; }
+        this._closed = true;
+        amqp.close(this.ch);
+        amqp.close(this.conn);
+    }
+}
+
+/**
+ * Build a RabbitQueue from a messaging.connect options dict.
+ *
+ * Required:
+ *   url   amqp://user:pass@host:port/vhost
+ *   queue queue name
+ *
+ * Optional:
+ *   exchange    default "" (direct-to-queue)
+ *   routingKey  default = queue name
+ *   durable     queue declared durable (default true)
+ */
+export func connect(dict<string, any> opts): RabbitQueue {
+    if (opts.contains("url") == false) {
+        throw RuntimeError("messaging.rabbitmq: opts.url is required");
+    }
+    if (opts.contains("queue") == false) {
+        throw RuntimeError("messaging.rabbitmq: opts.queue is required");
+    }
+    let url = opts["url"] as string;
+    let queue = opts["queue"] as string;
+    string exchange = "";
+    if (opts.contains("exchange")) {
+        exchange = opts["exchange"] as string;
+    }
+    string routingKey = queue;
+    if (opts.contains("routingKey")) {
+        routingKey = opts["routingKey"] as string;
+    }
+    let conn = amqp.dial(url);
+    let ch = amqp.channel(conn);
+    let durable = true;
+    if (opts.contains("durable")) {
+        durable = opts["durable"] as bool;
+    }
+    let _ = amqp.declareQueue(ch, queue, {"durable": durable});
+
+    let q = RabbitQueue();
+    q.conn = conn;
+    q.ch = ch;
+    q.queue = queue;
+    q.exchange = exchange;
+    q.routingKey = routingKey;
+    q._closed = false;
+    return q;
+}
+
+func payloadToBytes(any payload): bytes {
+    if (payload instanceof string) {
+        return bytes.fromString(payload as string);
+    }
+    if (payload instanceof bytes) {
+        return payload as bytes;
+    }
+    return bytes.fromString(json.stringify(payload));
+}
+
+/**
+ * RabbitMQ pub/sub topic. Backed by a fanout exchange so every
+ * subscribed queue gets a copy of each published message. Each
+ * subscribe() call declares a fresh server-named queue bound to
+ * the exchange; the queue lives only while the subscription is
+ * active.
+ */
+export class RabbitTopic {
+    int conn;
+    int ch;
+    string exchange;
+    bool _closed;
+
+    func publish(any payload): void {
+        let body = payloadToBytes(payload);
+        amqp.publish(this.ch, this.exchange, "", body, {
+            "contentType": contentTypeOf(payload),
+            "persistent":  false
+        });
+    }
+
+    func subscribe(callable handler): void {
+        /* Server-named queue (empty name => broker generates one),
+         * bound to the fanout exchange, exclusive to this client. */
+        let q = amqp.declareQueue(this.ch, "", {
+            "durable":    false,
+            "autoDelete": true,
+            "exclusive":  true
+        });
+        let queueName = q["name"] as string;
+        amqp.queueBind(this.ch, queueName, this.exchange, "");
+        while (this._closed == false) {
+            let msg = amqp.get(this.ch, queueName, false);
+            if (msg == null) {
+                async.sleep(50);
+                continue;
+            }
+            handler({
+                "body":   msg["body"],
+                "id":     (msg["deliveryTag"] as string),
+                "handle": msg["deliveryTag"]
+            });
+            amqp.ack(this.ch, msg["deliveryTag"] as int);
+        }
+    }
+
+    func close(): void {
+        if (this._closed) { return; }
+        this._closed = true;
+        amqp.close(this.ch);
+        amqp.close(this.conn);
+    }
+}
+
+/**
+ * Build a RabbitTopic over a fanout exchange named after opts.topic.
+ *
+ * Required: url (amqp://...), topic (used as the exchange name).
+ * Optional: durable (default true for the exchange).
+ */
+export func topic(dict<string, any> opts): RabbitTopic {
+    if (opts.contains("url") == false) {
+        throw RuntimeError("messaging.rabbitmq.topic: opts.url is required");
+    }
+    if (opts.contains("topic") == false) {
+        throw RuntimeError("messaging.rabbitmq.topic: opts.topic is required");
+    }
+    let url = opts["url"] as string;
+    let exchange = opts["topic"] as string;
+    let durable = true;
+    if (opts.contains("durable")) {
+        durable = opts["durable"] as bool;
+    }
+
+    let conn = amqp.dial(url);
+    let ch = amqp.channel(conn);
+    amqp.declareExchange(ch, exchange, "fanout", {"durable": durable});
+
+    let t = RabbitTopic();
+    t.conn = conn;
+    t.ch = ch;
+    t.exchange = exchange;
+    t._closed = false;
+    return t;
+}
+
+func contentTypeOf(any payload): string {
+    if (payload instanceof string) { return "text/plain"; }
+    if (payload instanceof bytes) { return "application/octet-stream"; }
+    return "application/json";
+}

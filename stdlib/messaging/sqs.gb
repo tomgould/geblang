@@ -1,0 +1,262 @@
+module messaging.sqs;
+
+import bytes;
+import crypt;
+import datetime;
+import encoding;
+import http;
+import json;
+
+/**
+ * AWS SQS backend for the messaging interface. Speaks the SQS REST
+ * API (query-string-form Action calls) signed with AWS Signature
+ * V4. No long-lived connection: each call is an independent HTTPS
+ * request to the queue URL.
+ *
+ * Duck-types `messaging.MessageQueue`; the explicit `implements`
+ * clause is omitted to break a parser-level circular import (the
+ * facade module imports this one to dispatch by driver).
+ */
+export class SqsQueue {
+    string queueUrl;
+    string region;
+    string accessKey;
+    string secretKey;
+
+    func publish(any payload): void {
+        string body = payloadToString(payload);
+        string params = "Action=SendMessage&Version=2012-11-05&MessageBody=" + encoding.urlEncode(body);
+        let resp = this.request("POST", params);
+        let status = resp["status"] as int;
+        if (status >= 400) {
+            throw RuntimeError("sqs.publish failed: " + (status as string) + " " + (resp["body"] as string));
+        }
+    }
+
+    func receive(int timeoutMs): ?dict<string, any> {
+        /* SQS WaitTimeSeconds is granular per-second up to 20. Round
+         * the millisecond budget up so a 1500ms request waits 2s. */
+        int waitSec = (timeoutMs + 999) / 1000;
+        if (waitSec < 0) { waitSec = 0; }
+        if (waitSec > 20) { waitSec = 20; }
+        string params = "Action=ReceiveMessage&Version=2012-11-05&MaxNumberOfMessages=1&WaitTimeSeconds=" + (waitSec as string);
+        let resp = this.request("POST", params);
+        let status = resp["status"] as int;
+        if (status >= 400) {
+            throw RuntimeError("sqs.receive failed: " + (status as string) + " " + (resp["body"] as string));
+        }
+        string xml = resp["body"] as string;
+        let bodyText = extractTag(xml, "Body");
+        if (bodyText == "") {
+            return null;
+        }
+        let handle = extractTag(xml, "ReceiptHandle");
+        let messageId = extractTag(xml, "MessageId");
+        return {
+            "body":      bodyText,
+            "id":        messageId,
+            "handle":    handle
+        };
+    }
+
+    func ack(any messageId): void {
+        /* SQS acks via DeleteMessage on the ReceiptHandle that came
+         * back with the original Receive call. Accept either the
+         * handle directly or the dict returned by receive(). */
+        string handle = "";
+        if (messageId instanceof string) {
+            handle = messageId as string;
+        } else if (messageId instanceof dict) {
+            let d = messageId as dict<string, any>;
+            handle = d["handle"] as string;
+        } else {
+            throw RuntimeError("sqs.ack: messageId must be a receipt handle string or message dict");
+        }
+        string params = "Action=DeleteMessage&Version=2012-11-05&ReceiptHandle=" + encoding.urlEncode(handle);
+        let resp = this.request("POST", params);
+        let status = resp["status"] as int;
+        if (status >= 400) {
+            throw RuntimeError("sqs.ack failed: " + (status as string) + " " + (resp["body"] as string));
+        }
+    }
+
+    func consume(callable handler): void {
+        /* Long-poll loop. Caller breaks out by throwing or by
+         * setting up an external cancellation channel; SQS doesn't
+         * push, so this remains a pull loop by design. */
+        while (true) {
+            let msg = this.receive(20000);
+            if (msg == null) {
+                continue;
+            }
+            handler(msg);
+            this.ack(msg["handle"]);
+        }
+    }
+
+    func close(): void {
+        /* SQS is stateless HTTP - no resource to free. Method exists
+         * so the interface stays uniform with backends that hold
+         * persistent connections (RabbitMQ, Kafka). */
+    }
+
+    func request(string method, string params): dict<string, any> {
+        string host = hostFromUrl(this.queueUrl);
+        string path = pathFromUrl(this.queueUrl);
+        let now = datetime.nowUnix();
+        string amzDate = datetime.format(now, "20060102T150405Z");
+        string dateStamp = amzDate.substring(0, 8);
+        string payloadHash = crypt.sha256(params);
+        let headers = {
+            "content-type":         "application/x-www-form-urlencoded",
+            "host":                 host,
+            "x-amz-content-sha256": payloadHash,
+            "x-amz-date":           amzDate
+        };
+        let canonical = canonicalRequest(method, path, "", headers, payloadHash);
+        let scope = dateStamp + "/" + this.region + "/sqs/aws4_request";
+        let stringToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + crypt.sha256(canonical);
+        let key = signingKey(this.secretKey, dateStamp, this.region, "sqs");
+        let signature = crypt.hmacSha256(bytes.toString(key), stringToSign);
+        string signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
+        string authHeader = "AWS4-HMAC-SHA256 Credential=" + this.accessKey + "/" + scope +
+            ",SignedHeaders=" + signedHeaders + ",Signature=" + signature;
+        return http.requestWithOptions({
+            "method":  method,
+            "url":     this.queueUrl,
+            "headers": {
+                "Content-Type":         "application/x-www-form-urlencoded",
+                "Host":                 host,
+                "X-Amz-Content-Sha256": payloadHash,
+                "X-Amz-Date":           amzDate,
+                "Authorization":        authHeader
+            },
+            "body": params
+        });
+    }
+}
+
+/**
+ * Build an SqsQueue from a messaging.connect options dict. Required
+ * keys: `region`, `queueUrl`, `accessKey`, `secretKey`.
+ */
+export func connect(dict<string, any> opts): SqsQueue {
+    if (opts.contains("region") == false) {
+        throw RuntimeError("messaging.sqs: opts.region is required");
+    }
+    if (opts.contains("queueUrl") == false) {
+        throw RuntimeError("messaging.sqs: opts.queueUrl is required");
+    }
+    if (opts.contains("accessKey") == false) {
+        throw RuntimeError("messaging.sqs: opts.accessKey is required");
+    }
+    if (opts.contains("secretKey") == false) {
+        throw RuntimeError("messaging.sqs: opts.secretKey is required");
+    }
+    let q = SqsQueue();
+    q.queueUrl = opts["queueUrl"] as string;
+    q.region = opts["region"] as string;
+    q.accessKey = opts["accessKey"] as string;
+    q.secretKey = opts["secretKey"] as string;
+    return q;
+}
+
+/* --- internal helpers --- */
+
+func payloadToString(any payload): string {
+    if (payload instanceof string) {
+        return payload as string;
+    }
+    if (payload instanceof bytes) {
+        return bytes.toString(payload as bytes);
+    }
+    /* Anything else - dicts, lists, primitives - is JSON-encoded so
+     * the consumer can round-trip with json.parse. */
+    return json.stringify(payload);
+}
+
+func hostFromUrl(string url): string {
+    string e = url;
+    if (e.startsWith("https://")) {
+        e = e.substring(8, e.length());
+    } else if (e.startsWith("http://")) {
+        e = e.substring(7, e.length());
+    }
+    let slash = e.indexOf("/");
+    if (slash >= 0) {
+        e = e.substring(0, slash);
+    }
+    return e;
+}
+
+func pathFromUrl(string url): string {
+    string e = url;
+    if (e.startsWith("https://")) {
+        e = e.substring(8, e.length());
+    } else if (e.startsWith("http://")) {
+        e = e.substring(7, e.length());
+    }
+    let slash = e.indexOf("/");
+    if (slash >= 0) {
+        return e.substring(slash, e.length());
+    }
+    return "/";
+}
+
+func signingKey(string secretKey, string dateStamp, string region, string service): bytes {
+    let kDate = crypt.hmacSha256Bytes("AWS4" + secretKey, dateStamp);
+    let kRegion = crypt.hmacSha256Bytes(bytes.toString(kDate), region);
+    let kService = crypt.hmacSha256Bytes(bytes.toString(kRegion), service);
+    return crypt.hmacSha256Bytes(bytes.toString(kService), "aws4_request");
+}
+
+func canonicalRequest(string method, string canonicalUri, string canonicalQuery, dict<string, string> headers, string payloadHash): string {
+    let headerNames = sortedKeys(headers);
+    string canonicalHeaders = "";
+    for (name in headerNames) {
+        canonicalHeaders = canonicalHeaders + (name as string) + ":" + headers[name as string] + "\n";
+    }
+    string signedHeaders = joinSlice(headerNames, ";");
+    return method + "\n" + canonicalUri + "\n" + canonicalQuery + "\n" +
+           canonicalHeaders + "\n" + signedHeaders + "\n" + payloadHash;
+}
+
+func sortedKeys(dict<string, string> d): list<string> {
+    list<string> out = [];
+    for (k in d.keys()) {
+        out = out.push(k as string);
+    }
+    for (let i = 1; i < out.length(); i = i + 1) {
+        let cur = out[i];
+        let j = i - 1;
+        while (j >= 0 && out[j] > cur) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = cur;
+    }
+    return out;
+}
+
+func joinSlice(list<string> parts, string sep): string {
+    string out = "";
+    for (let i = 0; i < parts.length(); i = i + 1) {
+        if (i > 0) { out = out + sep; }
+        out = out + parts[i];
+    }
+    return out;
+}
+
+/* Tiny XML tag extractor. SQS responses are simple flat-ish XML; we
+ * only need a handful of fields and avoid pulling in the full XML
+ * parser for the hot path. */
+func extractTag(string xml, string tag): string {
+    string open = "<" + tag + ">";
+    string close = "</" + tag + ">";
+    let start = xml.indexOf(open);
+    if (start < 0) { return ""; }
+    let bodyStart = start + open.length();
+    let end = xml.indexOf(close);
+    if (end < 0 || end < bodyStart) { return ""; }
+    return xml.substring(bodyStart, end);
+}

@@ -48,7 +48,8 @@ type VM struct {
 	// stays true for the VM's lifetime. The single-goroutine hot path
 	// (numeric_loop) never bridges, so it stays lock-free.
 	bridgeActive atomic.Bool
-	locals              []runtime.VMValue
+	localsStack         []runtime.VMValue
+	currentFrameBP      int
 	frames              []callFrame
 	maxCallDepth        int
 	defers              [][]deferredAction
@@ -60,6 +61,8 @@ type VM struct {
 	statefulNative      StatefulNativeCaller
 	classIndex          map[string]int
 	natives             *native.Registry
+	// nil entries fall through to evalNativeCall (statefuls / errors.is).
+	nativeCache         []native.Function
 	syncMode            bool // when true, async functions are called synchronously
 	decoratedFuncs      map[int64]runtime.Value
 	decoratedClasses    map[int64]runtime.Value
@@ -73,7 +76,6 @@ type VM struct {
 	generatorDone       <-chan struct{}
 	typeSpecCache       map[string]vmTypeSpec
 	typeAssertSpecs     map[int64]vmTypeSpec
-	localsFree          [][]runtime.VMValue
 	callArgsFree        [][]runtime.Value
 	// pendingTypeBindings carries an inherited type-binding map from a
 	// closure callsite into the next startFunctionWithValidation call.
@@ -179,7 +181,8 @@ const DefaultMaxCallDepth = 10000
 
 type callFrame struct {
 	returnIP         int
-	locals           []runtime.VMValue
+	basePointer      int
+	localCount       int
 	returnOverride   runtime.Value
 	typeBindings     map[string]string
 	generator        chan vmGeneratorItem
@@ -234,10 +237,12 @@ type deferredAction struct {
 }
 
 type exceptionHandler struct {
-	handlerIP  int
-	frameDepth int
-	stackDepth int
-	locals     []runtime.VMValue
+	handlerIP        int
+	frameDepth       int
+	stackDepth       int
+	localsStackDepth int
+	snapshot         []runtime.VMValue
+	snapshotBase     int
 }
 
 type iteratorValue struct {
@@ -351,14 +356,16 @@ func NewVM(chunk Chunk, stdout io.Writer) *VM {
 	if globalSize < 256 {
 		globalSize = 256
 	}
-	localSize := int(chunk.TopLevelLocalCount)
+	localsCap := int(chunk.TopLevelLocalCount)
+	if localsCap < 256 {
+		localsCap = 256
+	}
 	// Detach Functions so prepareFunctionTypeMetadata can mutate the
 	// per-VM metadata (typeParamSet, paramTypeSpecs, etc.) without
 	// racing concurrent VMs that share the same source chunk.
 	chunk.Functions = append([]FunctionInfo(nil), chunk.Functions...)
-	vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), dirtyGlobals: make([]bool, globalSize), locals: make([]runtime.VMValue, localSize), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: classIndex, natives: native.NewBuiltinRegistry(), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
+	vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), dirtyGlobals: make([]bool, globalSize), localsStack: make([]runtime.VMValue, 0, localsCap), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: classIndex, natives: native.NewBuiltinRegistry(), nativeCache: make([]native.Function, len(chunk.Constants)), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
 	vm.prepareFunctionTypeMetadata()
-	vm.prewarmLocalsPool()
 	// Register an InstanceInvoker so native code (e.g.
 	// convert.go's __serialize__ dispatch) can call class
 	// methods. Latest-writer-wins is intentional: when both
@@ -627,52 +634,22 @@ func (vm *VM) prepareFunctionTypeMetadata() {
 	}
 }
 
-// prewarmLocalsPool seeds vm.localsFree with one buffer per distinct
-// function LocalCount so the first call into each function shape hits
-// the pool instead of allocating a fresh slice.
-func (vm *VM) prewarmLocalsPool() {
-	seen := map[int64]struct{}{}
-	for _, fn := range vm.chunk.Functions {
-		if fn.LocalCount <= 0 {
-			continue
-		}
-		if _, dup := seen[fn.LocalCount]; dup {
-			continue
-		}
-		seen[fn.LocalCount] = struct{}{}
-		buf := make([]runtime.VMValue, fn.LocalCount)
-		vm.localsFree = append(vm.localsFree, buf[:0])
+func (vm *VM) snapshotCurrentFrameLocals() (snapshot []runtime.VMValue, base int) {
+	if len(vm.frames) == 0 {
+		return nil, 0
 	}
-}
-
-func (vm *VM) snapshotLocals() []runtime.VMValue {
-	if len(vm.locals) == 0 {
-		return nil
+	frame := vm.frames[len(vm.frames)-1]
+	count := frame.localCount
+	if count == 0 || frame.basePointer >= len(vm.localsStack) {
+		return nil, frame.basePointer
 	}
-	snapshot := vm.takeLocalsBuffer(len(vm.locals))
-	copy(snapshot, vm.locals)
-	return snapshot
-}
-
-func (vm *VM) takeLocalsBuffer(size int) []runtime.VMValue {
-	for i := len(vm.localsFree) - 1; i >= 0; i-- {
-		buf := vm.localsFree[i]
-		if cap(buf) < size {
-			continue
-		}
-		vm.localsFree[i] = vm.localsFree[len(vm.localsFree)-1]
-		vm.localsFree = vm.localsFree[:len(vm.localsFree)-1]
-		return buf[:size]
+	end := frame.basePointer + count
+	if end > len(vm.localsStack) {
+		end = len(vm.localsStack)
 	}
-	return make([]runtime.VMValue, size)
-}
-
-func (vm *VM) releaseLocalsBuffer(buf []runtime.VMValue) {
-	if cap(buf) == 0 {
-		return
-	}
-	clear(buf)
-	vm.localsFree = append(vm.localsFree, buf[:0])
+	snap := make([]runtime.VMValue, end-frame.basePointer)
+	copy(snap, vm.localsStack[frame.basePointer:end])
+	return snap, frame.basePointer
 }
 
 // takeCallArgsBuffer returns a []runtime.Value of length size, reusing
@@ -698,6 +675,47 @@ func (vm *VM) releaseCallArgsBuffer(buf []runtime.Value) {
 	}
 	clear(buf)
 	vm.callArgsFree = append(vm.callArgsFree, buf[:0])
+}
+
+func (vm *VM) pushLocalsStackFrame(frame *callFrame, localCount int, shares bool) {
+	if shares {
+		frame.basePointer = vm.currentFrameBP
+	} else {
+		frame.basePointer = len(vm.localsStack)
+	}
+	frame.localCount = localCount
+	vm.currentFrameBP = frame.basePointer
+	vm.ensureLocalsStack(frame.basePointer + localCount)
+}
+
+func (vm *VM) ensureLocalsStack(end int) {
+	cur := len(vm.localsStack)
+	if end <= cur {
+		return
+	}
+	if end > cap(vm.localsStack) {
+		newCap := cap(vm.localsStack) * 2
+		if newCap < end {
+			newCap = end
+		}
+		grown := make([]runtime.VMValue, end, newCap)
+		copy(grown, vm.localsStack)
+		vm.localsStack = grown
+		return
+	}
+	vm.localsStack = vm.localsStack[:end]
+	clear(vm.localsStack[cur:end])
+}
+
+func (vm *VM) popLocalsStackFrame(frame *callFrame) {
+	if !frame.shared && frame.basePointer < len(vm.localsStack) {
+		vm.localsStack = vm.localsStack[:frame.basePointer]
+	}
+	if len(vm.frames) > 1 {
+		vm.currentFrameBP = vm.frames[len(vm.frames)-2].basePointer
+	} else {
+		vm.currentFrameBP = 0
+	}
 }
 
 func (vm *VM) SetModuleName(name string) {
@@ -749,13 +767,6 @@ func (vm *VM) Run() (err error) {
 				return vm.runtimeError(instruction, "constant index out of range")
 			}
 			value := vm.chunk.Constants[index]
-			if bc, ok := value.(runtime.BytecodeClass); ok {
-				if dec, exists := vm.decoratedClasses[bc.Index]; exists {
-					value = dec
-				}
-			}
-			// Fast path for the dominant numeric / bool constants: skip
-			// the type switch in VMValueFromValue.
 			switch x := value.(type) {
 			case runtime.SmallInt:
 				vm.pushVM(runtime.VMValueSmallInt(x.Value))
@@ -763,6 +774,12 @@ func (vm *VM) Run() (err error) {
 				vm.pushVM(runtime.VMValueBool(x.Value))
 			case runtime.Null:
 				vm.pushVM(runtime.VMValueNull)
+			case runtime.BytecodeClass:
+				if dec, exists := vm.decoratedClasses[x.Index]; exists {
+					vm.push(dec)
+				} else {
+					vm.push(value)
+				}
 			default:
 				vm.push(value)
 			}
@@ -783,26 +800,29 @@ func (vm *VM) Run() (err error) {
 				return vm.runtimeError(instruction, "literal must be string")
 			}
 			var target []runtime.VMValue
+			var offset int
 			if instruction.Op == OpAppendStringConst {
-				target = vm.locals
+				target = vm.localsStack
+				offset = vm.currentFrameBP
 			} else {
 				target = vm.globals
 			}
-			if int(slot) >= len(target) {
+			idx := int(slot) + offset
+			if idx >= len(target) {
 				return vm.runtimeError(instruction, "slot out of range")
 			}
-			cur := target[slot]
+			cur := target[idx]
 			if cur.Kind == runtime.VMKindBoxed {
 				if acc, ok := cur.Boxed.(*runtime.StringAccumulator); ok {
 					acc.B.WriteString(litVal.Value)
 					materialised := runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: acc.Materialize()}
-					target[slot] = materialised
+					target[idx] = materialised
 					vm.pushVM(materialised)
 					continue
 				}
 				if l, lok := cur.Boxed.(runtime.String); lok {
 					next := runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: l.Value + litVal.Value}}
-					target[slot] = next
+					target[idx] = next
 					vm.pushVM(next)
 					continue
 				}
@@ -817,7 +837,7 @@ func (vm *VM) Run() (err error) {
 			if perr != nil {
 				return vm.runtimeError(instruction, "%s", perr.Error())
 			}
-			target[slot] = result
+			target[idx] = result
 			vm.pushVM(result)
 			ip = nextIP
 		case OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
@@ -831,15 +851,18 @@ func (vm *VM) Run() (err error) {
 				return vm.runtimeError(instruction, "literal must be string")
 			}
 			var target []runtime.VMValue
+			var offset int
 			if instruction.Op == OpAppendStringConstStmt {
-				target = vm.locals
+				target = vm.localsStack
+				offset = vm.currentFrameBP
 			} else {
 				target = vm.globals
 			}
-			if int(slot) >= len(target) {
+			idx := int(slot) + offset
+			if idx >= len(target) {
 				return vm.runtimeError(instruction, "slot out of range")
 			}
-			cur := target[slot]
+			cur := target[idx]
 			if cur.Kind == runtime.VMKindBoxed {
 				if acc, ok := cur.Boxed.(*runtime.StringAccumulator); ok {
 					acc.B.WriteString(litVal.Value)
@@ -847,14 +870,14 @@ func (vm *VM) Run() (err error) {
 				}
 				if l, lok := cur.Boxed.(runtime.String); lok {
 					if l.Value == "" {
-						target[slot] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: litVal.Value}}
+						target[idx] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: runtime.String{Value: litVal.Value}}
 						continue
 					}
 					sb := &strings.Builder{}
 					sb.Grow(len(l.Value) + len(litVal.Value) + 256)
 					sb.WriteString(l.Value)
 					sb.WriteString(litVal.Value)
-					target[slot] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: &runtime.StringAccumulator{B: sb}}
+					target[idx] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: &runtime.StringAccumulator{B: sb}}
 					continue
 				}
 			}
@@ -868,7 +891,7 @@ func (vm *VM) Run() (err error) {
 			if perr != nil {
 				return vm.runtimeError(instruction, "%s", perr.Error())
 			}
-			target[slot] = result
+			target[idx] = result
 			ip = nextIP
 		case OpAddStringConst:
 			n := len(vm.stack)
@@ -1054,7 +1077,44 @@ func (vm *VM) Run() (err error) {
 				ip = nextIP
 			}
 			continue
-		case OpIncLocalInt, OpDecLocalInt, OpIncGlobalInt, OpDecGlobalInt:
+		case OpIncLocalInt, OpDecLocalInt:
+			slot := instruction.Operands[0]
+			idx := vm.currentFrameBP + int(slot)
+			if idx < len(vm.localsStack) {
+				cur := vm.localsStack[idx]
+				if cur.Kind == runtime.VMKindSmallInt {
+					delta := int64(1)
+					if instruction.Op == OpDecLocalInt {
+						delta = -1
+					}
+					nv := cur.I64 + delta
+					if (cur.I64^nv)&(delta^nv) >= 0 {
+						vm.localsStack[idx] = runtime.VMValueSmallInt(nv)
+						vm.pushVM(cur)
+						continue
+					}
+				}
+			}
+			if err := vm.updateIntSlot(instruction); err != nil {
+				return err
+			}
+		case OpIncGlobalInt, OpDecGlobalInt:
+			slot := instruction.Operands[0]
+			if slot >= 0 && int(slot) < len(vm.globals) && !vm.bridgeActive.Load() {
+				cur := vm.globals[slot]
+				if cur.Kind == runtime.VMKindSmallInt {
+					delta := int64(1)
+					if instruction.Op == OpDecGlobalInt {
+						delta = -1
+					}
+					nv := cur.I64 + delta
+					if (cur.I64^nv)&(delta^nv) >= 0 {
+						vm.globals[slot] = runtime.VMValueSmallInt(nv)
+						vm.pushVM(cur)
+						continue
+					}
+				}
+			}
 			if err := vm.updateIntSlot(instruction); err != nil {
 				return err
 			}
@@ -1226,6 +1286,13 @@ func (vm *VM) Run() (err error) {
 			}
 		case OpGetGlobal:
 			slot := instruction.Operands[0]
+			if int(slot) < len(vm.globals) {
+				value := vm.globals[slot]
+				if value.Kind != runtime.VMKindBoxed && value.Kind != runtime.VMKindUnset {
+					vm.pushVM(value)
+					continue
+				}
+			}
 			value, err := vm.getGlobalVM(slot)
 			if err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
@@ -1236,6 +1303,14 @@ func (vm *VM) Run() (err error) {
 			value, err := vm.popVM()
 			if err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
+			}
+			if int(slot) < len(vm.globals) && !vm.bridgeActive.Load() {
+				cur := vm.globals[slot]
+				if cur.Kind != runtime.VMKindBoxed {
+					vm.globals[slot] = value
+					vm.pushVM(value)
+					continue
+				}
 			}
 			if err := vm.setGlobalVM(slot, value); err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
@@ -1251,12 +1326,10 @@ func (vm *VM) Run() (err error) {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
 		case OpGetLocal:
-			// Inlined fast path: vm.locals is pre-sized to function.LocalCount
-			// on call entry, so the slot is in range. The slow path (cell
-			// indirection, undefined check) falls through to getLocalVM.
 			slot := instruction.Operands[0]
-			if int(slot) < len(vm.locals) {
-				value := vm.locals[slot]
+			idx := vm.currentFrameBP + int(slot)
+			if idx < len(vm.localsStack) {
+				value := vm.localsStack[idx]
 				if value.Kind != runtime.VMKindBoxed && value.Kind != runtime.VMKindUnset {
 					vm.pushVM(value)
 					continue
@@ -1268,17 +1341,16 @@ func (vm *VM) Run() (err error) {
 			}
 			vm.pushVM(value)
 		case OpSetLocal:
-			// Inlined fast path: vm.locals is pre-sized; the slow path
-			// (cell-indirected writes) falls through to setLocalVM.
 			slot := instruction.Operands[0]
 			value, err := vm.popVM()
 			if err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
-			if int(slot) < len(vm.locals) {
-				cur := vm.locals[slot]
+			idx := vm.currentFrameBP + int(slot)
+			if idx < len(vm.localsStack) {
+				cur := vm.localsStack[idx]
 				if cur.Kind != runtime.VMKindBoxed {
-					vm.locals[slot] = value
+					vm.localsStack[idx] = value
 					vm.pushVM(value)
 					continue
 				}
@@ -1602,10 +1674,14 @@ func (vm *VM) Run() (err error) {
 			upvalues := make([]runtime.Value, upvalueCount)
 			for i := int64(0); i < upvalueCount; i++ {
 				outerSlot := instruction.Operands[2+i]
-				if outerSlot < 0 || int(outerSlot) >= len(vm.locals) {
+				if outerSlot < 0 {
 					return vm.runtimeError(instruction, "closure upvalue slot out of range")
 				}
-				slot := vm.locals[outerSlot]
+				outerIdx := vm.currentFrameBP + int(outerSlot)
+				if outerIdx >= len(vm.localsStack) {
+					return vm.runtimeError(instruction, "closure upvalue slot out of range")
+				}
+				slot := vm.localsStack[outerIdx]
 				var cell *runtime.BytecodeCell
 				if slot.Kind == runtime.VMKindBoxed {
 					if c, ok := slot.Boxed.(*runtime.BytecodeCell); ok {
@@ -1614,7 +1690,7 @@ func (vm *VM) Run() (err error) {
 				}
 				if cell == nil {
 					cell = &runtime.BytecodeCell{Value: slot.ToValue()}
-					vm.locals[outerSlot] = runtime.VMValueFromValue(cell)
+					vm.localsStack[outerIdx] = runtime.VMValueFromValue(cell)
 				}
 				upvalues[i] = cell
 			}
@@ -1646,19 +1722,20 @@ func (vm *VM) Run() (err error) {
 			if len(instruction.Operands) != 1 {
 				return vm.runtimeError(instruction, "exception handler instruction has invalid operands")
 			}
+			snap, snapBase := vm.snapshotCurrentFrameLocals()
 			vm.exceptionHandlers = append(vm.exceptionHandlers, exceptionHandler{
-				handlerIP:  int(instruction.Operands[0]),
-				frameDepth: len(vm.frames),
-				stackDepth: len(vm.stack),
-				locals:     vm.snapshotLocals(),
+				handlerIP:        int(instruction.Operands[0]),
+				frameDepth:       len(vm.frames),
+				stackDepth:       len(vm.stack),
+				localsStackDepth: len(vm.localsStack),
+				snapshot:         snap,
+				snapshotBase:     snapBase,
 			})
 		case OpPopExceptionHandler:
 			if len(vm.exceptionHandlers) == 0 {
 				return vm.runtimeError(instruction, "exception handler stack is empty")
 			}
-			handler := vm.exceptionHandlers[len(vm.exceptionHandlers)-1]
 			vm.exceptionHandlers = vm.exceptionHandlers[:len(vm.exceptionHandlers)-1]
-			vm.releaseLocalsBuffer(handler.locals)
 		case OpThrow:
 			nextIP, err := vm.throw(instruction, ip)
 			if err != nil {
@@ -1952,29 +2029,17 @@ func (vm *VM) Run() (err error) {
 			frameIdx := len(vm.frames) - 1
 			slot := &vm.frames[frameIdx]
 			returnIP := slot.returnIP
-			frameLocals := slot.locals
 			returnOverride := slot.returnOverride
 			isErrorClass := slot.isErrorClass
 			isImmutableClass := slot.isImmutableClass
 			isDestructibleConstructor := slot.isDestructibleConstructor
 			negateReturn := slot.negateReturn
-			frameShared := slot.shared
-			slot.locals = nil
+			vm.popLocalsStackFrame(slot)
 			slot.returnOverride = nil
 			slot.generator = nil
 			slot.generatorDone = nil
 			slot.typeBindings = nil
 			vm.frames = vm.frames[:frameIdx]
-			if frameShared {
-				// Callee borrowed the caller's locals slice; vm.locals
-				// already matches frame.locals modulo a defensive
-				// grow for nested functions.
-				vm.locals = frameLocals
-			} else {
-				completedLocals := vm.locals
-				vm.locals = frameLocals
-				vm.releaseLocalsBuffer(completedLocals)
-			}
 			// Hot path: a regular return — no override, no error-class
 			// reification, no negate, no immutable freeze, not a
 			// destructor-bearing constructor. Push the VMValue
@@ -2859,22 +2924,24 @@ func (vm *VM) jumpToExceptionHandler(instruction Instruction, ip int) (int, erro
 		}
 		frame := vm.frames[len(vm.frames)-1]
 		vm.frames = vm.frames[:len(vm.frames)-1]
-		// vm.locals belongs to the unwound frame. Only recycle when
-		// the frame owned that slice (i.e., not a shared-frame
-		// borrowing its parent's locals). Then swing vm.locals back
-		// to the parent's slice.
-		if !frame.shared {
-			vm.releaseLocalsBuffer(vm.locals)
+		if !frame.shared && frame.basePointer < len(vm.localsStack) {
+			vm.localsStack = vm.localsStack[:frame.basePointer]
 		}
-		vm.locals = frame.locals
 	}
 	if len(vm.stack) > handler.stackDepth {
 		vm.stack = vm.stack[:handler.stackDepth]
 	}
-	// vm.locals now belongs to the frame that contained the try block.
-	// Replace it with the snapshot taken at OpPushExceptionHandler.
-	vm.releaseLocalsBuffer(vm.locals)
-	vm.locals = handler.locals
+	if len(vm.localsStack) > handler.localsStackDepth {
+		vm.localsStack = vm.localsStack[:handler.localsStackDepth]
+	}
+	if len(handler.snapshot) > 0 && handler.snapshotBase+len(handler.snapshot) <= len(vm.localsStack) {
+		copy(vm.localsStack[handler.snapshotBase:handler.snapshotBase+len(handler.snapshot)], handler.snapshot)
+	}
+	if len(vm.frames) > 0 {
+		vm.currentFrameBP = vm.frames[len(vm.frames)-1].basePointer
+	} else {
+		vm.currentFrameBP = 0
+	}
 	return handler.handlerIP - 1, nil
 }
 
@@ -3297,22 +3364,26 @@ func (vm *VM) smallIntBinary(instruction Instruction, l int64, r int64) error {
 		if r == 0 {
 			return vm.runtimeError(instruction, "integer division by zero")
 		}
-		quotient, _ := intFloorDivMod(big.NewInt(l), big.NewInt(r))
-		if quotient.IsInt64() {
-			vm.push(runtime.SmallInt{Value: quotient.Int64()})
+		// math.MinInt64 / -1 is the only overflow case for int64 division.
+		if l == math.MinInt64 && r == -1 {
+			vm.push(runtime.Int{Value: new(big.Int).Neg(big.NewInt(l))})
 		} else {
-			vm.push(runtime.Int{Value: quotient})
+			q := l / r
+			rem := l - q*r
+			if rem != 0 && ((l < 0) != (r < 0)) {
+				q--
+			}
+			vm.push(runtime.SmallInt{Value: q})
 		}
 	case OpMod:
 		if r == 0 {
 			return vm.runtimeError(instruction, "modulo by zero")
 		}
-		_, remainder := intFloorDivMod(big.NewInt(l), big.NewInt(r))
-		if remainder.IsInt64() {
-			vm.push(runtime.SmallInt{Value: remainder.Int64()})
-		} else {
-			vm.push(runtime.Int{Value: remainder})
+		m := l % r
+		if m != 0 && ((l < 0) != (r < 0)) {
+			m += r
 		}
+		vm.push(runtime.SmallInt{Value: m})
 	case OpPow:
 		if r < 0 {
 			return vm.runtimeError(instruction, "exponent must be a non-negative int64")
@@ -4626,15 +4697,12 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	// them; the eventual OpReturn will use frame.locals, which still
 	// points to the original caller's locals, to restore on pop). Then
 	// allocate a fresh slice for the callee. function.SharesParentFrame
-	// is screened out at compile time so we always go through the
-	// fresh-allocation branch.
-	if !frame.shared {
-		vm.releaseLocalsBuffer(vm.locals)
-	}
 	frame.shared = false
-	vm.locals = vm.takeLocalsBuffer(int(function.LocalCount))
+	vm.popLocalsStackFrame(frame)
+	vm.pushLocalsStackFrame(frame, int(function.LocalCount), function.SharesParentFrame)
+	bp := frame.basePointer
 	for i := 0; i < paramCount; i++ {
-		vm.locals[function.ParamSlots[i]] = args[i]
+		vm.localsStack[bp+int(function.ParamSlots[i])] = args[i]
 	}
 	frameDepth := len(vm.frames)
 	if frameDepth < cap(vm.defers) {
@@ -5007,21 +5075,11 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	// (nested function statement) or allocate a fresh frame slice for
 	// the callee. Fresh slice avoids the per-call snapshot copy that
 	// previously dominated recursion overhead for small functions.
-	frame.locals = vm.locals
-	if function.SharesParentFrame {
-		if need := int(function.LocalCount); need > len(vm.locals) {
-			grown := make([]runtime.VMValue, need)
-			copy(grown, vm.locals)
-			vm.locals = grown
-		}
-	} else {
-		vm.locals = vm.takeLocalsBuffer(int(function.LocalCount))
-	}
-	// Copy args directly into locals as VMValues - no boxing.
+	vm.pushLocalsStackFrame(frame, int(function.LocalCount), function.SharesParentFrame)
+	bp := frame.basePointer
 	for i := 0; i < paramCount; i++ {
-		vm.locals[function.ParamSlots[i]] = stackArgs[i]
+		vm.localsStack[bp+int(function.ParamSlots[i])] = stackArgs[i]
 	}
-	// Generic type inference (if the function declares type parameters).
 	if len(function.TypeParameters) > 0 && len(function.ParamTypes) > 0 {
 		typeBindings := vm.inferTypeBindingsFromLocals(function)
 		if err := vm.checkTypeParamConstraints(instruction, function, typeBindings); err != nil {
@@ -5070,9 +5128,10 @@ func (vm *VM) matchVMValueToTypeSpec(typeParams map[string]bool, value runtime.V
 }
 
 // inferTypeBindingsFromLocals replicates the binding-inference loop in
-// startFunctionWithValidation but reads from vm.locals (already set up
-// by startFunctionVMValue) rather than a []runtime.Value arg list.
-// Returns the inferred bindings so the caller can run constraint checks.
+// startFunctionWithValidation but reads from vm.localsStack (already
+// set up by startFunctionVMValue via the new frame's basePointer)
+// rather than a []runtime.Value arg list. Returns the inferred
+// bindings so the caller can run constraint checks.
 func (vm *VM) inferTypeBindingsFromLocals(function *FunctionInfo) map[string]string {
 	typeParamSet := function.typeParamSet
 	typeBindings := map[string]string{}
@@ -5324,16 +5383,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	// it for a nested function statement or allocate a fresh frame
 	// slice for any other callee. This replaces the previous
 	// snapshotLocals() deep copy.
-	frame.locals = vm.locals
-	if function.SharesParentFrame {
-		if need := int(function.LocalCount); need > len(vm.locals) {
-			grown := make([]runtime.VMValue, need)
-			copy(grown, vm.locals)
-			vm.locals = grown
-		}
-	} else {
-		vm.locals = vm.takeLocalsBuffer(int(function.LocalCount))
-	}
+	vm.pushLocalsStackFrame(frame, int(function.LocalCount), function.SharesParentFrame)
 	for i, slot := range function.ParamSlots {
 		if err := vm.setLocal(slot, args[i]); err != nil {
 			return 0, vm.runtimeError(instruction, "%s", err.Error())
@@ -5433,6 +5483,26 @@ func (vm *VM) nativeCall(instruction Instruction) error {
 	if nameIndex < 0 || int(nameIndex) >= len(vm.chunk.Constants) {
 		return vm.runtimeError(instruction, "native call name out of range")
 	}
+	if int(nameIndex) < len(vm.nativeCache) {
+		if fn := vm.nativeCache[nameIndex]; fn != nil {
+			args := vm.takeCallArgsBuffer(int(argc))
+			for i := int(argc) - 1; i >= 0; i-- {
+				value, err := vm.pop()
+				if err != nil {
+					vm.releaseCallArgsBuffer(args)
+					return vm.runtimeError(instruction, "%s", err.Error())
+				}
+				args[i] = value
+			}
+			result, err := fn(args)
+			vm.releaseCallArgsBuffer(args)
+			if err != nil {
+				return recoverableNativeError{err: err}
+			}
+			vm.push(result)
+			return nil
+		}
+	}
 	name, ok := vm.chunk.Constants[nameIndex].(runtime.String)
 	if !ok {
 		return vm.runtimeError(instruction, "native call name must be string")
@@ -5444,6 +5514,15 @@ func (vm *VM) nativeCall(instruction Instruction) error {
 			return vm.runtimeError(instruction, "%s", err.Error())
 		}
 		args[i] = value
+	}
+	if vm.statefulNative == nil && name.Value != "errors.is" {
+		if module, function, ok := strings.Cut(name.Value, "."); ok && !isStatefulNativeCall(module, function) {
+			_ = module
+			_ = function
+			if fn := vm.natives.LookupKey(name.Value); fn != nil && int(nameIndex) < len(vm.nativeCache) {
+				vm.nativeCache[nameIndex] = fn
+			}
+		}
 	}
 	result, err := vm.evalNativeCall(name.Value, args)
 	if err != nil {
@@ -5839,19 +5918,19 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 		if name == "length" {
 			switch v := receiver.(type) {
 			case runtime.String:
-				vm.push(runtime.NewInt64(int64(len([]rune(v.Value)))))
+				vm.push(runtime.SmallInt{Value: int64(len([]rune(v.Value)))})
 				return ip, nil
 			case runtime.Bytes:
-				vm.push(runtime.NewInt64(int64(len(v.Value))))
+				vm.push(runtime.SmallInt{Value: int64(len(v.Value))})
 				return ip, nil
 			case runtime.List:
-				vm.push(runtime.NewInt64(int64(len(v.Elements))))
+				vm.push(runtime.SmallInt{Value: int64(len(v.Elements))})
 				return ip, nil
 			case runtime.Dict:
-				vm.push(runtime.NewInt64(int64(len(v.Entries))))
+				vm.push(runtime.SmallInt{Value: int64(len(v.Entries))})
 				return ip, nil
 			case runtime.Set:
-				vm.push(runtime.NewInt64(int64(len(v.Elements))))
+				vm.push(runtime.SmallInt{Value: int64(len(v.Elements))})
 				return ip, nil
 			}
 		}
@@ -7591,13 +7670,13 @@ func (vm *VM) collectionsNativeCall(fn string, args []runtime.Value) (runtime.Va
 		}
 		switch v := args[0].(type) {
 		case runtime.List:
-			return runtime.NewInt64(int64(len(v.Elements))), nil
+			return runtime.SmallInt{Value: int64(len(v.Elements))}, nil
 		case runtime.Dict:
-			return runtime.NewInt64(int64(len(v.Entries))), nil
+			return runtime.SmallInt{Value: int64(len(v.Entries))}, nil
 		case runtime.Set:
-			return runtime.NewInt64(int64(len(v.Elements))), nil
+			return runtime.SmallInt{Value: int64(len(v.Elements))}, nil
 		case runtime.String:
-			return runtime.NewInt64(int64(len([]rune(v.Value)))), nil
+			return runtime.SmallInt{Value: int64(len([]rune(v.Value)))}, nil
 		default:
 			return nil, fmt.Errorf("collections.length does not support %s", args[0].TypeName())
 		}
@@ -12208,15 +12287,15 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		switch value := receiver.(type) {
 		case runtime.String:
-			return runtime.NewInt64(int64(len([]rune(value.Value)))), nil
+			return runtime.SmallInt{Value: int64(len([]rune(value.Value)))}, nil
 		case runtime.Bytes:
-			return runtime.NewInt64(int64(len(value.Value))), nil
+			return runtime.SmallInt{Value: int64(len(value.Value))}, nil
 		case runtime.List:
-			return runtime.NewInt64(int64(len(value.Elements))), nil
+			return runtime.SmallInt{Value: int64(len(value.Elements))}, nil
 		case runtime.Dict:
-			return runtime.NewInt64(int64(len(value.Entries))), nil
+			return runtime.SmallInt{Value: int64(len(value.Entries))}, nil
 		case runtime.Set:
-			return runtime.NewInt64(int64(len(value.Elements))), nil
+			return runtime.SmallInt{Value: int64(len(value.Elements))}, nil
 		case runtime.Range:
 			return runtime.Int{Value: value.Length()}, nil
 		default:
@@ -12227,7 +12306,13 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if err != nil {
 			return nil, err
 		}
-		return runtime.Bool{Value: length.(runtime.Int).Value.Sign() == 0}, nil
+		switch n := length.(type) {
+		case runtime.SmallInt:
+			return runtime.Bool{Value: n.Value == 0}, nil
+		case runtime.Int:
+			return runtime.Bool{Value: n.Value.Sign() == 0}, nil
+		}
+		return runtime.Bool{Value: false}, nil
 	case "contains":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("contains expects one argument")
@@ -12566,7 +12651,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			if byteIndex < 0 {
 				return runtime.NewInt64(-1), nil
 			}
-			return runtime.NewInt64(int64(len([]rune(value.Value[:byteIndex])))), nil
+			return runtime.SmallInt{Value: int64(len([]rune(value.Value[:byteIndex])))}, nil
 		case runtime.List:
 			for i, element := range value.Elements {
 				if valuesEqual(element, args[0]) {
@@ -12675,7 +12760,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if byteIndex < 0 {
 			return runtime.NewInt64(-1), nil
 		}
-		return runtime.NewInt64(int64(len([]rune(value.Value[:byteIndex])))), nil
+		return runtime.SmallInt{Value: int64(len([]rune(value.Value[:byteIndex])))}, nil
 	case "reverse":
 		switch value := receiver.(type) {
 		case runtime.String:
@@ -14299,12 +14384,13 @@ func (vm *VM) getGlobalVM(slot int64) (runtime.VMValue, error) {
 }
 
 func (vm *VM) setLocal(slot int64, value runtime.Value) error {
-	if int(slot) >= len(vm.locals) {
-		if err := ensureSlot(&vm.locals, slot, "local"); err != nil {
+	idx := vm.currentFrameBP + int(slot)
+	if idx >= len(vm.localsStack) {
+		if err := vm.ensureLocalSlot(slot); err != nil {
 			return err
 		}
 	}
-	cur := vm.locals[slot]
+	cur := vm.localsStack[idx]
 	if cur.Kind == runtime.VMKindBoxed {
 		if cell, ok := cur.Boxed.(*runtime.BytecodeCell); ok {
 			if _, replacingCell := value.(*runtime.BytecodeCell); !replacingCell {
@@ -14313,40 +14399,38 @@ func (vm *VM) setLocal(slot int64, value runtime.Value) error {
 			}
 		}
 	}
-	vm.locals[slot] = runtime.VMValueFromValue(value)
+	vm.localsStack[idx] = runtime.VMValueFromValue(value)
 	return nil
 }
 
 func (vm *VM) setLocalVM(slot int64, value runtime.VMValue) error {
-	if int(slot) >= len(vm.locals) {
-		if err := ensureSlot(&vm.locals, slot, "local"); err != nil {
+	idx := vm.currentFrameBP + int(slot)
+	if idx >= len(vm.localsStack) {
+		if err := vm.ensureLocalSlot(slot); err != nil {
 			return err
 		}
 	}
-	cur := vm.locals[slot]
+	cur := vm.localsStack[idx]
 	if cur.Kind == runtime.VMKindBoxed {
 		if cell, ok := cur.Boxed.(*runtime.BytecodeCell); ok {
-			// Cell mutation: route the new value's runtime.Value form
-			// into the cell. Cell-typed writes themselves skip the
-			// indirection so closure capture creation can still install
-			// a fresh cell.
 			if _, replacingCell := value.Boxed.(*runtime.BytecodeCell); !replacingCell || value.Kind != runtime.VMKindBoxed {
 				cell.Value = value.ToValue()
 				return nil
 			}
 		}
 	}
-	vm.locals[slot] = value
+	vm.localsStack[idx] = value
 	return nil
 }
 
 func (vm *VM) getLocal(slot int64) (runtime.Value, error) {
-	if int(slot) >= len(vm.locals) {
-		if err := ensureSlot(&vm.locals, slot, "local"); err != nil {
+	idx := vm.currentFrameBP + int(slot)
+	if idx >= len(vm.localsStack) {
+		if err := vm.ensureLocalSlot(slot); err != nil {
 			return nil, err
 		}
 	}
-	value := vm.locals[slot]
+	value := vm.localsStack[idx]
 	if value.Kind == runtime.VMKindUnset {
 		return nil, fmt.Errorf("local is undefined")
 	}
@@ -14359,7 +14443,7 @@ func (vm *VM) getLocal(slot int64) (runtime.Value, error) {
 		}
 		if acc, ok := value.Boxed.(*runtime.StringAccumulator); ok {
 			s := acc.Materialize()
-			vm.locals[slot] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: s}
+			vm.localsStack[idx] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: s}
 			return s, nil
 		}
 	}
@@ -14367,12 +14451,13 @@ func (vm *VM) getLocal(slot int64) (runtime.Value, error) {
 }
 
 func (vm *VM) getLocalVM(slot int64) (runtime.VMValue, error) {
-	if int(slot) >= len(vm.locals) {
-		if err := ensureSlot(&vm.locals, slot, "local"); err != nil {
+	idx := vm.currentFrameBP + int(slot)
+	if idx >= len(vm.localsStack) {
+		if err := vm.ensureLocalSlot(slot); err != nil {
 			return runtime.VMValueNull, err
 		}
 	}
-	value := vm.locals[slot]
+	value := vm.localsStack[idx]
 	if value.Kind == runtime.VMKindUnset {
 		return runtime.VMValueNull, fmt.Errorf("local is undefined")
 	}
@@ -14385,11 +14470,24 @@ func (vm *VM) getLocalVM(slot int64) (runtime.VMValue, error) {
 		}
 		if acc, ok := value.Boxed.(*runtime.StringAccumulator); ok {
 			materialized := runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: acc.Materialize()}
-			vm.locals[slot] = materialized
+			vm.localsStack[idx] = materialized
 			return materialized, nil
 		}
 	}
 	return value, nil
+}
+
+func (vm *VM) ensureLocalSlot(slot int64) error {
+	if slot < 0 {
+		return fmt.Errorf("local slot out of range")
+	}
+	maxInt := int64(int(^uint(0) >> 1))
+	if slot > maxInt {
+		return fmt.Errorf("local slot out of range")
+	}
+	end := vm.currentFrameBP + int(slot) + 1
+	vm.ensureLocalsStack(end)
+	return nil
 }
 
 func ensureSlot(values *[]runtime.VMValue, slot int64, label string) error {

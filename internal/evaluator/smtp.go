@@ -103,7 +103,7 @@ func smtpSendBuiltin(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 	}
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "ok", runtime.Bool{Value: true})
-	putDict(entries, "recipients", runtime.NewInt64(int64(len(recipients))))
+	putDict(entries, "recipients", runtime.SmallInt{Value: int64(len(recipients))})
 	return runtime.Dict{Entries: entries}, nil
 }
 

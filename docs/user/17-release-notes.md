@@ -4,16 +4,13 @@
 
 ### Performance
 
-- Recursion bundle: flat-stack locals via `vm.localsStack` +
-  `frame.basePointer`, sync.Pool for per-call arg slices, and a
-  split VMValue layout that keeps primitive locals 16-byte
-  inline. `recursive_fib` from ~75 ms to TBD; allocs/op TBD.
-- Per-call allocation pressure: pooled dict/set literal element
-  maps, slab-allocated `Instance.Fields` for stable classes,
-  tighter http-handler closure clone path.
-- Opt-in event-loop reactor for HTTP and raw sockets via
-  `http.listen(addr, handler, {reactor: true})`. Default mode
-  remains goroutine-per-connection.
+- Tight integer loops are noticeably faster: `BenchmarkIntLoop`
+  3.7 ms to 2.74 ms, `BenchmarkIntArithmetic` 6.2 ms to 5.2 ms.
+- `recursive_fib` scoreboard 86 ms to 67 ms.
+- `list_functional` scoreboard 14 ms to 12 ms (matches PHP).
+- Recursive call paths drop ~20 allocations per call from the
+  new function-frame layout; long-running recursive workloads
+  see lower GC pressure.
 
 ### Language
 
@@ -21,34 +18,42 @@
   `case [int x, int y] if x > y => ...`. Each binding may be
   typed (must match) or untyped (any value); `_` is a wildcard
   that skips binding. Length and type mismatches both fall
-  through to the next case. New `OpMatchListShape` opcode keeps
-  the structural check in a single dispatch (chunk version
-  bumped 58 to 59).
+  through to the next case.
 - Union types (`T | U`) at parameter and return positions:
   `func get(int | string id): User | NotFoundError`. The runtime
   enforces "any branch matches" and throws a catchable
   `RuntimeError` on mismatch (parameter-validation errors now
   go through the standard throw path on the VM, matching the
   evaluator). Intersection (`T & U`) supported with "every
-  branch matches" semantics. Variable-level unions deferred.
-- Structured concurrency via `async.TaskGroup` and
-  `async.scope(fn)`. First-error cancels siblings; cancellation
-  propagates from group context.
+  branch matches" semantics.
+- Structured concurrency via the `async.scope` module:
+  `async.scope.TaskGroup` with `.spawn(fn)` / `.cancel()` and
+  the `async.scope.scope(body)` runner. The body receives the
+  group; spawned children are awaited at scope exit; if the
+  body or any child throws, remaining children are cancelled
+  and the first error is rethrown after the drain completes.
 
 ### Stdlib
 
-- New `archive` module with eager zip / tar / tar.gz readers
-  and writers: `archive.zipRead` / `zipWrite` /
-  `tarRead` / `tarWrite` / `tarGzRead` / `tarGzWrite`. Entries
-  are dicts with `name`, `data` (bytes), `isDir`, and `size`;
-  writers accept string or bytes payloads and sort tar entries
-  by name for deterministic output. Streaming cursor variants
-  queued as a follow-up.
-- New `metrics` module (counter / gauge / histogram +
-  Prometheus exporter) and `tracing` module (OpenTelemetry-
-  compatible spans + `@Traced` decorator + OTLP exporter).
-- `log` module gains structured-field helpers (`log.json`,
-  `log.toFile`, `log.toStream`, `KV`).
+- New `messaging` module with a unified queue + topic facade and
+  pluggable backends. Backends: AWS SQS over HTTPS with sigv4,
+  RabbitMQ over AMQP 0.9.1, STOMP 1.2 (covers ActiveMQ natively
+  and RabbitMQ via the STOMP plugin), and Kafka.
+  `messaging.connect({driver, ...})` returns a queue handle with
+  `publish` / `receive` / `ack` / `consume` / `close`.
+  `messaging.topic({driver, ...})` returns a pub/sub handle with
+  `publish` / `subscribe` / `close`; RabbitMQ uses a fanout
+  exchange, STOMP uses `/topic/` destinations, Kafka uses a fresh
+  consumer group per subscriber. SQS is queue-only on this
+  surface; use AWS SNS for fan-out and target SQS queues as SNS
+  subscriptions. Lower-level `amqp` and `kafka` native modules
+  are exposed for cases beyond the facade.
+- New `archive` module with zip / tar / tar.gz readers and
+  writers: `archive.zipRead` / `zipWrite` / `tarRead` /
+  `tarWrite` / `tarGzRead` / `tarGzWrite`. Entries are dicts
+  with `name`, `data` (bytes), `isDir`, and `size`; writers
+  accept string or bytes payloads and sort tar entries by name
+  for deterministic output.
 - `crypt.jwtSign(payload, key, opts?)` and
   `crypt.jwtVerify(token, key, opts?)` now dispatch on the
   `alg` option (or the token header) and cover every supported
@@ -77,6 +82,30 @@
   `ipAddresses`, `serialBits` (default 128). Completes the
   CSR-to-issued-cert pipeline (`generateCsr` to
   `signCertificate` to `parseCert`).
+- `metrics.counter(name, opts)` / `gauge` / `histogram` declare
+  typed metrics with optional labels; `metrics.observe(name,
+  value, labels)` records histogram samples; `metrics.toPrometheus()`
+  emits Prometheus v0.0.4 text exposition format. Legacy
+  `metrics.inc` / `set` keep working unchanged.
+- `log.toStream(stream)` writes JSON log lines to any
+  `streams.IOStream` (memory buffer, TCP socket, pipe).
+- `trace.toOtlpJson(opts?)` serialises recorded spans as OTLP/HTTP
+  JSON; `trace.exportOtlp(endpoint, opts?)` POSTs them to a
+  collector at `endpoint/v1/traces`. Child spans via
+  `trace.start(name, attrs, {parent})`.
+
+### Performance
+
+- Faster tight loops that mix arithmetic with collection length /
+  modulo: `regex_match` 62 ms to 45 ms, `numeric_loop` 123 ms to
+  92 ms, `recursive_fib` 65 ms to 58 ms.
+- `BenchmarkRecursiveFib` allocs/op 301 to 24.
+
+### Tooling
+
+- `make bench` now builds geblang via `make build` first and
+  benches that binary, so source changes always reach the
+  scoreboard.
 
 ## 1.3.0
 

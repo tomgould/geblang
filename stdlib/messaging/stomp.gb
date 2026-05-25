@@ -1,0 +1,302 @@
+module messaging.stomp;
+
+import bytes;
+import json;
+import sockets;
+
+/**
+ * STOMP 1.2 backend for messaging.MessageQueue. Speaks the
+ * text-based STOMP protocol over a single TCP connection, which
+ * covers ActiveMQ natively and RabbitMQ when the STOMP plugin is
+ * enabled. Duck-types `messaging.MessageQueue`.
+ *
+ * One subscription per StompQueue: receive() and consume() pull
+ * from MESSAGE frames delivered against the subscription id this
+ * queue installed at connect().
+ */
+export class StompQueue {
+    sockets.Socket sock;
+    string destination;
+    string subId;
+    int nextReceipt;
+    bool _closed;
+
+    func publish(any payload): void {
+        let body = payloadToString(payload);
+        let frame = "SEND\n" +
+            "destination:" + this.destination + "\n" +
+            "content-type:" + contentTypeOf(payload) + "\n" +
+            "content-length:" + (body.length() as string) + "\n" +
+            "\n" + body;
+        this.sock.write(frame);
+        /* Frames terminate with the NULL byte (\x00). We write it
+         * as a separate byte sequence because string literals can't
+         * easily contain raw 0 bytes in Geblang source. */
+        this.sock.write(bytes.toString(bytes.fromHex("00")));
+    }
+
+    func receive(int timeoutMs): ?dict<string, any> {
+        /* Best-effort timeout: socket has no per-read deadline API
+         * yet, so we read a frame and rely on the connection's
+         * idle / read timeout for the bound. A future revision can
+         * thread a per-call deadline through sockets.dial opts. */
+        let frame = readFrame(this.sock);
+        if (frame == null) {
+            return null;
+        }
+        let f = frame as dict<string, any>;
+        let command = f["command"] as string;
+        if (command != "MESSAGE") {
+            /* Could be ERROR or RECEIPT - surface ERROR, ignore the
+             * rest so the consume loop stays well-behaved. */
+            if (command == "ERROR") {
+                let headers = f["headers"] as dict<string, string>;
+                let msg = headers["message"] ?? "STOMP ERROR";
+                throw RuntimeError("stomp: " + (msg as string));
+            }
+            return null;
+        }
+        let headers = f["headers"] as dict<string, string>;
+        let messageId = (headers["message-id"] ?? "") as string;
+        let ackId = (headers["ack"] ?? messageId) as string;
+        return {
+            "body":   f["body"],
+            "id":     messageId,
+            "handle": ackId
+        };
+    }
+
+    func ack(any messageId): void {
+        string ackId = "";
+        if (messageId instanceof string) {
+            ackId = messageId as string;
+        } else if (messageId instanceof dict) {
+            let d = messageId as dict<string, any>;
+            ackId = d["handle"] as string;
+        } else {
+            throw RuntimeError("stomp.ack: messageId must be an ack id string or message dict");
+        }
+        let frame = "ACK\n" +
+            "id:" + ackId + "\n" +
+            "\n";
+        this.sock.write(frame);
+        this.sock.write(bytes.toString(bytes.fromHex("00")));
+    }
+
+    func consume(callable handler): void {
+        while (this._closed == false) {
+            let msg = this.receive(0);
+            if (msg == null) { continue; }
+            handler(msg);
+            this.ack(msg["handle"]);
+        }
+    }
+
+    func close(): void {
+        if (this._closed) { return; }
+        this._closed = true;
+        let frame = "DISCONNECT\n\n";
+        try {
+            this.sock.write(frame);
+            this.sock.write(bytes.toString(bytes.fromHex("00")));
+        } catch (RuntimeError e) {
+            /* If the socket is already in a bad state, just close. */
+        }
+        this.sock.close();
+    }
+}
+
+/**
+ * Build a StompQueue from a messaging.connect options dict.
+ *
+ * Required: host, port, destination (e.g. "/queue/orders").
+ * Optional: login, passcode, virtualHost (default "/"),
+ *   ackMode (default "client-individual").
+ */
+export func connect(dict<string, any> opts): StompQueue {
+    if (opts.contains("host") == false) {
+        throw RuntimeError("messaging.stomp: opts.host is required");
+    }
+    if (opts.contains("port") == false) {
+        throw RuntimeError("messaging.stomp: opts.port is required");
+    }
+    if (opts.contains("destination") == false) {
+        throw RuntimeError("messaging.stomp: opts.destination is required");
+    }
+    string host = opts["host"] as string;
+    int port = opts["port"] as int;
+    string destination = opts["destination"] as string;
+    string login = opts.contains("login") ? (opts["login"] as string) : "";
+    string passcode = opts.contains("passcode") ? (opts["passcode"] as string) : "";
+    string vhost = opts.contains("virtualHost") ? (opts["virtualHost"] as string) : "/";
+    string ackMode = opts.contains("ackMode") ? (opts["ackMode"] as string) : "client-individual";
+
+    let sock = sockets.dial(host, port, {});
+    /* STOMP CONNECT frame. STOMP 1.2 mandates accept-version and
+     * host headers. */
+    string connectFrame = "CONNECT\n" +
+        "accept-version:1.2\n" +
+        "host:" + vhost + "\n";
+    if (login != "") {
+        connectFrame = connectFrame + "login:" + login + "\n";
+    }
+    if (passcode != "") {
+        connectFrame = connectFrame + "passcode:" + passcode + "\n";
+    }
+    connectFrame = connectFrame + "\n";
+    sock.write(connectFrame);
+    sock.write(bytes.toString(bytes.fromHex("00")));
+
+    let reply = readFrame(sock);
+    if (reply == null) {
+        sock.close();
+        throw RuntimeError("stomp.connect: broker closed connection before CONNECTED");
+    }
+    let r = reply as dict<string, any>;
+    if ((r["command"] as string) != "CONNECTED") {
+        sock.close();
+        throw RuntimeError("stomp.connect: unexpected reply " + (r["command"] as string));
+    }
+
+    string subId = "sub-1";
+    string subFrame = "SUBSCRIBE\n" +
+        "id:" + subId + "\n" +
+        "destination:" + destination + "\n" +
+        "ack:" + ackMode + "\n" +
+        "\n";
+    sock.write(subFrame);
+    sock.write(bytes.toString(bytes.fromHex("00")));
+
+    let q = StompQueue();
+    q.sock = sock;
+    q.destination = destination;
+    q.subId = subId;
+    q.nextReceipt = 1;
+    q._closed = false;
+    return q;
+}
+
+/**
+ * STOMP pub/sub topic. Routes to the same connection / frame
+ * code as StompQueue; only the destination changes (broker-side
+ * topic semantics are determined by the destination namespace,
+ * e.g. ActiveMQ uses `/topic/...`). publish / subscribe / close
+ * map onto SEND / MESSAGE-loop / DISCONNECT.
+ */
+export class StompTopic {
+    StompQueue inner;
+
+    func publish(any payload): void { this.inner.publish(payload); }
+
+    func subscribe(callable handler): void {
+        while (this.inner._closed == false) {
+            let msg = this.inner.receive(0);
+            if (msg == null) { continue; }
+            handler(msg);
+            this.inner.ack(msg["handle"]);
+        }
+    }
+
+    func close(): void { this.inner.close(); }
+}
+
+/**
+ * Build a StompTopic. Same opts as connect() but the destination
+ * is rewritten to the broker's topic namespace when not already
+ * in one. ActiveMQ uses `/topic/...`; pass an explicit
+ * destination that starts with `/topic/` for other STOMP
+ * brokers.
+ */
+export func topic(dict<string, any> opts): StompTopic {
+    if (opts.contains("destination") == false) {
+        throw RuntimeError("messaging.stomp.topic: opts.destination is required");
+    }
+    let dest = opts["destination"] as string;
+    if (dest.startsWith("/topic/") == false && dest.startsWith("/exchange/") == false) {
+        opts["destination"] = "/topic/" + dest;
+    }
+    let q = connect(opts);
+    let t = StompTopic();
+    t.inner = q;
+    return t;
+}
+
+/* --- internal helpers --- */
+
+/* Reads one STOMP frame from the socket. Returns:
+ *   {command: string, headers: dict<string, string>, body: string}
+ * or null on clean EOF. Throws on malformed framing. */
+func readFrame(sockets.Socket sock): ?dict<string, any> {
+    /* Skip leading blank lines (heart-beats / inter-frame newlines). */
+    string command = "";
+    while (true) {
+        let line = sock.readLine();
+        if (line == null) { return null; }
+        let l = line as string;
+        if (l != "") {
+            command = l;
+            break;
+        }
+    }
+
+    dict<string, string> headers = {};
+    while (true) {
+        let line = sock.readLine();
+        if (line == null) {
+            throw RuntimeError("stomp: connection closed mid-frame");
+        }
+        let l = line as string;
+        if (l == "") { break; }
+        let colon = l.indexOf(":");
+        if (colon < 0) {
+            throw RuntimeError("stomp: malformed header line");
+        }
+        let name = l.substring(0, colon);
+        let value = l.substring(colon + 1, l.length());
+        /* STOMP says first header wins; subsequent same-named
+         * headers are ignored. */
+        if (headers.contains(name) == false) {
+            headers[name] = value;
+        }
+    }
+
+    /* Body terminates at the NULL byte. content-length header, when
+     * present, tells us exactly how many bytes to read. */
+    string body = "";
+    if (headers.contains("content-length")) {
+        let n = (headers["content-length"] as string).toInt();
+        body = sock.read(n);
+        /* Consume the trailing NULL terminator. */
+        let _ = sock.read(1);
+    } else {
+        while (true) {
+            let chunk = sock.read(1);
+            if (chunk.length() == 0) {
+                throw RuntimeError("stomp: connection closed mid-body");
+            }
+            /* The NULL byte we read is the frame terminator. */
+            if (bytes.toHex(bytes.fromString(chunk)) == "00") {
+                break;
+            }
+            body = body + chunk;
+        }
+    }
+
+    return {
+        "command": command,
+        "headers": headers,
+        "body":    body
+    };
+}
+
+func payloadToString(any payload): string {
+    if (payload instanceof string) { return payload as string; }
+    if (payload instanceof bytes)  { return bytes.toString(payload as bytes); }
+    return json.stringify(payload);
+}
+
+func contentTypeOf(any payload): string {
+    if (payload instanceof string) { return "text/plain"; }
+    if (payload instanceof bytes)  { return "application/octet-stream"; }
+    return "application/json";
+}

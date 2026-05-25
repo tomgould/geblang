@@ -54,6 +54,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/websocket"
+	amqp091 "github.com/rabbitmq/amqp091-go"
+	kafkago "github.com/segmentio/kafka-go"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -156,6 +158,7 @@ type Evaluator struct {
 	loggers           map[int64]*loggerHandle
 	metricsMu         sync.Mutex
 	metrics           map[string]float64
+	metricRegistry    map[string]*metricsEntry
 	traceMu           sync.Mutex
 	nextTraceID       int64
 	traces            map[int64]*traceSpan
@@ -168,6 +171,16 @@ type Evaluator struct {
 	wsMu              sync.Mutex
 	nextWSID          int64
 	websockets        map[int64]*websocket.Conn
+	amqpMu            sync.Mutex
+	nextAmqpConnID    int64
+	amqpConns         map[int64]*amqp091.Connection
+	nextAmqpChanID    int64
+	amqpChans         map[int64]*amqp091.Channel
+	kafkaMu           sync.Mutex
+	nextKafkaWriterID int64
+	kafkaWriters      map[int64]*kafkago.Writer
+	nextKafkaReaderID int64
+	kafkaReaders      map[int64]*kafkaReaderHandle
 	netMu             sync.Mutex
 	nextNetID         int64
 	netHandles        map[int64]*netHandle
@@ -466,12 +479,15 @@ type processSpec struct {
 }
 
 type traceSpan struct {
-	name   string
-	start  time.Time
-	end    time.Time
-	ended  bool
-	attrs  map[string]runtime.Value
-	events []traceEvent
+	name         string
+	start        time.Time
+	end          time.Time
+	ended        bool
+	attrs        map[string]runtime.Value
+	events       []traceEvent
+	traceID      []byte // 16 bytes; empty for legacy spans created before OTLP support
+	spanID       []byte // 8 bytes
+	parentSpanID []byte // 8 bytes; empty for root spans
 }
 
 type traceEvent struct {
@@ -554,7 +570,7 @@ func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []st
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*websocket.Conn{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*websocket.Conn{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}}
 	e.builtins = e.builtinModules()
 	// Register an InstanceInvoker so native code (e.g.
 	// convert.go's __serialize__ dispatch) can call class
@@ -3289,7 +3305,7 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 			return nil, err
 		}
 		list := rows.(runtime.List)
-		return runtime.NewInt64(int64(len(list.Elements))), nil
+		return runtime.SmallInt{Value: int64(len(list.Elements))}, nil
 	}}}
 	rowsClass.Methods["isempty"] = []runtime.Function{{Name: "isEmpty", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {
@@ -6852,15 +6868,15 @@ func (e *Evaluator) evalSelectorExpression(expr *ast.SelectorExpression, env *ru
 	if expr.Name.Value == "length" {
 		switch v := object.(type) {
 		case runtime.String:
-			return runtime.NewInt64(int64(len([]rune(v.Value)))), nil
+			return runtime.SmallInt{Value: int64(len([]rune(v.Value)))}, nil
 		case runtime.Bytes:
-			return runtime.NewInt64(int64(len(v.Value))), nil
+			return runtime.SmallInt{Value: int64(len(v.Value))}, nil
 		case runtime.List:
-			return runtime.NewInt64(int64(len(v.Elements))), nil
+			return runtime.SmallInt{Value: int64(len(v.Elements))}, nil
 		case runtime.Dict:
-			return runtime.NewInt64(int64(len(v.Entries))), nil
+			return runtime.SmallInt{Value: int64(len(v.Entries))}, nil
 		case runtime.Set:
-			return runtime.NewInt64(int64(len(v.Elements))), nil
+			return runtime.SmallInt{Value: int64(len(v.Elements))}, nil
 		}
 	}
 	return nil, fmt.Errorf("unsupported selector expression %s", expr.String())
@@ -7092,6 +7108,25 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"cancel":  asyncCancel,
 			"token":   asyncToken,
 		},
+		"amqp": {
+			"dial":            e.amqpDial,
+			"channel":         e.amqpChannel,
+			"declareQueue":    e.amqpDeclareQueue,
+			"declareExchange": e.amqpDeclareExchange,
+			"queueBind":       e.amqpQueueBind,
+			"publish":         e.amqpPublish,
+			"get":             e.amqpGet,
+			"ack":             e.amqpAck,
+			"close":           e.amqpClose,
+		},
+		"kafka": {
+			"writer": e.kafkaWriter,
+			"write":  e.kafkaWrite,
+			"reader": e.kafkaReader,
+			"read":   e.kafkaRead,
+			"commit": e.kafkaCommit,
+			"close":  e.kafkaClose,
+		},
 		"json": {
 			"parse":            e.registryBuiltin("json", "parse"),
 			"parseAs":          e.registryBuiltin("json", "parseAs"),
@@ -7244,20 +7279,27 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"stringify": e.serdeStringify,
 		},
 		"metrics": {
-			"inc":      e.metricsInc,
-			"set":      e.metricsSet,
-			"get":      e.metricsGet,
-			"snapshot": e.metricsSnapshot,
-			"reset":    e.metricsReset,
-			"now":      metricsNow,
-			"duration": metricsDuration,
+			"inc":          e.metricsInc,
+			"set":          e.metricsSet,
+			"get":          e.metricsGet,
+			"snapshot":     e.metricsSnapshot,
+			"reset":        e.metricsReset,
+			"now":          metricsNow,
+			"duration":     metricsDuration,
+			"counter":      e.metricsCounter,
+			"gauge":        e.metricsGauge,
+			"histogram":    e.metricsHistogram,
+			"observe":      e.metricsObserve,
+			"toPrometheus": e.metricsToPrometheus,
 		},
 		"trace": {
-			"start":    e.traceStart,
-			"event":    e.traceEvent,
-			"end":      e.traceEnd,
-			"snapshot": e.traceSnapshot,
-			"reset":    e.traceReset,
+			"start":       e.traceStart,
+			"event":       e.traceEvent,
+			"end":         e.traceEnd,
+			"snapshot":    e.traceSnapshot,
+			"reset":       e.traceReset,
+			"toOtlpJson":  e.traceToOtlpJson,
+			"exportOtlp":  e.traceExportOtlp,
 		},
 		"profile": {
 			"memStats": profileMemStats,
@@ -7568,15 +7610,16 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"staticMethod":     reflectStaticMethod,
 		},
 		"log": {
-			"stdout": e.logStdout,
-			"stderr": e.logStderr,
-			"file":   e.logFile,
-			"custom": e.logCustom,
-			"info":   e.logInfo,
-			"warn":   e.logWarn,
-			"error":  e.logError,
-			"debug":  e.logDebug,
-			"close":  e.logClose,
+			"stdout":   e.logStdout,
+			"stderr":   e.logStderr,
+			"file":     e.logFile,
+			"toStream": e.logToStream,
+			"custom":   e.logCustom,
+			"info":     e.logInfo,
+			"warn":     e.logWarn,
+			"error":    e.logError,
+			"debug":    e.logDebug,
+			"close":    e.logClose,
 		},
 		"path": {
 			"join":  pathJoin,
@@ -7667,15 +7710,15 @@ func collectionsLength(call *ast.CallExpression, args []runtime.Value) (runtime.
 	}
 	switch value := args[0].(type) {
 	case runtime.List:
-		return runtime.NewInt64(int64(len(value.Elements))), nil
+		return runtime.SmallInt{Value: int64(len(value.Elements))}, nil
 	case runtime.Dict:
-		return runtime.NewInt64(int64(len(value.Entries))), nil
+		return runtime.SmallInt{Value: int64(len(value.Entries))}, nil
 	case runtime.Set:
-		return runtime.NewInt64(int64(len(value.Elements))), nil
+		return runtime.SmallInt{Value: int64(len(value.Elements))}, nil
 	case runtime.String:
-		return runtime.NewInt64(int64(len([]rune(value.Value)))), nil
+		return runtime.SmallInt{Value: int64(len([]rune(value.Value)))}, nil
 	case runtime.Bytes:
-		return runtime.NewInt64(int64(len(value.Value))), nil
+		return runtime.SmallInt{Value: int64(len(value.Value))}, nil
 	default:
 		return nil, fmt.Errorf("%s does not support %s", call.Callee.String(), args[0].TypeName())
 	}
@@ -7686,7 +7729,13 @@ func collectionsIsEmpty(call *ast.CallExpression, args []runtime.Value) (runtime
 	if err != nil {
 		return nil, err
 	}
-	return runtime.Bool{Value: length.(runtime.Int).Value.Sign() == 0}, nil
+	switch n := length.(type) {
+	case runtime.SmallInt:
+		return runtime.Bool{Value: n.Value == 0}, nil
+	case runtime.Int:
+		return runtime.Bool{Value: n.Value.Sign() == 0}, nil
+	}
+	return runtime.Bool{Value: false}, nil
 }
 
 func collectionsContains(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -9058,30 +9107,60 @@ func writeTableRow(out *strings.Builder, row []string, widths []int, separator s
 }
 
 func (e *Evaluator) metricsInc(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	if len(args) != 1 && len(args) != 2 {
-		return nil, fmt.Errorf("%s expects name and optional amount", call.Callee.String())
+	if len(args) < 1 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects name, optional amount, optional labels", call.Callee.String())
 	}
 	name, ok := args[0].(runtime.String)
 	if !ok {
 		return nil, fmt.Errorf("%s name must be string", call.Callee.String())
 	}
 	amount := 1.0
-	if len(args) == 2 {
+	if len(args) >= 2 {
+		if labels, ok := args[1].(runtime.Dict); ok && len(args) == 2 {
+			// Two-arg variant with a dict in the second slot: treat it
+			// as labels with default amount = 1.
+			return e.metricsIncCommit(call, name.Value, 1.0, labels)
+		}
 		value, err := metricNumber(args[1])
 		if err != nil {
 			return nil, err
 		}
 		amount = value
 	}
+	labels := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	if len(args) == 3 {
+		labels, ok = args[2].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("%s labels must be dict", call.Callee.String())
+		}
+	}
+	return e.metricsIncCommit(call, name.Value, amount, labels)
+}
+
+func (e *Evaluator) metricsIncCommit(call *ast.CallExpression, name string, amount float64, labels runtime.Dict) (runtime.Value, error) {
 	e.metricsMu.Lock()
 	defer e.metricsMu.Unlock()
-	e.metrics[name.Value] += amount
-	return runtime.Float{Value: e.metrics[name.Value]}, nil
+	if entry, ok := e.metricRegistry[name]; ok {
+		if entry.kind != "counter" && entry.kind != "gauge" {
+			return nil, fmt.Errorf("metric %q is a %s; use metrics.observe to record samples", name, entry.kind)
+		}
+		key, _, err := labelKeyFromDict(entry, labels)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %v", call.Callee.String(), err)
+		}
+		entry.values[key] += amount
+		return runtime.Float{Value: entry.values[key]}, nil
+	}
+	if len(labels.Entries) > 0 {
+		return nil, fmt.Errorf("metric %q is not declared; call metrics.counter(%q, {labels: ...}) first", name, name)
+	}
+	e.metrics[name] += amount
+	return runtime.Float{Value: e.metrics[name]}, nil
 }
 
 func (e *Evaluator) metricsSet(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	if len(args) != 2 {
-		return nil, fmt.Errorf("%s expects name and value", call.Callee.String())
+	if len(args) != 2 && len(args) != 3 {
+		return nil, fmt.Errorf("%s expects name, value, optional labels", call.Callee.String())
 	}
 	name, ok := args[0].(runtime.String)
 	if !ok {
@@ -9091,8 +9170,29 @@ func (e *Evaluator) metricsSet(call *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
+	labels := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	if len(args) == 3 {
+		labels, ok = args[2].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("%s labels must be dict", call.Callee.String())
+		}
+	}
 	e.metricsMu.Lock()
 	defer e.metricsMu.Unlock()
+	if entry, ok := e.metricRegistry[name.Value]; ok {
+		if entry.kind != "gauge" && entry.kind != "counter" {
+			return nil, fmt.Errorf("metric %q is a %s; use metrics.observe to record samples", name.Value, entry.kind)
+		}
+		key, _, err := labelKeyFromDict(entry, labels)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %v", call.Callee.String(), err)
+		}
+		entry.values[key] = value
+		return runtime.Float{Value: value}, nil
+	}
+	if len(labels.Entries) > 0 {
+		return nil, fmt.Errorf("metric %q is not declared; call metrics.gauge(%q, {labels: ...}) first", name.Value, name.Value)
+	}
 	e.metrics[name.Value] = value
 	return runtime.Float{Value: value}, nil
 }
@@ -9156,6 +9256,321 @@ func metricsDuration(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 	return runtime.NewInt64(time.Now().UnixNano() - startNs), nil
 }
 
+// metricsEntry is one declared metric in the registry. counter and
+// gauge use `values` (one float per label-tuple); histogram uses
+// `histStates` (running bucket counts per label-tuple) and `buckets`
+// (the configured upper bounds, ascending).
+type metricsEntry struct {
+	kind       string
+	help       string
+	labelKeys  []string
+	values     map[string]float64
+	buckets    []float64
+	histStates map[string]*histState
+}
+
+type histState struct {
+	counts []uint64
+	sum    float64
+	count  uint64
+}
+
+// labelKeyFromDict produces a stable string key for a label-value
+// tuple by sorting the entry's labelKeys and joining `name=value`
+// pairs with ASCII unit separator. Missing labels are treated as the
+// empty string. Extra labels not declared on the metric are rejected.
+func labelKeyFromDict(entry *metricsEntry, fields runtime.Dict) (string, []string, error) {
+	if len(entry.labelKeys) == 0 {
+		if len(fields.Entries) > 0 {
+			return "", nil, fmt.Errorf("metric was declared with no labels")
+		}
+		return "", nil, nil
+	}
+	declared := map[string]string{}
+	for _, k := range entry.labelKeys {
+		declared[native.DictKey(runtime.String{Value: k})] = k
+	}
+	for k := range fields.Entries {
+		if _, ok := declared[k]; !ok {
+			return "", nil, fmt.Errorf("undeclared label key %q", k)
+		}
+	}
+	values := make([]string, len(entry.labelKeys))
+	for i, k := range entry.labelKeys {
+		ent, ok := fields.Entries[native.DictKey(runtime.String{Value: k})]
+		if !ok {
+			values[i] = ""
+			continue
+		}
+		s, ok := ent.Value.(runtime.String)
+		if !ok {
+			return "", nil, fmt.Errorf("label %q must be string", k)
+		}
+		values[i] = s.Value
+	}
+	return strings.Join(values, "\x1f"), values, nil
+}
+
+func (e *Evaluator) declareMetric(call *ast.CallExpression, args []runtime.Value, kind string) (runtime.Value, error) {
+	if len(args) != 1 && len(args) != 2 {
+		return nil, fmt.Errorf("%s expects name and optional opts", call.Callee.String())
+	}
+	name, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s name must be string", call.Callee.String())
+	}
+	entry := &metricsEntry{
+		kind:   kind,
+		values: map[string]float64{},
+	}
+	if kind == "histogram" {
+		entry.buckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
+		entry.histStates = map[string]*histState{}
+	}
+	if len(args) == 2 {
+		opts, ok := args[1].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("%s opts must be dict", call.Callee.String())
+		}
+		if helpEnt, ok := opts.Entries[native.DictKey(runtime.String{Value: "help"})]; ok {
+			if s, ok := helpEnt.Value.(runtime.String); ok {
+				entry.help = s.Value
+			}
+		}
+		if labelEnt, ok := opts.Entries[native.DictKey(runtime.String{Value: "labels"})]; ok {
+			list, ok := labelEnt.Value.(runtime.List)
+			if !ok {
+				return nil, fmt.Errorf("%s opts.labels must be list of strings", call.Callee.String())
+			}
+			for _, item := range list.Elements {
+				s, ok := item.(runtime.String)
+				if !ok {
+					return nil, fmt.Errorf("%s opts.labels entries must be strings", call.Callee.String())
+				}
+				entry.labelKeys = append(entry.labelKeys, s.Value)
+			}
+		}
+		if bucketEnt, ok := opts.Entries[native.DictKey(runtime.String{Value: "buckets"})]; ok {
+			if kind != "histogram" {
+				return nil, fmt.Errorf("%s opts.buckets is only valid for histograms", call.Callee.String())
+			}
+			list, ok := bucketEnt.Value.(runtime.List)
+			if !ok {
+				return nil, fmt.Errorf("%s opts.buckets must be list of numbers", call.Callee.String())
+			}
+			entry.buckets = entry.buckets[:0]
+			for _, item := range list.Elements {
+				v, err := metricNumber(item)
+				if err != nil {
+					return nil, fmt.Errorf("%s opts.buckets: %v", call.Callee.String(), err)
+				}
+				entry.buckets = append(entry.buckets, v)
+			}
+		}
+	}
+	e.metricsMu.Lock()
+	defer e.metricsMu.Unlock()
+	if existing, ok := e.metricRegistry[name.Value]; ok && existing.kind != kind {
+		return nil, fmt.Errorf("metric %q already declared as %s", name.Value, existing.kind)
+	}
+	e.metricRegistry[name.Value] = entry
+	return runtime.String{Value: name.Value}, nil
+}
+
+func (e *Evaluator) metricsCounter(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	return e.declareMetric(call, args, "counter")
+}
+
+func (e *Evaluator) metricsGauge(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	return e.declareMetric(call, args, "gauge")
+}
+
+func (e *Evaluator) metricsHistogram(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	return e.declareMetric(call, args, "histogram")
+}
+
+// metricsObserve records a histogram sample. Signature:
+//   metrics.observe(name, value)               // no labels
+//   metrics.observe(name, value, {labelDict})  // with labels
+func (e *Evaluator) metricsObserve(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 && len(args) != 3 {
+		return nil, fmt.Errorf("%s expects name, value, and optional labels", call.Callee.String())
+	}
+	name, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s name must be string", call.Callee.String())
+	}
+	value, err := metricNumber(args[1])
+	if err != nil {
+		return nil, err
+	}
+	labels := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	if len(args) == 3 {
+		labels, ok = args[2].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("%s labels must be dict", call.Callee.String())
+		}
+	}
+	e.metricsMu.Lock()
+	defer e.metricsMu.Unlock()
+	entry, ok := e.metricRegistry[name.Value]
+	if !ok {
+		return nil, fmt.Errorf("metric %q is not declared - call metrics.histogram(%q, ...) first", name.Value, name.Value)
+	}
+	if entry.kind != "histogram" {
+		return nil, fmt.Errorf("metric %q is a %s, not a histogram", name.Value, entry.kind)
+	}
+	key, _, err := labelKeyFromDict(entry, labels)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %v", call.Callee.String(), err)
+	}
+	state, ok := entry.histStates[key]
+	if !ok {
+		state = &histState{counts: make([]uint64, len(entry.buckets))}
+		entry.histStates[key] = state
+	}
+	for i, upper := range entry.buckets {
+		if value <= upper {
+			state.counts[i]++
+		}
+	}
+	state.sum += value
+	state.count++
+	return runtime.Null{}, nil
+}
+
+// metricsToPrometheus emits the registered metrics in Prometheus
+// text exposition format (v0.0.4). Legacy `metrics.inc/set` entries
+// that are not also declared with metrics.counter/gauge appear as
+// untyped at the end.
+func (e *Evaluator) metricsToPrometheus(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
+	}
+	e.metricsMu.Lock()
+	defer e.metricsMu.Unlock()
+	var buf strings.Builder
+	names := make([]string, 0, len(e.metricRegistry))
+	for name := range e.metricRegistry {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		entry := e.metricRegistry[name]
+		if entry.help != "" {
+			fmt.Fprintf(&buf, "# HELP %s %s\n", name, escapePromHelp(entry.help))
+		}
+		fmt.Fprintf(&buf, "# TYPE %s %s\n", name, entry.kind)
+		switch entry.kind {
+		case "counter", "gauge":
+			writeLabeledValues(&buf, name, entry)
+		case "histogram":
+			writeHistogram(&buf, name, entry)
+		}
+	}
+	// Legacy flat entries that weren't promoted via counter/gauge.
+	legacyNames := make([]string, 0, len(e.metrics))
+	for name := range e.metrics {
+		if _, declared := e.metricRegistry[name]; declared {
+			continue
+		}
+		legacyNames = append(legacyNames, name)
+	}
+	sort.Strings(legacyNames)
+	for _, name := range legacyNames {
+		fmt.Fprintf(&buf, "# TYPE %s untyped\n", name)
+		fmt.Fprintf(&buf, "%s %s\n", name, formatPromFloat(e.metrics[name]))
+	}
+	return runtime.String{Value: buf.String()}, nil
+}
+
+func writeLabeledValues(buf *strings.Builder, name string, entry *metricsEntry) {
+	keys := make([]string, 0, len(entry.values))
+	for k := range entry.values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(buf, "%s%s %s\n", name, promLabelsFromKey(entry.labelKeys, k), formatPromFloat(entry.values[k]))
+	}
+	if len(keys) == 0 && len(entry.labelKeys) == 0 {
+		fmt.Fprintf(buf, "%s 0\n", name)
+	}
+}
+
+func writeHistogram(buf *strings.Builder, name string, entry *metricsEntry) {
+	keys := make([]string, 0, len(entry.histStates))
+	for k := range entry.histStates {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 {
+		keys = []string{""}
+	}
+	for _, k := range keys {
+		state, ok := entry.histStates[k]
+		if !ok {
+			state = &histState{counts: make([]uint64, len(entry.buckets))}
+		}
+		baseLabels := promLabelsFromKey(entry.labelKeys, k)
+		for i, upper := range entry.buckets {
+			labelList := promLabelsAppendLE(baseLabels, formatPromFloat(upper))
+			fmt.Fprintf(buf, "%s_bucket%s %d\n", name, labelList, state.counts[i])
+		}
+		labelList := promLabelsAppendLE(baseLabels, "+Inf")
+		fmt.Fprintf(buf, "%s_bucket%s %d\n", name, labelList, state.count)
+		fmt.Fprintf(buf, "%s_sum%s %s\n", name, baseLabels, formatPromFloat(state.sum))
+		fmt.Fprintf(buf, "%s_count%s %d\n", name, baseLabels, state.count)
+	}
+}
+
+func promLabelsFromKey(labelNames []string, key string) string {
+	if len(labelNames) == 0 {
+		return ""
+	}
+	values := strings.Split(key, "\x1f")
+	if len(values) != len(labelNames) {
+		return ""
+	}
+	pairs := make([]string, 0, len(labelNames))
+	for i, name := range labelNames {
+		pairs = append(pairs, fmt.Sprintf("%s=%q", name, escapePromLabel(values[i])))
+	}
+	return "{" + strings.Join(pairs, ",") + "}"
+}
+
+func promLabelsAppendLE(base, upper string) string {
+	if base == "" {
+		return fmt.Sprintf("{le=%q}", upper)
+	}
+	return base[:len(base)-1] + fmt.Sprintf(",le=%q}", upper)
+}
+
+func escapePromLabel(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	return s
+}
+
+func escapePromHelp(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	return s
+}
+
+func formatPromFloat(v float64) string {
+	switch {
+	case math.IsNaN(v):
+		return "NaN"
+	case math.IsInf(v, 1):
+		return "+Inf"
+	case math.IsInf(v, -1):
+		return "-Inf"
+	}
+	return strconv.FormatFloat(v, 'g', -1, 64)
+}
+
 func metricNumber(value runtime.Value) (float64, error) {
 	switch value := value.(type) {
 	case runtime.SmallInt:
@@ -9174,8 +9589,8 @@ func metricNumber(value runtime.Value) (float64, error) {
 }
 
 func (e *Evaluator) traceStart(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	if len(args) != 1 && len(args) != 2 {
-		return nil, fmt.Errorf("%s expects name and optional attrs", call.Callee.String())
+	if len(args) < 1 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects name, optional attrs, optional opts", call.Callee.String())
 	}
 	name, ok := args[0].(runtime.String)
 	if !ok {
@@ -9185,11 +9600,59 @@ func (e *Evaluator) traceStart(call *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
+	// Optional third arg: opts dict carrying `parent` (a span handle
+	// previously returned by trace.start). When present, the new span
+	// inherits the parent's traceID and records its parent's spanID.
+	var parent *traceSpan
+	if len(args) == 3 {
+		opts, ok := args[2].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("%s opts must be dict", call.Callee.String())
+		}
+		if parentEnt, ok := opts.Entries[native.DictKey(runtime.String{Value: "parent"})]; ok {
+			parentID, err := traceHandleID(parentEnt.Value)
+			if err != nil {
+				return nil, fmt.Errorf("%s opts.parent: %v", call.Callee.String(), err)
+			}
+			e.traceMu.Lock()
+			parent = e.traces[parentID]
+			e.traceMu.Unlock()
+			if parent == nil {
+				return nil, fmt.Errorf("%s opts.parent: unknown span %d", call.Callee.String(), parentID)
+			}
+		}
+	}
+	span := &traceSpan{
+		name:   name.Value,
+		start:  time.Now(),
+		attrs:  attrs,
+		events: []traceEvent{},
+		spanID: randomBytes(8),
+	}
+	if parent != nil && len(parent.traceID) > 0 {
+		span.traceID = parent.traceID
+		span.parentSpanID = parent.spanID
+	} else {
+		span.traceID = randomBytes(16)
+	}
 	e.traceMu.Lock()
 	defer e.traceMu.Unlock()
 	e.nextTraceID++
-	e.traces[e.nextTraceID] = &traceSpan{name: name.Value, start: time.Now(), attrs: attrs, events: []traceEvent{}}
+	e.traces[e.nextTraceID] = span
 	return runtime.NewInt64(e.nextTraceID), nil
+}
+
+func randomBytes(n int) []byte {
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		// Fall back to a low-quality timestamp seed - never blocks the
+		// VM on entropy starvation. Tracing IDs are not security-
+		// sensitive; collision risk is negligible for typical loads.
+		for i := range buf {
+			buf[i] = byte(time.Now().UnixNano() >> uint(i*8))
+		}
+	}
+	return buf
 }
 
 func (e *Evaluator) traceEvent(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -9260,6 +9723,292 @@ func (e *Evaluator) traceReset(call *ast.CallExpression, args []runtime.Value) (
 	defer e.traceMu.Unlock()
 	e.traces = map[int64]*traceSpan{}
 	return runtime.Null{}, nil
+}
+
+// traceToOtlpJson serializes every recorded span to an OTLP/HTTP
+// JSON request body. Signature:
+//
+//	trace.toOtlpJson()          -> string  (uses default service name)
+//	trace.toOtlpJson(opts)      -> string  (opts.serviceName, opts.scopeName, opts.scopeVersion, opts.resource)
+//
+// Spans without an OTLP traceID/spanID (created before OTLP support
+// was added or imported from an older session) are assigned fresh
+// IDs at serialization time so the output is always well-formed.
+func (e *Evaluator) traceToOtlpJson(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) > 1 {
+		return nil, fmt.Errorf("%s expects optional opts dict", call.Callee.String())
+	}
+	opts := otlpExportOpts{
+		serviceName:  "geblang",
+		scopeName:    "geblang.trace",
+		scopeVersion: "1.4.0",
+	}
+	if len(args) == 1 {
+		if err := opts.applyDict(call, args[0]); err != nil {
+			return nil, err
+		}
+	}
+	body, err := e.buildOtlpJson(opts)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.String{Value: string(body)}, nil
+}
+
+// traceExportOtlp POSTs every recorded span to an OTLP/HTTP
+// collector. Signature:
+//
+//	trace.exportOtlp(endpoint)         -> dict {status, ok}
+//	trace.exportOtlp(endpoint, opts)   -> dict {status, ok}
+//
+// endpoint is the collector base URL (e.g. http://localhost:4318);
+// `/v1/traces` is appended automatically. opts may set serviceName,
+// scopeName, scopeVersion, resource (dict<string, string>), headers
+// (dict<string, string>), and timeoutMs.
+func (e *Evaluator) traceExportOtlp(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 && len(args) != 2 {
+		return nil, fmt.Errorf("%s expects endpoint and optional opts", call.Callee.String())
+	}
+	endpoint, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s endpoint must be string", call.Callee.String())
+	}
+	opts := otlpExportOpts{
+		serviceName:  "geblang",
+		scopeName:    "geblang.trace",
+		scopeVersion: "1.4.0",
+		timeoutMs:    10000,
+	}
+	if len(args) == 2 {
+		if err := opts.applyDict(call, args[1]); err != nil {
+			return nil, err
+		}
+	}
+	body, err := e.buildOtlpJson(opts)
+	if err != nil {
+		return nil, err
+	}
+	url := strings.TrimRight(endpoint.Value, "/") + "/v1/traces"
+	req, err := http.NewRequest("POST", url, strings.NewReader(string(body)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range opts.headers {
+		req.Header.Set(k, v)
+	}
+	client := &http.Client{Timeout: time.Duration(opts.timeoutMs) * time.Millisecond}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "status", runtime.NewInt64(int64(resp.StatusCode)))
+	putDict(entries, "ok", runtime.Bool{Value: resp.StatusCode >= 200 && resp.StatusCode < 300})
+	return runtime.Dict{Entries: entries}, nil
+}
+
+type otlpExportOpts struct {
+	serviceName  string
+	scopeName    string
+	scopeVersion string
+	resource     map[string]string
+	headers      map[string]string
+	timeoutMs    int
+}
+
+func (o *otlpExportOpts) applyDict(call *ast.CallExpression, value runtime.Value) error {
+	dict, ok := value.(runtime.Dict)
+	if !ok {
+		return fmt.Errorf("%s opts must be dict", call.Callee.String())
+	}
+	if ent, ok := dict.Entries[native.DictKey(runtime.String{Value: "serviceName"})]; ok {
+		s, ok := ent.Value.(runtime.String)
+		if !ok {
+			return fmt.Errorf("%s opts.serviceName must be string", call.Callee.String())
+		}
+		o.serviceName = s.Value
+	}
+	if ent, ok := dict.Entries[native.DictKey(runtime.String{Value: "scopeName"})]; ok {
+		s, ok := ent.Value.(runtime.String)
+		if !ok {
+			return fmt.Errorf("%s opts.scopeName must be string", call.Callee.String())
+		}
+		o.scopeName = s.Value
+	}
+	if ent, ok := dict.Entries[native.DictKey(runtime.String{Value: "scopeVersion"})]; ok {
+		s, ok := ent.Value.(runtime.String)
+		if !ok {
+			return fmt.Errorf("%s opts.scopeVersion must be string", call.Callee.String())
+		}
+		o.scopeVersion = s.Value
+	}
+	if ent, ok := dict.Entries[native.DictKey(runtime.String{Value: "resource"})]; ok {
+		res, ok := ent.Value.(runtime.Dict)
+		if !ok {
+			return fmt.Errorf("%s opts.resource must be dict<string, string>", call.Callee.String())
+		}
+		o.resource = stringDictFromRuntime(res)
+	}
+	if ent, ok := dict.Entries[native.DictKey(runtime.String{Value: "headers"})]; ok {
+		hd, ok := ent.Value.(runtime.Dict)
+		if !ok {
+			return fmt.Errorf("%s opts.headers must be dict<string, string>", call.Callee.String())
+		}
+		o.headers = stringDictFromRuntime(hd)
+	}
+	if ent, ok := dict.Entries[native.DictKey(runtime.String{Value: "timeoutMs"})]; ok {
+		n, ok := native.AsInt64(ent.Value)
+		if !ok {
+			return fmt.Errorf("%s opts.timeoutMs must be int", call.Callee.String())
+		}
+		o.timeoutMs = int(n)
+	}
+	return nil
+}
+
+func stringDictFromRuntime(d runtime.Dict) map[string]string {
+	out := map[string]string{}
+	for _, ent := range d.Entries {
+		k, ok := ent.Key.(runtime.String)
+		if !ok {
+			continue
+		}
+		v, ok := ent.Value.(runtime.String)
+		if !ok {
+			continue
+		}
+		out[k.Value] = v.Value
+	}
+	return out
+}
+
+// buildOtlpJson constructs an OTLP/HTTP request body (ExportTraceServiceRequest)
+// containing every span currently held by the evaluator.
+func (e *Evaluator) buildOtlpJson(opts otlpExportOpts) ([]byte, error) {
+	e.traceMu.Lock()
+	defer e.traceMu.Unlock()
+
+	// Stable ordering by handle so output is deterministic.
+	ids := make([]int64, 0, len(e.traces))
+	for id := range e.traces {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	spansJSON := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		span := e.traces[id]
+		if len(span.traceID) == 0 {
+			// Legacy span - assign IDs at serialization time so the
+			// output is well-formed for the collector.
+			span.traceID = randomBytes(16)
+			span.spanID = randomBytes(8)
+		}
+		endNano := span.start.UnixNano()
+		if span.ended {
+			endNano = span.end.UnixNano()
+		} else {
+			endNano = time.Now().UnixNano()
+		}
+		spanObj := map[string]any{
+			"traceId":           hex.EncodeToString(span.traceID),
+			"spanId":            hex.EncodeToString(span.spanID),
+			"name":              span.name,
+			"kind":              1, // SPAN_KIND_INTERNAL
+			"startTimeUnixNano": strconv.FormatInt(span.start.UnixNano(), 10),
+			"endTimeUnixNano":   strconv.FormatInt(endNano, 10),
+		}
+		if len(span.parentSpanID) > 0 {
+			spanObj["parentSpanId"] = hex.EncodeToString(span.parentSpanID)
+		}
+		if len(span.attrs) > 0 {
+			spanObj["attributes"] = otlpAttributesFromMap(span.attrs)
+		}
+		if len(span.events) > 0 {
+			events := make([]map[string]any, 0, len(span.events))
+			for _, ev := range span.events {
+				eventObj := map[string]any{
+					"name":         ev.name,
+					"timeUnixNano": strconv.FormatInt(ev.at.UnixNano(), 10),
+				}
+				if len(ev.attrs) > 0 {
+					eventObj["attributes"] = otlpAttributesFromMap(ev.attrs)
+				}
+				events = append(events, eventObj)
+			}
+			spanObj["events"] = events
+		}
+		spansJSON = append(spansJSON, spanObj)
+	}
+
+	resourceAttrs := []map[string]any{
+		{"key": "service.name", "value": map[string]any{"stringValue": opts.serviceName}},
+	}
+	for k, v := range opts.resource {
+		if k == "service.name" {
+			continue
+		}
+		resourceAttrs = append(resourceAttrs, map[string]any{
+			"key":   k,
+			"value": map[string]any{"stringValue": v},
+		})
+	}
+
+	payload := map[string]any{
+		"resourceSpans": []map[string]any{
+			{
+				"resource": map[string]any{"attributes": resourceAttrs},
+				"scopeSpans": []map[string]any{
+					{
+						"scope": map[string]any{
+							"name":    opts.scopeName,
+							"version": opts.scopeVersion,
+						},
+						"spans": spansJSON,
+					},
+				},
+			},
+		},
+	}
+	return json.Marshal(payload)
+}
+
+func otlpAttributesFromMap(attrs map[string]runtime.Value) []map[string]any {
+	keys := make([]string, 0, len(attrs))
+	for k := range attrs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]map[string]any, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, map[string]any{"key": k, "value": otlpAnyValue(attrs[k])})
+	}
+	return out
+}
+
+func otlpAnyValue(value runtime.Value) map[string]any {
+	switch v := value.(type) {
+	case runtime.String:
+		return map[string]any{"stringValue": v.Value}
+	case runtime.Bool:
+		return map[string]any{"boolValue": v.Value}
+	case runtime.SmallInt:
+		return map[string]any{"intValue": strconv.FormatInt(v.Value, 10)}
+	case runtime.Int:
+		if v.Value.IsInt64() {
+			return map[string]any{"intValue": strconv.FormatInt(v.Value.Int64(), 10)}
+		}
+		return map[string]any{"stringValue": v.Value.String()}
+	case runtime.Float:
+		return map[string]any{"doubleValue": v.Value}
+	}
+	// Fallback: encode as a JSON string so any attribute value survives.
+	if data, err := json.Marshal(value); err == nil {
+		return map[string]any{"stringValue": string(data)}
+	}
+	return map[string]any{"stringValue": fmt.Sprintf("%v", value)}
 }
 
 func optionalAttrs(call *ast.CallExpression, args []runtime.Value, index int) (map[string]runtime.Value, error) {
@@ -10180,6 +10929,35 @@ func (e *Evaluator) logFile(call *ast.CallExpression, args []runtime.Value) (run
 		return nil, err
 	}
 	return e.registerLogger(&loggerHandle{target: path, writer: file, closer: file}), nil
+}
+
+// logToStream returns a logger that writes JSON log lines to the
+// given IOStream. Accepts either a raw IOStream native handle or
+// an IOStream class instance (the wrapper from stdlib/streams.gb).
+// The stream's lifetime is owned by the caller - closing the
+// logger does NOT close the underlying stream, so the same stream
+// can back multiple loggers or remain open for non-log traffic
+// after the logger is discarded.
+func (e *Evaluator) logToStream(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
+	}
+	streamValue := args[0]
+	if inst, ok := streamValue.(*runtime.Instance); ok {
+		// Unwrap a streams.IOStream class instance by reading its
+		// `handle` field.
+		if h, ok := inst.Fields["handle"]; ok {
+			streamValue = h
+		}
+	}
+	stream, err := e.ioStreamHandle(streamValue)
+	if err != nil {
+		return nil, err
+	}
+	if stream.writer == nil {
+		return nil, fmt.Errorf("%s stream is not writable", call.Callee.String())
+	}
+	return e.registerLogger(&loggerHandle{target: stream.name, writer: stream.writer}), nil
 }
 
 func (e *Evaluator) logCustom(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -14165,6 +14943,579 @@ func websocketHandleID(value runtime.Value) (int64, error) {
 		return 0, fmt.Errorf("connection must be websocket handle")
 	}
 	return handle.Value.Int64(), nil
+}
+
+func handleID(value runtime.Value, label string) (int64, error) {
+	handle, ok := value.(runtime.Int)
+	if !ok || !handle.Value.IsInt64() {
+		return 0, fmt.Errorf("%s handle must be int", label)
+	}
+	return handle.Value.Int64(), nil
+}
+
+func (e *Evaluator) amqpDial(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects amqp url", call.Callee.String())
+	}
+	url, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s url must be string", call.Callee.String())
+	}
+	conn, err := amqp091.Dial(url.Value)
+	if err != nil {
+		return nil, fmt.Errorf("amqp.dial: %w", err)
+	}
+	e.amqpMu.Lock()
+	defer e.amqpMu.Unlock()
+	e.nextAmqpConnID++
+	id := e.nextAmqpConnID
+	e.amqpConns[id] = conn
+	return runtime.NewInt64(id), nil
+}
+
+func (e *Evaluator) amqpChannel(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects connection handle", call.Callee.String())
+	}
+	id, err := handleID(args[0], "amqp connection")
+	if err != nil {
+		return nil, err
+	}
+	e.amqpMu.Lock()
+	conn, ok := e.amqpConns[id]
+	e.amqpMu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("amqp.channel: unknown connection handle %d", id)
+	}
+	ch, err := conn.Channel()
+	if err != nil {
+		return nil, fmt.Errorf("amqp.channel: %w", err)
+	}
+	e.amqpMu.Lock()
+	defer e.amqpMu.Unlock()
+	e.nextAmqpChanID++
+	chID := e.nextAmqpChanID
+	e.amqpChans[chID] = ch
+	return runtime.NewInt64(chID), nil
+}
+
+func (e *Evaluator) amqpDeclareQueue(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects channel, name, and optional opts", call.Callee.String())
+	}
+	id, err := handleID(args[0], "amqp channel")
+	if err != nil {
+		return nil, err
+	}
+	name, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("amqp.declareQueue: name must be string")
+	}
+	durable, autoDelete, exclusive := true, false, false
+	if len(args) == 3 {
+		opts, ok := args[2].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("amqp.declareQueue: opts must be dict")
+		}
+		durable = dictBoolDefault(opts, "durable", true)
+		autoDelete = dictBoolDefault(opts, "autoDelete", false)
+		exclusive = dictBoolDefault(opts, "exclusive", false)
+	}
+	e.amqpMu.Lock()
+	ch, ok := e.amqpChans[id]
+	e.amqpMu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("amqp.declareQueue: unknown channel handle %d", id)
+	}
+	q, err := ch.QueueDeclare(name.Value, durable, autoDelete, exclusive, false, nil)
+	if err != nil {
+		return nil, fmt.Errorf("amqp.declareQueue: %w", err)
+	}
+	entries := map[string]runtime.DictEntry{}
+	nameKey := runtime.String{Value: "name"}
+	entries["s"+"name"] = runtime.DictEntry{Key: nameKey, Value: runtime.String{Value: q.Name}}
+	messagesKey := runtime.String{Value: "messages"}
+	entries["s"+"messages"] = runtime.DictEntry{Key: messagesKey, Value: runtime.NewInt64(int64(q.Messages))}
+	consumersKey := runtime.String{Value: "consumers"}
+	entries["s"+"consumers"] = runtime.DictEntry{Key: consumersKey, Value: runtime.NewInt64(int64(q.Consumers))}
+	return runtime.Dict{Entries: entries}, nil
+}
+
+func (e *Evaluator) amqpDeclareExchange(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 3 || len(args) > 4 {
+		return nil, fmt.Errorf("%s expects channel, name, kind, and optional opts", call.Callee.String())
+	}
+	id, err := handleID(args[0], "amqp channel")
+	if err != nil {
+		return nil, err
+	}
+	name, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("amqp.declareExchange: name must be string")
+	}
+	kind, ok := args[2].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("amqp.declareExchange: kind must be string (fanout/topic/direct/headers)")
+	}
+	durable, autoDelete := true, false
+	if len(args) == 4 {
+		opts, ok := args[3].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("amqp.declareExchange: opts must be dict")
+		}
+		durable = dictBoolDefault(opts, "durable", true)
+		autoDelete = dictBoolDefault(opts, "autoDelete", false)
+	}
+	e.amqpMu.Lock()
+	ch, ok := e.amqpChans[id]
+	e.amqpMu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("amqp.declareExchange: unknown channel handle %d", id)
+	}
+	if err := ch.ExchangeDeclare(name.Value, kind.Value, durable, autoDelete, false, false, nil); err != nil {
+		return nil, fmt.Errorf("amqp.declareExchange: %w", err)
+	}
+	return runtime.Null{}, nil
+}
+
+func (e *Evaluator) amqpQueueBind(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 4 {
+		return nil, fmt.Errorf("%s expects channel, queue, exchange, routingKey", call.Callee.String())
+	}
+	id, err := handleID(args[0], "amqp channel")
+	if err != nil {
+		return nil, err
+	}
+	queue, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("amqp.queueBind: queue must be string")
+	}
+	exchange, ok := args[2].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("amqp.queueBind: exchange must be string")
+	}
+	routingKey, ok := args[3].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("amqp.queueBind: routingKey must be string")
+	}
+	e.amqpMu.Lock()
+	ch, ok := e.amqpChans[id]
+	e.amqpMu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("amqp.queueBind: unknown channel handle %d", id)
+	}
+	if err := ch.QueueBind(queue.Value, routingKey.Value, exchange.Value, false, nil); err != nil {
+		return nil, fmt.Errorf("amqp.queueBind: %w", err)
+	}
+	return runtime.Null{}, nil
+}
+
+func (e *Evaluator) amqpPublish(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 4 || len(args) > 5 {
+		return nil, fmt.Errorf("%s expects channel, exchange, routingKey, body, and optional opts", call.Callee.String())
+	}
+	id, err := handleID(args[0], "amqp channel")
+	if err != nil {
+		return nil, err
+	}
+	exchange, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("amqp.publish: exchange must be string")
+	}
+	routingKey, ok := args[2].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("amqp.publish: routingKey must be string")
+	}
+	var body []byte
+	switch b := args[3].(type) {
+	case runtime.String:
+		body = []byte(b.Value)
+	case runtime.Bytes:
+		body = b.Value
+	default:
+		return nil, fmt.Errorf("amqp.publish: body must be string or bytes")
+	}
+	contentType := "application/octet-stream"
+	persistent := true
+	if len(args) == 5 {
+		opts, ok := args[4].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("amqp.publish: opts must be dict")
+		}
+		if v := dictStringDefault(opts, "contentType", ""); v != "" {
+			contentType = v
+		}
+		persistent = dictBoolDefault(opts, "persistent", true)
+	}
+	e.amqpMu.Lock()
+	ch, ok := e.amqpChans[id]
+	e.amqpMu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("amqp.publish: unknown channel handle %d", id)
+	}
+	deliveryMode := uint8(amqp091.Persistent)
+	if !persistent {
+		deliveryMode = uint8(amqp091.Transient)
+	}
+	err = ch.PublishWithContext(context.Background(), exchange.Value, routingKey.Value, false, false, amqp091.Publishing{
+		ContentType:  contentType,
+		Body:         body,
+		DeliveryMode: deliveryMode,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("amqp.publish: %w", err)
+	}
+	return runtime.Null{}, nil
+}
+
+func (e *Evaluator) amqpGet(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects channel, queue, and optional autoAck", call.Callee.String())
+	}
+	id, err := handleID(args[0], "amqp channel")
+	if err != nil {
+		return nil, err
+	}
+	queue, ok := args[1].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("amqp.get: queue must be string")
+	}
+	autoAck := false
+	if len(args) == 3 {
+		b, ok := args[2].(runtime.Bool)
+		if !ok {
+			return nil, fmt.Errorf("amqp.get: autoAck must be bool")
+		}
+		autoAck = b.Value
+	}
+	e.amqpMu.Lock()
+	ch, ok := e.amqpChans[id]
+	e.amqpMu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("amqp.get: unknown channel handle %d", id)
+	}
+	msg, ok, err := ch.Get(queue.Value, autoAck)
+	if err != nil {
+		return nil, fmt.Errorf("amqp.get: %w", err)
+	}
+	if !ok {
+		return runtime.Null{}, nil
+	}
+	entries := map[string]runtime.DictEntry{}
+	bodyKey := runtime.String{Value: "body"}
+	entries["s"+"body"] = runtime.DictEntry{Key: bodyKey, Value: runtime.Bytes{Value: msg.Body}}
+	tagKey := runtime.String{Value: "deliveryTag"}
+	entries["s"+"deliveryTag"] = runtime.DictEntry{Key: tagKey, Value: runtime.NewInt64(int64(msg.DeliveryTag))}
+	ctKey := runtime.String{Value: "contentType"}
+	entries["s"+"contentType"] = runtime.DictEntry{Key: ctKey, Value: runtime.String{Value: msg.ContentType}}
+	rkKey := runtime.String{Value: "routingKey"}
+	entries["s"+"routingKey"] = runtime.DictEntry{Key: rkKey, Value: runtime.String{Value: msg.RoutingKey}}
+	exchKey := runtime.String{Value: "exchange"}
+	entries["s"+"exchange"] = runtime.DictEntry{Key: exchKey, Value: runtime.String{Value: msg.Exchange}}
+	return runtime.Dict{Entries: entries}, nil
+}
+
+func (e *Evaluator) amqpAck(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects channel and deliveryTag", call.Callee.String())
+	}
+	id, err := handleID(args[0], "amqp channel")
+	if err != nil {
+		return nil, err
+	}
+	tag, ok := args[1].(runtime.Int)
+	if !ok || !tag.Value.IsInt64() {
+		return nil, fmt.Errorf("amqp.ack: deliveryTag must be int")
+	}
+	e.amqpMu.Lock()
+	ch, ok := e.amqpChans[id]
+	e.amqpMu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("amqp.ack: unknown channel handle %d", id)
+	}
+	if err := ch.Ack(uint64(tag.Value.Int64()), false); err != nil {
+		return nil, fmt.Errorf("amqp.ack: %w", err)
+	}
+	return runtime.Null{}, nil
+}
+
+func (e *Evaluator) amqpClose(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects handle", call.Callee.String())
+	}
+	id, err := handleID(args[0], "amqp")
+	if err != nil {
+		return nil, err
+	}
+	e.amqpMu.Lock()
+	defer e.amqpMu.Unlock()
+	if ch, ok := e.amqpChans[id]; ok {
+		delete(e.amqpChans, id)
+		_ = ch.Close()
+		return runtime.Null{}, nil
+	}
+	if conn, ok := e.amqpConns[id]; ok {
+		delete(e.amqpConns, id)
+		_ = conn.Close()
+		return runtime.Null{}, nil
+	}
+	return runtime.Null{}, nil
+}
+
+func dictBoolDefault(d runtime.Dict, key string, def bool) bool {
+	for _, entry := range d.Entries {
+		k, ok := entry.Key.(runtime.String)
+		if !ok || k.Value != key {
+			continue
+		}
+		if b, ok := entry.Value.(runtime.Bool); ok {
+			return b.Value
+		}
+		return def
+	}
+	return def
+}
+
+func dictStringDefault(d runtime.Dict, key, def string) string {
+	for _, entry := range d.Entries {
+		k, ok := entry.Key.(runtime.String)
+		if !ok || k.Value != key {
+			continue
+		}
+		if s, ok := entry.Value.(runtime.String); ok {
+			return s.Value
+		}
+		return def
+	}
+	return def
+}
+
+type kafkaReaderHandle struct {
+	reader  *kafkago.Reader
+	pending kafkago.Message
+	hasMsg  bool
+}
+
+func dictStringList(d runtime.Dict, key string) []string {
+	for _, entry := range d.Entries {
+		k, ok := entry.Key.(runtime.String)
+		if !ok || k.Value != key {
+			continue
+		}
+		list, ok := entry.Value.(runtime.List)
+		if !ok {
+			return nil
+		}
+		out := make([]string, 0, len(list.Elements))
+		for _, el := range list.Elements {
+			if s, ok := el.(runtime.String); ok {
+				out = append(out, s.Value)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func (e *Evaluator) kafkaWriter(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects an options dict", call.Callee.String())
+	}
+	opts, ok := args[0].(runtime.Dict)
+	if !ok {
+		return nil, fmt.Errorf("kafka.writer: opts must be dict")
+	}
+	brokers := dictStringList(opts, "brokers")
+	if len(brokers) == 0 {
+		return nil, fmt.Errorf("kafka.writer: opts.brokers must be a non-empty list<string>")
+	}
+	topic := dictStringDefault(opts, "topic", "")
+	if topic == "" {
+		return nil, fmt.Errorf("kafka.writer: opts.topic is required")
+	}
+	w := &kafkago.Writer{
+		Addr:                   kafkago.TCP(brokers...),
+		Topic:                  topic,
+		Balancer:               &kafkago.Hash{},
+		AllowAutoTopicCreation: dictBoolDefault(opts, "autoCreateTopic", false),
+	}
+	e.kafkaMu.Lock()
+	defer e.kafkaMu.Unlock()
+	e.nextKafkaWriterID++
+	id := e.nextKafkaWriterID
+	e.kafkaWriters[id] = w
+	return runtime.NewInt64(id), nil
+}
+
+func (e *Evaluator) kafkaWrite(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects writer handle, value, and optional key", call.Callee.String())
+	}
+	id, err := handleID(args[0], "kafka writer")
+	if err != nil {
+		return nil, err
+	}
+	var value []byte
+	switch v := args[1].(type) {
+	case runtime.String:
+		value = []byte(v.Value)
+	case runtime.Bytes:
+		value = v.Value
+	default:
+		return nil, fmt.Errorf("kafka.write: value must be string or bytes")
+	}
+	var key []byte
+	if len(args) == 3 {
+		switch k := args[2].(type) {
+		case runtime.String:
+			key = []byte(k.Value)
+		case runtime.Bytes:
+			key = k.Value
+		case runtime.Null:
+		default:
+			return nil, fmt.Errorf("kafka.write: key must be string, bytes, or null")
+		}
+	}
+	e.kafkaMu.Lock()
+	w, ok := e.kafkaWriters[id]
+	e.kafkaMu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("kafka.write: unknown writer handle %d", id)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := w.WriteMessages(ctx, kafkago.Message{Key: key, Value: value}); err != nil {
+		return nil, fmt.Errorf("kafka.write: %w", err)
+	}
+	return runtime.Null{}, nil
+}
+
+func (e *Evaluator) kafkaReader(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects an options dict", call.Callee.String())
+	}
+	opts, ok := args[0].(runtime.Dict)
+	if !ok {
+		return nil, fmt.Errorf("kafka.reader: opts must be dict")
+	}
+	brokers := dictStringList(opts, "brokers")
+	if len(brokers) == 0 {
+		return nil, fmt.Errorf("kafka.reader: opts.brokers must be a non-empty list<string>")
+	}
+	topic := dictStringDefault(opts, "topic", "")
+	if topic == "" {
+		return nil, fmt.Errorf("kafka.reader: opts.topic is required")
+	}
+	groupID := dictStringDefault(opts, "groupId", "")
+	if groupID == "" {
+		return nil, fmt.Errorf("kafka.reader: opts.groupId is required")
+	}
+	r := kafkago.NewReader(kafkago.ReaderConfig{
+		Brokers: brokers,
+		Topic:   topic,
+		GroupID: groupID,
+	})
+	e.kafkaMu.Lock()
+	defer e.kafkaMu.Unlock()
+	e.nextKafkaReaderID++
+	id := e.nextKafkaReaderID
+	e.kafkaReaders[id] = &kafkaReaderHandle{reader: r}
+	return runtime.NewInt64(id), nil
+}
+
+func (e *Evaluator) kafkaRead(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 1 || len(args) > 2 {
+		return nil, fmt.Errorf("%s expects reader handle and optional timeoutMs", call.Callee.String())
+	}
+	id, err := handleID(args[0], "kafka reader")
+	if err != nil {
+		return nil, err
+	}
+	timeoutMs := int64(30000)
+	if len(args) == 2 {
+		n, ok := args[1].(runtime.Int)
+		if !ok || !n.Value.IsInt64() {
+			return nil, fmt.Errorf("kafka.read: timeoutMs must be int")
+		}
+		timeoutMs = n.Value.Int64()
+	}
+	e.kafkaMu.Lock()
+	handle, ok := e.kafkaReaders[id]
+	e.kafkaMu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("kafka.read: unknown reader handle %d", id)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
+	msg, err := handle.reader.FetchMessage(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return runtime.Null{}, nil
+		}
+		return nil, fmt.Errorf("kafka.read: %w", err)
+	}
+	handle.pending = msg
+	handle.hasMsg = true
+	entries := map[string]runtime.DictEntry{}
+	put := func(key string, value runtime.Value) {
+		k := runtime.String{Value: key}
+		entries["s"+key] = runtime.DictEntry{Key: k, Value: value}
+	}
+	put("value", runtime.Bytes{Value: msg.Value})
+	put("key", runtime.Bytes{Value: msg.Key})
+	put("topic", runtime.String{Value: msg.Topic})
+	put("partition", runtime.NewInt64(int64(msg.Partition)))
+	put("offset", runtime.NewInt64(msg.Offset))
+	return runtime.Dict{Entries: entries}, nil
+}
+
+func (e *Evaluator) kafkaCommit(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects reader handle", call.Callee.String())
+	}
+	id, err := handleID(args[0], "kafka reader")
+	if err != nil {
+		return nil, err
+	}
+	e.kafkaMu.Lock()
+	handle, ok := e.kafkaReaders[id]
+	e.kafkaMu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("kafka.commit: unknown reader handle %d", id)
+	}
+	if !handle.hasMsg {
+		return runtime.Null{}, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := handle.reader.CommitMessages(ctx, handle.pending); err != nil {
+		return nil, fmt.Errorf("kafka.commit: %w", err)
+	}
+	handle.hasMsg = false
+	return runtime.Null{}, nil
+}
+
+func (e *Evaluator) kafkaClose(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects a writer or reader handle", call.Callee.String())
+	}
+	id, err := handleID(args[0], "kafka")
+	if err != nil {
+		return nil, err
+	}
+	e.kafkaMu.Lock()
+	defer e.kafkaMu.Unlock()
+	if w, ok := e.kafkaWriters[id]; ok {
+		delete(e.kafkaWriters, id)
+		_ = w.Close()
+		return runtime.Null{}, nil
+	}
+	if r, ok := e.kafkaReaders[id]; ok {
+		delete(e.kafkaReaders, id)
+		_ = r.reader.Close()
+		return runtime.Null{}, nil
+	}
+	return runtime.Null{}, nil
 }
 
 func (e *Evaluator) httpServe(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -19511,7 +20862,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.length expects no arguments")
 			}
-			return runtime.NewInt64(int64(len(value.Entries))), nil
+			return runtime.SmallInt{Value: int64(len(value.Entries))}, nil
 		case "isEmpty":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.isEmpty expects no arguments")
@@ -19719,7 +21070,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("set.length expects no arguments")
 			}
-			return runtime.NewInt64(int64(len(value.Elements))), nil
+			return runtime.SmallInt{Value: int64(len(value.Elements))}, nil
 		case "isEmpty":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("set.isEmpty expects no arguments")
@@ -19807,7 +21158,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.length expects no arguments")
 			}
-			return runtime.NewInt64(int64(len(value.Elements))), nil
+			return runtime.SmallInt{Value: int64(len(value.Elements))}, nil
 		case "isEmpty":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.isEmpty expects no arguments")
@@ -20837,7 +22188,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("string.length expects no arguments")
 			}
-			return runtime.NewInt64(int64(len([]rune(value.Value)))), nil
+			return runtime.SmallInt{Value: int64(len([]rune(value.Value)))}, nil
 		case "isEmpty":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("string.isEmpty expects no arguments")
@@ -21070,7 +22421,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if byteIndex < 0 {
 				return runtime.NewInt64(-1), nil
 			}
-			return runtime.NewInt64(int64(len([]rune(value.Value[:byteIndex])))), nil
+			return runtime.SmallInt{Value: int64(len([]rune(value.Value[:byteIndex])))}, nil
 		case "substring", "slice":
 			if len(args) < 1 || len(args) > 2 {
 				return nil, fmt.Errorf("string.%s expects (start[, end])", name)
@@ -21127,7 +22478,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if byteIndex < 0 {
 				return runtime.NewInt64(-1), nil
 			}
-			return runtime.NewInt64(int64(len([]rune(value.Value[:byteIndex])))), nil
+			return runtime.SmallInt{Value: int64(len([]rune(value.Value[:byteIndex])))}, nil
 		case "reverse":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("string.reverse expects no arguments")
@@ -21153,7 +22504,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("bytes.length expects no arguments")
 			}
-			return runtime.NewInt64(int64(len(value.Value))), nil
+			return runtime.SmallInt{Value: int64(len(value.Value))}, nil
 		case "isEmpty":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("bytes.isEmpty expects no arguments")
@@ -24354,6 +25705,9 @@ func orderedSetValues(value runtime.Set) []runtime.Value {
 }
 
 func indexInt(value runtime.Value) (int, error) {
+	if small, ok := value.(runtime.SmallInt); ok {
+		return int(small.Value), nil
+	}
 	intValue, ok := value.(runtime.Int)
 	if !ok {
 		return 0, fmt.Errorf("index must be int, got %s", value.TypeName())
