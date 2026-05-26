@@ -257,6 +257,7 @@ const (
 	// resolved at deferred-dispatch time so the names can be reordered
 	// against the underlying function's ParamNames.
 	OpDeferCallableCallNamed
+	OpImportFrom
 )
 
 type Instruction struct {

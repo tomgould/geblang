@@ -376,6 +376,29 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		// itself, which is a harmless no-op in canonicalModule().
 		c.moduleAliases[stmt.ModuleName()] = strings.Join(stmt.Path, ".")
 		return nil
+	case *ast.FromImportStatement:
+		if isEvaluatorOnlyBuiltinImport(stmt.Path) {
+			return c.withStatementLocation(stmt, fmt.Errorf("bytecode compiler does not support builtin module %s yet", strings.Join(stmt.Path, ".")))
+		}
+		canonical := strings.Join(stmt.Path, ".")
+		native := isBytecodeImportModule(stmt.Path)
+		canonicalIdx := int64(len(c.chunk.Constants))
+		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: canonical})
+		nativeFlag := int64(0)
+		if native {
+			nativeFlag = 1
+		}
+		operands := []int64{canonicalIdx, nativeFlag, int64(len(stmt.Names))}
+		for _, item := range stmt.Names {
+			if item.Name == nil {
+				return c.withStatementLocation(stmt, fmt.Errorf("from %s import: empty name", canonical))
+			}
+			nameIdx := int64(len(c.chunk.Constants))
+			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: item.Name.Value})
+			operands = append(operands, nameIdx, int64(c.globalSlot(item.Local())))
+		}
+		c.emitAt(OpImportFrom, stmt.Token.Line, stmt.Token.Column, operands...)
+		return nil
 	case *ast.ExportStatement:
 		if err := c.compileStatement(stmt.Statement); err != nil {
 			return err

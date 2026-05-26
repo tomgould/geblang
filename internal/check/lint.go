@@ -8,10 +8,12 @@ import (
 )
 
 type lintImport struct {
-	name   string
-	token  ast.ImportStatement
-	used   bool
-	module string
+	name    string
+	line    int
+	column  int
+	used    bool
+	module  string
+	message string
 }
 
 // lintProgram runs the package's optional lint rules:
@@ -21,13 +23,37 @@ func lintProgram(file string, program *ast.Program) []Diagnostic {
 	diagnostics := []Diagnostic{}
 	imports := map[string]*lintImport{}
 	for _, stmt := range program.Statements {
-		if imp, ok := stmt.(*ast.ImportStatement); ok {
+		switch imp := stmt.(type) {
+		case *ast.ImportStatement:
 			name := imp.ModuleName()
-			imports[strings.ToLower(name)] = &lintImport{name: name, token: *imp, module: strings.Join(imp.Path, ".")}
+			module := strings.Join(imp.Path, ".")
+			imports[strings.ToLower(name)] = &lintImport{
+				name:    name,
+				line:    imp.Token.Line,
+				column:  imp.Token.Column,
+				module:  module,
+				message: fmt.Sprintf("import %s is not used", module),
+			}
+		case *ast.FromImportStatement:
+			module := strings.Join(imp.Path, ".")
+			for _, item := range imp.Names {
+				if item.Name == nil {
+					continue
+				}
+				local := item.Local()
+				imports[strings.ToLower(local)] = &lintImport{
+					name:    local,
+					line:    item.Name.Token.Line,
+					column:  item.Name.Token.Column,
+					module:  module,
+					message: fmt.Sprintf("from %s import %s: %s is not used", module, item.Name.Value, local),
+				}
+			}
 		}
 	}
 	for _, stmt := range program.Statements {
-		if _, ok := stmt.(*ast.ImportStatement); ok {
+		switch stmt.(type) {
+		case *ast.ImportStatement, *ast.FromImportStatement:
 			continue
 		}
 		lintMarkStatementIdentifiers(stmt, imports)
@@ -36,11 +62,11 @@ func lintProgram(file string, program *ast.Program) []Diagnostic {
 		if !imp.used {
 			diagnostics = append(diagnostics, Diagnostic{
 				File:     file,
-				Line:     imp.token.Token.Line,
-				Column:   imp.token.Token.Column,
+				Line:     imp.line,
+				Column:   imp.column,
 				Severity: SeverityWarning,
 				Rule:     "unused-import",
-				Message:  fmt.Sprintf("import %s is not used", imp.module),
+				Message:  imp.message,
 			})
 		}
 	}
@@ -340,6 +366,8 @@ func statementPosition(stmt ast.Statement) (int, int) {
 	case *ast.ExportStatement:
 		return s.Token.Line, s.Token.Column
 	case *ast.ImportStatement:
+		return s.Token.Line, s.Token.Column
+	case *ast.FromImportStatement:
 		return s.Token.Line, s.Token.Column
 	case *ast.DeclarationStatement:
 		return s.Token.Line, s.Token.Column

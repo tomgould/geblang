@@ -1955,6 +1955,16 @@ io.println(bytes.toHex(bytes.fromBase64Url("-_8")));
 `, "-_8\n-_8\nfbff\n")
 }
 
+func TestParityFromImportNative(t *testing.T) {
+	runParity(t, `import io;
+from crypt import passwordHash, passwordVerify as verify;
+let h = passwordHash("hunter2", {"algorithm": "bcrypt", "cost": 4});
+io.println(h.startsWith("$2y$04$"));
+io.println(verify("hunter2", h));
+io.println(verify("wrong", h));
+`, "true\ntrue\nfalse\n")
+}
+
 func TestParityPasswordHashRoundTrip(t *testing.T) {
 	runParity(t, `import io;
 import crypt;

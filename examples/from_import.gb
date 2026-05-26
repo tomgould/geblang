@@ -1,0 +1,11 @@
+import io;
+import bytes;
+from crypt import passwordHash, passwordVerify;
+from crypt import passwordHash as makeHash, passwordVerify as check;
+from bytes import toHex as hex;
+
+let h = passwordHash("hunter2");
+io.println("default-bound: " + h.startsWith("$2y$").toString());
+io.println("verify ok:    " + passwordVerify("hunter2", h).toString());
+io.println("alias verify: " + check("hunter2", makeHash("hunter2")).toString());
+io.println("bytes alias:  " + hex(bytes.fromString("hi")));

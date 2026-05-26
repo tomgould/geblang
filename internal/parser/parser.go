@@ -197,6 +197,9 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseEnumStatement()
 	}
 
+	if p.looksLikeFromImport() {
+		return p.parseFromImportStatement()
+	}
 	if p.looksLikeTypedDeclaration() {
 		return p.parseDeclarationStatement()
 	}
@@ -204,6 +207,29 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseMultiAssignStatement()
 	}
 	return p.parseExpressionStatement(true)
+}
+
+// looksLikeFromImport reports whether the upcoming tokens form a
+// from-import statement: `from IDENT (. IDENT)* import ...`. `from`
+// stays an identifier in the lexer so existing `int from`-style
+// parameter names still parse. Path segments accept any identifier-
+// name token so reserved words like `not` work as path components,
+// matching the existing parsePath helper.
+func (p *Parser) looksLikeFromImport() bool {
+	if !p.curTokenIs(token.Ident) || p.curToken.Literal != "from" {
+		return false
+	}
+	if !isIdentifierNameToken(p.peekToken.Type) {
+		return false
+	}
+	idx := p.position
+	for idx < len(p.tokens) && p.tokens[idx].Type == token.Dot {
+		if idx+1 >= len(p.tokens) || !isIdentifierNameToken(p.tokens[idx+1].Type) {
+			return false
+		}
+		idx += 2
+	}
+	return idx < len(p.tokens) && p.tokens[idx].Type == token.Import
 }
 
 // looksLikeMultiAssign reports whether the upcoming tokens form a
@@ -362,6 +388,51 @@ func (p *Parser) parseImportStatement() ast.Statement {
 	}
 	p.expectPeek(token.Semicolon)
 	return stmt
+}
+
+func (p *Parser) parseFromImportStatement() ast.Statement {
+	stmt := &ast.FromImportStatement{Token: p.curToken}
+	p.nextToken() // advance to first path component
+	stmt.Path = p.parsePathHere()
+	if !p.expectPeek(token.Import) {
+		return stmt
+	}
+	for {
+		if !p.expectPeek(token.Ident) {
+			return stmt
+		}
+		name := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		entry := ast.FromImportName{Name: name}
+		if p.peekTokenIs(token.As) {
+			p.nextToken()
+			if !p.expectPeek(token.Ident) {
+				return stmt
+			}
+			entry.Alias = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		}
+		stmt.Names = append(stmt.Names, entry)
+		if !p.peekTokenIs(token.Comma) {
+			break
+		}
+		p.nextToken()
+	}
+	p.expectPeek(token.Semicolon)
+	return stmt
+}
+
+// parsePathHere reads NAME (DOT NAME)* starting at the current token.
+// Unlike parsePath which is called with curToken on `import` or
+// `module`, this variant assumes curToken is already the first name.
+func (p *Parser) parsePathHere() []string {
+	parts := []string{p.curToken.Literal}
+	for p.peekTokenIs(token.Dot) {
+		p.nextToken()
+		if !p.expectPeekIdentifierName() {
+			break
+		}
+		parts = append(parts, p.curToken.Literal)
+	}
+	return parts
 }
 
 func (p *Parser) parseExportStatement() ast.Statement {

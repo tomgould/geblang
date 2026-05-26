@@ -1659,6 +1659,10 @@ func (vm *VM) Run() (err error) {
 			if err := vm.importModule(instruction); err != nil {
 				return err
 			}
+		case OpImportFrom:
+			if err := vm.importFrom(instruction); err != nil {
+				return err
+			}
 		case OpMakeClosure:
 			if len(instruction.Operands) < 2 {
 				return vm.runtimeError(instruction, "make closure instruction has invalid operands")
@@ -2843,6 +2847,87 @@ func (vm *VM) makeError(instruction Instruction) error {
 	}
 	vm.push(runtime.Error{Class: class, Message: message})
 	return nil
+}
+
+func (vm *VM) importFrom(instruction Instruction) error {
+	if len(instruction.Operands) < 3 {
+		return vm.runtimeError(instruction, "import-from instruction has invalid operands")
+	}
+	canonical, err := vm.constantStringAt(instruction, instruction.Operands[0], "module name must be string")
+	if err != nil {
+		return err
+	}
+	isNative := instruction.Operands[1] != 0
+	count := int(instruction.Operands[2])
+	if len(instruction.Operands) != 3+2*count {
+		return vm.runtimeError(instruction, "import-from instruction operand count mismatch")
+	}
+	var module *runtime.Module
+	if !isNative {
+		if vm.moduleLoader == nil {
+			return vm.runtimeError(instruction, "bytecode module loader is not configured")
+		}
+		loaded, err := vm.moduleLoader.LoadModule(canonical, "")
+		if err != nil {
+			return vm.runtimeError(instruction, "%s", err.Error())
+		}
+		module = loaded
+	}
+	for i := 0; i < count; i++ {
+		nameIdx := instruction.Operands[3+2*i]
+		slot := instruction.Operands[3+2*i+1]
+		name, err := vm.constantStringAt(instruction, nameIdx, "import-from name must be string")
+		if err != nil {
+			return err
+		}
+		var value runtime.Value
+		if isNative {
+			key := native.Key(canonical, name)
+			fn := vm.natives.LookupKey(key)
+			if fn == nil && vm.statefulNative != nil {
+				value, err = vm.wrapStatefulNativeImport(canonical, name)
+				if err != nil {
+					return vm.runtimeError(instruction, "%s", err.Error())
+				}
+			} else if fn != nil {
+				captured := fn
+				value = runtime.Function{
+					Name: canonical + "." + name,
+					Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+						return captured(args)
+					},
+				}
+			} else {
+				return vm.runtimeError(instruction, "from %s import %s: %s is not exported", canonical, name, name)
+			}
+		} else {
+			v, ok := module.Exports[name]
+			if !ok {
+				return vm.runtimeError(instruction, "from %s import %s: %s is not exported", canonical, name, name)
+			}
+			value = v
+		}
+		if err := vm.setGlobal(slot, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// wrapStatefulNativeImport bridges from-imports of stateful native
+// modules (http, db, etc.) by routing each call back through the
+// statefulNative caller exposed on the VM.
+func (vm *VM) wrapStatefulNativeImport(canonical, name string) (runtime.Value, error) {
+	caller := vm.statefulNative
+	if caller == nil {
+		return nil, fmt.Errorf("from %s import %s: stateful natives unavailable", canonical, name)
+	}
+	return runtime.Function{
+		Name: canonical + "." + name,
+		Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+			return caller.CallBuiltin(canonical, name, args, nil)
+		},
+	}, nil
 }
 
 func (vm *VM) importModule(instruction Instruction) error {

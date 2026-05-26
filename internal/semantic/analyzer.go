@@ -191,6 +191,7 @@ func isAllowedAtModuleTopLevel(stmt ast.Statement) bool {
 	switch s := stmt.(type) {
 	case *ast.ModuleStatement,
 		*ast.ImportStatement,
+		*ast.FromImportStatement,
 		*ast.InitStatement,
 		*ast.TypeAliasStatement,
 		*ast.DeclarationStatement,
@@ -219,6 +220,8 @@ func statementToken(stmt ast.Statement) token.Token {
 	case *ast.ModuleStatement:
 		return s.Token
 	case *ast.ImportStatement:
+		return s.Token
+	case *ast.FromImportStatement:
 		return s.Token
 	case *ast.ExportStatement:
 		return s.Token

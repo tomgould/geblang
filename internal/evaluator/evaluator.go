@@ -1102,6 +1102,84 @@ func (e *Evaluator) evalImportStatement(stmt *ast.ImportStatement, env *runtime.
 	return signal{}, nil
 }
 
+func (e *Evaluator) evalFromImportStatement(stmt *ast.FromImportStatement, env *runtime.Environment) (signal, error) {
+	canonical := strings.Join(stmt.Path, ".")
+	if canonical == "" {
+		return signal{}, fmt.Errorf("empty import path")
+	}
+	if _, ok := e.builtins[canonical]; ok {
+		moduleClasses := e.builtinModuleValue(canonical, "").Exports
+		functions := e.builtins[canonical]
+		for _, item := range stmt.Names {
+			if item.Name == nil {
+				continue
+			}
+			name := item.Name.Value
+			local := item.Local()
+			value, ok := e.resolveBuiltinExport(moduleClasses, functions, canonical, name)
+			if !ok {
+				return signal{}, fmt.Errorf("from %s import %s: %s is not exported", canonical, name, name)
+			}
+			if err := env.Define(local, value, true); err != nil {
+				if err := env.Assign(local, value); err != nil {
+					return signal{}, err
+				}
+			}
+		}
+		e.imports[canonical] = true
+		return signal{}, nil
+	}
+	module, err := e.loadUserModule(canonical, "")
+	if err != nil {
+		return signal{}, err
+	}
+	for _, item := range stmt.Names {
+		if item.Name == nil {
+			continue
+		}
+		name := item.Name.Value
+		local := item.Local()
+		value, ok := module.Exports[name]
+		if !ok {
+			return signal{}, fmt.Errorf("from %s import %s: %s is not exported", canonical, name, name)
+		}
+		if err := env.Define(local, value, true); err != nil {
+			if err := env.Assign(local, value); err != nil {
+				return signal{}, err
+			}
+		}
+	}
+	return signal{}, nil
+}
+
+// resolveBuiltinExport finds a named symbol on a native module: a
+// class registered in builtinModuleValue's Exports, or a registry
+// function wrapped as a callable runtime.Function value.
+func (e *Evaluator) resolveBuiltinExport(classes map[string]runtime.Value, functions map[string]builtinFunc, canonical, name string) (runtime.Value, bool) {
+	if value, ok := classes[name]; ok {
+		return value, true
+	}
+	if fn, ok := functions[name]; ok {
+		return e.wrapBuiltinAsFunction(canonical, name, fn), true
+	}
+	return nil, false
+}
+
+func (e *Evaluator) wrapBuiltinAsFunction(canonical, name string, fn builtinFunc) runtime.Function {
+	syntheticCall := &ast.CallExpression{
+		Callee: &ast.SelectorExpression{
+			Object: &ast.Identifier{Value: canonical},
+			Name:   &ast.Identifier{Value: name},
+		},
+	}
+	return runtime.Function{
+		Name: canonical + "." + name,
+		Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+			return fn(syntheticCall, args)
+		},
+	}
+}
+
 func (e *Evaluator) builtinModuleValue(canonical, alias string) *runtime.Module {
 	exports := map[string]runtime.Value{}
 	switch canonical {
@@ -1704,6 +1782,8 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 		return signal{}, nil
 	case *ast.ImportStatement:
 		return e.evalImportStatement(stmt, env)
+	case *ast.FromImportStatement:
+		return e.evalFromImportStatement(stmt, env)
 	case *ast.ExportStatement:
 		return e.evalStatement(stmt.Statement, env)
 	case *ast.InitStatement:

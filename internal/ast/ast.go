@@ -163,6 +163,45 @@ func (s *ImportStatement) String() string {
 	return out + ";"
 }
 
+type FromImportName struct {
+	Name  *Identifier
+	Alias *Identifier
+}
+
+func (n FromImportName) Local() string {
+	if n.Alias != nil {
+		return n.Alias.Value
+	}
+	if n.Name != nil {
+		return n.Name.Value
+	}
+	return ""
+}
+
+type FromImportStatement struct {
+	Token token.Token
+	Path  []string
+	Names []FromImportName
+}
+
+func (*FromImportStatement) statementNode()         {}
+func (s *FromImportStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *FromImportStatement) String() string {
+	out := "from " + strings.Join(s.Path, ".") + " import "
+	parts := make([]string, 0, len(s.Names))
+	for _, n := range s.Names {
+		piece := ""
+		if n.Name != nil {
+			piece = n.Name.String()
+		}
+		if n.Alias != nil {
+			piece += " as " + n.Alias.String()
+		}
+		parts = append(parts, piece)
+	}
+	return out + strings.Join(parts, ", ") + ";"
+}
+
 type ExportStatement struct {
 	Token     token.Token
 	Statement Statement

@@ -128,6 +128,66 @@ func TestSourceReturnsParseDiagnostics(t *testing.T) {
 	}
 }
 
+func TestSourceFromImportFlagsMissingNativeExport(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	source := "from crypt import passwordHash, notARealFunction;\n"
+	opts := Options{
+		Resolver:    modules.NewResolver([]string{dir}),
+		CrossModule: true,
+		NativeSymbols: map[string]map[string]struct{}{
+			"crypt": {"passwordHash": {}, "passwordVerify": {}},
+		},
+	}
+	_, diags := Source(file, source, opts)
+	if !hasDiag(diags, "import", "crypt has no exported member notARealFunction") {
+		t.Fatalf("expected missing-export diagnostic, got %+v", diags)
+	}
+	for _, d := range diags {
+		if d.Rule == "import" && strings.Contains(d.Message, "passwordHash") {
+			t.Fatalf("known export passwordHash should not be flagged: %+v", d)
+		}
+	}
+}
+
+func TestSourceFromImportFlagsMissingProjectSymbol(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "util.gb"), []byte("func helper(): int { return 1; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	main := filepath.Join(dir, "main.gb")
+	body := "from util import helper, missing;\n"
+	opts := Options{Resolver: modules.NewResolver([]string{dir}), CrossModule: true}
+	_, diags := Source(main, body, opts)
+	if !hasDiag(diags, "import", "util has no exported member missing") {
+		t.Fatalf("expected missing-export diagnostic, got %+v", diags)
+	}
+}
+
+func TestSourceFromImportWarnsOnUnusedAlias(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	source := "from crypt import passwordHash as unused;\n"
+	opts := Options{Lint: true, Resolver: modules.NewResolver([]string{dir})}
+	_, diags := Source(file, source, opts)
+	if !hasDiag(diags, "unused-import", "from crypt import passwordHash: unused is not used") {
+		t.Fatalf("expected unused-from-import warning, got %+v", diags)
+	}
+}
+
+func TestSourceFromImportMarksAliasAsUsed(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	source := "from crypt import passwordHash;\nlet x = passwordHash(\"hi\");\n"
+	opts := Options{Lint: true, Resolver: modules.NewResolver([]string{dir})}
+	_, diags := Source(file, source, opts)
+	for _, d := range diags {
+		if d.Rule == "unused-import" {
+			t.Fatalf("referenced from-import flagged as unused: %+v", d)
+		}
+	}
+}
+
 func hasDiag(diags []Diagnostic, rule, contains string) bool {
 	for _, d := range diags {
 		if d.Rule == rule && strings.Contains(d.Message, contains) {

@@ -133,21 +133,85 @@ func exportedName(stmt ast.Statement) string {
 // their AST via opts.Resolver and ModuleCache.
 func checkCrossModuleSymbols(file string, program *ast.Program, opts Options) []Diagnostic {
 	aliases := collectImportAliases(program)
-	if len(aliases) == 0 {
-		return nil
-	}
 	cache := opts.ModuleCache
 	if cache == nil {
 		cache = NewModuleCache()
 	}
-	diags := []Diagnostic{}
+	diags := checkFromImportSymbols(program, opts, cache)
+	if len(aliases) == 0 {
+		return diagsWithFile(diags, file)
+	}
 	for _, stmt := range program.Statements {
-		if _, ok := stmt.(*ast.ImportStatement); ok {
+		switch stmt.(type) {
+		case *ast.ImportStatement, *ast.FromImportStatement:
 			continue
 		}
 		diags = append(diags, walkStatementForCrossModule(stmt, aliases, opts, cache)...)
 	}
 	return diagsWithFile(diags, file)
+}
+
+// checkFromImportSymbols flags each `from M import N` whose N is not
+// exported by M. Uses opts.NativeSymbols for native modules and the
+// module cache for project modules.
+func checkFromImportSymbols(program *ast.Program, opts Options, cache *ModuleCache) []Diagnostic {
+	diags := []Diagnostic{}
+	for _, stmt := range program.Statements {
+		from, ok := stmt.(*ast.FromImportStatement)
+		if !ok {
+			continue
+		}
+		canonical := joinPath(from.Path)
+		if canonical == "" {
+			continue
+		}
+		native := IsNativeImport(canonical)
+		exports, lookup := resolveExportSet(canonical, native, opts, cache)
+		if !lookup {
+			continue
+		}
+		for _, item := range from.Names {
+			if item.Name == nil {
+				continue
+			}
+			if _, exists := exports[item.Name.Value]; exists {
+				continue
+			}
+			diags = append(diags, Diagnostic{
+				Line:     item.Name.Token.Line,
+				Column:   item.Name.Token.Column,
+				Severity: SeverityError,
+				Rule:     "import",
+				Message:  fmt.Sprintf("%s has no exported member %s", canonical, item.Name.Value),
+			})
+		}
+	}
+	return diags
+}
+
+func resolveExportSet(canonical string, native bool, opts Options, cache *ModuleCache) (map[string]struct{}, bool) {
+	if native {
+		if opts.NativeSymbols == nil {
+			return nil, false
+		}
+		symbols, ok := opts.NativeSymbols[canonical]
+		if !ok {
+			return nil, false
+		}
+		return symbols, true
+	}
+	if opts.Resolver == nil {
+		return nil, false
+	}
+	path, err := opts.Resolver.Resolve(canonical)
+	if err != nil {
+		return nil, false
+	}
+	_, exports, err := cache.load(path)
+	if err != nil {
+		return nil, false
+	}
+	return exports, true
 }
 
 func diagsWithFile(diags []Diagnostic, file string) []Diagnostic {
@@ -167,13 +231,11 @@ type importAlias struct {
 func collectImportAliases(program *ast.Program) map[string]importAlias {
 	out := map[string]importAlias{}
 	for _, stmt := range program.Statements {
-		imp, ok := stmt.(*ast.ImportStatement)
-		if !ok {
-			continue
+		if imp, ok := stmt.(*ast.ImportStatement); ok {
+			alias := imp.ModuleName()
+			canonical := joinPath(imp.Path)
+			out[alias] = importAlias{canonical: canonical, native: IsNativeImport(canonical)}
 		}
-		alias := imp.ModuleName()
-		canonical := joinPath(imp.Path)
-		out[alias] = importAlias{canonical: canonical, native: IsNativeImport(canonical)}
 	}
 	return out
 }

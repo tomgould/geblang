@@ -481,6 +481,73 @@ func TestParserGenericCallExpression(t *testing.T) {
 	}
 }
 
+func TestParserFromImportSingle(t *testing.T) {
+	p := parser.New(lexer.New("from crypt import passwordHash;\n"))
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) != 0 {
+		t.Fatalf("parser errors: %v", errs)
+	}
+	stmt, ok := prog.Statements[0].(*ast.FromImportStatement)
+	if !ok {
+		t.Fatalf("expected FromImportStatement, got %T", prog.Statements[0])
+	}
+	if len(stmt.Path) != 1 || stmt.Path[0] != "crypt" {
+		t.Fatalf("path: got %v want [crypt]", stmt.Path)
+	}
+	if len(stmt.Names) != 1 || stmt.Names[0].Name.Value != "passwordHash" || stmt.Names[0].Alias != nil {
+		t.Fatalf("names: got %+v", stmt.Names)
+	}
+	if stmt.Names[0].Local() != "passwordHash" {
+		t.Fatalf("local: got %q want passwordHash", stmt.Names[0].Local())
+	}
+}
+
+func TestParserFromImportMultipleWithAlias(t *testing.T) {
+	p := parser.New(lexer.New("from crypt import passwordHash, passwordVerify as verify;\n"))
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) != 0 {
+		t.Fatalf("parser errors: %v", errs)
+	}
+	stmt := prog.Statements[0].(*ast.FromImportStatement)
+	if len(stmt.Names) != 2 {
+		t.Fatalf("expected 2 names, got %d", len(stmt.Names))
+	}
+	if stmt.Names[0].Name.Value != "passwordHash" || stmt.Names[0].Alias != nil {
+		t.Fatalf("first name: %+v", stmt.Names[0])
+	}
+	if stmt.Names[1].Name.Value != "passwordVerify" || stmt.Names[1].Alias == nil || stmt.Names[1].Alias.Value != "verify" {
+		t.Fatalf("second name: %+v", stmt.Names[1])
+	}
+}
+
+func TestParserFromImportDottedPath(t *testing.T) {
+	p := parser.New(lexer.New("from a.b.c import x;\n"))
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) != 0 {
+		t.Fatalf("parser errors: %v", errs)
+	}
+	stmt := prog.Statements[0].(*ast.FromImportStatement)
+	if len(stmt.Path) != 3 {
+		t.Fatalf("path length: got %d want 3", len(stmt.Path))
+	}
+}
+
+func TestParserPreservesFromAsIdentifier(t *testing.T) {
+	src := `func nextMarker(string source, int from): int { return from + 1; }
+`
+	p := parser.New(lexer.New(src))
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) != 0 {
+		t.Fatalf("parser errors: %v", errs)
+	}
+	if len(prog.Statements) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(prog.Statements))
+	}
+	if _, ok := prog.Statements[0].(*ast.FunctionStatement); !ok {
+		t.Fatalf("expected FunctionStatement, got %T", prog.Statements[0])
+	}
+}
+
 func TestParserLessThanComparisonStillParses(t *testing.T) {
 	cases := []string{
 		`let a = x < y;`,

@@ -2,6 +2,15 @@
 
 ## 1.4.2
 
+### Language
+
+- Selective imports: `from X import Y;`, `from X import Y, Z;`,
+  `from X import Y as Z;`. Binds the named symbols into the current
+  scope without the module namespace prefix. The source module itself
+  is not bound by the from-import - pair with `import X;` when you
+  need both. `from` is a soft keyword so existing identifiers named
+  `from` (function parameters, class fields) still parse.
+
 ### Bug fixes
 
 - REPL: left / right arrows now follow the line correctly when the

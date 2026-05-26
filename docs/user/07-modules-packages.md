@@ -20,6 +20,30 @@ import json; # harmless
 # json = {}; # invalid: imported module bindings are constant
 ```
 
+## Selective imports
+
+`from X import Y` binds named symbols from a module into the current
+scope without the namespace prefix. Multiple names may share one
+statement and each name supports an `as` alias.
+
+```gb
+from crypt import passwordHash;
+from crypt import passwordHash, passwordVerify;
+from crypt import passwordVerify as verify;
+from bytes import toHex as hex;
+
+let h = passwordHash("hunter2");
+io.println(verify("hunter2", h));   # true
+io.println(hex(bytes.fromString("hi")));  # "6869"
+```
+
+The form is module-as-source, not module-as-binding: `from crypt
+import passwordHash` does not bind `crypt` itself. Use `import
+crypt;` alongside if you need both the namespace and a hoisted name.
+
+`from` is a soft keyword: existing identifiers named `from` (function
+parameters, class fields) keep working unchanged.
+
 ## Exports
 
 User modules export declarations explicitly:

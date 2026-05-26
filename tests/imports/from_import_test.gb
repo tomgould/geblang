@@ -1,0 +1,36 @@
+/**
+ * @title Selective imports (1.4.2)
+ * @summary from X import Y[, Z [as A]]
+ */
+import test;
+import bytes;
+from crypt import passwordHash, passwordVerify;
+from crypt import passwordVerify as verify;
+from bytes import toHex as hex;
+
+class FromImportTest extends test.Test {
+    @test
+    func bindsSingleNativeFunction(): void {
+        let h = passwordHash("hunter2");
+        this.assertTrue(h.startsWith("$2y$"));
+    }
+
+    @test
+    func bindsMultipleNativeFunctionsInOneStatement(): void {
+        let h = passwordHash("hunter2");
+        this.assertTrue(passwordVerify("hunter2", h));
+        this.assertEquals(false, passwordVerify("wrong", h));
+    }
+
+    @test
+    func aliasMakesRenamedBinding(): void {
+        let h = passwordHash("hunter2");
+        this.assertTrue(verify("hunter2", h));
+    }
+
+    @test
+    func bindsBytesModuleHelperWithAlias(): void {
+        let raw = bytes.fromString("hi");
+        this.assertEquals("6869", hex(raw));
+    }
+}

@@ -158,23 +158,37 @@ func parseParserError(msg string) (line, col int, text string) {
 func checkImports(file string, program *ast.Program, resolver *modules.Resolver) []Diagnostic {
 	diags := []Diagnostic{}
 	for _, stmt := range program.Statements {
-		imp, ok := stmt.(*ast.ImportStatement)
-		if !ok {
-			continue
-		}
-		canonical := strings.Join(imp.Path, ".")
-		if canonical == "" || IsNativeImport(canonical) {
-			continue
-		}
-		if _, err := resolver.Resolve(canonical); err != nil {
-			diags = append(diags, Diagnostic{
-				File:     file,
-				Line:     imp.Token.Line,
-				Column:   imp.Token.Column,
-				Severity: SeverityError,
-				Rule:     "import",
-				Message:  fmt.Sprintf("cannot resolve import %s", canonical),
-			})
+		switch imp := stmt.(type) {
+		case *ast.ImportStatement:
+			canonical := strings.Join(imp.Path, ".")
+			if canonical == "" || IsNativeImport(canonical) {
+				continue
+			}
+			if _, err := resolver.Resolve(canonical); err != nil {
+				diags = append(diags, Diagnostic{
+					File:     file,
+					Line:     imp.Token.Line,
+					Column:   imp.Token.Column,
+					Severity: SeverityError,
+					Rule:     "import",
+					Message:  fmt.Sprintf("cannot resolve import %s", canonical),
+				})
+			}
+		case *ast.FromImportStatement:
+			canonical := strings.Join(imp.Path, ".")
+			if canonical == "" || IsNativeImport(canonical) {
+				continue
+			}
+			if _, err := resolver.Resolve(canonical); err != nil {
+				diags = append(diags, Diagnostic{
+					File:     file,
+					Line:     imp.Token.Line,
+					Column:   imp.Token.Column,
+					Severity: SeverityError,
+					Rule:     "import",
+					Message:  fmt.Sprintf("cannot resolve import %s", canonical),
+				})
+			}
 		}
 	}
 	return diags

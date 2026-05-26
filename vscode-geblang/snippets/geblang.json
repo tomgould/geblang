@@ -199,6 +199,13 @@
         ],
         "description": "Module import"
     },
+    "From-import": {
+        "prefix": "fromimport",
+        "body": [
+            "from ${1:module} import ${2:name};"
+        ],
+        "description": "Bind selected symbols from a module"
+    },
     "Module skeleton": {
         "prefix": "module",
         "body": [
