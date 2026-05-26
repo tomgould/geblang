@@ -8,6 +8,7 @@ import (
 
 	"geblang/internal/bundle"
 	"geblang/internal/bytecode"
+	"geblang/internal/check"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
 	"geblang/internal/parser"
@@ -67,7 +68,7 @@ func runBuild(args []string) {
 		os.Exit(1)
 	}
 
-	allModules, err := bundle.WalkImports(entry, entryPath, resolver, isNativeImport)
+	allModules, err := bundle.WalkImports(entry, entryPath, resolver, check.IsNativeImport)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "geblang build: %v\n", err)
 		os.Exit(1)

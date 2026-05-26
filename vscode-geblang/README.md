@@ -5,7 +5,21 @@ Visual Studio Code extension for [Geblang](https://github.com/dgebler/geblang).
 ## Features
 
 - Syntax highlighting for `.gb` files
-- Real-time diagnostics (parse and semantic errors) via LSP
+- Real-time diagnostics via LSP, debounced at 200 ms:
+  parse and semantic errors, bytecode type errors, unresolved imports,
+  unused imports (warning), and cross-module symbol checks
+  (`foo.bar()` is flagged when `bar` isn't exported by `foo`).
+- **Quick-fix** for unresolved imports: when you type
+  `import bytse;`, the lightbulb offers `bytes` as a replacement
+  (and ranks workspace modules alongside the stdlib).
+- **Go to Definition**, **Find References** (whole-file, whole-word
+  matches), and **Rename Symbol** (`F2`, whole-file) for the
+  identifier under the cursor.
+- **Workspace Symbol Search** (`Ctrl-T` / `Cmd-T`) across every
+  `.gb` file in the open folder.
+- **Language Server output channel**: View -> Output ->
+  "Geblang Language Server". A status-bar item shows the LSP state
+  (starting / running / error) and clicks through to the channel.
 - Step debugging via DAP: breakpoints, step over/into/out, variable inspection
 - **Test Explorer**: `@test`-decorated methods inside `class X extends test.Test`
   appear in the Testing view; run individual tests or whole classes with the
@@ -14,7 +28,9 @@ Visual Studio Code extension for [Geblang](https://github.com/dgebler/geblang).
   every test class declaration so you can launch a script without opening
   the command palette.
 - **Format Document**: pipes the current buffer through `geblang fmt --stdin`.
-  Pair with `"editor.formatOnSave": true` to format on save.
+  Add `"editor.formatOnSave": true` (optionally scoped to
+  `"[geblang]"`) in your settings to format every save through the
+  same path. No extra extension setting required.
 - **Commands** (from the palette): Run Current File, Open REPL, Run Doctor,
   Build Project, Clean Bytecode Cache, Select Geblang Executable.
 - Snippets for common scaffolding: `func`, `asyncfunc`, `genfunc`,

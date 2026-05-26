@@ -56,6 +56,16 @@
         "command": "geblang.cleanCache",
         "title": "Clean Bytecode Cache",
         "category": "Geblang"
+      },
+      {
+        "command": "geblang.restartLanguageServer",
+        "title": "Restart Language Server",
+        "category": "Geblang"
+      },
+      {
+        "command": "geblang.showLspOutput",
+        "title": "Show Language Server Output",
+        "category": "Geblang"
       }
     ],
     "languages": [

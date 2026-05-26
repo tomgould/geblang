@@ -7335,6 +7335,8 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"bcryptVerify":           e.registryBuiltin("crypt", "bcryptVerify"),
 			"argon2idHash":           e.registryBuiltin("crypt", "argon2idHash"),
 			"argon2idVerify":         e.registryBuiltin("crypt", "argon2idVerify"),
+			"passwordHash":           e.registryBuiltin("crypt", "passwordHash"),
+			"passwordVerify":         e.registryBuiltin("crypt", "passwordVerify"),
 			"randomHex":              e.registryBuiltin("crypt", "randomHex"),
 			"base64Encode":           e.registryBuiltin("crypt", "base64Encode"),
 			"base64Decode":           e.registryBuiltin("crypt", "base64Decode"),

@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"geblang/internal/check"
 )
 
 // notifyCapture is a sync-wrapped io.Writer that captures the bytes
@@ -97,9 +99,11 @@ func (e *numErr) Error() string { return "invalid number: " + e.s }
 func newTestServer() (*server, *notifyCapture) {
 	cap := &notifyCapture{}
 	s := &server{
-		w:          cap,
-		docs:       map[string]string{},
-		diagTimers: map[string]*time.Timer{},
+		w:           cap,
+		docs:        map[string]string{},
+		diagTimers:  map[string]*time.Timer{},
+		moduleCache: check.NewModuleCache(),
+		workspace:   newWorkspaceIndex(),
 	}
 	return s, cap
 }

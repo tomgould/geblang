@@ -12,6 +12,15 @@ import {
 
 let client: LanguageClient | undefined;
 let lspProcess: cp.ChildProcess | undefined;
+let lspOutput: vscode.OutputChannel | undefined;
+let lspStatus: vscode.StatusBarItem | undefined;
+
+function getLspOutput(): vscode.OutputChannel {
+    if (!lspOutput) {
+        lspOutput = vscode.window.createOutputChannel('Geblang Language Server');
+    }
+    return lspOutput;
+}
 
 function geblangExecutablePath(): string {
     const raw = vscode.workspace.getConfiguration('geblang').get<string>('executablePath', 'geblang');
@@ -108,15 +117,47 @@ async function startClient(): Promise<LanguageClient> {
         };
     }
 
+    const outputChannel = getLspOutput();
     const clientOptions: LanguageClientOptions = {
         documentSelector: [{ scheme: 'file', language: 'geblang' }],
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/*.gb'),
         },
+        outputChannel,
+        traceOutputChannel: outputChannel,
     };
     const c = new LanguageClient('geblang', 'Geblang Language Server', serverOptions, clientOptions);
     c.start();
+    setLspStatus('running');
     return c;
+}
+
+function ensureLspStatus(): vscode.StatusBarItem {
+    if (!lspStatus) {
+        lspStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+        lspStatus.command = 'geblang.showLspOutput';
+        lspStatus.tooltip = 'Geblang Language Server (click to show log)';
+        lspStatus.show();
+    }
+    return lspStatus;
+}
+
+function setLspStatus(state: 'starting' | 'running' | 'error' | 'stopped'): void {
+    const status = ensureLspStatus();
+    switch (state) {
+        case 'starting':
+            status.text = '$(loading~spin) Geblang LSP';
+            return;
+        case 'running':
+            status.text = '$(check) Geblang LSP';
+            return;
+        case 'error':
+            status.text = '$(error) Geblang LSP';
+            return;
+        case 'stopped':
+            status.text = '$(circle-slash) Geblang LSP';
+            return;
+    }
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -168,6 +209,9 @@ export function activate(context: vscode.ExtensionContext): void {
             launchLsp();
             vscode.window.showInformationMessage('Geblang: language server restarted');
         }),
+        vscode.commands.registerCommand('geblang.showLspOutput', () => {
+            getLspOutput().show(true);
+        }),
     );
 
     // ---- Document formatter via `geblang fmt` ----
@@ -200,11 +244,16 @@ export function activate(context: vscode.ExtensionContext): void {
     // ---- LSP client (async, failure shows an error but does not block activation) ----
     context.subscriptions.push({ dispose: () => { client?.stop(); lspProcess?.kill(); } });
 
+    ensureLspStatus();
     function launchLsp(): void {
+        setLspStatus('starting');
         startClient().then(c => {
             client = c;
+            setLspStatus('running');
         }).catch(err => {
-            vscode.window.showErrorMessage(`Geblang: language server failed to start — ${err.message}`);
+            setLspStatus('error');
+            getLspOutput().appendLine(`failed to start LSP: ${err.message}`);
+            vscode.window.showErrorMessage(`Geblang: language server failed to start - ${err.message}`);
         });
     }
     launchLsp();

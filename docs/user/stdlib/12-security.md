@@ -69,6 +69,36 @@ API request signing, and message integrity checks.
 Never store passwords as plain hashes. Use a dedicated password hashing
 function that incorporates a salt and a cost factor.
 
+#### PHP-compatible unified API
+
+`crypt.passwordHash(password, opts?)` and `crypt.passwordVerify(password, hash)`
+produce and accept hashes that round-trip with PHP's
+`password_hash` / `password_verify`. The hash strings are also accepted by
+Node `bcryptjs`, Python `passlib`, and any other PHC-string-compatible library.
+
+```gb
+/* Defaults: bcrypt at cost 10, $2y$ prefix (PHP's default). */
+let hash = crypt.passwordHash("hunter2");
+io.println(hash);                       /* $2y$10$... */
+
+/* Verify a hash produced by PHP, geblang, or any other library: */
+io.println(crypt.passwordVerify("hunter2", hash));   /* true */
+```
+
+`opts.algorithm` picks between `"bcrypt"` (default), `"argon2id"`, and
+`"argon2i"`. `opts.cost` tunes bcrypt; `opts.memory` / `opts.time` /
+`opts.parallelism` / `opts.keyLength` / `opts.saltLength` tune the argon2
+variants (same shape as `crypt.argon2idHash`).
+
+```gb
+let bcrypt12 = crypt.passwordHash("hunter2", {"algorithm": "bcrypt", "cost": 12});
+let argon    = crypt.passwordHash("hunter2", {"algorithm": "argon2id", "memory": 131072});
+```
+
+`passwordVerify` auto-detects the algorithm from the hash prefix
+(`$2a$`, `$2b$`, `$2y$` for bcrypt; `$argon2id$`, `$argon2i$` for argon2)
+and returns `false` for any unknown or malformed input rather than throwing.
+
 #### Argon2id (preferred)
 
 `crypt.argon2idHash(password)` hashes a password using Argon2id and returns a
@@ -120,7 +150,9 @@ let strongHash = crypt.bcryptHash("hunter2", 12);
 ```
 
 Bcrypt is well-supported but limited to 72-byte passwords and has lower
-memory-hardness than Argon2id. Prefer Argon2id for new code.
+memory-hardness than Argon2id. Prefer Argon2id for new code. Note that
+`crypt.bcryptHash` emits Go's `$2a$` prefix; use `crypt.passwordHash`
+(above) when you need PHP-style `$2y$` output for cross-language interop.
 
 ### JWT - unified sign and verify
 

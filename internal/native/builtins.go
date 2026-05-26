@@ -893,6 +893,114 @@ func registerCrypt(r *Registry) {
 		actual := argon2.IDKey([]byte(password.Value), salt, params.time, params.memory, params.parallelism, uint32(len(expected)))
 		return runtime.Bool{Value: subtle.ConstantTimeCompare(actual, expected) == 1}, nil
 	})
+	r.Register("crypt", "passwordHash", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 && len(args) != 2 {
+			return nil, fmt.Errorf("crypt.passwordHash expects password and optional opts")
+		}
+		password, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("crypt.passwordHash password must be string")
+		}
+		algorithm := "bcrypt"
+		var opts runtime.Dict
+		var haveOpts bool
+		if len(args) == 2 {
+			opts, ok = args[1].(runtime.Dict)
+			if !ok {
+				return nil, fmt.Errorf("crypt.passwordHash opts must be dict")
+			}
+			haveOpts = true
+			if alg := dictString(opts, "algorithm"); alg != "" {
+				algorithm = alg
+			}
+		}
+		switch algorithm {
+		case "bcrypt", "2y", "PASSWORD_BCRYPT":
+			cost := bcrypt.DefaultCost
+			if haveOpts {
+				if v, ok := dictInt64(opts, "cost"); ok {
+					cost = int(v)
+				}
+			}
+			hash, err := bcrypt.GenerateFromPassword([]byte(password.Value), cost)
+			if err != nil {
+				return nil, err
+			}
+			out := string(hash)
+			if strings.HasPrefix(out, "$2a$") || strings.HasPrefix(out, "$2b$") {
+				out = "$2y$" + out[4:]
+			}
+			return runtime.String{Value: out}, nil
+		case "argon2id", "PASSWORD_ARGON2ID":
+			params := defaultArgon2idParams()
+			if haveOpts {
+				if err := applyArgon2idOptions(&params, opts); err != nil {
+					return nil, err
+				}
+			}
+			salt := make([]byte, params.saltLength)
+			if _, err := rand.Read(salt); err != nil {
+				return nil, err
+			}
+			hash := argon2.IDKey([]byte(password.Value), salt, params.time, params.memory, params.parallelism, params.keyLength)
+			return runtime.String{Value: fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
+				params.memory, params.time, params.parallelism,
+				base64.RawStdEncoding.EncodeToString(salt),
+				base64.RawStdEncoding.EncodeToString(hash))}, nil
+		case "argon2i", "PASSWORD_ARGON2I":
+			params := defaultArgon2idParams()
+			if haveOpts {
+				if err := applyArgon2idOptions(&params, opts); err != nil {
+					return nil, err
+				}
+			}
+			salt := make([]byte, params.saltLength)
+			if _, err := rand.Read(salt); err != nil {
+				return nil, err
+			}
+			hash := argon2.Key([]byte(password.Value), salt, params.time, params.memory, params.parallelism, params.keyLength)
+			return runtime.String{Value: fmt.Sprintf("$argon2i$v=19$m=%d,t=%d,p=%d$%s$%s",
+				params.memory, params.time, params.parallelism,
+				base64.RawStdEncoding.EncodeToString(salt),
+				base64.RawStdEncoding.EncodeToString(hash))}, nil
+		}
+		return nil, fmt.Errorf("crypt.passwordHash: unknown algorithm %q (expected bcrypt, argon2id, argon2i)", algorithm)
+	})
+	r.Register("crypt", "passwordVerify", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("crypt.passwordVerify expects password and hash")
+		}
+		password, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("crypt.passwordVerify password must be string")
+		}
+		encoded, ok := args[1].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("crypt.passwordVerify hash must be string")
+		}
+		hash := encoded.Value
+		switch {
+		case strings.HasPrefix(hash, "$2a$"), strings.HasPrefix(hash, "$2b$"), strings.HasPrefix(hash, "$2y$"):
+			err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password.Value))
+			return runtime.Bool{Value: err == nil}, nil
+		case strings.HasPrefix(hash, "$argon2"):
+			params, salt, expected, variant, err := parseArgon2Hash(hash)
+			if err != nil {
+				return runtime.Bool{Value: false}, nil
+			}
+			var actual []byte
+			switch variant {
+			case "argon2id":
+				actual = argon2.IDKey([]byte(password.Value), salt, params.time, params.memory, params.parallelism, uint32(len(expected)))
+			case "argon2i":
+				actual = argon2.Key([]byte(password.Value), salt, params.time, params.memory, params.parallelism, uint32(len(expected)))
+			default:
+				return runtime.Bool{Value: false}, nil
+			}
+			return runtime.Bool{Value: subtle.ConstantTimeCompare(actual, expected) == 1}, nil
+		}
+		return runtime.Bool{Value: false}, nil
+	})
 	r.Register("crypt", "randomHex", func(args []runtime.Value) (runtime.Value, error) {
 		size, err := singleInt64(args, "crypt.randomHex")
 		if err != nil {
@@ -2397,19 +2505,34 @@ func applyArgon2idOptions(params *argon2idParams, options runtime.Dict) error {
 }
 
 func parseArgon2idHash(encoded string) (argon2idParams, []byte, []byte, error) {
+	params, salt, hash, _, err := parseArgon2Hash(encoded)
+	return params, salt, hash, err
+}
+
+// parseArgon2Hash accepts any of the three Argon2 variants PHP emits:
+// $argon2i$, $argon2d$, and $argon2id$. Returns the variant name so callers
+// can dispatch to the right argon2 derivation function.
+func parseArgon2Hash(encoded string) (argon2idParams, []byte, []byte, string, error) {
 	parts := strings.Split(encoded, "$")
-	if len(parts) != 6 || parts[1] != "argon2id" || parts[2] != "v=19" {
-		return argon2idParams{}, nil, nil, fmt.Errorf("invalid argon2id hash")
+	if len(parts) != 6 {
+		return argon2idParams{}, nil, nil, "", fmt.Errorf("invalid argon2 hash")
+	}
+	variant := parts[1]
+	if variant != "argon2id" && variant != "argon2i" && variant != "argon2d" {
+		return argon2idParams{}, nil, nil, "", fmt.Errorf("invalid argon2 hash")
+	}
+	if parts[2] != "v=19" {
+		return argon2idParams{}, nil, nil, "", fmt.Errorf("invalid argon2 hash")
 	}
 	params := argon2idParams{keyLength: 32}
 	for _, item := range strings.Split(parts[3], ",") {
 		pair := strings.SplitN(item, "=", 2)
 		if len(pair) != 2 {
-			return argon2idParams{}, nil, nil, fmt.Errorf("invalid argon2id parameters")
+			return argon2idParams{}, nil, nil, "", fmt.Errorf("invalid argon2 parameters")
 		}
 		value, err := strconv.ParseUint(pair[1], 10, 32)
 		if err != nil {
-			return argon2idParams{}, nil, nil, err
+			return argon2idParams{}, nil, nil, "", err
 		}
 		switch pair[0] {
 		case "m":
@@ -2418,25 +2541,26 @@ func parseArgon2idHash(encoded string) (argon2idParams, []byte, []byte, error) {
 			params.time = uint32(value)
 		case "p":
 			if value > 255 {
-				return argon2idParams{}, nil, nil, fmt.Errorf("invalid argon2id parallelism")
+				return argon2idParams{}, nil, nil, "", fmt.Errorf("invalid argon2 parallelism")
 			}
 			params.parallelism = uint8(value)
 		default:
-			return argon2idParams{}, nil, nil, fmt.Errorf("unknown argon2id parameter")
+			return argon2idParams{}, nil, nil, "", fmt.Errorf("unknown argon2 parameter")
 		}
 	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
-		return argon2idParams{}, nil, nil, err
+		return argon2idParams{}, nil, nil, "", err
 	}
 	hash, err := base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil {
-		return argon2idParams{}, nil, nil, err
+		return argon2idParams{}, nil, nil, "", err
 	}
 	if params.memory == 0 || params.time == 0 || params.parallelism == 0 || len(salt) == 0 || len(hash) == 0 {
-		return argon2idParams{}, nil, nil, fmt.Errorf("invalid argon2id hash")
+		return argon2idParams{}, nil, nil, "", fmt.Errorf("invalid argon2 hash")
 	}
-	return params, salt, hash, nil
+	params.keyLength = uint32(len(hash))
+	return params, salt, hash, variant, nil
 }
 
 func registerURL(r *Registry) {

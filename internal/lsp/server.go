@@ -8,15 +8,16 @@ import (
 	"fmt"
 	"io"
 	"net"
+	neturl "net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"geblang/internal/check"
 	"geblang/internal/formatter"
-	"geblang/internal/lexer"
-	"geblang/internal/parser"
-	"geblang/internal/semantic"
+	"geblang/internal/modules"
 )
 
 // diagnosticDebounce is how long the server waits after the last document
@@ -76,22 +77,27 @@ func tcpAdvertiseIP() string {
 // Serve runs the LSP protocol loop on r/w until the session ends.
 func Serve(r io.Reader, w io.Writer) error {
 	s := &server{
-		r:          bufio.NewReader(r),
-		w:          w,
-		seq:        0,
-		docs:       map[string]string{},
-		diagTimers: map[string]*time.Timer{},
+		r:           bufio.NewReader(r),
+		w:           w,
+		seq:         0,
+		docs:        map[string]string{},
+		diagTimers:  map[string]*time.Timer{},
+		moduleCache: check.NewModuleCache(),
+		workspace:   newWorkspaceIndex(),
 	}
 	return s.run()
 }
 
 type server struct {
-	r          *bufio.Reader
-	w          io.Writer
-	mu         sync.Mutex
-	seq        int
-	docs       map[string]string      // uri → source text
-	diagTimers map[string]*time.Timer // uri → pending debounced diagnostic timer
+	r              *bufio.Reader
+	w              io.Writer
+	mu             sync.Mutex
+	seq            int
+	docs           map[string]string      // uri → source text
+	diagTimers     map[string]*time.Timer // uri → pending debounced diagnostic timer
+	workspaceRoots []string               // file-system paths from initialize.workspaceFolders / rootUri
+	moduleCache    *check.ModuleCache
+	workspace      *workspaceIndex
 }
 
 // ---- protocol framing ----
@@ -181,6 +187,10 @@ func (s *server) run() error {
 func (s *server) handle(msg *rawMessage) {
 	switch msg.Method {
 	case "initialize":
+		var params InitializeParams
+		_ = json.Unmarshal(msg.Params, &params)
+		s.recordWorkspaceRoots(params)
+		go s.workspace.bootstrap(s.snapshotWorkspaceRoots())
 		s.respond(msg.ID, map[string]any{
 			"capabilities": map[string]any{
 				"textDocumentSync": 1, // full sync
@@ -196,10 +206,14 @@ func (s *server) handle(msg *rawMessage) {
 				"documentSymbolProvider":     true,
 				"definitionProvider":         true,
 				"documentFormattingProvider": true,
+				"codeActionProvider":         true,
+				"referencesProvider":         true,
+				"renameProvider":             map[string]any{"prepareProvider": true},
+				"workspaceSymbolProvider":    true,
 			},
 			"serverInfo": map[string]any{
 				"name":    "geblang-lsp",
-				"version": "1.0.0",
+				"version": "1.4.1",
 			},
 		})
 
@@ -316,6 +330,60 @@ func (s *server) handle(msg *rawMessage) {
 			return
 		}
 		s.respond(msg.ID, s.formatting(params.TextDocument.URI))
+
+	case "textDocument/didSave":
+		var params struct {
+			TextDocument TextDocumentIdentifier `json:"textDocument"`
+			Text         *string                `json:"text,omitempty"`
+		}
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			return
+		}
+		if path := uriToPath(params.TextDocument.URI); path != "" {
+			s.workspace.refreshFile(path)
+		}
+
+	case "textDocument/codeAction":
+		var params CodeActionParams
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			s.respond(msg.ID, []CodeAction{})
+			return
+		}
+		s.respond(msg.ID, s.codeAction(params))
+
+	case "textDocument/references":
+		var params ReferenceParams
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			s.respond(msg.ID, []Location{})
+			return
+		}
+		s.respond(msg.ID, s.references(params))
+
+	case "textDocument/prepareRename":
+		var params TextDocumentPositionParams
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			s.respond(msg.ID, nil)
+			return
+		}
+		s.respond(msg.ID, s.prepareRename(params))
+
+	case "textDocument/rename":
+		var params RenameParams
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			s.respond(msg.ID, nil)
+			return
+		}
+		s.respond(msg.ID, s.rename(params))
+
+	case "workspace/symbol":
+		var params struct {
+			Query string `json:"query"`
+		}
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			s.respond(msg.ID, []WorkspaceSymbol{})
+			return
+		}
+		s.respond(msg.ID, s.workspaceSymbols(params.Query))
 	}
 }
 
@@ -428,7 +496,7 @@ func (s *server) scheduleDiagnostics(uri, source string, version int) {
 }
 
 func (s *server) publishDiagnostics(uri, source string, version int) {
-	diags := s.analyze(source)
+	diags := s.analyze(uri, source)
 	// LSP §3.17 PublishDiagnosticsParams.diagnostics is an array - it
 	// must never be JSON `null`. analyze() can return a nil slice when
 	// nothing was found, and encoding/json marshals nil slices to
@@ -458,6 +526,7 @@ type Diagnostic struct {
 	Range    Range  `json:"range"`
 	Severity int    `json:"severity"` // 1=error, 2=warning
 	Source   string `json:"source"`
+	Code     string `json:"code,omitempty"`
 	Message  string `json:"message"`
 }
 
@@ -473,60 +542,94 @@ type Position struct {
 	Character int `json:"character"`
 }
 
-func (s *server) analyze(source string) []Diagnostic {
-	var diags []Diagnostic
-
-	p := parser.New(lexer.New(source))
-	program := p.ParseProgram()
-
-	for _, msg := range p.Errors() {
-		// Parser errors are formatted as "line:col: message"
-		line, col, text := parseErrorMsg(msg)
-		diags = append(diags, Diagnostic{
-			Range:    lineColRange(line, col),
-			Severity: 1,
-			Source:   "geblang",
-			Message:  text,
-		})
+func (s *server) analyze(uri, source string) []Diagnostic {
+	file := uriToPath(uri)
+	opts := check.Options{
+		Lint:          true,
+		Resolver:      s.resolverForFile(file),
+		CrossModule:   true,
+		NativeSymbols: catalogNativeSymbols(),
+		ModuleCache:   s.moduleCache,
 	}
-
-	// Run the semantic analyzer regardless of parse errors. Even with
-	// partial parses, the analyzer often finds additional issues the
-	// user benefits from seeing in the same pass (a typo plus a wrong
-	// type, say). Position is taken from the diagnostic itself; the
-	// lineColRange helper falls back to (1, 1) for zero values.
-	for _, sd := range semantic.New().Analyze(program) {
-		// Map semantic.Severity to LSP severity codes (1=error,
-		// 2=warning). Errors are the default; warnings still surface
-		// in the VS Code Problems panel but don't block geblang run.
-		severity := 1
-		if sd.Severity == semantic.SeverityWarning {
-			severity = 2
+	_, raw := check.Source(file, source, opts)
+	diags := make([]Diagnostic, 0, len(raw))
+	for _, d := range raw {
+		sev := 1
+		if d.Severity == check.SeverityWarning {
+			sev = 2
 		}
 		diags = append(diags, Diagnostic{
-			Range:    lineColRange(sd.Line, sd.Column),
-			Severity: severity,
+			Range:    lineColRange(d.Line, d.Column),
+			Severity: sev,
 			Source:   "geblang",
-			Message:  sd.Message,
+			Code:     d.Rule,
+			Message:  d.Message,
 		})
 	}
 	return diags
 }
 
-// parseErrorMsg splits a parser error string "line:col: message" into parts.
-func parseErrorMsg(msg string) (line, col int, text string) {
-	// Format: "line:col: message"
-	parts := strings.SplitN(msg, ": ", 2)
-	if len(parts) == 2 {
-		pos := strings.SplitN(parts[0], ":", 2)
-		if len(pos) == 2 {
-			line, _ = strconv.Atoi(pos[0])
-			col, _ = strconv.Atoi(pos[1])
-			text = parts[1]
+// resolverForFile returns a module resolver rooted at the file's
+// directory and every workspace root. Workspace roots come first so
+// project modules resolve before any same-named neighbour file.
+func (s *server) resolverForFile(file string) *modules.Resolver {
+	paths := s.snapshotWorkspaceRoots()
+	if file != "" {
+		paths = append(paths, filepath.Dir(file))
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	return modules.NewResolver(paths)
+}
+
+func (s *server) snapshotWorkspaceRoots() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.workspaceRoots) == 0 {
+		return nil
+	}
+	out := make([]string, len(s.workspaceRoots))
+	copy(out, s.workspaceRoots)
+	return out
+}
+
+func (s *server) recordWorkspaceRoots(params InitializeParams) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen := map[string]struct{}{}
+	add := func(p string) {
+		if p == "" {
 			return
 		}
+		if _, ok := seen[p]; ok {
+			return
+		}
+		seen[p] = struct{}{}
+		s.workspaceRoots = append(s.workspaceRoots, p)
 	}
-	return 1, 1, msg
+	for _, folder := range params.WorkspaceFolders {
+		add(uriToPath(folder.URI))
+	}
+	if params.RootURI != "" {
+		add(uriToPath(params.RootURI))
+	} else if params.RootPath != "" {
+		add(params.RootPath)
+	}
+}
+
+// uriToPath converts a `file://` URI to a filesystem path. Returns an
+// empty string for non-file URIs (the LSP analyse path handles that
+// case gracefully).
+func uriToPath(uri string) string {
+	if uri == "" {
+		return ""
+	}
+	parsed, err := neturl.Parse(uri)
+	if err != nil || parsed.Scheme != "file" {
+		return ""
+	}
+	return parsed.Path
 }
 
 // lineColRange converts 1-based line/col to an LSP Range (0-based).
@@ -615,4 +718,58 @@ type SignatureInformation struct {
 
 type ParameterInformation struct {
 	Label string `json:"label"`
+}
+
+type WorkspaceFolder struct {
+	URI  string `json:"uri"`
+	Name string `json:"name"`
+}
+
+type InitializeParams struct {
+	RootURI          string            `json:"rootUri,omitempty"`
+	RootPath         string            `json:"rootPath,omitempty"`
+	WorkspaceFolders []WorkspaceFolder `json:"workspaceFolders,omitempty"`
+}
+
+type CodeActionContext struct {
+	Diagnostics []Diagnostic `json:"diagnostics,omitempty"`
+}
+
+type CodeActionParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Range        Range                  `json:"range"`
+	Context      CodeActionContext      `json:"context"`
+}
+
+type CodeAction struct {
+	Title       string         `json:"title"`
+	Kind        string         `json:"kind,omitempty"`
+	Diagnostics []Diagnostic   `json:"diagnostics,omitempty"`
+	Edit        *WorkspaceEdit `json:"edit,omitempty"`
+	IsPreferred bool           `json:"isPreferred,omitempty"`
+}
+
+type WorkspaceEdit struct {
+	Changes map[string][]TextEdit `json:"changes,omitempty"`
+}
+
+type ReferenceParams struct {
+	TextDocumentPositionParams
+	Context ReferenceContext `json:"context"`
+}
+
+type ReferenceContext struct {
+	IncludeDeclaration bool `json:"includeDeclaration"`
+}
+
+type RenameParams struct {
+	TextDocumentPositionParams
+	NewName string `json:"newName"`
+}
+
+type WorkspaceSymbol struct {
+	Name          string   `json:"name"`
+	Kind          int      `json:"kind"`
+	Location      Location `json:"location"`
+	ContainerName string   `json:"containerName,omitempty"`
 }

@@ -444,6 +444,16 @@
         ],
         "description": "Pack/unpack a binary record (Python struct-style format)"
     },
+    "crypt.passwordHash / passwordVerify": {
+        "prefix": "passwordhash",
+        "body": [
+            "let ${1:hash} = crypt.passwordHash(${2:password});",
+            "if (crypt.passwordVerify(${2:password}, ${1:hash})) {",
+            "    $0",
+            "}"
+        ],
+        "description": "PHP-compatible password hash + verify (defaults to bcrypt $2y$)"
+    },
     "http.newClient with proxy": {
         "prefix": "httpproxy",
         "body": [

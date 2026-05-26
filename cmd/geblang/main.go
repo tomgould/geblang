@@ -14,6 +14,7 @@ import (
 	"geblang/internal/ast"
 	"geblang/internal/bundle"
 	"geblang/internal/bytecode"
+	"geblang/internal/check"
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
@@ -820,29 +821,22 @@ func checkGeblangPath(config checkConfig) (checkResult, error) {
 }
 
 func checkGeblangSource(file, source string, config checkConfig) (*ast.Program, []checkDiagnostic) {
-	p := parser.New(lexer.New(source))
-	program := p.ParseProgram()
-	if len(p.Errors()) > 0 {
-		diagnostics := make([]checkDiagnostic, 0, len(p.Errors()))
-		for _, msg := range p.Errors() {
-			diagnostics = append(diagnostics, checkDiagnostic{File: file, Severity: "error", Rule: "parse", Message: msg})
-		}
-		return nil, diagnostics
+	opts := check.Options{
+		Lint:        config.Lint,
+		Resolver:    checkResolver(config, file),
+		CrossModule: false,
 	}
-	diagnostics := []checkDiagnostic{}
-	for _, semanticDiagnostic := range semantic.New().Analyze(program) {
-		severity := "error"
-		if semanticDiagnostic.Severity == semantic.SeverityWarning {
-			severity = "warning"
-		}
-		diagnostics = append(diagnostics, checkDiagnostic{File: file, Severity: severity, Rule: "semantic", Message: semanticDiagnostic.Message, Line: semanticDiagnostic.Line, Column: semanticDiagnostic.Column})
-	}
-	if _, compileErr := bytecode.Compile(program, []byte(source), file); compileErr != nil && !isBytecodeParityError(compileErr) {
-		diagnostics = append(diagnostics, checkDiagnostic{File: file, Severity: "error", Rule: "type", Message: compileErr.Error()})
-	}
-	diagnostics = append(diagnostics, checkImports(config, file, program)...)
-	if config.Lint {
-		diagnostics = append(diagnostics, lintProgram(file, program)...)
+	program, raw := check.Source(file, source, opts)
+	diagnostics := make([]checkDiagnostic, 0, len(raw))
+	for _, d := range raw {
+		diagnostics = append(diagnostics, checkDiagnostic{
+			File:     d.File,
+			Line:     d.Line,
+			Column:   d.Column,
+			Severity: string(d.Severity),
+			Rule:     d.Rule,
+			Message:  d.Message,
+		})
 	}
 	return program, diagnostics
 }
@@ -854,32 +848,6 @@ func checkGeblangSource(file, source string, config checkConfig) (*ast.Program, 
 // pre-flight check.
 func isBytecodeParityError(err error) bool {
 	return bytecode.IsParityError(err)
-}
-
-func checkImports(config checkConfig, file string, program *ast.Program) []checkDiagnostic {
-	resolver := checkResolver(config, file)
-	diagnostics := []checkDiagnostic{}
-	for _, stmt := range program.Statements {
-		imp, ok := stmt.(*ast.ImportStatement)
-		if !ok {
-			continue
-		}
-		canonical := strings.Join(imp.Path, ".")
-		if canonical == "" || isNativeImport(canonical) {
-			continue
-		}
-		if _, err := resolver.Resolve(canonical); err != nil {
-			diagnostics = append(diagnostics, checkDiagnostic{
-				File:     file,
-				Line:     imp.Token.Line,
-				Column:   imp.Token.Column,
-				Severity: "error",
-				Rule:     "import",
-				Message:  fmt.Sprintf("cannot resolve import %s", canonical),
-			})
-		}
-	}
-	return diagnostics
 }
 
 type moduleDeclaration struct {
@@ -1005,62 +973,6 @@ func sameFilePath(left, right string) bool {
 	return filepath.Clean(left) == filepath.Clean(right)
 }
 
-func isNativeImport(canonical string) bool {
-	_, ok := nativeImportModules[canonical]
-	return ok
-}
-
-var nativeImportModules = map[string]struct{}{
-	"args":        {},
-	"async":       {},
-	"bytes":       {},
-	"cli":         {},
-	"collections": {},
-	"compress":    {},
-	"crypt":       {},
-	"csv":         {},
-	"datetime":    {},
-	"db":          {},
-	"dotenv":      {},
-	"encoding":    {},
-	"errors":      {},
-	"ext":         {},
-	"freeze":      {},
-	"http":        {},
-	"io":          {},
-	"json":        {},
-	"log":         {},
-	"markdown":    {},
-	"math":        {},
-	"metrics":     {},
-	"net":         {},
-	"path":        {},
-	"process":     {},
-	"profile":     {},
-	"random":      {},
-	"re":          {},
-	"reflect":     {},
-	"schema":      {},
-	"secrets":     {},
-	"serde":       {},
-	"smtp":        {},
-	"strbuilder":  {},
-	"string":      {},
-	"sys":         {},
-	"template":    {},
-	"test":        {},
-	"time":        {},
-	"toml":        {},
-	"trace":       {},
-	"url":         {},
-	"uuid":        {},
-	"web":         {},
-	"websocket":   {},
-	"watch":       {},
-	"xml":         {},
-	"yaml":        {},
-}
-
 func discoverGeblangFiles(path string) ([]string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -1087,370 +999,6 @@ func discoverGeblangFiles(path string) ([]string, error) {
 	})
 	sort.Strings(files)
 	return files, err
-}
-
-type lintImport struct {
-	name   string
-	token  ast.ImportStatement
-	used   bool
-	module string
-}
-
-func lintProgram(file string, program *ast.Program) []checkDiagnostic {
-	diagnostics := []checkDiagnostic{}
-	imports := map[string]*lintImport{}
-	for _, stmt := range program.Statements {
-		if imp, ok := stmt.(*ast.ImportStatement); ok {
-			name := imp.ModuleName()
-			imports[strings.ToLower(name)] = &lintImport{name: name, token: *imp, module: strings.Join(imp.Path, ".")}
-		}
-	}
-	for _, stmt := range program.Statements {
-		if _, ok := stmt.(*ast.ImportStatement); ok {
-			continue
-		}
-		lintMarkStatementIdentifiers(stmt, imports)
-	}
-	for _, imp := range imports {
-		if !imp.used {
-			diagnostics = append(diagnostics, checkDiagnostic{
-				File:     file,
-				Line:     imp.token.Token.Line,
-				Column:   imp.token.Token.Column,
-				Severity: "warning",
-				Rule:     "unused-import",
-				Message:  fmt.Sprintf("import %s is not used", imp.module),
-			})
-		}
-	}
-	for _, stmt := range program.Statements {
-		diagnostics = append(diagnostics, lintUnreachableStatement(file, stmt)...)
-	}
-	return diagnostics
-}
-
-func lintMarkStatementIdentifiers(stmt ast.Statement, imports map[string]*lintImport) {
-	switch s := stmt.(type) {
-	case *ast.ExportStatement:
-		lintMarkStatementIdentifiers(s.Statement, imports)
-	case *ast.DeclarationStatement:
-		lintMarkTypeRef(s.Type, imports)
-		lintMarkExpressionIdentifiers(s.Value, imports)
-	case *ast.DestructuringStatement:
-		lintMarkExpressionIdentifiers(s.Value, imports)
-	case *ast.ExpressionStatement:
-		lintMarkExpressionIdentifiers(s.Expression, imports)
-	case *ast.ReturnStatement:
-		lintMarkExpressionIdentifiers(s.Value, imports)
-	case *ast.YieldStatement:
-		lintMarkExpressionIdentifiers(s.Value, imports)
-	case *ast.SimpleStatement:
-		lintMarkExpressionIdentifiers(s.Value, imports)
-	case *ast.IfStatement:
-		lintMarkExpressionIdentifiers(s.Condition, imports)
-		lintMarkBlockIdentifiers(s.Consequence, imports)
-		for _, clause := range s.ElseIfs {
-			lintMarkExpressionIdentifiers(clause.Condition, imports)
-			lintMarkBlockIdentifiers(clause.Body, imports)
-		}
-		lintMarkBlockIdentifiers(s.Alternative, imports)
-	case *ast.WhileStatement:
-		lintMarkExpressionIdentifiers(s.Condition, imports)
-		lintMarkBlockIdentifiers(s.Body, imports)
-	case *ast.ForStatement:
-		lintMarkStatementIdentifiers(s.Init, imports)
-		lintMarkExpressionIdentifiers(s.Condition, imports)
-		lintMarkStatementIdentifiers(s.Update, imports)
-		lintMarkExpressionIdentifiers(s.Iterable, imports)
-		lintMarkExpressionIdentifiers(s.Step, imports)
-		lintMarkBlockIdentifiers(s.Body, imports)
-	case *ast.FunctionStatement:
-		lintMarkDecorators(s.Decorators, imports)
-		for _, param := range s.Parameters {
-			lintMarkTypeRef(param.Type, imports)
-			lintMarkExpressionIdentifiers(param.Default, imports)
-		}
-		lintMarkTypeRef(s.ReturnType, imports)
-		lintMarkBlockIdentifiers(s.Body, imports)
-	case *ast.ClassStatement:
-		lintMarkDecorators(s.Decorators, imports)
-		lintMarkTypeRef(s.Extends, imports)
-		for _, typ := range s.Implements {
-			lintMarkTypeRef(typ, imports)
-		}
-		for _, member := range s.Members {
-			lintMarkStatementIdentifiers(member, imports)
-		}
-	case *ast.InterfaceStatement:
-		for _, typ := range s.Parents {
-			lintMarkTypeRef(typ, imports)
-		}
-		for _, method := range s.Methods {
-			for _, param := range method.Parameters {
-				lintMarkTypeRef(param.Type, imports)
-				lintMarkExpressionIdentifiers(param.Default, imports)
-			}
-			lintMarkTypeRef(method.ReturnType, imports)
-		}
-	case *ast.TryStatement:
-		lintMarkBlockIdentifiers(s.Body, imports)
-		for _, clause := range s.Catches {
-			lintMarkTypeRef(clause.Type, imports)
-			lintMarkBlockIdentifiers(clause.Body, imports)
-		}
-		lintMarkBlockIdentifiers(s.Finally, imports)
-	case *ast.EnumStatement:
-	case *ast.MatchStatement:
-		lintMarkExpressionIdentifiers(s.Expr, imports)
-		for _, clause := range s.Cases {
-			lintMarkExpressionIdentifiers(clause.Pattern, imports)
-			lintMarkExpressionIdentifiers(clause.Guard, imports)
-			lintMarkExpressionIdentifiers(clause.Value, imports)
-			lintMarkBlockIdentifiers(clause.Body, imports)
-		}
-	case *ast.InitStatement:
-		lintMarkBlockIdentifiers(s.Body, imports)
-	}
-}
-
-func lintMarkBlockIdentifiers(block *ast.BlockStatement, imports map[string]*lintImport) {
-	if block == nil {
-		return
-	}
-	for _, stmt := range block.Statements {
-		lintMarkStatementIdentifiers(stmt, imports)
-	}
-}
-
-func lintMarkDecorators(decorators []ast.Decorator, imports map[string]*lintImport) {
-	for _, decorator := range decorators {
-		if decorator.Name != nil {
-			if imp, ok := imports[strings.ToLower(decorator.Name.Value)]; ok {
-				imp.used = true
-			}
-		}
-		for _, arg := range decorator.Arguments {
-			lintMarkExpressionIdentifiers(arg.Value, imports)
-		}
-	}
-}
-
-func lintMarkTypeRef(typ *ast.TypeRef, imports map[string]*lintImport) {
-	if typ == nil {
-		return
-	}
-	name := typ.Name
-	if dot := strings.IndexByte(name, '.'); dot >= 0 {
-		name = name[:dot]
-	}
-	if imp, ok := imports[strings.ToLower(name)]; ok {
-		imp.used = true
-	}
-	for _, arg := range typ.Arguments {
-		lintMarkTypeRef(arg, imports)
-	}
-	lintMarkTypeRef(typ.Left, imports)
-	lintMarkTypeRef(typ.Right, imports)
-}
-
-func lintMarkExpressionIdentifiers(expr ast.Expression, imports map[string]*lintImport) {
-	if expr == nil {
-		return
-	}
-	switch e := expr.(type) {
-	case *ast.Identifier:
-		if imp, ok := imports[strings.ToLower(e.Value)]; ok {
-			imp.used = true
-		}
-	case *ast.SpreadExpression:
-		lintMarkExpressionIdentifiers(e.Value, imports)
-	case *ast.InterpolatedString:
-		for _, part := range e.Parts {
-			lintMarkExpressionIdentifiers(part, imports)
-		}
-	case *ast.PrefixExpression:
-		lintMarkExpressionIdentifiers(e.Right, imports)
-	case *ast.PostfixExpression:
-		lintMarkExpressionIdentifiers(e.Left, imports)
-	case *ast.InfixExpression:
-		lintMarkExpressionIdentifiers(e.Left, imports)
-		lintMarkExpressionIdentifiers(e.Right, imports)
-	case *ast.AssignmentExpression:
-		lintMarkExpressionIdentifiers(e.Left, imports)
-		lintMarkExpressionIdentifiers(e.Value, imports)
-	case *ast.SelectorExpression:
-		lintMarkExpressionIdentifiers(e.Object, imports)
-	case *ast.CallExpression:
-		lintMarkExpressionIdentifiers(e.Callee, imports)
-		for _, arg := range e.Arguments {
-			lintMarkExpressionIdentifiers(arg.Value, imports)
-		}
-	case *ast.IndexExpression:
-		lintMarkExpressionIdentifiers(e.Left, imports)
-		lintMarkExpressionIdentifiers(e.Index, imports)
-	case *ast.ListLiteral:
-		for _, element := range e.Elements {
-			lintMarkExpressionIdentifiers(element, imports)
-		}
-	case *ast.DictLiteral:
-		for _, pair := range e.Entries {
-			lintMarkExpressionIdentifiers(pair.Key, imports)
-			lintMarkExpressionIdentifiers(pair.Value, imports)
-		}
-	case *ast.SetLiteral:
-		for _, element := range e.Elements {
-			lintMarkExpressionIdentifiers(element, imports)
-		}
-	case *ast.RangeExpression:
-		lintMarkExpressionIdentifiers(e.Start, imports)
-		lintMarkExpressionIdentifiers(e.End, imports)
-		lintMarkExpressionIdentifiers(e.Step, imports)
-	case *ast.FunctionLiteral:
-		for _, param := range e.Parameters {
-			lintMarkTypeRef(param.Type, imports)
-			lintMarkExpressionIdentifiers(param.Default, imports)
-		}
-		lintMarkTypeRef(e.ReturnType, imports)
-		lintMarkBlockIdentifiers(e.Body, imports)
-	case *ast.MatchExpression:
-		lintMarkExpressionIdentifiers(e.Expr, imports)
-		for _, clause := range e.Cases {
-			lintMarkExpressionIdentifiers(clause.Pattern, imports)
-			lintMarkExpressionIdentifiers(clause.Guard, imports)
-			lintMarkExpressionIdentifiers(clause.Value, imports)
-			lintMarkBlockIdentifiers(clause.Body, imports)
-		}
-	case *ast.AwaitExpression:
-		lintMarkExpressionIdentifiers(e.Value, imports)
-	case *ast.CastExpression:
-		lintMarkExpressionIdentifiers(e.Value, imports)
-	case *ast.TernaryExpression:
-		lintMarkExpressionIdentifiers(e.Condition, imports)
-		lintMarkExpressionIdentifiers(e.ThenExpr, imports)
-		lintMarkExpressionIdentifiers(e.ElseExpr, imports)
-	}
-}
-
-func lintUnreachableStatement(file string, stmt ast.Statement) []checkDiagnostic {
-	switch s := stmt.(type) {
-	case *ast.ExportStatement:
-		return lintUnreachableStatement(file, s.Statement)
-	case *ast.InitStatement:
-		return lintUnreachableBlock(file, s.Body)
-	case *ast.FunctionStatement:
-		return lintUnreachableBlock(file, s.Body)
-	case *ast.ClassStatement:
-		diagnostics := []checkDiagnostic{}
-		for _, member := range s.Members {
-			diagnostics = append(diagnostics, lintUnreachableStatement(file, member)...)
-		}
-		return diagnostics
-	case *ast.IfStatement:
-		diagnostics := lintUnreachableBlock(file, s.Consequence)
-		for _, clause := range s.ElseIfs {
-			diagnostics = append(diagnostics, lintUnreachableBlock(file, clause.Body)...)
-		}
-		diagnostics = append(diagnostics, lintUnreachableBlock(file, s.Alternative)...)
-		return diagnostics
-	case *ast.WhileStatement:
-		return lintUnreachableBlock(file, s.Body)
-	case *ast.ForStatement:
-		return lintUnreachableBlock(file, s.Body)
-	case *ast.TryStatement:
-		diagnostics := lintUnreachableBlock(file, s.Body)
-		for _, clause := range s.Catches {
-			diagnostics = append(diagnostics, lintUnreachableBlock(file, clause.Body)...)
-		}
-		diagnostics = append(diagnostics, lintUnreachableBlock(file, s.Finally)...)
-		return diagnostics
-	case *ast.MatchStatement:
-		diagnostics := []checkDiagnostic{}
-		for _, clause := range s.Cases {
-			diagnostics = append(diagnostics, lintUnreachableBlock(file, clause.Body)...)
-		}
-		return diagnostics
-	default:
-		return nil
-	}
-}
-
-func lintUnreachableBlock(file string, block *ast.BlockStatement) []checkDiagnostic {
-	if block == nil {
-		return nil
-	}
-	diagnostics := []checkDiagnostic{}
-	terminated := false
-	for _, stmt := range block.Statements {
-		if terminated {
-			line, column := statementPosition(stmt)
-			diagnostics = append(diagnostics, checkDiagnostic{
-				File:     file,
-				Line:     line,
-				Column:   column,
-				Severity: "warning",
-				Rule:     "unreachable",
-				Message:  "statement is unreachable",
-			})
-			continue
-		}
-		diagnostics = append(diagnostics, lintUnreachableStatement(file, stmt)...)
-		if statementTerminates(stmt) {
-			terminated = true
-		}
-	}
-	return diagnostics
-}
-
-func statementTerminates(stmt ast.Statement) bool {
-	switch s := stmt.(type) {
-	case *ast.ReturnStatement:
-		return true
-	case *ast.SimpleStatement:
-		return s.Kind == "break" || s.Kind == "continue" || s.Kind == "throw"
-	case *ast.ExportStatement:
-		return statementTerminates(s.Statement)
-	default:
-		return false
-	}
-}
-
-func statementPosition(stmt ast.Statement) (int, int) {
-	switch s := stmt.(type) {
-	case *ast.ExportStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.ImportStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.DeclarationStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.DestructuringStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.ExpressionStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.ReturnStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.YieldStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.SimpleStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.IfStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.WhileStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.ForStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.FunctionStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.ClassStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.TryStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.MatchStatement:
-		return s.Token.Line, s.Token.Column
-	case *ast.InitStatement:
-		return s.Token.Line, s.Token.Column
-	default:
-		return 0, 0
-	}
 }
 
 func runScript(sourcePath string, scriptArgs []string, source []byte, program *ast.Program, mode executionMode, stdout io.Writer, trace io.Writer) (int, error) {

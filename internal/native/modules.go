@@ -1,0 +1,39 @@
+package native
+
+// NativeModuleNames is the canonical set of module names that ship as
+// Geblang natives. Both `geblang check` and the LSP read this so an
+// `import foo;` to a name in this set is never flagged as unresolved,
+// even when the engine doesn't yet expose every function in that
+// module to the LSP catalog.
+var NativeModuleNames = map[string]struct{}{
+	"amqp": {}, "archive": {}, "args": {}, "async": {}, "binary": {},
+	"bytes": {}, "cli": {}, "cli.widgets": {}, "collections": {},
+	"compress": {}, "crypt": {}, "csv": {}, "datetime": {}, "db": {},
+	"dotenv": {}, "encoding": {}, "errors": {}, "ext": {}, "freeze": {},
+	"http": {}, "io": {}, "json": {}, "kafka": {}, "log": {},
+	"markdown": {}, "math": {}, "metrics": {}, "net": {}, "path": {},
+	"pcre": {}, "proc": {}, "process": {}, "profile": {}, "profiler": {},
+	"random": {}, "re": {}, "reflect": {}, "schema": {}, "secrets": {},
+	"serde": {}, "smtp": {}, "sockets": {}, "ssh": {}, "strbuilder": {},
+	"streams": {}, "string": {}, "strings": {}, "sys": {}, "template": {},
+	"test": {}, "time": {}, "toml": {}, "trace": {}, "url": {},
+	"uuid": {}, "watch": {}, "web": {}, "websocket": {}, "xml": {},
+	"yaml": {},
+}
+
+// IsNativeModule reports whether canonical names a Geblang-native
+// module.
+func IsNativeModule(canonical string) bool {
+	_, ok := NativeModuleNames[canonical]
+	return ok
+}
+
+// NativeModuleList returns the native module names as a sorted-by-insertion
+// slice. Callers that need a deterministic order should sort themselves.
+func NativeModuleList() []string {
+	out := make([]string, 0, len(NativeModuleNames))
+	for name := range NativeModuleNames {
+		out = append(out, name)
+	}
+	return out
+}

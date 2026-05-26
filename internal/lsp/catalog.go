@@ -719,6 +719,8 @@ var stdlibCatalog = map[string]moduleDoc{
 		"bcryptVerify":           fn([]string{"string password", "string hash"}, "bool", "Verifies a bcrypt password hash."),
 		"argon2idHash":           fn([]string{"string password", "dict<string, any> options = {}"}, "string", "Hashes a password with Argon2id (PHC format)."),
 		"argon2idVerify":         fn([]string{"string password", "string hash"}, "bool", "Verifies an Argon2id password hash."),
+		"passwordHash":           fn([]string{"string password", "dict<string, any> opts = {}"}, "string", "PHP-compatible password hash. opts.algorithm: \"bcrypt\" (default, emits $2y$), \"argon2id\", or \"argon2i\". opts.cost (bcrypt) / opts.memory / opts.time / opts.parallelism (argon2). Output round-trips with PHP password_hash / password_verify."),
+		"passwordVerify":         fn([]string{"string password", "string hash"}, "bool", "PHP-compatible password verify. Auto-detects bcrypt ($2a$/$2b$/$2y$) and Argon2 ($argon2i$/$argon2id$) by hash prefix; returns false on any malformed input."),
 		"base64Encode":           fn([]string{"string text"}, "string", "Base64-encodes a string. For bytes use encoding.base64Encode."),
 		"base64Decode":           fn([]string{"string text"}, "string", "Base64-decodes a string."),
 		"jwtSign":                fn([]string{"any payload", "any key", "dict<string, any> opts = {}"}, "string", "Signs a JWT. opts.alg picks the algorithm (HS256/384/512, RS256/384/512, ES256/384/512, EdDSA); defaults to HS256. key is the HMAC secret (string/bytes) or a PEM private key. \"none\" is rejected by default; opt in by passing \"none\" inside opts.allowedAlgs."),

@@ -11,6 +11,13 @@
   or unpadded input.
 - `bytes.toBase64Url` / `bytes.fromBase64Url` module helpers and
   a `b.toBase64Url()` method on bytes values.
+- `crypt.passwordHash(pw, opts?)` and `crypt.passwordVerify(pw, hash)`
+  produce and verify hashes interchangeably with PHP's
+  `password_hash` / `password_verify`. Output uses the `$2y$`
+  prefix for bcrypt (PHP default) or PHC format for argon2id /
+  argon2i. Verify auto-detects the algorithm from the hash
+  prefix and accepts `$2a$`, `$2b$`, `$2y$`, `$argon2id$`, and
+  `$argon2i$` hashes from any compatible source.
 - New `binary` module with Python `struct`-style pack/unpack:
   `binary.pack(format, ...values)`, `binary.unpack(format, data)`,
   `binary.unpackNamed(spec, data)`, and `binary.size(format)`.
@@ -18,6 +25,22 @@
   floats, fixed-length byte strings, and pad bytes; the first
   character may set endianness (`<` little, `>` big, `!` network,
   `=` native).
+
+### Tooling
+
+- LSP diagnostics now cover unresolved imports, bytecode type errors,
+  unused imports, and cross-module symbol checks (`foo.bar()` is
+  flagged when `bar` isn't exported by `foo`). Both `geblang check`
+  and the in-editor squiggles go through the same shared pipeline.
+- New LSP capabilities: `textDocument/codeAction` quick-fix for
+  unresolved imports (suggests nearest-match replacements);
+  `textDocument/references` and `textDocument/rename` for the
+  identifier under the cursor (single-file scope);
+  `workspace/symbol` search across every `.gb` file in the open roots.
+- VS Code extension gains a `Geblang Language Server` output channel
+  and a status-bar item showing the LSP state (click to focus the
+  channel). `editor.formatOnSave` works as expected; no extension
+  setting needed.
 
 ## 1.4.0
 
