@@ -129,6 +129,33 @@ func TestWriteRedrawLeftArrowAcrossRowBoundary(t *testing.T) {
 	}
 }
 
+func TestWriteEndWalksPastWrappedRowsBeforeNewline(t *testing.T) {
+	width := 10
+	prompt := "geb> "
+	buf := strings.Repeat("x", 25)
+	var out bytes.Buffer
+	row := writeEnd(&out, width, prompt, []rune(buf), 0)
+	if row != 0 {
+		t.Fatalf("expected cursor reset to row 0 after newline, got %d", row)
+	}
+	emit := out.String()
+	if !strings.Contains(emit, "\x1b[2B") {
+		t.Fatalf("expected CUD-by-2 to walk past rows 1 and 2 before CRLF, got %q", emit)
+	}
+	if !strings.HasSuffix(emit, "\r\n") {
+		t.Fatalf("expected trailing CRLF, got %q", emit)
+	}
+}
+
+func TestWriteEndNoMotionWhenAlreadyAtEnd(t *testing.T) {
+	width := 80
+	var out bytes.Buffer
+	writeEnd(&out, width, "geb> ", []rune("short"), 0)
+	if strings.Contains(out.String(), "\x1b[") {
+		t.Fatalf("expected no escape codes for single-row buffer, got %q", out.String())
+	}
+}
+
 func TestWriteRedrawClearsStaleRowsOnShrink(t *testing.T) {
 	width := 10
 	prompt := "geb> "

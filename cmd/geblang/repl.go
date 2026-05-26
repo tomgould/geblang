@@ -167,12 +167,8 @@ type terminalLineReader struct {
 	history   []string
 	store     *replHistoryStore
 	completer replCompleter
-	// cursorRow is the visual row offset (0-based) of the cursor from
-	// the prompt's start row, as left by the most recent redraw. We
-	// need it on the next redraw to move the terminal cursor up to
-	// the prompt's row before clearing - VT100 `\r` only resets the
-	// column, not the row, and the terminal has no other way to tell
-	// us where we are.
+	// row offset of the cursor from the prompt's start row; needed
+	// because VT100 `\r` only resets the column.
 	cursorRow int
 }
 
@@ -223,7 +219,7 @@ func (r *terminalLineReader) ReadLine(prompt string) (string, error) {
 		switch b := tmp[0]; b {
 		case '\r', '\n':
 			ctrlCArmed = false
-			fmt.Fprint(r.out, "\r\n")
+			r.endLine(prompt, buffer)
 			line := string(buffer)
 			if shouldRecordREPLHistory(line) {
 				r.history = append(r.history, line)
@@ -232,19 +228,21 @@ func (r *terminalLineReader) ReadLine(prompt string) (string, error) {
 		case 4:
 			ctrlCArmed = false
 			if len(buffer) == 0 {
-				fmt.Fprint(r.out, "\r\n")
+				r.endLine(prompt, buffer)
 				return "", io.EOF
 			}
 		case 3:
 			if ctrlCArmed {
-				fmt.Fprint(r.out, "\r\n")
+				r.endLine(prompt, buffer)
 				return "", io.EOF
 			}
 			ctrlCArmed = true
+			oldBuffer := append([]rune(nil), buffer...)
 			buffer = buffer[:0]
 			cursor = 0
 			historyIndex = len(r.history)
 			draft = draft[:0]
+			r.endLine(prompt, oldBuffer)
 			fmt.Fprint(r.out, "^C Press Ctrl+C again to quit.\r\n")
 			fmt.Fprint(r.out, prompt)
 		case 127, 8:
@@ -394,7 +392,7 @@ func (r *terminalLineReader) completeLine(prompt string, buffer []rune) []rune {
 		return buffer
 	}
 	if len(completion.Candidates) > 0 {
-		fmt.Fprint(r.out, "\r\n")
+		r.endLine(prompt, buffer)
 		for _, candidate := range completion.Candidates {
 			fmt.Fprintln(r.out, candidate)
 		}
@@ -403,32 +401,34 @@ func (r *terminalLineReader) completeLine(prompt string, buffer []rune) []rune {
 	return buffer
 }
 
-// redrawLine repaints the prompt + buffer and positions the terminal
-// cursor at the logical position `cursor`. Unlike the bare
-// `redrawLineAtCursor`, this method:
-//   - Knows the terminal width (queried per call so it stays correct
-//     when the window is resized between keystrokes).
-//   - Walks up to the prompt's start row before clearing, so wrapped
-//     lines don't leave stale rows behind.
-//   - Uses vertical-motion escapes (CUU/CUD) plus column-zero + CUF
-//     to land the cursor on the right (row, column) pair even when
-//     the buffer overflows.
-//
-// Trailing-wrap quirk: when the printed text ends exactly at the
-// terminal's right edge, most terminals leave the cursor in the
-// pending-wrap "sticky" column N+1 of the same row rather than
-// advancing it to column 0 of the next row. We force the wrap by
-// writing a space + carriage-return when the position is at column
-// 0 of an apparent-new row, matching what linenoise / rustyline do.
+// redrawLine repaints prompt+buffer and positions the cursor at
+// `cursor`, walking up to the prompt row first so wrapped rows
+// don't leak between redraws.
 func (r *terminalLineReader) redrawLine(prompt string, buffer []rune, cursor int) {
 	r.cursorRow = writeRedraw(r.out, r.terminalWidth(), prompt, buffer, cursor, r.cursorRow)
 }
 
-// writeRedraw emits the escape sequences + prompt + buffer needed to
-// repaint the line at width `width`, given that the cursor was last
-// left `prevRow` rows below the prompt's start row. Returns the new
-// row offset for the next redraw. Split out so unit tests can drive
-// it with a bytes.Buffer and a fixed width.
+// endLine walks the cursor past any wrapped rows before emitting the
+// trailing CRLF, so committed input doesn't get overprinted by the
+// next thing the host writes.
+func (r *terminalLineReader) endLine(prompt string, buffer []rune) {
+	r.cursorRow = writeEnd(r.out, r.terminalWidth(), prompt, buffer, r.cursorRow)
+}
+
+func writeEnd(out io.Writer, width int, prompt string, buffer []rune, prevRow int) int {
+	pw := displayWidth(prompt)
+	totalCols := pw + len(buffer)
+	lastRow := 0
+	if totalCols > 0 {
+		lastRow = (totalCols - 1) / width
+	}
+	if down := lastRow - prevRow; down > 0 {
+		fmt.Fprintf(out, "\x1b[%dB", down)
+	}
+	fmt.Fprint(out, "\r\n")
+	return 0
+}
+
 func writeRedraw(out io.Writer, width int, prompt string, buffer []rune, cursor int, prevRow int) int {
 	pw := displayWidth(prompt)
 	totalCols := pw + len(buffer)
@@ -444,6 +444,7 @@ func writeRedraw(out io.Writer, width int, prompt string, buffer []rune, cursor 
 	fmt.Fprint(out, prompt)
 	fmt.Fprint(out, string(buffer))
 	if len(buffer) > 0 && totalCols%width == 0 {
+		// force wrap past terminals' sticky last column
 		fmt.Fprint(out, " \r")
 	}
 	postRow := totalRows - 1
@@ -460,8 +461,6 @@ func writeRedraw(out io.Writer, width int, prompt string, buffer []rune, cursor 
 	return cursorRow
 }
 
-// rowsFor returns how many terminal rows `cells` visible cells span at
-// the given width. Zero cells take one row (the prompt-start row).
 func rowsFor(cells, width int) int {
 	if width <= 0 {
 		return 1
@@ -476,10 +475,7 @@ func rowsFor(cells, width int) int {
 	return rows
 }
 
-// displayWidth returns the number of terminal cells `s` occupies. The
-// REPL only ever passes plain-ASCII prompts (`geb> ` / `...> `) but
-// the helper strips ANSI CSI escapes so a future colourised prompt
-// still measures correctly.
+// displayWidth strips ANSI CSI escapes so prompts with colour codes still measure correctly.
 func displayWidth(s string) int {
 	n := 0
 	i := 0
@@ -501,8 +497,6 @@ func displayWidth(s string) int {
 	return n
 }
 
-// terminalWidth returns the terminal's current width in columns, or
-// a 80-column fallback when ioctl fails or returns zero.
 func (r *terminalLineReader) terminalWidth() int {
 	ws, err := unix.IoctlGetWinsize(int(r.out.Fd()), unix.TIOCGWINSZ)
 	if err != nil || ws == nil || ws.Col == 0 {

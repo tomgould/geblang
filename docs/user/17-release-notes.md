@@ -9,6 +9,11 @@
   start / end of the logical line instead of the start / end of the
   current physical row. Backspace, Delete, and history navigation
   also reposition the cursor properly across wrapped rows.
+- REPL: pressing Enter after navigating away from the end of a
+  wrapped line now puts evaluator output on a clean new line below
+  the entire input, instead of overwriting the trailing wrapped row.
+  Tab-completion candidate listings and the `^C` clear-line message
+  walk past wrapped rows the same way.
 
 ## 1.4.1
 
