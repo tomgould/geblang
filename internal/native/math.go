@@ -4,9 +4,71 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"strconv"
+	"strings"
 
 	"geblang/internal/runtime"
 )
+
+// IntBaseArg validates an optional base argument for int<->string base
+// conversion. Returns 10 when args is empty.
+func IntBaseArg(args []runtime.Value, label string) (int, error) {
+	if len(args) == 0 {
+		return 10, nil
+	}
+	if len(args) != 1 {
+		return 0, fmt.Errorf("%s expects optional base", label)
+	}
+	var base int64
+	switch v := args[0].(type) {
+	case runtime.SmallInt:
+		base = v.Value
+	case runtime.Int:
+		if !v.Value.IsInt64() {
+			return 0, fmt.Errorf("%s base must be between 2 and 36", label)
+		}
+		base = v.Value.Int64()
+	default:
+		return 0, fmt.Errorf("%s base must be an int", label)
+	}
+	if base < 2 || base > 36 {
+		return 0, fmt.Errorf("%s base must be between 2 and 36", label)
+	}
+	return int(base), nil
+}
+
+// IntFormatBase formats a runtime int (SmallInt or Int) in the given base.
+// Lowercase digits a-z for bases > 10. Caller should validate base via IntBaseArg.
+func IntFormatBase(value runtime.Value, base int) (string, error) {
+	switch v := value.(type) {
+	case runtime.SmallInt:
+		return strconv.FormatInt(v.Value, base), nil
+	case runtime.Int:
+		return v.Value.Text(base), nil
+	}
+	return "", fmt.Errorf("%s has no toString(base)", value.TypeName())
+}
+
+// StringParseBase parses a string into a runtime int using the given base.
+// Returns SmallInt when the result fits in int64, otherwise Int. Caller
+// should validate base via IntBaseArg.
+func StringParseBase(text string, base int, label string) (runtime.Value, error) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return nil, fmt.Errorf("%s: empty string", label)
+	}
+	if n, err := strconv.ParseInt(trimmed, base, 64); err == nil {
+		return runtime.SmallInt{Value: n}, nil
+	}
+	bi, ok := new(big.Int).SetString(trimmed, base)
+	if !ok {
+		return nil, fmt.Errorf("%s: invalid digit in %q for base %d", label, text, base)
+	}
+	if bi.IsInt64() {
+		return runtime.SmallInt{Value: bi.Int64()}, nil
+	}
+	return runtime.Int{Value: bi}, nil
+}
 
 // IntToDecimal converts a runtime.Int to runtime.Decimal for mixed-type arithmetic.
 func IntToDecimal(value runtime.Int) runtime.Decimal {

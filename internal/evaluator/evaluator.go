@@ -48,19 +48,20 @@ import (
 	"geblang/internal/parser"
 	"geblang/internal/runtime"
 	"geblang/internal/semantic"
+	"geblang/internal/version"
 
 	tomllib "github.com/BurntSushi/toml"
 	"github.com/creack/pty"
 	"github.com/fsnotify/fsnotify"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/websocket"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/pkg/sftp"
 	amqp091 "github.com/rabbitmq/amqp091-go"
 	kafkago "github.com/segmentio/kafka-go"
-	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"golang.org/x/sys/unix"
 	yamllib "gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
@@ -106,122 +107,122 @@ type Evaluator struct {
 	// globalClasses is the cross-module class registry. Every user
 	// class registers here at definition time so reflect.class(name)
 	// from any module can find it.
-	globalClasses        map[string]*runtime.Class
-	errorSentinels       map[string]*runtime.Class
-	deferFrames          []*deferFrame
-	yieldFrames          []*yieldFrame
-	callStack            []evalFrame
-	callDepth            int
-	maxCallDepth         int
+	globalClasses  map[string]*runtime.Class
+	errorSentinels map[string]*runtime.Class
+	deferFrames    []*deferFrame
+	yieldFrames    []*yieldFrame
+	callStack      []evalFrame
+	callDepth      int
+	maxCallDepth   int
 	// classStack tracks the lexical class of the currently executing
 	// method/constructor. `parent(...)` resolves to the parent of the top of
 	// this stack rather than to `this.Class.Parent`, so that calling
 	// `parent(msg)` inside e.g. AppError's body always dispatches to Error,
 	// not back to AppError, regardless of the runtime class of `this`.
-	classStack        []*runtime.Class
+	classStack []*runtime.Class
 	// destructibleInstances tracks instances of classes that
 	// declare a `func ~ClassName()` destructor. The sweep at
 	// Cleanup() time invokes their destructors in reverse-creation
 	// order (LIFO). `del x` removes the corresponding entry and
 	// fires the destructor immediately.
 	destructibleInstances []*runtime.Instance
-	args              []string
-	debugHook         DebugHookFunc
-	debugSourcePath   string
-	parent            *Evaluator
-	vmDispatcher      MethodDispatcher
-	dbMu              sync.Mutex
-	nextDBID          int64
-	dbs               map[int64]*sql.DB
-	dbDrivers         map[int64]string
-	nextTxID          int64
-	txs               map[int64]*dbTxHandle
-	nextStmtID        int64
-	stmts             map[int64]*dbStmtHandle
-	nextDBRowsID      int64
-	dbRows            map[int64]*dbRowsHandle
-	fileMu            sync.Mutex
-	nextFileID        int64
-	files             map[int64]*os.File
-	bufReaders        map[int64]*bufio.Reader
-	bufferMu          sync.Mutex
-	nextBufferID      int64
-	buffers           map[int64]*bytes.Buffer
-	streamMu          sync.Mutex
-	nextStreamID      int64
-	streams           map[int64]*ioStreamHandle
-	processMu         sync.Mutex
-	nextProcID        int64
-	processes         map[int64]*processHandle
-	logMu             sync.Mutex
-	nextLogID         int64
-	loggers           map[int64]*loggerHandle
-	metricsMu         sync.Mutex
-	metrics           map[string]float64
-	metricRegistry    map[string]*metricsEntry
-	traceMu           sync.Mutex
-	nextTraceID       int64
-	traces            map[int64]*traceSpan
-	watchMu           sync.Mutex
-	nextWatchID       int64
-	watches           map[int64]*watchHandle
-	webMu             sync.Mutex
-	nextWebID         int64
-	webApps           map[int64]*webApp
-	wsMu              sync.Mutex
-	nextWSID          int64
-	websockets        map[int64]*websocket.Conn
-	amqpMu            sync.Mutex
-	nextAmqpConnID    int64
-	amqpConns         map[int64]*amqp091.Connection
-	nextAmqpChanID    int64
-	amqpChans         map[int64]*amqp091.Channel
-	kafkaMu           sync.Mutex
-	nextKafkaWriterID int64
-	kafkaWriters      map[int64]*kafkago.Writer
-	nextKafkaReaderID int64
-	kafkaReaders      map[int64]*kafkaReaderHandle
-	netMu             sync.Mutex
-	nextNetID         int64
-	netHandles        map[int64]*netHandle
-	netServerMu       sync.Mutex
-	nextNetServerID   int64
-	netServers        map[int64]*netServerHandle
-	sshMu             sync.Mutex
-	nextSSHID         int64
-	sshClients        map[int64]*sshClientHandle
-	sshSessions       map[int64]*sshSessionHandle
-	sshTunnels        map[int64]*sshTunnelHandle
-	httpServerMu      sync.Mutex
-	nextHTTPServerID  int64
-	httpServers       map[int64]*httpServerHandle
-	httpStreamMu      sync.Mutex
-	nextHTTPStreamID  int64
-	httpStreams       map[int64]*httpStreamHandle
-	httpClientMu      sync.Mutex
-	nextHTTPClientID  int64
-	httpClientHandles map[int64]*httpClientHandle
-	httpCookieJarMu   sync.Mutex
-	nextCookieJarID   int64
-	httpCookieJars    map[int64]http.CookieJar
-	httpFetchStreamMu sync.Mutex
-	nextFetchStreamID int64
-	httpFetchStreams  map[int64]*httpFetchStreamHandle
-	jsonMu            sync.Mutex
-	nextJSONID        int64
-	jsonReaders       map[int64]*jsonStreamReader
-	xmlMu             sync.Mutex
-	nextXMLID         int64
-	xmlReaders        map[int64]*xmlStreamReader
-	csvMu             sync.Mutex
-	nextCSVID         int64
-	csvReaders        map[int64]*csvStreamReader
-	yamlMu            sync.Mutex
-	nextYAMLID        int64
-	yamlReaders       map[int64]*yamlStreamReader
-	extMu             sync.Mutex
-	nextExtID         int64
-	extConns          map[int64]*extHandle
+	args                  []string
+	debugHook             DebugHookFunc
+	debugSourcePath       string
+	parent                *Evaluator
+	vmDispatcher          MethodDispatcher
+	dbMu                  sync.Mutex
+	nextDBID              int64
+	dbs                   map[int64]*sql.DB
+	dbDrivers             map[int64]string
+	nextTxID              int64
+	txs                   map[int64]*dbTxHandle
+	nextStmtID            int64
+	stmts                 map[int64]*dbStmtHandle
+	nextDBRowsID          int64
+	dbRows                map[int64]*dbRowsHandle
+	fileMu                sync.Mutex
+	nextFileID            int64
+	files                 map[int64]*os.File
+	bufReaders            map[int64]*bufio.Reader
+	bufferMu              sync.Mutex
+	nextBufferID          int64
+	buffers               map[int64]*bytes.Buffer
+	streamMu              sync.Mutex
+	nextStreamID          int64
+	streams               map[int64]*ioStreamHandle
+	processMu             sync.Mutex
+	nextProcID            int64
+	processes             map[int64]*processHandle
+	logMu                 sync.Mutex
+	nextLogID             int64
+	loggers               map[int64]*loggerHandle
+	metricsMu             sync.Mutex
+	metrics               map[string]float64
+	metricRegistry        map[string]*metricsEntry
+	traceMu               sync.Mutex
+	nextTraceID           int64
+	traces                map[int64]*traceSpan
+	watchMu               sync.Mutex
+	nextWatchID           int64
+	watches               map[int64]*watchHandle
+	webMu                 sync.Mutex
+	nextWebID             int64
+	webApps               map[int64]*webApp
+	wsMu                  sync.Mutex
+	nextWSID              int64
+	websockets            map[int64]*websocket.Conn
+	amqpMu                sync.Mutex
+	nextAmqpConnID        int64
+	amqpConns             map[int64]*amqp091.Connection
+	nextAmqpChanID        int64
+	amqpChans             map[int64]*amqp091.Channel
+	kafkaMu               sync.Mutex
+	nextKafkaWriterID     int64
+	kafkaWriters          map[int64]*kafkago.Writer
+	nextKafkaReaderID     int64
+	kafkaReaders          map[int64]*kafkaReaderHandle
+	netMu                 sync.Mutex
+	nextNetID             int64
+	netHandles            map[int64]*netHandle
+	netServerMu           sync.Mutex
+	nextNetServerID       int64
+	netServers            map[int64]*netServerHandle
+	sshMu                 sync.Mutex
+	nextSSHID             int64
+	sshClients            map[int64]*sshClientHandle
+	sshSessions           map[int64]*sshSessionHandle
+	sshTunnels            map[int64]*sshTunnelHandle
+	httpServerMu          sync.Mutex
+	nextHTTPServerID      int64
+	httpServers           map[int64]*httpServerHandle
+	httpStreamMu          sync.Mutex
+	nextHTTPStreamID      int64
+	httpStreams           map[int64]*httpStreamHandle
+	httpClientMu          sync.Mutex
+	nextHTTPClientID      int64
+	httpClientHandles     map[int64]*httpClientHandle
+	httpCookieJarMu       sync.Mutex
+	nextCookieJarID       int64
+	httpCookieJars        map[int64]http.CookieJar
+	httpFetchStreamMu     sync.Mutex
+	nextFetchStreamID     int64
+	httpFetchStreams      map[int64]*httpFetchStreamHandle
+	jsonMu                sync.Mutex
+	nextJSONID            int64
+	jsonReaders           map[int64]*jsonStreamReader
+	xmlMu                 sync.Mutex
+	nextXMLID             int64
+	xmlReaders            map[int64]*xmlStreamReader
+	csvMu                 sync.Mutex
+	nextCSVID             int64
+	csvReaders            map[int64]*csvStreamReader
+	yamlMu                sync.Mutex
+	nextYAMLID            int64
+	yamlReaders           map[int64]*yamlStreamReader
+	extMu                 sync.Mutex
+	nextExtID             int64
+	extConns              map[int64]*extHandle
 }
 
 type builtinFunc func(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error)
@@ -6085,14 +6086,14 @@ func bindDestructuredName(env *runtime.Environment, name string, value runtime.V
 // resolveUserIterator returns the iterator backing a `for (x in obj)`
 // loop where obj is a user-defined class instance. Calls obj.__iter()
 // when defined and returns:
-//  - (*runtime.Instance, true, nil) when the result is itself an
-//    iterator instance (has __next or is `this` for self-iterating
-//    classes).
-//  - (any other runtime.Value via the "passthrough" path, true, nil)
-//    by setting the value into `passthrough` so the caller falls back
-//    to the standard iteration dispatcher on List / Generator / etc.
-//  - (nil, false, nil) when the instance implements neither protocol
-//    side (caller surfaces the existing "not iterable" error).
+//   - (*runtime.Instance, true, nil) when the result is itself an
+//     iterator instance (has __next or is `this` for self-iterating
+//     classes).
+//   - (any other runtime.Value via the "passthrough" path, true, nil)
+//     by setting the value into `passthrough` so the caller falls back
+//     to the standard iteration dispatcher on List / Generator / etc.
+//   - (nil, false, nil) when the instance implements neither protocol
+//     side (caller surfaces the existing "not iterable" error).
 func (e *Evaluator) resolveUserIterator(instance *runtime.Instance) (*runtime.Instance, runtime.Value, bool, error) {
 	if instance == nil || instance.Class == nil {
 		return nil, nil, false, nil
@@ -6515,7 +6516,6 @@ func (e *Evaluator) evalReflectLookupCall(call *ast.CallExpression, env *runtime
 	}
 }
 
-
 func (e *Evaluator) reflectLookupValue(name string, env *runtime.Environment) (runtime.Value, bool, error) {
 	if moduleName, exportName, ok := strings.Cut(name, "."); ok {
 		moduleValue, valueOK := env.Get(moduleName)
@@ -6722,7 +6722,7 @@ func primitiveMethods(typeName string) []string {
 	case "string":
 		return []string{"contains", "endsWith", "format", "get", "indexOf", "isEmpty", "length", "lower", "replace", "split", "startsWith", "toString", "trim", "upper"}
 	case "bytes":
-		return []string{"contains", "get", "isEmpty", "length", "toBase64", "toHex", "toString"}
+		return []string{"contains", "get", "isEmpty", "length", "toBase64", "toBase64Url", "toHex", "toString"}
 	case "dict":
 		return []string{"contains", "get", "hasKey", "isEmpty", "keys", "length", "set"}
 	case "set":
@@ -7173,13 +7173,15 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"stringify": e.registryBuiltin("csv", "stringify"),
 		},
 		"bytes": {
-			"fromString": e.registryBuiltin("bytes", "fromString"),
-			"toString":   e.registryBuiltin("bytes", "toString"),
-			"fromHex":    e.registryBuiltin("bytes", "fromHex"),
-			"toHex":      e.registryBuiltin("bytes", "toHex"),
-			"fromBase64": e.registryBuiltin("bytes", "fromBase64"),
-			"toBase64":   e.registryBuiltin("bytes", "toBase64"),
-			"concat":     e.registryBuiltin("bytes", "concat"),
+			"fromString":    e.registryBuiltin("bytes", "fromString"),
+			"toString":      e.registryBuiltin("bytes", "toString"),
+			"fromHex":       e.registryBuiltin("bytes", "fromHex"),
+			"toHex":         e.registryBuiltin("bytes", "toHex"),
+			"fromBase64":    e.registryBuiltin("bytes", "fromBase64"),
+			"toBase64":      e.registryBuiltin("bytes", "toBase64"),
+			"fromBase64Url": e.registryBuiltin("bytes", "fromBase64Url"),
+			"toBase64Url":   e.registryBuiltin("bytes", "toBase64Url"),
+			"concat":        e.registryBuiltin("bytes", "concat"),
 		},
 		"string": {
 			"fromCodePoint":  e.registryBuiltin("string", "fromCodePoint"),
@@ -7293,13 +7295,13 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"toPrometheus": e.metricsToPrometheus,
 		},
 		"trace": {
-			"start":       e.traceStart,
-			"event":       e.traceEvent,
-			"end":         e.traceEnd,
-			"snapshot":    e.traceSnapshot,
-			"reset":       e.traceReset,
-			"toOtlpJson":  e.traceToOtlpJson,
-			"exportOtlp":  e.traceExportOtlp,
+			"start":      e.traceStart,
+			"event":      e.traceEvent,
+			"end":        e.traceEnd,
+			"snapshot":   e.traceSnapshot,
+			"reset":      e.traceReset,
+			"toOtlpJson": e.traceToOtlpJson,
+			"exportOtlp": e.traceExportOtlp,
 		},
 		"profile": {
 			"memStats": profileMemStats,
@@ -7359,17 +7361,25 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"chacha20Encrypt":        e.registryBuiltin("crypt", "chacha20Encrypt"),
 			"chacha20Decrypt":        e.registryBuiltin("crypt", "chacha20Decrypt"),
 		},
+		"binary": {
+			"pack":        e.registryBuiltin("binary", "pack"),
+			"unpack":      e.registryBuiltin("binary", "unpack"),
+			"unpackNamed": e.registryBuiltin("binary", "unpackNamed"),
+			"size":        e.registryBuiltin("binary", "size"),
+		},
 		"encoding": {
-			"base64Encode": e.registryBuiltin("encoding", "base64Encode"),
-			"base64Decode": e.registryBuiltin("encoding", "base64Decode"),
-			"base32Encode": e.registryBuiltin("encoding", "base32Encode"),
-			"base32Decode": e.registryBuiltin("encoding", "base32Decode"),
-			"base58Encode": e.registryBuiltin("encoding", "base58Encode"),
-			"base58Decode": e.registryBuiltin("encoding", "base58Decode"),
-			"urlEncode":    e.registryBuiltin("encoding", "urlEncode"),
-			"urlDecode":    e.registryBuiltin("encoding", "urlDecode"),
-			"htmlEscape":   e.registryBuiltin("encoding", "htmlEscape"),
-			"htmlUnescape": e.registryBuiltin("encoding", "htmlUnescape"),
+			"base64Encode":    e.registryBuiltin("encoding", "base64Encode"),
+			"base64Decode":    e.registryBuiltin("encoding", "base64Decode"),
+			"base32Encode":    e.registryBuiltin("encoding", "base32Encode"),
+			"base32Decode":    e.registryBuiltin("encoding", "base32Decode"),
+			"base58Encode":    e.registryBuiltin("encoding", "base58Encode"),
+			"base58Decode":    e.registryBuiltin("encoding", "base58Decode"),
+			"base64UrlEncode": e.registryBuiltin("encoding", "base64UrlEncode"),
+			"base64UrlDecode": e.registryBuiltin("encoding", "base64UrlDecode"),
+			"urlEncode":       e.registryBuiltin("encoding", "urlEncode"),
+			"urlDecode":       e.registryBuiltin("encoding", "urlDecode"),
+			"htmlEscape":      e.registryBuiltin("encoding", "htmlEscape"),
+			"htmlUnescape":    e.registryBuiltin("encoding", "htmlUnescape"),
 		},
 		"compress": {
 			"gzip":   e.registryBuiltin("compress", "gzip"),
@@ -7477,20 +7487,20 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"loadAndApply": e.dotenvLoadAndApply,
 		},
 		"cli": {
-			"prompt":           e.cliPrompt,
-			"password":         e.cliPassword,
-			"secret":           e.cliPassword,
-			"confirm":          e.cliConfirm,
-			"choose":           e.cliChoose,
-			"style":            cliStyle,
-			"stripAnsi":        cliStripANSI,
-			"table":            cliTable,
-			"parseArgs":        e.registryBuiltin("args", "parse"),
-			"help":             e.registryBuiltin("args", "help"),
-			"spinnerTick":      e.cliSpinnerTick,
-			"spinnerStop":      e.cliSpinnerStop,
-			"progressRender":   e.cliProgressRender,
-			"progressFinish":   e.cliProgressFinish,
+			"prompt":         e.cliPrompt,
+			"password":       e.cliPassword,
+			"secret":         e.cliPassword,
+			"confirm":        e.cliConfirm,
+			"choose":         e.cliChoose,
+			"style":          cliStyle,
+			"stripAnsi":      cliStripANSI,
+			"table":          cliTable,
+			"parseArgs":      e.registryBuiltin("args", "parse"),
+			"help":           e.registryBuiltin("args", "help"),
+			"spinnerTick":    e.cliSpinnerTick,
+			"spinnerStop":    e.cliSpinnerStop,
+			"progressRender": e.cliProgressRender,
+			"progressFinish": e.cliProgressFinish,
 		},
 		"http": {
 			"serve":              e.httpServe,
@@ -7638,32 +7648,32 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"stop":     e.watchStop,
 		},
 		"math": {
-			"abs":   e.registryBuiltin("math", "abs"),
-			"min":   e.registryBuiltin("math", "min"),
-			"max":   e.registryBuiltin("math", "max"),
-			"clamp": e.registryBuiltin("math", "clamp"),
-			"floor": e.registryBuiltin("math", "floor"),
-			"ceil":  e.registryBuiltin("math", "ceil"),
-			"round": e.registryBuiltin("math", "round"),
-			"sqrt":  e.registryBuiltin("math", "sqrt"),
-			"sin":   e.registryBuiltin("math", "sin"),
-			"cos":   e.registryBuiltin("math", "cos"),
-			"tan":   e.registryBuiltin("math", "tan"),
-			"asin":  e.registryBuiltin("math", "asin"),
-			"acos":  e.registryBuiltin("math", "acos"),
-			"atan":  e.registryBuiltin("math", "atan"),
-			"atan2": e.registryBuiltin("math", "atan2"),
-			"log":   e.registryBuiltin("math", "log"),
-			"log10": e.registryBuiltin("math", "log10"),
-			"exp":   e.registryBuiltin("math", "exp"),
-			"pow":   e.registryBuiltin("math", "pow"),
-			"pi":    e.registryBuiltin("math", "pi"),
-			"e":     e.registryBuiltin("math", "e"),
-			"log2":  e.registryBuiltin("math", "log2"),
-			"trunc": e.registryBuiltin("math", "trunc"),
-			"sign":  e.registryBuiltin("math", "sign"),
-			"cbrt":  e.registryBuiltin("math", "cbrt"),
-			"hypot": e.registryBuiltin("math", "hypot"),
+			"abs":        e.registryBuiltin("math", "abs"),
+			"min":        e.registryBuiltin("math", "min"),
+			"max":        e.registryBuiltin("math", "max"),
+			"clamp":      e.registryBuiltin("math", "clamp"),
+			"floor":      e.registryBuiltin("math", "floor"),
+			"ceil":       e.registryBuiltin("math", "ceil"),
+			"round":      e.registryBuiltin("math", "round"),
+			"sqrt":       e.registryBuiltin("math", "sqrt"),
+			"sin":        e.registryBuiltin("math", "sin"),
+			"cos":        e.registryBuiltin("math", "cos"),
+			"tan":        e.registryBuiltin("math", "tan"),
+			"asin":       e.registryBuiltin("math", "asin"),
+			"acos":       e.registryBuiltin("math", "acos"),
+			"atan":       e.registryBuiltin("math", "atan"),
+			"atan2":      e.registryBuiltin("math", "atan2"),
+			"log":        e.registryBuiltin("math", "log"),
+			"log10":      e.registryBuiltin("math", "log10"),
+			"exp":        e.registryBuiltin("math", "exp"),
+			"pow":        e.registryBuiltin("math", "pow"),
+			"pi":         e.registryBuiltin("math", "pi"),
+			"e":          e.registryBuiltin("math", "e"),
+			"log2":       e.registryBuiltin("math", "log2"),
+			"trunc":      e.registryBuiltin("math", "trunc"),
+			"sign":       e.registryBuiltin("math", "sign"),
+			"cbrt":       e.registryBuiltin("math", "cbrt"),
+			"hypot":      e.registryBuiltin("math", "hypot"),
 			"inf":        e.registryBuiltin("math", "inf"),
 			"nan":        e.registryBuiltin("math", "nan"),
 			"isNaN":      e.registryBuiltin("math", "isNaN"),
@@ -9390,8 +9400,9 @@ func (e *Evaluator) metricsHistogram(call *ast.CallExpression, args []runtime.Va
 }
 
 // metricsObserve records a histogram sample. Signature:
-//   metrics.observe(name, value)               // no labels
-//   metrics.observe(name, value, {labelDict})  // with labels
+//
+//	metrics.observe(name, value)               // no labels
+//	metrics.observe(name, value, {labelDict})  // with labels
 func (e *Evaluator) metricsObserve(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 2 && len(args) != 3 {
 		return nil, fmt.Errorf("%s expects name, value, and optional labels", call.Callee.String())
@@ -9741,7 +9752,7 @@ func (e *Evaluator) traceToOtlpJson(call *ast.CallExpression, args []runtime.Val
 	opts := otlpExportOpts{
 		serviceName:  "geblang",
 		scopeName:    "geblang.trace",
-		scopeVersion: "1.4.0",
+		scopeVersion: version.Geblang,
 	}
 	if len(args) == 1 {
 		if err := opts.applyDict(call, args[0]); err != nil {
@@ -9776,7 +9787,7 @@ func (e *Evaluator) traceExportOtlp(call *ast.CallExpression, args []runtime.Val
 	opts := otlpExportOpts{
 		serviceName:  "geblang",
 		scopeName:    "geblang.trace",
-		scopeVersion: "1.4.0",
+		scopeVersion: version.Geblang,
 		timeoutMs:    10000,
 	}
 	if len(args) == 2 {
@@ -12083,7 +12094,7 @@ func primitiveMethodNamesFor(typeName string) []string {
 	case "string":
 		return []string{"chars", "codeAt", "contains", "endsWith", "format", "indexOf", "isEmpty", "length", "lower", "padLeft", "padRight", "replace", "split", "startsWith", "substring", "toBool", "toDecimal", "toFloat", "toInt", "trim", "trimLeft", "trimRight", "upper"}
 	case "bytes":
-		return []string{"contains", "get", "isEmpty", "length", "toBase64", "toHex", "toString"}
+		return []string{"contains", "get", "isEmpty", "length", "toBase64", "toBase64Url", "toHex", "toString"}
 	case "range":
 		return []string{"contains", "first", "isEmpty", "last", "length", "toList"}
 	}
@@ -20796,6 +20807,15 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 		return nil, fmt.Errorf("unknown method %s.%s", instance.Class.Name, name)
 	}
 	if target, ok := primitiveConversionTarget(name); ok {
+		if target == "int" {
+			if text, ok := receiver.(runtime.String); ok && len(args) >= 1 {
+				base, err := native.IntBaseArg(args, "string.toInt")
+				if err != nil {
+					return nil, err
+				}
+				return native.StringParseBase(text.Value, base, "string.toInt")
+			}
+		}
 		if len(args) != 0 {
 			return nil, fmt.Errorf("%s.%s expects no arguments", receiver.TypeName(), name)
 		}
@@ -22541,6 +22561,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, fmt.Errorf("bytes.toBase64 expects no arguments")
 			}
 			return runtime.String{Value: base64.StdEncoding.EncodeToString(value.Value)}, nil
+		case "toBase64Url":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("bytes.toBase64Url expects no arguments")
+			}
+			return runtime.String{Value: base64.RawURLEncoding.EncodeToString(value.Value)}, nil
 		case "contains":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("bytes.contains expects one argument")
@@ -22594,10 +22619,18 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			return runtime.Bool{Value: value.Value.Sign() < 0}, nil
 		case "toString":
-			if len(args) != 0 {
-				return nil, fmt.Errorf("int.toString expects no arguments")
+			base, err := native.IntBaseArg(args, "int.toString")
+			if err != nil {
+				return nil, err
 			}
-			return runtime.String{Value: value.Inspect()}, nil
+			if base == 10 {
+				return runtime.String{Value: value.Inspect()}, nil
+			}
+			s, err := native.IntFormatBase(value, base)
+			if err != nil {
+				return nil, err
+			}
+			return runtime.String{Value: s}, nil
 		}
 	case runtime.Decimal:
 		switch name {

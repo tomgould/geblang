@@ -1,5 +1,24 @@
 # Release Notes
 
+## 1.4.1
+
+### Stdlib
+
+- `int.toString(base)` and `string.toInt(base)` accept any base
+  2-36 for arbitrary base conversion (lowercase digits a-z).
+- `encoding.base64UrlEncode` / `base64UrlDecode` for unpadded
+  URL-safe Base64 (RFC 4648 section 5); decoder accepts padded
+  or unpadded input.
+- `bytes.toBase64Url` / `bytes.fromBase64Url` module helpers and
+  a `b.toBase64Url()` method on bytes values.
+- New `binary` module with Python `struct`-style pack/unpack:
+  `binary.pack(format, ...values)`, `binary.unpack(format, data)`,
+  `binary.unpackNamed(spec, data)`, and `binary.size(format)`.
+  Format codes cover signed/unsigned 8/16/32/64-bit ints, 32/64-bit
+  floats, fixed-length byte strings, and pad bytes; the first
+  character may set endianness (`<` little, `>` big, `!` network,
+  `=` native).
+
 ## 1.4.0
 
 ### Performance

@@ -1,0 +1,37 @@
+/**
+ * @title Bytes URL-safe base64 (1.4.1)
+ * @summary bytes.toBase64Url / fromBase64Url module functions and method form.
+ */
+import test;
+import bytes;
+
+class BytesBase64UrlTest extends test.Test {
+    @test
+    func moduleRoundTrip(): void {
+        let raw = bytes.fromHex("48656c6c6f2c20776f726c6421");
+        let encoded = bytes.toBase64Url(raw);
+        this.assertEquals(false, encoded.contains("="));
+        let decoded = bytes.fromBase64Url(encoded);
+        this.assertEquals(bytes.toHex(raw), bytes.toHex(decoded));
+    }
+
+    @test
+    func methodFormMatchesModule(): void {
+        let raw = bytes.fromHex("fbff");
+        this.assertEquals(bytes.toBase64Url(raw), raw.toBase64Url());
+    }
+
+    @test
+    func fromBase64UrlAcceptsPadded(): void {
+        let padded = "SGVsbG8sIHdvcmxkIQ==";
+        let decoded = bytes.fromBase64Url(padded);
+        this.assertEquals("Hello, world!", bytes.toString(decoded));
+    }
+
+    @test
+    func fromBase64UrlRejectsGarbage(): void {
+        this.assertThrows(func(): void {
+            bytes.fromBase64Url("!!!");
+        });
+    }
+}

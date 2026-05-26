@@ -1935,6 +1935,38 @@ io.println(bytes.fromString("hi").toHex());
 `, "Hello\n6869\n")
 }
 
+func TestParityIntBaseConversion(t *testing.T) {
+	runParity(t, `import io;
+io.println((255).toString(16));
+io.println((255).toString(2));
+io.println((-13).toString(2));
+io.println("ff".toInt(16));
+io.println("-101".toInt(2));
+`, "ff\n11111111\n-1101\n255\n-5\n")
+}
+
+func TestParityBytesBase64Url(t *testing.T) {
+	runParity(t, `import io;
+import bytes;
+let raw = bytes.fromHex("fbff");
+io.println(raw.toBase64Url());
+io.println(bytes.toBase64Url(raw));
+io.println(bytes.toHex(bytes.fromBase64Url("-_8")));
+`, "-_8\n-_8\nfbff\n")
+}
+
+func TestParityBinaryPack(t *testing.T) {
+	runParity(t, `import io;
+import binary;
+import bytes;
+let buf = binary.pack(">IH", 3735928559, 1024);
+io.println(bytes.toHex(buf));
+let parts = binary.unpack(">IH", buf);
+io.println(parts);
+io.println(binary.size(">IH"));
+`, "deadbeef0400\n[3735928559, 1024]\n6\n")
+}
+
 func TestParityExceptionTypes(t *testing.T) {
 	runParity(t, `import io;
 try {

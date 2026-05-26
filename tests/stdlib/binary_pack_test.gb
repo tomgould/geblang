@@ -1,0 +1,134 @@
+/**
+ * @title Binary pack/unpack (1.4.1)
+ * @summary Python struct-style binary layout helpers.
+ */
+import test;
+import binary;
+import bytes;
+
+class BinaryPackTest extends test.Test {
+    @test
+    func packUnpackBigEndianInts(): void {
+        let buf = binary.pack(">IH", 3735928559, 1024);
+        this.assertEquals("deadbeef0400", bytes.toHex(buf));
+        let parts = binary.unpack(">IH", buf);
+        this.assertEquals(2, parts.length());
+        this.assertEquals(3735928559, parts[0]);
+        this.assertEquals(1024, parts[1]);
+    }
+
+    @test
+    func packLittleEndian(): void {
+        let buf = binary.pack("<I", 1);
+        this.assertEquals("01000000", bytes.toHex(buf));
+    }
+
+    @test
+    func packNetworkOrderIsBigEndian(): void {
+        let bigBuf = binary.pack(">H", 256);
+        let netBuf = binary.pack("!H", 256);
+        this.assertEquals(bytes.toHex(bigBuf), bytes.toHex(netBuf));
+    }
+
+    @test
+    func packSignedEightBit(): void {
+        let buf = binary.pack(">b", -1);
+        this.assertEquals("ff", bytes.toHex(buf));
+        let parts = binary.unpack(">b", buf);
+        this.assertEquals(-1, parts[0]);
+    }
+
+    @test
+    func packRejectsOutOfRange(): void {
+        this.assertThrows(func(): void {
+            binary.pack(">B", 256);
+        });
+        this.assertThrows(func(): void {
+            binary.pack(">b", 128);
+        });
+        this.assertThrows(func(): void {
+            binary.pack(">B", -1);
+        });
+    }
+
+    @test
+    func packAndUnpackFloats(): void {
+        let value = 3.14.toFloat();
+        let buf = binary.pack(">d", value);
+        this.assertEquals(8, buf.length);
+        let parts = binary.unpack(">d", buf);
+        let got = parts[0] as float;
+        this.assertTrue(got > 3.13.toFloat() && got < 3.15.toFloat());
+    }
+
+    @test
+    func fixedStringPaddingAndExtraction(): void {
+        let buf = binary.pack(">5s", "hi");
+        this.assertEquals("6869000000", bytes.toHex(buf));
+        let parts = binary.unpack(">5s", buf);
+        let raw = parts[0] as bytes;
+        this.assertEquals(5, raw.length);
+        this.assertEquals(0x68, raw[0]);
+        this.assertEquals(0x69, raw[1]);
+        this.assertEquals(0, raw[2]);
+    }
+
+    @test
+    func padBytesAreSkipped(): void {
+        let buf = binary.pack(">Bx2sB", 1, "ab", 2);
+        this.assertEquals("0100616202", bytes.toHex(buf));
+        this.assertEquals(5, binary.size(">Bx2sB"));
+        let parts = binary.unpack(">Bx2sB", buf);
+        this.assertEquals(3, parts.length());
+        this.assertEquals(1, parts[0]);
+        this.assertEquals("ab", bytes.toString(parts[1] as bytes));
+        this.assertEquals(2, parts[2]);
+    }
+
+    @test
+    func repeatCountExpandsArgs(): void {
+        let buf = binary.pack(">4B", 1, 2, 3, 4);
+        this.assertEquals("01020304", bytes.toHex(buf));
+        let parts = binary.unpack(">4B", buf);
+        this.assertEquals([1, 2, 3, 4], parts);
+    }
+
+    @test
+    func sizeReturnsExpectedByteCount(): void {
+        this.assertEquals(0, binary.size(""));
+        this.assertEquals(8, binary.size(">IH2B"));
+        this.assertEquals(13, binary.size(">10sB2x"));
+    }
+
+    @test
+    func unpackNamedReturnsDict(): void {
+        let buf = binary.pack(">IH", 42, 7);
+        let header = binary.unpackNamed([
+            {"name": "id",  "type": ">I"},
+            {"name": "seq", "type": "H"}
+        ], buf);
+        this.assertEquals(42, header["id"]);
+        this.assertEquals(7, header["seq"]);
+    }
+
+    @test
+    func unpackTooShortThrows(): void {
+        this.assertThrows(func(): void {
+            binary.unpack(">I", bytes.fromHex("01"));
+        });
+    }
+
+    @test
+    func packWrongArgCountThrows(): void {
+        this.assertThrows(func(): void {
+            binary.pack(">IH", 1);
+        });
+    }
+
+    @test
+    func unknownFormatCodeThrows(): void {
+        this.assertThrows(func(): void {
+            binary.pack(">Z", 1);
+        });
+    }
+}

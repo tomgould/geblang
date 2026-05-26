@@ -419,6 +419,31 @@
         ],
         "description": "Base58 encode / decode (Bitcoin/IPFS alphabet)"
     },
+    "encoding.base64Url encode/decode": {
+        "prefix": "base64url",
+        "body": [
+            "let ${1:enc} = encoding.base64UrlEncode(${2:value});",
+            "let ${3:dec} = encoding.base64UrlDecode(${1:enc});"
+        ],
+        "description": "Unpadded URL-safe Base64 (JWT/JOSE flavour)"
+    },
+    "int base conversion": {
+        "prefix": "tobase",
+        "body": [
+            "let ${1:hex} = (${2:255}).toString(${3:16});",
+            "let ${4:value} = \"${5:ff}\".toInt(${3:16});"
+        ],
+        "description": "Format an int in base 2-36 and parse one back"
+    },
+    "binary.pack / unpack": {
+        "prefix": "binarypack",
+        "body": [
+            "import binary;",
+            "let ${1:buf} = binary.pack(\"${2:>IH}\", ${3:1234}, ${4:56});",
+            "let ${5:fields} = binary.unpack(\"${2:>IH}\", ${1:buf});"
+        ],
+        "description": "Pack/unpack a binary record (Python struct-style format)"
+    },
     "http.newClient with proxy": {
         "prefix": "httpproxy",
         "body": [

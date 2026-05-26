@@ -1,0 +1,53 @@
+/**
+ * @title Encoding URL-safe base64 (1.4.1)
+ * @summary encoding.base64UrlEncode/Decode for JWT-style payloads.
+ */
+import test;
+import encoding;
+import bytes;
+
+class EncodingUrlTest extends test.Test {
+    @test
+    func encodeStripsPadding(): void {
+        /* Standard base64 of "any carnal pleasure." ends with "==" padding. */
+        let encoded = encoding.base64UrlEncode("any carnal pleasure.");
+        this.assertEquals(false, encoded.contains("="));
+        this.assertEquals("YW55IGNhcm5hbCBwbGVhc3VyZS4", encoded);
+    }
+
+    @test
+    func encodeReplacesPlusAndSlash(): void {
+        /* The byte 0xFB encodes to "+" in standard alphabet, "-" in URL alphabet. */
+        let raw = bytes.fromHex("fbff");
+        let urlSafe = encoding.base64UrlEncode(raw);
+        this.assertEquals(false, urlSafe.contains("+"));
+        this.assertEquals(false, urlSafe.contains("/"));
+    }
+
+    @test
+    func decodeAcceptsUnpadded(): void {
+        let decoded = encoding.base64UrlDecode("YW55IGNhcm5hbCBwbGVhc3VyZS4");
+        this.assertEquals("any carnal pleasure.", bytes.toString(decoded));
+    }
+
+    @test
+    func decodeAcceptsPadded(): void {
+        let decoded = encoding.base64UrlDecode("YW55IGNhcm5hbCBwbGVhc3VyZS4=");
+        this.assertEquals("any carnal pleasure.", bytes.toString(decoded));
+    }
+
+    @test
+    func roundTripsJwtStylePayload(): void {
+        let payload = "{\"sub\":\"1234567890\",\"name\":\"John Doe\",\"iat\":1516239022}";
+        let encoded = encoding.base64UrlEncode(payload);
+        let decoded = encoding.base64UrlDecode(encoded);
+        this.assertEquals(payload, bytes.toString(decoded));
+    }
+
+    @test
+    func decodeRejectsInvalidAlphabet(): void {
+        this.assertThrows(func(): void {
+            encoding.base64UrlDecode("!!!not-valid!!!");
+        });
+    }
+}

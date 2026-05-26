@@ -40,27 +40,27 @@ type VM struct {
 	// wrap-bridge write-back can copy only the touched slots back to the
 	// parent rather than slicecopying the entire backing array (which
 	// races the parent's lock-free OpGetGlobal on unrelated slots).
-	dirtyGlobals        []bool
+	dirtyGlobals []bool
 	// bridgeActive is set once a wrap-bridge worker is, or could become,
 	// alive against this VM's globals. While false, setGlobalVM /
 	// setGlobal can write without taking globalsMu because no concurrent
 	// reader/writer of vm.globals exists. Set monotonically: once true,
 	// stays true for the VM's lifetime. The single-goroutine hot path
 	// (numeric_loop) never bridges, so it stays lock-free.
-	bridgeActive atomic.Bool
-	localsStack         []runtime.VMValue
-	currentFrameBP      int
-	frames              []callFrame
-	maxCallDepth        int
-	defers              [][]deferredAction
-	exceptionHandlers   []exceptionHandler
-	pendingThrow        *runtime.Error
-	moduleLoader        ModuleLoader
-	moduleName          string
-	modulePaths         []string
-	statefulNative      StatefulNativeCaller
-	classIndex          map[string]int
-	natives             *native.Registry
+	bridgeActive      atomic.Bool
+	localsStack       []runtime.VMValue
+	currentFrameBP    int
+	frames            []callFrame
+	maxCallDepth      int
+	defers            [][]deferredAction
+	exceptionHandlers []exceptionHandler
+	pendingThrow      *runtime.Error
+	moduleLoader      ModuleLoader
+	moduleName        string
+	modulePaths       []string
+	statefulNative    StatefulNativeCaller
+	classIndex        map[string]int
+	natives           *native.Registry
 	// nil entries fall through to evalNativeCall (statefuls / errors.is).
 	nativeCache         []native.Function
 	syncMode            bool // when true, async functions are called synchronously
@@ -7310,7 +7310,7 @@ func vmPrimitiveMethodNamesFor(typeName string) []string {
 	case "string":
 		return []string{"chars", "codeAt", "contains", "endsWith", "format", "indexOf", "isEmpty", "length", "lower", "padLeft", "padRight", "replace", "split", "startsWith", "substring", "toBool", "toDecimal", "toFloat", "toInt", "trim", "trimLeft", "trimRight", "upper"}
 	case "bytes":
-		return []string{"contains", "get", "isEmpty", "length", "toBase64", "toHex", "toString"}
+		return []string{"contains", "get", "isEmpty", "length", "toBase64", "toBase64Url", "toHex", "toString"}
 	case "range":
 		return []string{"contains", "first", "isEmpty", "last", "length", "toList"}
 	}
@@ -12276,6 +12276,15 @@ func primitiveReMatches(patternArg runtime.Value, text string) (runtime.Value, e
 func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) (runtime.Value, error) {
 	switch strings.ToLower(name) {
 	case "toint", "todecimal", "tofloat", "tobool":
+		if name == "toInt" || strings.ToLower(name) == "toint" {
+			if text, ok := receiver.(runtime.String); ok && len(args) >= 1 {
+				base, err := native.IntBaseArg(args, "string.toInt")
+				if err != nil {
+					return nil, err
+				}
+				return native.StringParseBase(text.Value, base, "string.toInt")
+			}
+		}
 		if len(args) != 0 {
 			return nil, fmt.Errorf("%s.%s expects no arguments", receiver.TypeName(), name)
 		}
@@ -13295,6 +13304,21 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return runtime.String{Value: value.Value.FloatString(scale)}, nil
 		}
+		switch receiver.(type) {
+		case runtime.SmallInt, runtime.Int:
+			base, err := native.IntBaseArg(args, "int.toString")
+			if err != nil {
+				return nil, err
+			}
+			if base == 10 {
+				return runtime.String{Value: receiver.Inspect()}, nil
+			}
+			s, err := native.IntFormatBase(receiver, base)
+			if err != nil {
+				return nil, err
+			}
+			return runtime.String{Value: s}, nil
+		}
 		if len(args) != 0 {
 			return nil, fmt.Errorf("%s.toString expects no arguments", receiver.TypeName())
 		}
@@ -13320,6 +13344,15 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			return nil, fmt.Errorf("%s has no method toBase64", receiver.TypeName())
 		}
 		return runtime.String{Value: base64.StdEncoding.EncodeToString(value.Value)}, nil
+	case "tobase64url":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("bytes.toBase64Url expects no arguments")
+		}
+		value, ok := receiver.(runtime.Bytes)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method toBase64Url", receiver.TypeName())
+		}
+		return runtime.String{Value: base64.RawURLEncoding.EncodeToString(value.Value)}, nil
 	default:
 		return nil, fmt.Errorf("%s has no method %s", receiver.TypeName(), name)
 	}

@@ -1,0 +1,79 @@
+/**
+ * @title Int base conversion (1.4.1)
+ * @summary int.toString(base) and string.toInt(base) for bases 2-36.
+ */
+import test;
+
+class IntBaseTest extends test.Test {
+    @test
+    func toStringDefaultsToBaseTen(): void {
+        this.assertEquals("123", (123).toString());
+        this.assertEquals("-7", (-7).toString());
+    }
+
+    @test
+    func toStringBase16(): void {
+        this.assertEquals("ff", (255).toString(16));
+        this.assertEquals("deadbeef", (3735928559).toString(16));
+    }
+
+    @test
+    func toStringBase2(): void {
+        this.assertEquals("11111111", (255).toString(2));
+        this.assertEquals("0", (0).toString(2));
+        this.assertEquals("-1101", (-13).toString(2));
+    }
+
+    @test
+    func toStringBase8And36(): void {
+        this.assertEquals("777", (511).toString(8));
+        this.assertEquals("zz", (1295).toString(36));
+    }
+
+    @test
+    func toStringRejectsBadBase(): void {
+        this.assertThrows(func(): void { (10).toString(1); });
+        this.assertThrows(func(): void { (10).toString(37); });
+        this.assertThrows(func(): void { (10).toString(-2); });
+    }
+
+    @test
+    func toIntDefaultsToBaseTen(): void {
+        this.assertEquals(123, "123".toInt());
+        this.assertEquals(-7, "-7".toInt());
+    }
+
+    @test
+    func toIntBase16(): void {
+        this.assertEquals(255, "ff".toInt(16));
+        this.assertEquals(255, "FF".toInt(16));
+        this.assertEquals(3735928559, "deadbeef".toInt(16));
+    }
+
+    @test
+    func toIntBase2(): void {
+        this.assertEquals(255, "11111111".toInt(2));
+        this.assertEquals(-5, "-101".toInt(2));
+    }
+
+    @test
+    func toIntRejectsInvalidDigit(): void {
+        this.assertThrows(func(): void { "g".toInt(16); });
+        this.assertThrows(func(): void { "2".toInt(2); });
+        this.assertThrows(func(): void { "".toInt(10); });
+    }
+
+    @test
+    func toIntRejectsBadBase(): void {
+        this.assertThrows(func(): void { "10".toInt(1); });
+        this.assertThrows(func(): void { "10".toInt(37); });
+    }
+
+    @test
+    func roundTripsArbitraryBases(): void {
+        for (base in 2..36) {
+            let s = (123456).toString(base);
+            this.assertEquals(123456, s.toInt(base));
+        }
+    }
+}

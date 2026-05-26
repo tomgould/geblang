@@ -39,8 +39,8 @@ import (
 
 	"geblang/internal/runtime"
 
-	googleuuid "github.com/google/uuid"
 	tomllib "github.com/BurntSushi/toml"
+	googleuuid "github.com/google/uuid"
 	"github.com/yuin/goldmark"
 	goldast "github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
@@ -109,6 +109,7 @@ func registerAllBuiltins(r *Registry) {
 	registerCompress(r)
 	registerArchive(r)
 	registerEncoding(r)
+	registerBinary(r)
 	registerURL(r)
 	registerUUID(r)
 	registerRe(r)
@@ -1991,6 +1992,24 @@ func registerBytes(r *Registry) {
 		}
 		return runtime.String{Value: base64.StdEncoding.EncodeToString(data)}, nil
 	})
+	r.Register("bytes", "fromBase64Url", func(args []runtime.Value) (runtime.Value, error) {
+		text, err := singleString(args, "bytes.fromBase64Url")
+		if err != nil {
+			return nil, err
+		}
+		data, err := decodeBase64Url(text)
+		if err != nil {
+			return nil, fmt.Errorf("bytes.fromBase64Url: %v", err)
+		}
+		return runtime.Bytes{Value: data}, nil
+	})
+	r.Register("bytes", "toBase64Url", func(args []runtime.Value) (runtime.Value, error) {
+		data, err := singleBytes(args, "bytes.toBase64Url")
+		if err != nil {
+			return nil, err
+		}
+		return runtime.String{Value: base64.RawURLEncoding.EncodeToString(data)}, nil
+	})
 	r.Register("bytes", "concat", func(args []runtime.Value) (runtime.Value, error) {
 		out := []byte{}
 		for _, arg := range args {
@@ -2175,6 +2194,35 @@ func registerEncoding(r *Registry) {
 	r.Register("encoding", "base32Decode", base32DecodeFn)
 	r.Register("encoding", "base58Encode", base58EncodeFn)
 	r.Register("encoding", "base58Decode", base58DecodeFn)
+	r.Register("encoding", "base64UrlEncode", func(args []runtime.Value) (runtime.Value, error) {
+		data, err := encodingInputBytes(args, "encoding.base64UrlEncode")
+		if err != nil {
+			return nil, err
+		}
+		return runtime.String{Value: base64.RawURLEncoding.EncodeToString(data)}, nil
+	})
+	r.Register("encoding", "base64UrlDecode", func(args []runtime.Value) (runtime.Value, error) {
+		s, err := singleString(args, "encoding.base64UrlDecode")
+		if err != nil {
+			return nil, err
+		}
+		decoded, err := decodeBase64Url(s)
+		if err != nil {
+			return nil, fmt.Errorf("encoding.base64UrlDecode: %v", err)
+		}
+		return runtime.Bytes{Value: decoded}, nil
+	})
+}
+
+// decodeBase64Url accepts both unpadded (RawURLEncoding, JOSE) and padded
+// (URLEncoding) input so callers don't have to know which producer emitted
+// the string.
+func decodeBase64Url(s string) ([]byte, error) {
+	trimmed := strings.TrimRight(s, "=")
+	if decoded, err := base64.RawURLEncoding.DecodeString(trimmed); err == nil {
+		return decoded, nil
+	}
+	return base64.URLEncoding.DecodeString(s)
 }
 
 // base58Alphabet is the Bitcoin / IPFS alphabet (no 0, O, I, l).
@@ -3242,7 +3290,7 @@ func reMatchDict(re *regexp.Regexp, match []string) runtime.Dict {
 }
 
 var (
-	regexCache atomic.Pointer[map[string]*regexp.Regexp]
+	regexCache        atomic.Pointer[map[string]*regexp.Regexp]
 	regexCacheWriteMu sync.Mutex
 )
 

@@ -7,7 +7,13 @@ Import `bytes`:
 - `fromString(text)`, `toString(bytes)`
 - `fromHex(text)`, `toHex(bytes)`
 - `fromBase64(text)`, `toBase64(bytes)`
+- `fromBase64Url(text)`, `toBase64Url(bytes)` - unpadded URL-safe
+  base64 (RFC 4648 section 5; the variant JWT/JOSE uses). The
+  decoder accepts both padded and unpadded input.
 - `concat(list<bytes>)`
+
+Bytes values also expose `b.toHex()`, `b.toBase64()`, and
+`b.toBase64Url()` as methods, equivalent to the module helpers.
 
 ```gb
 import bytes;
@@ -22,6 +28,9 @@ io.println(bytes.toString(data));
 Import `encoding`:
 
 - `base64Encode(value)`, `base64Decode(text)`
+- `base64UrlEncode(value)`, `base64UrlDecode(text)` - unpadded
+  URL-safe Base64 (RFC 4648 section 5; matches JWT/JOSE). Decoder
+  accepts padded or unpadded input.
 - `base32Encode(value)`, `base32Decode(text)` - RFC 4648 standard alphabet, accepts padded or unpadded input on decode.
 - `base58Encode(value)`, `base58Decode(text)` - Bitcoin/IPFS alphabet (no `0`, `O`, `I`, `l`); preserves leading zero bytes by emitting leading `1`s.
 - `urlEncode(text)`, `urlDecode(text)`
@@ -42,6 +51,63 @@ Both decoders return `bytes` so binary payloads round-trip safely.
 
 Use this module for transport encodings and escaping, not password hashing or
 cryptographic operations.
+
+## Binary
+
+Import `binary` for Python `struct`-style packing of typed values
+into a byte buffer:
+
+- `binary.pack(format, ...values)` returns `bytes`.
+- `binary.unpack(format, data)` returns a `list<any>` of values.
+- `binary.unpackNamed(spec, data)` returns a `dict<string, any>`;
+  `spec` is a `list` of `{"name": string, "type": string}` dicts.
+- `binary.size(format)` returns the number of bytes the format
+  consumes, useful for buffer sizing.
+
+The first character of the format may set endianness: `>` big,
+`<` little, `!` network (= big), `=` host native. The default
+is big-endian. Per-field codes:
+
+| Code | Type             | Bytes |
+|------|------------------|-------|
+| `b`  | int8 (signed)    | 1     |
+| `B`  | uint8            | 1     |
+| `h`  | int16            | 2     |
+| `H`  | uint16           | 2     |
+| `i`  | int32            | 4     |
+| `I`  | uint32           | 4     |
+| `q`  | int64            | 8     |
+| `Q`  | uint64           | 8     |
+| `f`  | float32          | 4     |
+| `d`  | float64          | 8     |
+| `Ns` | N-byte string    | N     |
+| `Nx` | N pad bytes      | N     |
+
+A leading digit before a non-`s`/`x` code repeats it (`4I` is
+shorthand for `IIII`); each repeat takes its own positional
+argument.
+
+```gb
+import binary;
+import bytes;
+
+let header = binary.pack(">IHB", 0xDEADBEEF, 1024, 7);
+io.println(bytes.toHex(header));        /* deadbeef040007 */
+
+let parts = binary.unpack(">IHB", header);
+io.println(parts);                      /* [3735928559, 1024, 7] */
+
+let labelled = binary.unpackNamed([
+    {"name": "magic",   "type": ">I"},
+    {"name": "size",    "type": "H"},
+    {"name": "version", "type": "B"}
+], header);
+io.println(labelled["magic"]);          /* 3735928559 */
+```
+
+Unsigned 64-bit values whose high bit is set are returned as a
+big-int (`Int`) on unpack so the value round-trips losslessly;
+pack accepts either `int` form.
 
 ## Compression
 

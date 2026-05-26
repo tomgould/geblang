@@ -20,9 +20,10 @@ import (
 	"geblang/internal/parser"
 	"geblang/internal/runtime"
 	"geblang/internal/semantic"
+	geblangver "geblang/internal/version"
 )
 
-const version = "1.4.0"
+const version = geblangver.Geblang
 const bannerString = "Geblang Version %s, ©2026 David Gebler.\n==========================================\n"
 
 type executionMode int
