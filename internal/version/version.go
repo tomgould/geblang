@@ -4,4 +4,4 @@
 // from this constant.
 package version
 
-const Geblang = "1.4.1"
+const Geblang = "1.4.2"

@@ -1,5 +1,15 @@
 # Release Notes
 
+## 1.4.2
+
+### Bug fixes
+
+- REPL: left / right arrows now follow the line correctly when the
+  input wraps to a second terminal row, and Home / End jump to the
+  start / end of the logical line instead of the start / end of the
+  current physical row. Backspace, Delete, and history navigation
+  also reposition the cursor properly across wrapped rows.
+
 ## 1.4.1
 
 ### Stdlib
