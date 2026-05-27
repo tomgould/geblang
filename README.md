@@ -1,185 +1,255 @@
 # Geblang
 
-Geblang is a type-safe interpreted scripting language implemented in Go. The
-project is at version **1.4.2**. Geblang takes inspiration from both
-PHP and Python, but adds many features these languages are unable to
-offer.
-
-## Architecture
-
-The interpreter uses an AST-centered pipeline with a bytecode VM as the
-production execution path; the tree-walking evaluator remains as a
-fallback for unsupported VM constructs and as the reference semantics:
-
-```text
-source
-  -> lexer
-  -> parser
-  -> AST
-  -> semantic analysis (type checks, nullability, decorator metadata)
-  -> bytecode compiler
-  -> VM (with evaluator fallback)
-```
-
-Compiled bytecode is cached on disk (`~/.cache/geblang/bytecode/`)
-keyed by source hash so subsequent runs skip parse / compile entirely.
-
-## Target Capabilities
-
-- Complete interpreted runtime
-- Modules
-- Classes with single inheritance
-- Interfaces
-- Standard modules for common scripting needs:
-  - system and OS interaction
-  - file and stream I/O
-  - process management
-  - HTTP server/client
-  - networking helpers
-  - SQLite, PostgreSQL, and MySQL database access
-  - encryption and hashing
-  - JSON parsing and encoding
-  - TOML parsing and encoding
-  - YAML parsing and encoding
-  - common math helpers
-
-## Reference Manual Website
-
-The user manual lives in `docs/user/` as separate Markdown chapters. Build the
-Bootstrap 5 themed static reference site with:
-
-```sh
-make docs
-```
-
-The generated HTML is written to `docs/site/`. The site includes the manual,
-generated source API pages for `stdlib/`, and generated example pages from
-`docs/examples/`. Open `docs/site/index.html` directly, or serve the directory
-with any static file server:
-
-```sh
-python3 -m http.server --directory docs/site 8080
-```
-
-The static site generator is Go code in `cmd/docsite`. Use
-`DOCS_API_SRC` and `DOCS_EXAMPLES_SRC` to point generated API and example
-sections at other source trees.
-
-## Docker Binary Build
-
-To build a distributable Geblang binary and bundled source stdlib in Docker:
-
-```sh
-make docker-build
-```
-
-This creates:
-
-```text
-build/
-  geblang
-  stdlib/
-```
-
-Run the packaged binary:
-
-```sh
-./build/geblang --version
-./build/geblang examples/hello.gb
-```
-
-If you move the binary away from the bundled `stdlib/` directory, set
-`GEBLANG_STDLIB` to the copied stdlib path:
-
-```sh
-GEBLANG_STDLIB=/path/to/stdlib /path/to/geblang script.gb
-```
-
-## Quick Example
+Geblang is a statically-typed scripting language implemented in Go.
+Current version: **1.4.5**. It combines the ergonomics of PHP and
+Python with strong static typing, generics, decorators, async, and
+runtime reflection.
 
 ```gb
-# This is a single-line Geblang comment.
-/* This is a multi-line
-   Geblang comment. */
+import http;
+import web.router as router;
+
+let app = router.newRouter();
+router.get(app, "/", func(dict<string, any> req): dict<string, any> {
+    return {"status": 200, "body": "Hello from Geblang"};
+});
+http.serve("127.0.0.1:8080", func(dict<string, any> req): dict<string, any> {
+    return router.handle(app, req);
+});
+```
+
+## Highlights
+
+- **Static typing** with generics, unions (`T | U`), intersections
+  (`T & U`), nullable types (`?T`), and explicit type assertions.
+- **Classes** with single inheritance and interfaces, decorators
+  (callable + metadata), pattern matching, enums, and reflection.
+- **Concurrency** built on a cooperative async model: `async`
+  functions, `await`, generators, structured task groups
+  (`async.scope.scope`), and `async.race` / `async.all` /
+  `async.timeout` combinators. Optional reactor backend for
+  high-throughput TCP / HTTP via `{reactor: true}`.
+- **Bytecode VM** with a tree-walking evaluator as the reference
+  semantics and fallback. Compiled bytecode is cached on disk by
+  source hash so subsequent runs skip parse and compile.
+- **Batteries-included stdlib**: HTTP server / client, WebSocket,
+  TCP / UDP, SQLite / PostgreSQL / MySQL, Redis, SMTP / IMAP,
+  RabbitMQ / Kafka / SQS / STOMP, file + streaming I/O, archives,
+  process management, schedulers, OTLP traces, Prometheus metrics,
+  JSON / YAML / TOML / XML / Markdown, regex, crypto (HMAC,
+  Argon2id, bcrypt, JWT, AES-GCM, XChaCha20-Poly1305, RSA / EC /
+  Ed25519), pathlib, math, and a Twig-style template engine.
+- **Tooling**: `geblang` CLI (run / repl / check / test / fmt /
+  init / install / build / doctor / cache), VS Code extension with
+  LSP + DAP + test explorer, Dockerised reproducible build,
+  single-binary bundling via `geblang build --out`.
+
+The full language and stdlib reference is in
+[docs/user/](docs/user/) - start with
+[01-getting-started.md](docs/user/01-getting-started.md). The
+release notes are at
+[docs/user/17-release-notes.md](docs/user/17-release-notes.md).
+
+## Install
+
+```sh
+make build              # produces ./geblang
+make docs               # builds the static reference site
+make docker-build       # produces ./build/{geblang,stdlib} via Docker
+```
+
+After `make docker-build`, the binary at `./build/geblang` runs
+standalone; if you relocate it away from the bundled `stdlib/`,
+set `GEBLANG_STDLIB` to point at the moved directory.
+
+## Quickstart
+
+### Hello world
+
+```gb
+# Geblang line comments use `#`. Block comments use `/* ... */`.
 import io;
-import sys;
 
-io.print("Hello world\n");
-io.println("Hello world");
-io.print('Hello world\n');
-
-sys.exit(0);
+io.println("Hello, world");
 ```
-
-Double-quoted strings evaluate escape sequences. Single-quoted strings keep
-backslash escapes literal.
-
-Geblang line comments use `#`; `//` is reserved for integer division.
-
-The full language reference lives in [docs/user/](docs/user/) — start with
-[01-getting-started.md](docs/user/01-getting-started.md). The complete API
-reference is generated from source into the docs site.
-
-Run the example:
 
 ```sh
-make build
-make docs
-make docker-build
-./geblang
-./geblang repl
-./geblang -m http.server 8080
-./geblang check examples/hello.gb
-./geblang check --json examples/hello.gb
-./geblang check --strict examples/
-./geblang init --name acme.tools
-./geblang doctor
-./geblang doctor --json
-./geblang --help
-./geblang help test
-./geblang --version
-go run ./cmd/geblang examples/hello.gb
+geblang hello.gb
 ```
 
-Run tests:
+Double-quoted strings evaluate escape sequences. Single-quoted
+strings keep backslashes literal. `//` is integer division, not a
+comment.
+
+### HTTP server with typed binding
+
+```gb
+import http;
+import web.router as router;
+import json;
+
+let app = router.newRouter();
+
+router.get(app, "/users/:id", func(dict<string, any> req): dict<string, any> {
+    let params = req["params"] as dict<string, any>;
+    return {
+        "status": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.stringify({"id": params["id"]}),
+    };
+});
+
+http.serve("127.0.0.1:8080", func(dict<string, any> req): dict<string, any> {
+    return router.handle(app, req);
+});
+```
+
+### WebSocket echo server
+
+```gb
+import http;
+import web.router as router;
+import web.websocket as ws;
+
+let app = router.newRouter();
+
+router.get(app, "/ws", func(dict<string, any> req): dict<string, any> {
+    return ws.upgrade(func(ws.Connection conn): void {
+        while (true) {
+            let msg = conn.readJson();
+            if (msg == null) { return; }
+            conn.sendJson({"echo": msg["text"]});
+        }
+    });
+});
+
+http.serve("127.0.0.1:8080", func(dict<string, any> req): dict<string, any> {
+    return router.handle(app, req);
+});
+```
+
+The upgrade callback runs once per connection. Inside, `conn.read`
+/ `conn.readJson` block until the next frame; `conn.send` /
+`conn.sendJson` write back. The connection closes when the callback
+returns or the peer disconnects.
+
+### Classes, generics, decorators
+
+```gb
+import io;
+import reflect;
+
+func cache(any fn): any {
+    dict<string, any> hits = {};
+    return func(string key): any {
+        if (hits.contains(key)) { return hits[key]; }
+        let value = fn(key);
+        hits[key] = value;
+        return value;
+    };
+}
+
+class Repository<T> {
+    list<T> items;
+
+    func Repository() {
+        this.items = [];
+    }
+
+    func add(T item): void {
+        this.items = this.items.push(item);
+    }
+
+    func count(): int {
+        return this.items.length();
+    }
+}
+
+class User {
+    string name;
+    func User(string name) { this.name = name; }
+}
+
+let users = Repository<User>();
+users.add(User("Ada"));
+users.add(User("Carla"));
+io.println(users.count());
+io.println(reflect.typeOf(users));
+```
+
+### Async + structured concurrency
+
+```gb
+import async;
+import async.scope as scope;
+import io;
+import time;
+
+async func fetch(string label, int ms): string {
+    await time.sleep(ms);
+    return label + " done";
+}
+
+let results = scope.scope(func(scope.TaskGroup g): list<string> {
+    let a = g.spawn(func(): string { return fetch("a", 100).await(); });
+    let b = g.spawn(func(): string { return fetch("b", 50).await(); });
+    return [a.await(), b.await()];
+});
+
+io.println(results);
+```
+
+Spawn errors propagate at scope exit; the first failure cancels
+remaining siblings. `async.race`, `async.all`, and `async.timeout`
+provide single-shot variants for simpler cases.
+
+## CLI
 
 ```sh
-make test
-go run ./cmd/geblang test examples/sample_test.gb
-go run ./cmd/geblang test --tag fast examples
+geblang script.gb                    # run a script (VM by default)
+geblang --disable-vm script.gb       # run via evaluator
+geblang repl                         # interactive REPL
+geblang check script.gb              # static analysis (no execution)
+geblang check --strict path/         # treat warnings as errors
+geblang test tests/                  # run *_test.gb files
+geblang fmt path/                    # canonical formatter
+geblang init --name acme.tools       # scaffold a new project
+geblang doctor                       # environment + toolchain report
+geblang build --out app              # bundle script into one binary
+geblang -m http.server 8080          # run a stdlib module's main()
+geblang --version
+geblang --help
 ```
 
-## What's in 1.0
+## Run tests
 
-The full language and stdlib reference is at [docs/user/](docs/user/).
-At a glance, 1.0 covers:
+```sh
+make test                            # full Go test suite
+geblang test examples/sample_test.gb # run a Geblang test file
+geblang test --tag fast examples     # filter by @tag
+```
 
-**Language.** Static typing with generics, nullability, decorators,
-classes (single inheritance + interfaces), enums, pattern matching,
-async functions, generators, `defer`, `try`/`catch`/`finally`, named
-arguments, top-level await, and reflection.
+## Project layout
 
-**Runtime.** Bytecode VM with an evaluator fallback; on-disk bytecode
-cache; cooperative goroutine-backed async; `runtime.Task` with
-cancellation and combinators (`async.all`, `async.race`,
-`async.timeout`).
+- `cmd/geblang/` - CLI and REPL.
+- `cmd/docsite/` - static reference manual generator.
+- `internal/` - lexer, parser, semantic analyzer, AST,
+  evaluator, bytecode compiler + VM, runtime, LSP, DAP,
+  transpiler.
+- `stdlib/` - source-distributed Geblang stdlib (loaded at
+  runtime alongside the binary).
+- `internal/native/` - pure stdlib functions shared by
+  evaluator and VM.
+- `internal/evaluator/` - tree-walking evaluator and stateful
+  module implementations.
+- `internal/bytecode/` - bytecode compiler, VM, format,
+  parity tests.
+- `docs/user/` - user reference manual (built into a static
+  site by `make docs`).
+- `examples/` - runnable examples for public APIs.
+- `vscode-geblang/` - VS Code extension (syntax, LSP client,
+  DAP, test explorer).
 
-**Stdlib.** `io`, `sys`, `bytes`, `encoding` (base64/32/58, URL,
-HTML), `crypt` (hashes, HMAC, Argon2id, bcrypt, JWT, AES-GCM,
-XChaCha20-Poly1305, RSA/EC/Ed25519, certs), `re` (RE2 regex with
-named groups + matchAll), `json` / `yaml` / `xml` / `toml` /
-`markdown`, `datetime`, `time` (+ `time.scheduler` for Timer / Ticker
-/ Interval), `random`, `secrets`, `collections`, `path`, `pathlib`,
-`math`, `http` (server + reusable client with cookie jar, keep-alive,
-proxy), `websocket`, `net`, `db` (sqlite / postgres / mysql), `web`
-(router), `test`, `log`, `metrics`, `tracer`, `profiler`, `schema`,
-`serde`, `watch`, `mailer`, `redis`, `functools`, `option`, `result`,
-`config`, plus async wrappers under `async.io`, `async.http`,
-`async.net`, `async.stream`, `async.rate`.
+## License
 
-**Tooling.** `geblang` (run/repl/check/test/fmt/init/install/build/
-doctor/cache), VS Code extension (syntax highlighting, LSP, DAP,
-test explorer, code lenses, snippets), Dockerised reproducible
-build, single-binary `geblang build --out` bundling, Linux/macOS/
-Windows.
-
+MIT - see [LICENSE](LICENSE).

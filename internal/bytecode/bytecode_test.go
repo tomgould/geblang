@@ -240,6 +240,10 @@ func (l fakeModuleLoader) CallModuleMethod(module string, className string, meth
 	return runtime.Null{}, fmt.Errorf("unexpected module method call %s.%s", className, methodName)
 }
 
+func (l fakeModuleLoader) CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	return runtime.Null{}, fmt.Errorf("unexpected cross-module parent call %s.%s", className, methodName)
+}
+
 func (l fakeModuleLoader) FindClassByName(name string) (runtime.Value, bool) {
 	return nil, false
 }

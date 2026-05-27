@@ -177,6 +177,8 @@ var pureBuiltins = map[string]map[string]struct{}{
 	},
 	"time": {
 		"now": {}, "elapsed": {}, "sleep": {},
+		"unix": {}, "unixMilli": {}, "unixMicro": {}, "unixNano": {},
+		"unixFloat": {}, "unixDecimal": {}, "elapsedFloat": {},
 	},
 	"collections": {
 		"length": {}, "isEmpty": {}, "contains": {}, "reverse": {}, "sort": {}, "join": {},

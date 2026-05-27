@@ -1,5 +1,57 @@
 # Release Notes
 
+## 1.4.5
+
+### Engine
+
+- Bytecode VM now supports `class Sub extends mod.Parent` patterns
+  where the parent class lives in another `.gb` module. Both
+  `parent(args)` constructor calls and `parent.method(args)`
+  dispatch through the parent module's chunk. Method lookup on
+  the subclass instance also walks across the module boundary so
+  inherited methods like `subInstance.parentMethod()` work
+  natively under the VM (the evaluator already supported this).
+  Removes the long-standing requirement to run apps that import
+  libraries with subclassable base classes via `--disable-vm`.
+
+## 1.4.4
+
+### Stdlib
+
+- `crypt.md5` / `sha1` / `sha256` / `sha512` / `sha3_256` /
+  `blake2b` / `crc32` now accept either `string` or `bytes` input
+  (previously string-only). `crypt.hmacSha256` and
+  `hmacSha256Bytes` accept string or bytes for both the key and
+  the message. Existing string callers are unchanged.
+
+## 1.4.3
+
+### Time
+
+- New `time.unix()` / `time.unixMilli()` / `time.unixMicro()` /
+  `time.unixNano()` / `time.unixFloat()` / `time.unixDecimal()` for
+  PHP / Python-style unix-time access. `time.unix()` is whole
+  seconds (PHP `time()`); `time.unixFloat()` is fractional seconds
+  (PHP `microtime(true)` / Python `time.time()`); `time.unixDecimal()`
+  is lossless nanosecond-precision seconds as a `decimal`.
+- `time.elapsedFloat(start)` is the float-seconds analogue of
+  `time.elapsed`.
+- `time.now()` keeps returning milliseconds; nothing in
+  `async.sleep` / scheduler / `timeoutMs` semantics changes.
+
+### Networking
+
+- `http.listen`, `http.serve`, and `net.serve` accept an optional
+  `opts` dict with `maxConcurrent`, `queueSize`, and `onOverload`
+  ("reject" / "wait" / "drop") for bounded concurrency and
+  backpressure. Defaults are unchanged - no opts means unbounded.
+  WebSocket connections share the parent HTTP server's cap, so a
+  `maxConcurrent: 1000` listen becomes a hard cap on simultaneous
+  WebSocket clients.
+- `http.serverStats(server)` and `net.serverStats(handle)` return
+  `{active, queued, rejected, maxConcurrent}` so callers can wire
+  pool counters into metrics or alerts.
+
 ## 1.4.2
 
 ### Language

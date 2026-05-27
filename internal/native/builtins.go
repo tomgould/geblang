@@ -719,90 +719,76 @@ func registerYAML(r *Registry) {
 
 func registerCrypt(r *Registry) {
 	r.Register("crypt", "md5", func(args []runtime.Value) (runtime.Value, error) {
-		text, err := singleString(args, "crypt.md5")
+		data, err := singleHashInput(args, "crypt.md5")
 		if err != nil {
 			return nil, err
 		}
-		sum := md5.Sum([]byte(text))
+		sum := md5.Sum(data)
 		return runtime.String{Value: hex.EncodeToString(sum[:])}, nil
 	})
 	r.Register("crypt", "sha1", func(args []runtime.Value) (runtime.Value, error) {
-		text, err := singleString(args, "crypt.sha1")
+		data, err := singleHashInput(args, "crypt.sha1")
 		if err != nil {
 			return nil, err
 		}
-		sum := sha1.Sum([]byte(text))
+		sum := sha1.Sum(data)
 		return runtime.String{Value: hex.EncodeToString(sum[:])}, nil
 	})
 	r.Register("crypt", "sha256", func(args []runtime.Value) (runtime.Value, error) {
-		text, err := singleString(args, "crypt.sha256")
+		data, err := singleHashInput(args, "crypt.sha256")
 		if err != nil {
 			return nil, err
 		}
-		sum := sha256.Sum256([]byte(text))
+		sum := sha256.Sum256(data)
 		return runtime.String{Value: hex.EncodeToString(sum[:])}, nil
 	})
 	r.Register("crypt", "sha512", func(args []runtime.Value) (runtime.Value, error) {
-		text, err := singleString(args, "crypt.sha512")
+		data, err := singleHashInput(args, "crypt.sha512")
 		if err != nil {
 			return nil, err
 		}
-		sum := sha512.Sum512([]byte(text))
+		sum := sha512.Sum512(data)
 		return runtime.String{Value: hex.EncodeToString(sum[:])}, nil
 	})
 	r.Register("crypt", "sha3_256", func(args []runtime.Value) (runtime.Value, error) {
-		text, err := singleString(args, "crypt.sha3_256")
+		data, err := singleHashInput(args, "crypt.sha3_256")
 		if err != nil {
 			return nil, err
 		}
-		sum := sha3.Sum256([]byte(text))
+		sum := sha3.Sum256(data)
 		return runtime.String{Value: hex.EncodeToString(sum[:])}, nil
 	})
 	r.Register("crypt", "blake2b", func(args []runtime.Value) (runtime.Value, error) {
-		text, err := singleString(args, "crypt.blake2b")
+		data, err := singleHashInput(args, "crypt.blake2b")
 		if err != nil {
 			return nil, err
 		}
-		sum := blake2b.Sum256([]byte(text))
+		sum := blake2b.Sum256(data)
 		return runtime.String{Value: hex.EncodeToString(sum[:])}, nil
 	})
 	r.Register("crypt", "crc32", func(args []runtime.Value) (runtime.Value, error) {
-		text, err := singleString(args, "crypt.crc32")
+		data, err := singleHashInput(args, "crypt.crc32")
 		if err != nil {
 			return nil, err
 		}
-		return runtime.NewInt64(int64(crc32.ChecksumIEEE([]byte(text)))), nil
+		return runtime.NewInt64(int64(crc32.ChecksumIEEE(data))), nil
 	})
 	r.Register("crypt", "hmacSha256", func(args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("crypt.hmacSha256 expects exactly two arguments")
+		key, msg, err := hmacInputs(args, "crypt.hmacSha256")
+		if err != nil {
+			return nil, err
 		}
-		key, ok := args[0].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("crypt.hmacSha256 key must be string")
-		}
-		text, ok := args[1].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("crypt.hmacSha256 message must be string")
-		}
-		mac := hmac.New(sha256.New, []byte(key.Value))
-		_, _ = mac.Write([]byte(text.Value))
+		mac := hmac.New(sha256.New, key)
+		_, _ = mac.Write(msg)
 		return runtime.String{Value: hex.EncodeToString(mac.Sum(nil))}, nil
 	})
 	r.Register("crypt", "hmacSha256Bytes", func(args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 2 {
-			return nil, fmt.Errorf("crypt.hmacSha256Bytes expects exactly two arguments")
+		key, msg, err := hmacInputs(args, "crypt.hmacSha256Bytes")
+		if err != nil {
+			return nil, err
 		}
-		key, ok := args[0].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("crypt.hmacSha256Bytes key must be string")
-		}
-		text, ok := args[1].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("crypt.hmacSha256Bytes message must be string")
-		}
-		mac := hmac.New(sha256.New, []byte(key.Value))
-		_, _ = mac.Write([]byte(text.Value))
+		mac := hmac.New(sha256.New, key)
+		_, _ = mac.Write(msg)
 		return runtime.Bytes{Value: mac.Sum(nil)}, nil
 	})
 	r.Register("crypt", "bcryptHash", func(args []runtime.Value) (runtime.Value, error) {
@@ -1910,6 +1896,76 @@ func registerTime(r *Registry) {
 		}
 		return runtime.Null{}, nil
 	})
+	r.Register("time", "unix", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("time.unix expects no arguments")
+		}
+		return runtime.NewInt64(time.Now().Unix()), nil
+	})
+	r.Register("time", "unixMilli", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("time.unixMilli expects no arguments")
+		}
+		return runtime.NewInt64(time.Now().UnixMilli()), nil
+	})
+	r.Register("time", "unixMicro", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("time.unixMicro expects no arguments")
+		}
+		return runtime.NewInt64(time.Now().UnixMicro()), nil
+	})
+	r.Register("time", "unixNano", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("time.unixNano expects no arguments")
+		}
+		return runtime.NewInt64(time.Now().UnixNano()), nil
+	})
+	r.Register("time", "unixFloat", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("time.unixFloat expects no arguments")
+		}
+		now := time.Now()
+		return runtime.Float{Value: float64(now.Unix()) + float64(now.Nanosecond())/1e9}, nil
+	})
+	r.Register("time", "unixDecimal", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("time.unixDecimal expects no arguments")
+		}
+		now := time.Now()
+		num := new(big.Int).Mul(big.NewInt(now.Unix()), big.NewInt(1_000_000_000))
+		num.Add(num, big.NewInt(int64(now.Nanosecond())))
+		return runtime.Decimal{Value: new(big.Rat).SetFrac(num, big.NewInt(1_000_000_000))}, nil
+	})
+	r.Register("time", "elapsedFloat", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("time.elapsedFloat expects one argument (start time in seconds)")
+		}
+		start, ok := asFloat64Strict(args[0])
+		if !ok {
+			return nil, fmt.Errorf("time.elapsedFloat start must be a number")
+		}
+		now := time.Now()
+		current := float64(now.Unix()) + float64(now.Nanosecond())/1e9
+		return runtime.Float{Value: current - start}, nil
+	})
+}
+
+// asFloat64Strict accepts int/float/decimal values and returns a
+// float64 approximation. Returns false for non-numeric types.
+func asFloat64Strict(value runtime.Value) (float64, bool) {
+	switch v := value.(type) {
+	case runtime.SmallInt:
+		return float64(v.Value), true
+	case runtime.Int:
+		f, _ := new(big.Float).SetInt(v.Value).Float64()
+		return f, true
+	case runtime.Float:
+		return v.Value, true
+	case runtime.Decimal:
+		f, _ := v.Value.Float64()
+		return f, true
+	}
+	return 0, false
 }
 
 // registerRandom registers a deterministic pseudo-random number generator
@@ -4030,6 +4086,49 @@ func templatePath(dir string, name string) (string, error) {
 		return "", fmt.Errorf("template name escapes template directory")
 	}
 	return filepath.Join(dir, cleanName), nil
+}
+
+// singleHashInput accepts either a string or bytes value and returns
+// the raw bytes. Used by every crypt hash so binary content can be
+// hashed without round-tripping through hex.
+func singleHashInput(args []runtime.Value, label string) ([]byte, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects exactly one argument", label)
+	}
+	switch v := args[0].(type) {
+	case runtime.String:
+		return []byte(v.Value), nil
+	case runtime.Bytes:
+		return v.Value, nil
+	}
+	return nil, fmt.Errorf("%s expects a string or bytes argument", label)
+}
+
+// hmacInputs accepts (key, message) pairs where either side may be
+// string or bytes. Used by hmacSha256 + hmacSha256Bytes.
+func hmacInputs(args []runtime.Value, label string) ([]byte, []byte, error) {
+	if len(args) != 2 {
+		return nil, nil, fmt.Errorf("%s expects exactly two arguments", label)
+	}
+	key, err := bytesLike(args[0], label+" key")
+	if err != nil {
+		return nil, nil, err
+	}
+	msg, err := bytesLike(args[1], label+" message")
+	if err != nil {
+		return nil, nil, err
+	}
+	return key, msg, nil
+}
+
+func bytesLike(v runtime.Value, label string) ([]byte, error) {
+	switch x := v.(type) {
+	case runtime.String:
+		return []byte(x.Value), nil
+	case runtime.Bytes:
+		return x.Value, nil
+	}
+	return nil, fmt.Errorf("%s must be string or bytes", label)
 }
 
 func singleString(args []runtime.Value, label string) (string, error) {

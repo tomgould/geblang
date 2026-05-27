@@ -1,9 +1,10 @@
 /**
  * @title time stdlib test
- * @summary time.now / elapsed / sleep monotonic-style timing.
+ * @summary time.now / elapsed / sleep + unix-time precision helpers.
  */
 import test;
 import time;
+import datetime;
 
 class TimeTest extends test.Test {
     @test
@@ -32,5 +33,66 @@ class TimeTest extends test.Test {
         time.sleep(0);
         let elapsed = time.elapsed(t0);
         this.assertTrue(elapsed < 100);
+    }
+
+    @test
+    func unixMatchesDatetimeNowUnix(): void {
+        let a = time.unix();
+        let b = datetime.nowUnix();
+        this.assertTrue(a >= b - 1 && a <= b + 1);
+    }
+
+    @test
+    func unixMilliMatchesNow(): void {
+        let m = time.unixMilli();
+        let n = time.now();
+        # Two calls back to back differ by at most a few ms.
+        this.assertTrue(m >= n - 50 && m <= n + 50);
+    }
+
+    @test
+    func unitsAreInternallyConsistent(): void {
+        let s = time.unix();
+        let ms = time.unixMilli();
+        let us = time.unixMicro();
+        let ns = time.unixNano();
+        # Round-trip via integer division (1s slack for cross-call jitter).
+        this.assertTrue(ms / 1000 >= s - 1 && ms / 1000 <= s + 1);
+        this.assertTrue(us / 1000 >= ms - 50 && us / 1000 <= ms + 50);
+        this.assertTrue(ns / 1000 >= us - 50_000 && ns / 1000 <= us + 50_000);
+    }
+
+    @test
+    func unixFloatHasSubSecondFraction(): void {
+        let s = time.unix();
+        let f = time.unixFloat();
+        let asInt = f.toInt();
+        # asInt is the second bucket f belongs to; should match s within 1s drift.
+        this.assertTrue(asInt >= s - 1 && asInt <= s + 1);
+    }
+
+    @test
+    func unixDecimalLosslessSeconds(): void {
+        let s = time.unix();
+        let d = time.unixDecimal();
+        let asInt = d.toInt();
+        this.assertTrue(asInt >= s - 1 && asInt <= s + 1);
+    }
+
+    @test
+    func elapsedFloatReportsPositiveDelta(): void {
+        let start = time.unixFloat();
+        time.sleep(20);
+        let elapsed = time.elapsedFloat(start);
+        this.assertTrue(elapsed > 0.0.toFloat());
+        this.assertTrue(elapsed < 5.0.toFloat());
+    }
+
+    @test
+    func elapsedFloatAcceptsDecimalStart(): void {
+        let start = time.unixDecimal();
+        time.sleep(5);
+        let elapsed = time.elapsedFloat(start);
+        this.assertTrue(elapsed > 0.0.toFloat());
     }
 }

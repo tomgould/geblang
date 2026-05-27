@@ -362,8 +362,14 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 			if alias == "" {
 				return fmt.Errorf("empty import path")
 			}
+			canonical := strings.Join(stmt.Path, ".")
+			// Record the alias so resolveQualifiedClassName can rewrite
+			// `alias.Class` references (e.g. `extends mymod.Foo`) into
+			// their canonical `module.Class` form for cross-module
+			// parent-class dispatch.
+			c.moduleAliases[alias] = canonical
 			canonicalIndex := int64(len(c.chunk.Constants))
-			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: strings.Join(stmt.Path, ".")})
+			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: canonical})
 			aliasIndex := int64(len(c.chunk.Constants))
 			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: alias})
 			c.emitAt(OpImportModule, stmt.Token.Line, stmt.Token.Column, canonicalIndex, aliasIndex, c.globalSlot(alias))
@@ -1055,7 +1061,10 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 			class.ParentIndex = parentIndex
 			class.ParentName = c.chunk.Classes[parentIndex].Name
 		} else if isBuiltinErrorClass(stmt.Extends.Name) || strings.Contains(stmt.Extends.Name, ".") {
-			class.ParentName = stmt.Extends.Name
+			// Cross-module parent (e.g. `extends pluginmod.Plugin`). Resolve
+			// the alias prefix to its canonical module so the VM can look
+			// up the parent class at runtime via the module loader.
+			class.ParentName = c.resolveQualifiedClassName(stmt.Extends.Name)
 		} else {
 			return fmt.Errorf("bytecode compiler parent class %s is not declared", stmt.Extends.Name)
 		}
@@ -2456,11 +2465,12 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				}
 				currentClass := c.chunk.Classes[c.classStack[len(c.classStack)-1]]
 				isBuiltinErrorParent := isBuiltinErrorClass(currentClass.ParentName) && (currentClass.ParentIndex < 0 || int(currentClass.ParentIndex) >= len(c.chunk.Classes))
-				if !isBuiltinErrorParent && (currentClass.ParentIndex < 0 || int(currentClass.ParentIndex) >= len(c.chunk.Classes)) {
+				isCrossModuleParent := !isBuiltinErrorParent && (currentClass.ParentIndex < 0 || int(currentClass.ParentIndex) >= len(c.chunk.Classes)) && strings.Contains(currentClass.ParentName, ".")
+				if !isBuiltinErrorParent && !isCrossModuleParent && (currentClass.ParentIndex < 0 || int(currentClass.ParentIndex) >= len(c.chunk.Classes)) {
 					return fmt.Errorf("%s has no parent class", currentClass.Name)
 				}
 				var orderedArgs []ast.Expression
-				if !isBuiltinErrorParent {
+				if !isBuiltinErrorParent && !isCrossModuleParent {
 					parent := c.chunk.Classes[currentClass.ParentIndex]
 					if len(parent.ConstructorIndices) > 0 {
 						var err error
@@ -2475,6 +2485,9 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 						}
 					}
 				} else {
+					// Cross-module or builtin-error parent: positional only at
+					// compile time. Overload selection (cross-module) happens
+					// at runtime via the module loader.
 					orderedArgs = positionalArguments(expr.Arguments)
 					if orderedArgs == nil && len(expr.Arguments) > 0 {
 						return fmt.Errorf("%s constructor does not accept named arguments", currentClass.ParentName)
@@ -2747,17 +2760,29 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					return fmt.Errorf("parent is only available inside class methods")
 				}
 				currentClass := c.chunk.Classes[c.classStack[len(c.classStack)-1]]
-				if currentClass.ParentIndex < 0 || int(currentClass.ParentIndex) >= len(c.chunk.Classes) {
+				isCrossModuleParent := (currentClass.ParentIndex < 0 || int(currentClass.ParentIndex) >= len(c.chunk.Classes)) && strings.Contains(currentClass.ParentName, ".")
+				if !isCrossModuleParent && (currentClass.ParentIndex < 0 || int(currentClass.ParentIndex) >= len(c.chunk.Classes)) {
 					return fmt.Errorf("%s has no parent class", currentClass.Name)
 				}
-				parent := c.chunk.Classes[currentClass.ParentIndex]
-				indices, ok := c.lookupMethod(parent, selector.Name.Value)
-				if !ok {
-					return fmt.Errorf("unknown parent method %s.%s", parent.Name, selector.Name.Value)
-				}
-				_, orderedArgs, err := c.selectFunctionIndicesCall(selector.Name.Value, indices, expr.Arguments, 1)
-				if err != nil {
-					return err
+				var orderedArgs []ast.Expression
+				if !isCrossModuleParent {
+					parent := c.chunk.Classes[currentClass.ParentIndex]
+					indices, ok := c.lookupMethod(parent, selector.Name.Value)
+					if !ok {
+						return fmt.Errorf("unknown parent method %s.%s", parent.Name, selector.Name.Value)
+					}
+					var err error
+					_, orderedArgs, err = c.selectFunctionIndicesCall(selector.Name.Value, indices, expr.Arguments, 1)
+					if err != nil {
+						return err
+					}
+				} else {
+					// Cross-module parent method: positional args; overload
+					// selection runs in the parent module's VM at runtime.
+					orderedArgs = positionalArguments(expr.Arguments)
+					if orderedArgs == nil && len(expr.Arguments) > 0 {
+						return fmt.Errorf("parent method %s.%s does not accept named arguments", currentClass.ParentName, selector.Name.Value)
+					}
 				}
 				resolved, ok := c.resolveName("this")
 				if !ok {
@@ -5414,6 +5439,22 @@ func (c *Compiler) staticStringExpr(expr ast.Expression) bool {
 		return strings.EqualFold(c.bytecodeTypeName(e.Type), "string")
 	}
 	return false
+}
+
+// resolveQualifiedClassName takes a dotted reference like `pluginmod.Plugin`
+// and replaces the alias prefix with its canonical module path so the
+// runtime can locate the class through the module loader.
+func (c *Compiler) resolveQualifiedClassName(name string) string {
+	dot := strings.LastIndex(name, ".")
+	if dot < 0 {
+		return name
+	}
+	prefix := name[:dot]
+	className := name[dot+1:]
+	if canonical, ok := c.moduleAliases[prefix]; ok {
+		return canonical + "." + className
+	}
+	return name
 }
 
 // canonicalModule returns the canonical native-module path that `name`

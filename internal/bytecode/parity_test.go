@@ -213,6 +213,14 @@ func (l *stdlibModuleLoader) CallModuleMethod(module string, className string, m
 	return vm.CallInstanceMethod(instance, methodName, args)
 }
 
+func (l *stdlibModuleLoader) CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	vm, err := l.newSubVM(module)
+	if err != nil {
+		return nil, err
+	}
+	return vm.CallMethodAs(className, instance, methodName, args)
+}
+
 func (l *stdlibModuleLoader) FindFunctionByName(name string) (runtime.Value, bool) {
 	for _, module := range l.modules {
 		if module == nil {
@@ -1953,6 +1961,18 @@ io.println(raw.toBase64Url());
 io.println(bytes.toBase64Url(raw));
 io.println(bytes.toHex(bytes.fromBase64Url("-_8")));
 `, "-_8\n-_8\nfbff\n")
+}
+
+func TestParityCryptHashAcceptsBytes(t *testing.T) {
+	runParity(t, `import io;
+import bytes;
+import crypt;
+let raw = bytes.fromString("hi");
+io.println(crypt.sha256(raw));
+io.println(crypt.sha256("hi"));
+io.println(crypt.md5(raw));
+io.println(crypt.sha1(bytes.fromHex("00ff")));
+`, "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4\n8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4\n49f68a5c8493ec2c0bf489821c21fc3b\naa3e5dcdd77b153f2e59bd0d8794fde33cb4e486\n")
 }
 
 func TestParityFromImportNative(t *testing.T) {
@@ -5700,6 +5720,81 @@ io.println(quiet.loaded);
 	}
 	if vmOut.String() != "loaded once\n1\n" {
 		t.Fatalf("vm output: got %q", vmOut.String())
+	}
+}
+
+// TestParityCrossModuleClassExtension exercises `class B extends mod.A`
+// patterns: B in the main script extends a class A declared in another
+// .gb module. The fixture covers both `parent(args)` (constructor) and
+// `parent.method(args)` dispatch into A, plus a field-write inside A's
+// constructor that mutates the (subclass) instance.
+func TestParityCrossModuleClassExtension(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "base.gb"), []byte(`module base;
+export class Greeter {
+    string name;
+    func Greeter(string name) {
+        this.name = name;
+    }
+    func greet(): string {
+        return "hello from " + this.name;
+    }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write base module: %v", err)
+	}
+
+	source := `import io;
+import base;
+
+class Loud extends base.Greeter {
+    func Loud(string name) {
+        parent(name);
+    }
+    func shout(): string {
+        return parent.greet().upper();
+    }
+}
+
+let l = Loud("ada");
+io.println(l.greet());
+io.println(l.shout());
+io.println(l.name);
+`
+
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	want := "hello from ada\nHELLO FROM ADA\nada\n"
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: unexpected error: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: got %q, want %q", evOut.String(), want)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: unexpected error: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: got %q, want %q", vmOut.String(), want)
 	}
 }
 

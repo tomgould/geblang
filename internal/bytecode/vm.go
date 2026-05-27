@@ -140,6 +140,12 @@ type ModuleLoader interface {
 	ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value) (runtime.Value, error)
 	CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value) (runtime.Value, error)
 	CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error)
+	// CallParentInModule invokes the parent class's constructor or
+	// method on the supplied instance inside the parent module's chunk.
+	// className is looked up in the target chunk regardless of
+	// instance.Class.Name, which is necessary because instance is a
+	// subclass declared in another chunk.
+	CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error)
 	// FindClassByName looks up a class by its bare (unqualified) name
 	// across every loaded module. Returns nil when nothing matches.
 	// Used by reflect.class so framework code can resolve a user
@@ -6102,7 +6108,14 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 	}
 	classInfo, ok := vm.classInfo(instance.Class.Name)
 	if !ok {
-		return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
+		// Cross-module subclass: the instance was created from a class
+		// in another chunk (e.g. a user subclass running its parent's
+		// constructor here). The __set magic method can't be looked up
+		// from this chunk; fall back to a direct field write to match
+		// evaluator semantics.
+		instance.Fields[name] = value
+		vm.push(value)
+		return ip, nil
 	}
 	indices, hasSet := vm.lookupMethod(classInfo, "__set")
 	vm.cacheFieldShapeFull(instance.Class, name, false, false, classInfo)
@@ -6138,6 +6151,27 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 				if s, ok := args[0].(runtime.String); ok {
 					instance.Fields["__parentMsg"] = s
 				}
+			}
+			vm.push(runtime.Null{})
+			return ip, nil
+		}
+		// Cross-module parent: ParentIndex == -1 but ParentName carries a
+		// qualified `module.Class` reference. Dispatch through the module
+		// loader so the parent's constructor runs against this instance
+		// inside its own chunk.
+		if classInfo.ParentIndex < 0 && strings.Contains(classInfo.ParentName, ".") {
+			if vm.moduleLoader == nil {
+				return 0, vm.runtimeError(instruction, "cross-module parent constructor requires a module loader")
+			}
+			module, parentClass, ok := splitQualifiedClassName(classInfo.ParentName)
+			if !ok {
+				return 0, vm.runtimeError(instruction, "cross-module parent name %q is malformed", classInfo.ParentName)
+			}
+			if _, err := vm.moduleLoader.LoadModule(module, module); err != nil {
+				return 0, vm.runtimeError(instruction, "load parent module %s: %s", module, err.Error())
+			}
+			if _, err := vm.moduleLoader.CallParentInModule(module, parentClass, parentClass, instance, args); err != nil {
+				return 0, vm.runtimeError(instruction, "%s", err.Error())
 			}
 			vm.push(runtime.Null{})
 			return ip, nil
@@ -6180,6 +6214,29 @@ func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	// Cross-module parent: dispatch the named method into the parent's
+	// own chunk through the module loader. Mirrors callParentConstructor.
+	if classIndex >= 0 && int(classIndex) < len(vm.chunk.Classes) {
+		classInfo := vm.chunk.Classes[classIndex]
+		if classInfo.ParentIndex < 0 && strings.Contains(classInfo.ParentName, ".") {
+			if vm.moduleLoader == nil {
+				return 0, vm.runtimeError(instruction, "cross-module parent method requires a module loader")
+			}
+			module, parentClass, ok := splitQualifiedClassName(classInfo.ParentName)
+			if !ok {
+				return 0, vm.runtimeError(instruction, "cross-module parent name %q is malformed", classInfo.ParentName)
+			}
+			if _, err := vm.moduleLoader.LoadModule(module, module); err != nil {
+				return 0, vm.runtimeError(instruction, "load parent module %s: %s", module, err.Error())
+			}
+			result, err := vm.moduleLoader.CallParentInModule(module, parentClass, name.Value, instance, args)
+			if err != nil {
+				return 0, vm.runtimeError(instruction, "%s", err.Error())
+			}
+			vm.push(result)
+			return ip, nil
+		}
+	}
 	parent, err := vm.parentClassInfo(instruction, classIndex)
 	if err != nil {
 		return 0, err
@@ -6214,6 +6271,17 @@ func (vm *VM) popInstanceAndArgs(instruction Instruction, argc int) (*runtime.In
 		return nil, nil, vm.runtimeError(instruction, "%s is not an instance", receiver.TypeName())
 	}
 	return instance, args, nil
+}
+
+// splitQualifiedClassName separates a `module.path.Class` reference into
+// the canonical module path and the class name. Returns ok=false when
+// the input has no dot (and therefore isn't qualified).
+func splitQualifiedClassName(qualified string) (string, string, bool) {
+	dot := strings.LastIndex(qualified, ".")
+	if dot < 0 {
+		return "", "", false
+	}
+	return qualified[:dot], qualified[dot+1:], true
 }
 
 func (vm *VM) parentClassInfo(instruction Instruction, classIndex int64) (ClassInfo, error) {
@@ -9564,6 +9632,48 @@ func (vm *VM) ConstructClass(index int64, args []runtime.Value) (runtime.Value, 
 	return vm.runWrapper(args, wrapper)
 }
 
+// CallMethodAs invokes `name` on `instance` using the supplied
+// className to locate the method definition. Used by cross-module
+// parent dispatch where the subclass instance is declared in
+// another chunk: `instance.Class.Name` would point at the subclass,
+// which doesn't exist in the parent module's chunk.
+func (vm *VM) CallMethodAs(className string, instance *runtime.Instance, name string, args []runtime.Value) (runtime.Value, error) {
+	classInfo, ok := vm.classInfo(className)
+	if !ok {
+		return nil, fmt.Errorf("unknown class %s", className)
+	}
+	indices, ok := vm.lookupMethod(classInfo, name)
+	if !ok {
+		// Constructors are stored separately from methods. When the
+		// method name equals the class name, fall back to the
+		// class's constructor list so cross-module parent
+		// constructors can dispatch through the same entry point.
+		if strings.EqualFold(name, className) {
+			indices = append([]int64(nil), classInfo.ConstructorIndices...)
+			if len(indices) == 0 {
+				return runtime.Null{}, nil
+			}
+		} else {
+			return nil, fmt.Errorf("unknown method %s.%s", className, name)
+		}
+	}
+	functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 1)
+	if err != nil {
+		return nil, err
+	}
+	if err := vm.ensureCallableDecorators(); err != nil {
+		return nil, err
+	}
+	if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
+		if vm.chunk.Functions[functionIndex].Async && !vm.syncMode {
+			return vm.startAsyncCallableWithForwardThis(decorated, args, instance), nil
+		}
+		return vm.callCallableWithForwardThis(decorated, args, instance)
+	}
+	callArgs := append([]runtime.Value{instance}, args...)
+	return vm.CallFunction(functionIndex, callArgs)
+}
+
 func (vm *VM) CallMethod(instance *runtime.Instance, name string, args []runtime.Value) (runtime.Value, error) {
 	if nativeMethods := instance.Class.Methods[strings.ToLower(name)]; len(nativeMethods) > 0 && nativeMethods[0].Native != nil {
 		return nativeMethods[0].Native(instance, args)
@@ -10861,6 +10971,21 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 				}
 				vm.push(result)
 				return ip, nil
+			}
+			// Cross-module parent: the method may live in the parent's
+			// own chunk (e.g. `class B extends mod.A` then `b.foo()`).
+			// Dispatch via the module loader so the parent's chunk
+			// handles the lookup and execution.
+			if classInfo.ParentIndex < 0 && strings.Contains(classInfo.ParentName, ".") && vm.moduleLoader != nil {
+				if module, parentClass, ok := splitQualifiedClassName(classInfo.ParentName); ok {
+					if _, err := vm.moduleLoader.LoadModule(module, module); err == nil {
+						result, err := vm.moduleLoader.CallParentInModule(module, parentClass, nameValue.Value, instance, args)
+						if err == nil {
+							vm.push(result)
+							return ip, nil
+						}
+					}
+				}
 			}
 			return 0, vm.runtimeError(instruction, "unknown method %s.%s", instance.Class.Name, nameValue.Value)
 		}

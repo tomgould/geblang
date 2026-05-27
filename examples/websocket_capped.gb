@@ -1,0 +1,39 @@
+import io;
+import http;
+import websocket;
+import async;
+
+/**
+ * A WebSocket echo server that caps simultaneous clients at 1000.
+ * Clients past the cap receive a clean HTTP 503 during the upgrade
+ * handshake.  The session goroutine releases its slot when the
+ * handler returns (client disconnects or write fails).
+ */
+let id = http.listen(":8080", func(dict<string, any> req): any {
+    if (req["path"] == "/ws") {
+        return http.websocketUpgrade(func(int conn): void {
+            while (true) {
+                let msg = websocket.read(conn);
+                if (msg == null) { break; }
+                websocket.send(conn, "echo: " + (msg as string));
+            }
+        });
+    }
+    return {"status": 404, "body": "not found"};
+}, {
+    "maxConcurrent": 1000,
+    "queueSize":     0,
+    "onOverload":    "reject"
+});
+
+io.println("ws echo server listening with cap=1000");
+
+async.run(func(): void {
+    while (true) {
+        async.sleep(5000);
+        io.println("ws stats: " + http.serverStats(id).toString());
+    }
+});
+
+async.sleep(86400000);
+http.close(id);

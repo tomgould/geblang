@@ -150,6 +150,80 @@ func events(dict<string, any> request): dict<string, any> {
 }
 ```
 
+### Concurrency limits
+
+`http.listen` and `http.serve` accept an optional opts dict that caps
+simultaneous in-flight handlers and decides what happens when the cap is
+reached. Defaults preserve the unbounded behaviour - the opts dict is
+opt-in.
+
+```gb
+let id = http.listen(":8080", handler, {
+    "maxConcurrent": 1000,    # at most 1000 active handlers; 0 = unbounded
+    "queueSize":     500,     # requests waiting for a slot
+    "onOverload":    "reject" # "reject" | "wait" | "drop"
+});
+```
+
+`onOverload` controls the action when slots and queue are both full:
+
+- `"reject"` (default once a cap is set) responds with HTTP 503 and the
+  body `server at capacity`.
+- `"wait"` keeps the request blocked until a slot opens. There is no
+  rejection at all; the queue size becomes informational.
+- `"drop"` closes the connection silently without writing a body.
+
+WebSocket connections inherit the same cap because the upgrade happens
+inside an HTTP handler. A WebSocket holds its slot for the entire
+connection lifetime, which gives you a hard cap on simultaneous
+WebSocket clients.
+
+Read the pool's running counters with `http.serverStats(server)`:
+
+```gb
+let stats = http.serverStats(id);
+# {"active": 42, "queued": 7, "rejected": 0, "maxConcurrent": 1000}
+```
+
+#### Which concurrency model do I want?
+
+There are three points on the spectrum; this section picks one for you
+based on what your workload actually looks like.
+
+- **Default (no opts).** Go's runtime spawns a goroutine per request
+  and multiplexes them onto OS threads via its M:N scheduler. The
+  scheduler uses epoll on Linux / kqueue on macOS / IOCP on Windows
+  under the hood, so blocking-looking handlers do not actually pin a
+  thread. This handles thousands of concurrent connections without
+  any opt-in. Use this when your handlers are fast (sub-100 ms),
+  total active connections are below ~10k, and load is bursty rather
+  than sustained. Most apps stop here.
+
+- **Bounded concurrency (`maxConcurrent` opt).** Adds a semaphore in
+  front of the handler. Same Go scheduler underneath; the cap is on
+  in-flight work, not on the runtime's I/O multiplexer. Use this
+  when handlers are slow or hold expensive resources (DB connections,
+  large memory buffers, long-lived WebSocket sessions) and an
+  unbounded goroutine pile can run you out of memory or starve
+  downstream services. The cap gives you predictable peak memory and
+  a clean backpressure signal (503) instead of an OOM.
+
+- **Full epoll/kqueue reactor.** Not built into Geblang. A real
+  reactor (gnet-style) would bypass `net/http` entirely, manage file
+  descriptors directly via the kernel poll APIs, and run each request
+  on a fixed-size worker pool. It only meaningfully helps past ~100k
+  persistent connections per box, where Go's per-goroutine stack
+  (~8 KB minimum) and scheduler overhead start to matter. Below that
+  scale the bounded-concurrency option above is the same wall-clock
+  performance with a fraction of the implementation surface. If you
+  hit a workload that needs more, the right move is dropping below
+  Geblang into a Go program that uses `gnet` or `evio` directly.
+
+Rule of thumb: start without opts, switch to `maxConcurrent` the first
+time a slow handler or a memory ceiling matters, and don't reach for a
+custom reactor until you have measurements proving the Go scheduler is
+the bottleneck (it usually isn't).
+
 ## Net
 
 Import `net` for DNS, TCP, and UDP:
@@ -160,6 +234,11 @@ Import `net` for DNS, TCP, and UDP:
 - UDP: `listenUdp`, `dialUdp`, `readFrom`, `writeTo`
 
 For task-returning socket calls, import `async.net`.
+
+`net.serve` accepts the same `maxConcurrent` / `queueSize` /
+`onOverload` opts as `http.listen`. On overload, the listener closes
+the accepted socket immediately (the same effect for `reject` and
+`drop`). Poll counters with `net.serverStats(handle)`.
 
 Socket operations use the same error model as HTTP: connection failures,
 deadline failures, and bind conflicts throw `IOError` so applications can

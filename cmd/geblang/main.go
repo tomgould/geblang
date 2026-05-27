@@ -1772,6 +1772,29 @@ func (l *bytecodeModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClas
 	return vm.CallStaticMethod(class.Index, methodName, args)
 }
 
+func (l *bytecodeModuleLoader) CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script parent dispatch called without a main chunk")
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunks[module]
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", module)
+		}
+		chunk = c
+	}
+	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
+	vm.SetModuleName(module)
+	vm.SetModulePaths(l.modulePaths)
+	vm.SetStatefulNativeCaller(l.stateful)
+	vm.RestoreGlobals(l.globals[module])
+	vm.RestoreFunctionDecoratorState(l.decorators[module])
+	return vm.CallMethodAs(className, instance, methodName, args)
+}
+
 func (l *bytecodeModuleLoader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if module == "" {

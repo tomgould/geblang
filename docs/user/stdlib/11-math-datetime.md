@@ -562,6 +562,55 @@ io.println("lap B: " + (time.elapsed(lap) as string) + " ms");
 io.println("total: " + (time.elapsed(started) as string) + " ms");
 ```
 
+### Unix time precision
+
+`time.now()` returns milliseconds since the Unix epoch, matching most
+JS / Node code. For PHP / Python ergonomics and sub-millisecond
+precision, the `time` module also exposes:
+
+| Function | Returns | Equivalent |
+|----------|---------|------------|
+| `time.unix()` | `int` whole seconds | PHP `time()`, `int(time.time())` |
+| `time.unixMilli()` | `int` milliseconds | alias of `time.now()` |
+| `time.unixMicro()` | `int` microseconds | |
+| `time.unixNano()` | `int` nanoseconds | Python `time.time_ns()` |
+| `time.unixFloat()` | `float` fractional seconds | PHP `microtime(true)`, Python `time.time()` |
+| `time.unixDecimal()` | `decimal` lossless seconds | full nanosecond precision |
+| `time.elapsedFloat(start)` | `float` seconds elapsed | float-seconds analogue of `time.elapsed` |
+
+Pick by what your data looks like:
+
+- **Whole seconds**: `time.unix()` (or the existing `datetime.nowUnix()`,
+  same value).
+- **Web-tier wall clock / 99% of cases**: `time.now()` /
+  `time.unixMilli()`. Whole-millisecond timestamps log cleanly and
+  fit in `int` without precision concerns.
+- **Microbenchmarks**: `time.unixMicro()` or `time.unixNano()` -
+  integer math, no float rounding.
+- **Sub-second wall clock you'll log or do math on**:
+  `time.unixFloat()`. Float64 covers microsecond precision; sub-
+  microsecond bits round off.
+- **Lossless for cryptographic timestamps / cross-host correlation**:
+  `time.unixDecimal()`. Backed by `(seconds * 1e9 + nanos) / 1e9`
+  via `decimal`'s big.Rat, so nanosecond precision survives
+  arithmetic.
+
+```gb
+import time;
+import io;
+
+let start = time.unixFloat();
+# ... fast work ...
+io.println("took " + (time.elapsedFloat(start) as string) + " s");
+
+# Lossless when nanoseconds matter:
+let ts = time.unixDecimal();   # e.g. 1779882656.123456789
+```
+
+Everything else in Geblang (the `time.scheduler` Timer / Ticker /
+Interval, `async.sleep`, HTTP / DB / SSH `timeoutMs`, and gebweb's
+job scheduler) continues to use milliseconds.
+
 ---
 
 ## UUID

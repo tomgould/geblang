@@ -32,7 +32,7 @@ func TestHTTPHandlerUpgradesWebSocket(t *testing.T) {
 		return gruntime.Dict{Entries: entries}, nil
 	}}
 
-	server := newLocalHTTPTestServer(t, e.httpHandler(handler))
+	server := newLocalHTTPTestServer(t, e.httpHandler(handler, nil))
 	defer server.Close()
 
 	conn, _, err := gorillawebsocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)

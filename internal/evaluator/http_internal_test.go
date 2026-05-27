@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"geblang/internal/ast"
+	"geblang/internal/concurrent"
 	gruntime "geblang/internal/runtime"
 	"geblang/internal/token"
 )
@@ -70,7 +71,7 @@ func TestHTTPHandlerAllowsConcurrentCallbacks(t *testing.T) {
 		return gruntime.String{Value: "ok"}, nil
 	}}
 
-	server := newLocalHTTPTestServer(t, e.httpHandler(handler))
+	server := newLocalHTTPTestServer(t, e.httpHandler(handler, nil))
 	defer server.Close()
 
 	var wg sync.WaitGroup
@@ -127,7 +128,7 @@ func TestHTTPClosureHandlerAllowsConcurrentCallbacks(t *testing.T) {
 	// Geblang closure handler — exercises the clone path.
 	handler := concurrencyHandler(blocker)
 
-	server := newLocalHTTPTestServer(t, e.httpHandler(handler))
+	server := newLocalHTTPTestServer(t, e.httpHandler(handler, nil))
 	defer server.Close()
 
 	var wg sync.WaitGroup
@@ -290,5 +291,110 @@ func TestWriteHTTPResponseStreamsFileAndBufferBodies(t *testing.T) {
 	}
 	if string(bufferBody) != "buffer-body" {
 		t.Fatalf("buffer response body: got %q, want buffer-body", string(bufferBody))
+	}
+}
+
+func TestHTTPHandlerRejectsOverloadWhenCapped(t *testing.T) {
+	e := New(io.Discard)
+	release := make(chan struct{})
+	entered := make(chan struct{}, 4)
+
+	handler := gruntime.Function{Native: func(this *gruntime.Instance, args []gruntime.Value) (gruntime.Value, error) {
+		entered <- struct{}{}
+		<-release
+		return gruntime.String{Value: "ok"}, nil
+	}}
+
+	pool := concurrent.NewPool(2, 0, concurrent.Reject)
+	server := newLocalHTTPTestServer(t, e.httpHandler(handler, pool))
+	defer server.Close()
+
+	var wg sync.WaitGroup
+	codes := make([]int, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			resp, err := http.Get(server.URL)
+			if err != nil {
+				t.Errorf("request %d: %v", i, err)
+				return
+			}
+			codes[i] = resp.StatusCode
+			_ = resp.Body.Close()
+		}(i)
+	}
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			close(release)
+			t.Fatal("expected two handlers to enter")
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	ok, rejected := 0, 0
+	for _, code := range codes {
+		switch code {
+		case http.StatusOK:
+			ok++
+		case http.StatusServiceUnavailable:
+			rejected++
+		}
+	}
+	if ok != 2 || rejected != 2 {
+		t.Fatalf("status codes: ok=%d rejected=%d codes=%v want ok=2 rejected=2", ok, rejected, codes)
+	}
+	stats := pool.Stats()
+	if stats.Rejected != 2 {
+		t.Fatalf("pool.Stats.Rejected: got %d want 2", stats.Rejected)
+	}
+}
+
+func TestHTTPHandlerWaitsForSlotUnderWaitPolicy(t *testing.T) {
+	e := New(io.Discard)
+	release := make(chan struct{})
+	var handled int32
+
+	handler := gruntime.Function{Native: func(this *gruntime.Instance, args []gruntime.Value) (gruntime.Value, error) {
+		<-release
+		atomic.AddInt32(&handled, 1)
+		return gruntime.String{Value: "ok"}, nil
+	}}
+
+	pool := concurrent.NewPool(1, 0, concurrent.Wait)
+	server := newLocalHTTPTestServer(t, e.httpHandler(handler, pool))
+	defer server.Close()
+
+	var wg sync.WaitGroup
+	codes := make([]int, 3)
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			resp, err := http.Get(server.URL)
+			if err != nil {
+				t.Errorf("request %d: %v", i, err)
+				return
+			}
+			codes[i] = resp.StatusCode
+			_ = resp.Body.Close()
+		}(i)
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	for i, code := range codes {
+		if code != http.StatusOK {
+			t.Fatalf("request %d: got %d want 200 (wait policy should not reject)", i, code)
+		}
+	}
+	if atomic.LoadInt32(&handled) != 3 {
+		t.Fatalf("handler invocations: got %d want 3", atomic.LoadInt32(&handled))
 	}
 }

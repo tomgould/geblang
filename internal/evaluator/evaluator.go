@@ -42,6 +42,7 @@ import (
 	"unicode/utf8"
 
 	"geblang/internal/ast"
+	"geblang/internal/concurrent"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
 	"geblang/internal/native"
@@ -347,6 +348,7 @@ type netServerHandle struct {
 	listener net.Listener
 	wg       sync.WaitGroup
 	stopped  bool
+	pool     *concurrent.Pool
 }
 
 // sshClientHandle wraps an established ssh.Client plus a lazily
@@ -381,6 +383,7 @@ type httpServerHandle struct {
 	server   *http.Server
 	listener net.Listener
 	done     chan error
+	pool     *concurrent.Pool
 }
 
 type httpStreamHandle struct {
@@ -7349,9 +7352,16 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"dispose":    e.registryBuiltin("strbuilder", "dispose"),
 		},
 		"time": {
-			"now":     e.registryBuiltin("time", "now"),
-			"elapsed": e.registryBuiltin("time", "elapsed"),
-			"sleep":   e.registryBuiltin("time", "sleep"),
+			"now":          e.registryBuiltin("time", "now"),
+			"elapsed":      e.registryBuiltin("time", "elapsed"),
+			"sleep":        e.registryBuiltin("time", "sleep"),
+			"unix":         e.registryBuiltin("time", "unix"),
+			"unixMilli":    e.registryBuiltin("time", "unixMilli"),
+			"unixMicro":    e.registryBuiltin("time", "unixMicro"),
+			"unixNano":     e.registryBuiltin("time", "unixNano"),
+			"unixFloat":    e.registryBuiltin("time", "unixFloat"),
+			"unixDecimal":  e.registryBuiltin("time", "unixDecimal"),
+			"elapsedFloat": e.registryBuiltin("time", "elapsedFloat"),
 		},
 		"schema": {
 			"validate": schemaValidate,
@@ -7590,6 +7600,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"close":              e.httpClose,
 			"shutdown":           e.httpShutdown,
 			"serverAddr":         e.httpServerAddr,
+			"serverStats":        e.httpServerStats,
 			"stream":             httpStreamResponse,
 			"streamWrite":        e.httpStreamWrite,
 			"streamFlush":        e.httpStreamFlush,
@@ -7665,6 +7676,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"dial":          e.netDial,
 			"serve":         e.netServe,
 			"closeListener": e.netCloseListener,
+			"serverStats":   e.netServerStats,
 		},
 		"test": {
 			"run":        e.testRun,
@@ -13037,12 +13049,16 @@ func (e *Evaluator) netServe(call *ast.CallExpression, args []runtime.Value) (ru
 	if !ok {
 		return nil, fmt.Errorf("%s handler must be a function", call.Callee.String())
 	}
+	pool, err := serverPoolFromArgs(args, 3, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	addr := net.JoinHostPort(host.Value, strconv.FormatInt(port, 10))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	server := &netServerHandle{listener: listener}
+	server := &netServerHandle{listener: listener, pool: pool}
 	e.netServerMu.Lock()
 	e.nextNetServerID++
 	id := e.nextNetServerID
@@ -13051,28 +13067,37 @@ func (e *Evaluator) netServe(call *ast.CallExpression, args []runtime.Value) (ru
 	server.wg.Add(1)
 	go func() {
 		defer server.wg.Done()
-		child := e.childForCallback()
-		defer child.Cleanup()
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
 				return
 			}
 			handlerConn := conn
-			// Register handles on the parent evaluator: the user's
-			// handler closure was defined there, so its captured
-			// `io.*` / `net.*` native lookups dispatch against the
-			// parent's stream + net maps.
-			connHandle := e.registerNetHandle(&netHandle{conn: handlerConn})
-			streamHandle := &ioStreamHandle{name: "net socket", reader: handlerConn, writer: handlerConn, closer: handlerConn}
-			streamValue := e.registerIOStream(streamHandle)
-			entries := map[string]runtime.DictEntry{}
-			putDict(entries, "handle", connHandle)
-			putDict(entries, "stream", streamValue)
-			putDict(entries, "localAddr", runtime.String{Value: handlerConn.LocalAddr().String()})
-			putDict(entries, "remoteAddr", runtime.String{Value: handlerConn.RemoteAddr().String()})
-			socketDict := runtime.Dict{Entries: entries}
-			_, _ = child.applyFunction(handler, []runtime.Value{socketDict})
+			if pool != nil && !pool.IsUnbounded() {
+				if err := pool.Acquire(context.Background()); err != nil {
+					_ = handlerConn.Close()
+					continue
+				}
+			}
+			server.wg.Add(1)
+			go func() {
+				defer server.wg.Done()
+				if pool != nil && !pool.IsUnbounded() {
+					defer pool.Release()
+				}
+				child := e.childForCallback()
+				defer child.Cleanup()
+				connHandle := e.registerNetHandle(&netHandle{conn: handlerConn})
+				streamHandle := &ioStreamHandle{name: "net socket", reader: handlerConn, writer: handlerConn, closer: handlerConn}
+				streamValue := e.registerIOStream(streamHandle)
+				entries := map[string]runtime.DictEntry{}
+				putDict(entries, "handle", connHandle)
+				putDict(entries, "stream", streamValue)
+				putDict(entries, "localAddr", runtime.String{Value: handlerConn.LocalAddr().String()})
+				putDict(entries, "remoteAddr", runtime.String{Value: handlerConn.RemoteAddr().String()})
+				socketDict := runtime.Dict{Entries: entries}
+				_, _ = child.applyFunction(handler, []runtime.Value{socketDict})
+			}()
 		}
 	}()
 	entries := map[string]runtime.DictEntry{}
@@ -15612,8 +15637,8 @@ func (e *Evaluator) kafkaClose(call *ast.CallExpression, args []runtime.Value) (
 }
 
 func (e *Evaluator) httpServe(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	if len(args) != 2 {
-		return nil, fmt.Errorf("%s expects exactly two arguments", call.Callee.String())
+	if len(args) != 2 && len(args) != 3 {
+		return nil, fmt.Errorf("%s expects address, handler, and optional opts", call.Callee.String())
 	}
 	addr, ok := args[0].(runtime.String)
 	if !ok {
@@ -15623,9 +15648,13 @@ func (e *Evaluator) httpServe(call *ast.CallExpression, args []runtime.Value) (r
 	if !ok {
 		return nil, fmt.Errorf("%s handler must be a function", call.Callee.String())
 	}
+	pool, err := serverPoolFromArgs(args, 2, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	server := &http.Server{
 		Addr:    addr.Value,
-		Handler: e.httpHandler(handler),
+		Handler: e.httpHandler(handler, pool),
 	}
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return nil, err
@@ -15634,8 +15663,8 @@ func (e *Evaluator) httpServe(call *ast.CallExpression, args []runtime.Value) (r
 }
 
 func (e *Evaluator) httpListen(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	if len(args) != 2 {
-		return nil, fmt.Errorf("%s expects address and handler", call.Callee.String())
+	if len(args) != 2 && len(args) != 3 {
+		return nil, fmt.Errorf("%s expects address, handler, and optional opts", call.Callee.String())
 	}
 	addr, ok := args[0].(runtime.String)
 	if !ok {
@@ -15645,12 +15674,16 @@ func (e *Evaluator) httpListen(call *ast.CallExpression, args []runtime.Value) (
 	if !ok {
 		return nil, fmt.Errorf("%s handler must be a function", call.Callee.String())
 	}
+	pool, err := serverPoolFromArgs(args, 2, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	listener, err := net.Listen("tcp", addr.Value)
 	if err != nil {
 		return nil, err
 	}
-	server := &http.Server{Handler: e.httpHandler(handler)}
-	handle := &httpServerHandle{server: server, listener: listener, done: make(chan error, 1)}
+	server := &http.Server{Handler: e.httpHandler(handler, pool)}
+	handle := &httpServerHandle{server: server, listener: listener, done: make(chan error, 1), pool: pool}
 	e.httpServerMu.Lock()
 	e.nextHTTPServerID++
 	id := e.nextHTTPServerID
@@ -15665,6 +15698,93 @@ func (e *Evaluator) httpListen(call *ast.CallExpression, args []runtime.Value) (
 		close(handle.done)
 	}()
 	return runtime.NewInt64(id), nil
+}
+
+// serverPoolFromArgs pulls the maxConcurrent/queueSize/onOverload
+// dict at args[optsIndex] (if present) and returns a configured
+// pool. Nil pool means unbounded.
+func serverPoolFromArgs(args []runtime.Value, optsIndex int, label string) (*concurrent.Pool, error) {
+	if len(args) <= optsIndex {
+		return nil, nil
+	}
+	opts, ok := args[optsIndex].(runtime.Dict)
+	if !ok {
+		return nil, fmt.Errorf("%s opts must be dict", label)
+	}
+	maxConcurrent := 0
+	if v, ok := dictField(opts, "maxConcurrent"); ok {
+		n, ok := toInt64(v)
+		if !ok || n < 0 {
+			return nil, fmt.Errorf("%s opts.maxConcurrent must be a non-negative int", label)
+		}
+		maxConcurrent = int(n)
+	}
+	queueSize := 0
+	if v, ok := dictField(opts, "queueSize"); ok {
+		n, ok := toInt64(v)
+		if !ok || n < 0 {
+			return nil, fmt.Errorf("%s opts.queueSize must be a non-negative int", label)
+		}
+		queueSize = int(n)
+	}
+	policy := concurrent.Reject
+	if v, ok := dictField(opts, "onOverload"); ok {
+		s, ok := v.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s opts.onOverload must be string", label)
+		}
+		switch s.Value {
+		case "reject", "wait", "drop":
+			policy = concurrent.ParsePolicy(s.Value)
+		default:
+			return nil, fmt.Errorf("%s opts.onOverload must be \"reject\", \"wait\", or \"drop\"", label)
+		}
+	}
+	if maxConcurrent == 0 && queueSize == 0 {
+		return nil, nil
+	}
+	return concurrent.NewPool(maxConcurrent, queueSize, policy), nil
+}
+
+func (e *Evaluator) httpServerStats(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects a server handle", call.Callee.String())
+	}
+	handle, err := e.httpServerHandle(args[0])
+	if err != nil {
+		return nil, err
+	}
+	return poolStatsDict(handle.pool), nil
+}
+
+func (e *Evaluator) netServerStats(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects a server handle", call.Callee.String())
+	}
+	id, ok := native.AsInt64(args[0])
+	if !ok {
+		return nil, fmt.Errorf("%s server handle must be int", call.Callee.String())
+	}
+	e.netServerMu.Lock()
+	server, ok := e.netServers[id]
+	e.netServerMu.Unlock()
+	if !ok {
+		if e.parent != nil {
+			return e.parent.netServerStats(call, args)
+		}
+		return nil, fmt.Errorf("unknown net server handle %d", id)
+	}
+	return poolStatsDict(server.pool), nil
+}
+
+func poolStatsDict(pool *concurrent.Pool) runtime.Value {
+	stats := pool.Stats()
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "active", runtime.NewInt64(stats.Active))
+	putDict(entries, "queued", runtime.NewInt64(stats.Queued))
+	putDict(entries, "rejected", runtime.NewInt64(stats.Rejected))
+	putDict(entries, "maxConcurrent", runtime.NewInt64(stats.MaxConcurrent))
+	return runtime.Dict{Entries: entries}
 }
 
 func (e *Evaluator) httpServerAddr(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -15784,8 +15904,26 @@ func waitHTTPServerDone(handle *httpServerHandle) error {
 	return err
 }
 
-func (e *Evaluator) httpHandler(handler runtime.Function) http.Handler {
+func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if pool != nil && !pool.IsUnbounded() {
+			if err := pool.Acquire(r.Context()); err != nil {
+				switch pool.Policy() {
+				case concurrent.Drop:
+					if hijacker, ok := w.(http.Hijacker); ok {
+						if conn, _, hErr := hijacker.Hijack(); hErr == nil {
+							_ = conn.Close()
+							return
+						}
+					}
+					w.WriteHeader(http.StatusServiceUnavailable)
+				default:
+					http.Error(w, "server at capacity", http.StatusServiceUnavailable)
+				}
+				return
+			}
+			defer pool.Release()
+		}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
