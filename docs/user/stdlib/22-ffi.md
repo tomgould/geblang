@@ -7,7 +7,7 @@ in-process so calls have no IPC overhead - what `crypt.sha256`
 costs, an FFI call costs.
 
 FFI is the lower-latency counterpart to the subprocess-based
-[`ext` protocol](19-env-ext.html). Pick FFI for tight numeric
+[`ext` protocol](env-ext.html). Pick FFI for tight numeric
 loops and library bindings where every microsecond matters; pick
 `ext` for long-running services or untrusted code that must run
 isolated from the script.
