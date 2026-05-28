@@ -1,0 +1,245 @@
+module ffi;
+
+import ffinative;
+import io;
+
+/**
+ * Type codes mirror internal/ffi/ffi.go's Type enum. Geblang code
+ * passes these to lib.symbol(...) to declare the C signature:
+ *
+ *     let sin = lib.symbol("sin", [ffi.DOUBLE], ffi.DOUBLE);
+ *     io.println(sin(3.14));
+ *
+ * VOID is only valid as a return type. BYTES is only valid as an
+ * argument type (length is passed separately as UINT64). PTR is the
+ * universal opaque handle type - returning a PTR gives you an int
+ * the program can pass back to other FFI calls or feed into Library
+ * memory helpers (ffi.alloc / ffi.free / ffi.readBytes / etc.).
+ */
+export const int VOID = 0;
+export const int INT8 = 1;
+export const int INT16 = 2;
+export const int INT32 = 3;
+export const int INT64 = 4;
+export const int UINT8 = 5;
+export const int UINT16 = 6;
+export const int UINT32 = 7;
+export const int UINT64 = 8;
+export const int FLOAT = 9;
+export const int DOUBLE = 10;
+export const int PTR = 11;
+export const int CSTRING = 12;
+export const int BYTES = 13;
+
+/**
+ * Library is an opened shared object. Construct via ffi.dlopen.
+ * `symbol(name, argTypes, retType)` resolves a function and
+ * returns a Geblang callable bound to the native code; invoking
+ * the callable dispatches into C through libffi-style trampolines
+ * with no per-call IPC.
+ *
+ * Capability gating runs at dlopen time. If the project's
+ * geblang.yaml does not list the requested path (or
+ * --allow-ffi was not supplied), dlopen throws a
+ * PermissionError that user code can catch.
+ */
+export class Library {
+    int handle;
+    string path;
+    bool _closed;
+
+    func Library(int handle, string path) {
+        this.handle = handle;
+        this.path = path;
+        this._closed = false;
+    }
+
+    /** Resolve a symbol and return a callable bound to the signature. */
+    func symbol(string name, list<int> argTypes, int retType): callable {
+        if (this._closed) {
+            throw RuntimeError("ffi.Library.symbol: library is closed");
+        }
+        return ffinative.symbol(this.handle, name, argTypes, retType);
+    }
+
+    /** Release the library handle. Idempotent. */
+    func close(): void {
+        if (this._closed) { return; }
+        ffinative.close(this.handle);
+        this._closed = true;
+    }
+
+    /** True once close() has run. */
+    func isClosed(): bool {
+        return this._closed;
+    }
+}
+
+/**
+ * Open a shared library at `path` and return a Library wrapping
+ * the dlopen handle. Path resolution matches the platform dlopen
+ * search rules: an absolute or relative path is loaded directly;
+ * a bare library name (e.g. `libm.so.6`) goes through the system
+ * loader's search path.
+ *
+ * Throws PermissionError when the active capability policy does
+ * not include the requested path.
+ */
+export func dlopen(string path): Library {
+    int handle = ffinative.dlopen(path);
+    return Library(handle, path);
+}
+
+/** Allocate `n` bytes on the libc heap; returns the pointer as int.
+ *  The caller must Free it. */
+export func alloc(int n): int {
+    return ffinative.alloc(n);
+}
+
+/** Release memory previously allocated by alloc (NULL-safe). */
+export func free(int ptr): void {
+    ffinative.free(ptr);
+}
+
+/** Copy `n` bytes starting at `ptr` into a fresh bytes value. */
+export func readBytes(int ptr, int n): bytes {
+    return ffinative.readBytes(ptr, n);
+}
+
+/** Copy `data` into the C-side buffer at `ptr`. */
+export func writeBytes(int ptr, bytes data): void {
+    ffinative.writeBytes(ptr, data);
+}
+
+/** Read a null-terminated C string at `ptr` into a Geblang string. */
+export func readCString(int ptr): string {
+    return ffinative.readCString(ptr);
+}
+
+/** Allocate a null-terminated copy of `s` on the libc heap; returns
+ *  the pointer. Caller must Free it. */
+export func cString(string s): int {
+    return ffinative.cString(s);
+}
+
+/** Read the value of the C `errno` variable on the calling thread. */
+export func errno(): int {
+    return ffinative.errno();
+}
+
+/**
+ * Layout descriptor for a C struct. Construct via `ffi.Struct([...])`
+ * passing field declarations in their C declaration order.
+ *
+ *     let Timeval = ffi.Struct([
+ *         ["tv_sec",  ffi.INT64],
+ *         ["tv_usec", ffi.INT64],
+ *     ]);
+ *     let ptr = ffi.alloc(Timeval.size);
+ *     Timeval.set(ptr, "tv_sec", 1700000000);
+ *     io.println(Timeval.get(ptr, "tv_sec"));
+ *     ffi.free(ptr);
+ *
+ * Fields use the standard C alignment rules (each field aligned to
+ * its size; struct size padded to max alignment). PTR, INT*, UINT*,
+ * FLOAT, DOUBLE are valid as fields. CSTRING / BYTES are not -
+ * model those as PTR and manage the pointed-at memory explicitly.
+ */
+export class Struct {
+    int handle;
+    int size;
+
+    func Struct(int handle) {
+        this.handle = handle;
+        this.size = ffinative.structSize(handle);
+    }
+
+    /** Read field `name` from the struct pointed at by `ptr`. */
+    func get(int ptr, string name): any {
+        return ffinative.structGet(this.handle, ptr, name);
+    }
+
+    /** Write field `name` of the struct pointed at by `ptr`. */
+    func set(int ptr, string name, any value): void {
+        ffinative.structSet(this.handle, ptr, name, value);
+    }
+
+    /** Allocate `size` bytes for one struct instance; returns the
+     *  pointer. Caller frees via `ffi.free`. */
+    func alloc(): int {
+        return ffinative.alloc(this.size);
+    }
+}
+
+/**
+ * Build a struct layout from a list of [name, type] pairs in C
+ * declaration order. Returns a `Struct` you can use to read and
+ * write fields on a pointer.
+ */
+export func StructOf(list<list<any>> fields): Struct {
+    return Struct(ffinative.newStruct(fields));
+}
+
+/** Byte size of the given element type code. Useful for sizing
+ *  buffers when passing typed arrays to native calls. */
+export func sizeOf(int elemType): int {
+    return ffinative.sizeOf(elemType);
+}
+
+/** Pack a Geblang list into a C-side buffer at `ptr`. The buffer
+ *  must be at least `values.length() * sizeOf(elemType)` bytes. */
+export func writeArray(int ptr, int elemType, list<any> values): void {
+    ffinative.writeArray(ptr, elemType, values);
+}
+
+/** Read `length` elements of `elemType` from the C-side buffer at
+ *  `ptr` into a Geblang list. */
+export func readArray(int ptr, int elemType, int length): list<any> {
+    return ffinative.readArray(ptr, elemType, length);
+}
+
+/**
+ * Zero-copy view of `length` bytes starting at `ptr` as a Geblang
+ * bytes value. The returned bytes ALIAS the C memory - no copy is
+ * performed. The caller MUST guarantee that the underlying memory
+ * outlives every use of the value; once the C side frees it,
+ * accessing the bytes is undefined behaviour.
+ *
+ * For most code, prefer `ffi.readBytes(ptr, n)` which copies.
+ * Reach for `bytesView` only when the buffer is large enough that
+ * the copy cost matters (image frames, audio buffers, tensors).
+ */
+export func bytesView(int ptr, int length): bytes {
+    return ffinative.bytesView(ptr, length);
+}
+
+/**
+ * Build a C function pointer that dispatches into `fn` when C calls
+ * it. `argTypes` and `retType` declare the C-ABI signature.
+ *
+ *     let cmp = ffi.callback(
+ *         func(int a, int b): int { return (a as int) - (b as int); },
+ *         [ffi.PTR, ffi.PTR],
+ *         ffi.INT32
+ *     );
+ *
+ * The returned int is the C function pointer; pass it through a
+ * symbol declared as `ffi.PTR` to native libraries that expect a
+ * callback (e.g. qsort's comparator).
+ *
+ * Constraints:
+ *  - Argument types: INT*, UINT*, PTR only. Floats, CSTRING, and
+ *    BYTES are not supported in callback signatures - if a C
+ *    callback receives a string or a struct, declare PTR and
+ *    decode it inside the Geblang function using ffi.readCString,
+ *    ffi.readBytes, or struct.get.
+ *  - Return types: VOID, INT*, UINT*, PTR.
+ *  - Callbacks live for the rest of the process; up to 2000 may
+ *    be allocated per process. Don't create them inside hot loops.
+ *  - The Geblang runtime must be reachable when C calls back.
+ *    Multi-threaded libraries that invoke callbacks from arbitrary
+ *    OS threads may fail; document the threading model per binding.
+ */
+export func callback(callable fn, list<int> argTypes, int retType): int {
+    return ffinative.callback(fn, argTypes, retType);
+}

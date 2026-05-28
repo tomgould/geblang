@@ -1,0 +1,106 @@
+/**
+ * @title FFI libm
+ * @summary Calls into the system math library through the ffi
+ * module. Validates DOUBLE arg + return marshalling and the
+ * Library / symbol cache surface.
+ *
+ * Requires: --allow-ffi 'libm.so.*' or a permissions.ffi block
+ * in geblang.yaml. Without permission the tests skip cleanly.
+ */
+import test;
+import ffi;
+import io;
+
+class FFILibMTest extends test.Test {
+    func tryOpen(): ?ffi.Library {
+        try {
+            return ffi.dlopen("libm.so.6");
+        } catch (PermissionError e) {
+            io.println("skipping: FFI not permitted (" + e.message + ")");
+            return null;
+        } catch (Error e) {
+            io.println("skipping: libm not available (" + e.message + ")");
+            return null;
+        }
+    }
+
+    @test
+    func sinReturnsZeroAtZero(): void {
+        let lib = this.tryOpen();
+        if (lib == null) { return; }
+        let sin = lib.symbol("sin", [ffi.DOUBLE], ffi.DOUBLE);
+        let result = sin(0.0) as decimal;
+        this.assertTrue(result.abs() < 0.000000001);
+        lib.close();
+    }
+
+    @test
+    func sinReturnsOneAtHalfPi(): void {
+        let lib = this.tryOpen();
+        if (lib == null) { return; }
+        let sin = lib.symbol("sin", [ffi.DOUBLE], ffi.DOUBLE);
+        let result = sin(1.5707963267948966) as decimal;
+        let diff = (result - 1.0).abs();
+        this.assertTrue(diff < 0.000000001);
+        lib.close();
+    }
+
+    @test
+    func sqrtMultipleCalls(): void {
+        let lib = this.tryOpen();
+        if (lib == null) { return; }
+        let sqrt = lib.symbol("sqrt", [ffi.DOUBLE], ffi.DOUBLE);
+        let cases = [[4.0, 2.0], [9.0, 3.0], [16.0, 4.0], [100.0, 10.0]];
+        for (pair in cases) {
+            let input = pair[0] as decimal;
+            let want = pair[1] as decimal;
+            let got = sqrt(input) as decimal;
+            let diff = (got - want).abs();
+            this.assertTrue(diff < 0.000000001);
+        }
+        lib.close();
+    }
+
+    @test
+    func hypotTwoArgs(): void {
+        let lib = this.tryOpen();
+        if (lib == null) { return; }
+        let hypot = lib.symbol("hypot", [ffi.DOUBLE, ffi.DOUBLE], ffi.DOUBLE);
+        let got = hypot(3.0, 4.0) as decimal;
+        let diff = (got - 5.0).abs();
+        this.assertTrue(diff < 0.000000001);
+        lib.close();
+    }
+
+    @test
+    func symbolCacheReturnsSameCallable(): void {
+        let lib = this.tryOpen();
+        if (lib == null) { return; }
+        let cos1 = lib.symbol("cos", [ffi.DOUBLE], ffi.DOUBLE);
+        let cos2 = lib.symbol("cos", [ffi.DOUBLE], ffi.DOUBLE);
+        let a = cos1(0.5) as decimal;
+        let b = cos2(0.5) as decimal;
+        this.assertTrue((a - b).abs() < 0.000000001);
+        lib.close();
+    }
+
+    @test
+    func closedLibraryRejectsSymbol(): void {
+        let lib = this.tryOpen();
+        if (lib == null) { return; }
+        lib.close();
+        this.assertThrows(func(): void {
+            lib.symbol("sin", [ffi.DOUBLE], ffi.DOUBLE);
+        });
+    }
+
+    @test
+    func deniedPathThrowsPermissionError(): void {
+        try {
+            let lib = ffi.dlopen("/etc/shadow.so");
+            this.fail("expected PermissionError");
+        } catch (PermissionError e) {
+            this.assertTrue(e.message.length() > 0);
+        }
+    }
+}

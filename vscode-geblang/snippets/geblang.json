@@ -847,5 +847,36 @@
             "${1:pb}.finish(\"${3:complete}\");"
         ],
         "description": "cli.widgets.ProgressBar: progress bar (1.2.0)"
+    },
+    "ffi.dlopen": {
+        "prefix": "ffidlopen",
+        "body": [
+            "let ${1:lib} = ffi.dlopen(\"${2:libm.so.6}\");",
+            "let ${3:func_name} = ${1:lib}.symbol(\"${4:func_name}\", [${5:ffi.DOUBLE}], ${6:ffi.DOUBLE});",
+            "$0"
+        ],
+        "description": "ffi.dlopen + symbol resolution (1.6.0)"
+    },
+    "ffi.symbol": {
+        "prefix": "ffisymbol",
+        "body": [
+            "let ${1:func_name} = ${2:lib}.symbol(\"${3:func_name}\", [${4:ffi.DOUBLE}], ${5:ffi.DOUBLE});",
+            "$0"
+        ],
+        "description": "ffi.Library.symbol: declare a C function signature (1.6.0)"
+    },
+    "ffi.handle wrapper class": {
+        "prefix": "ffihandle",
+        "body": [
+            "class ${1:Handle} {",
+            "\tint handle;",
+            "\tfunc ${1:Handle}(int handle) { this.handle = handle; }",
+            "\tfunc ~${1:Handle}() {",
+            "\t\t${2:releaseFn}(this.handle);",
+            "\t}",
+            "}",
+            "$0"
+        ],
+        "description": "ffi: wrap a C handle in a Geblang class with destructor (1.6.0)"
     }
 }

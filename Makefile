@@ -31,8 +31,13 @@ test-go:
 
 # test-lang runs the Geblang-level regression suite under tests/.
 # It depends on the geblang binary being built (target: build).
+# FFI tests need explicit permission to load libm/libc/libsqlite3
+# under tests/stdlib/; without these flags they would skip cleanly
+# but leave the FFI surface unexercised.
 test-lang: build
-	./$(BINARY) test tests/
+	./$(BINARY) test \
+	  --allow-ffi 'libm.so.*' --allow-ffi 'libc.so.*' --allow-ffi 'libsqlite3*' \
+	  tests/
 
 # check-lang statically checks every .gb file under tests/. The tests/check
 # subdirectory contains intentionally invalid files that must each emit at

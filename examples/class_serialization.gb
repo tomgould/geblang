@@ -1,7 +1,7 @@
 /**
  * @title Class serialization
- * @summary Default field-dump, __serialize__ override, and the
- *          json.parseAs / __deserialize__ deserialisation path.
+ * @summary Default field-dump, __serialize override, and the
+ *          json.parseAs / __deserialize deserialisation path.
  * @category Data formats
  */
 import io;
@@ -35,8 +35,8 @@ io.println(q.x);
 io.println(q.y);
 
 /* Classes can override both sides:
- *   __serialize__()          - shape control on output
- *   __deserialize__(dict d)  - static factory called by parseAs */
+ *   __serialize()          - shape control on output
+ *   __deserialize(dict d)  - static factory called by parseAs */
 class Tagged {
     string kind;
     string label;
@@ -46,11 +46,11 @@ class Tagged {
         this.label = label;
     }
 
-    func __serialize__(): dict {
+    func __serialize(): dict {
         return {"kind": this.kind, "label": this.label, "v": 1};
     }
 
-    static func __deserialize__(dict d): Tagged {
+    static func __deserialize(dict d): Tagged {
         return Tagged(d["kind"], d["label"]);
     }
 }

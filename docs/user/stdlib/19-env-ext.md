@@ -114,6 +114,12 @@ Import `ext` to call managed or pre-started external processes over Geblang's
 extension protocol. This is how you integrate Python libraries, Go binaries,
 Node helpers, or any other runtime without building them into the VM.
 
+For in-process calls into C-ABI shared libraries (libtorch, libsqlite,
+libcurl, ...), see [Foreign Function Interface](ffi.html). FFI has lower
+per-call latency than `ext` because it skips the IPC round-trip, but it
+also runs the library in the script's process, so trust requirements are
+higher.
+
 ### What the extension protocol is
 
 An extension is a subprocess that communicates with the Geblang host over a

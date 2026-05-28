@@ -8,12 +8,12 @@ Import `json`:
 
 - `parse(text)` - parse JSON string into Geblang value
 - `parseAs(text, ClassRef)` - parse and reconstruct a class instance
-  (calls static `__deserialize__(dict)` when defined, else the
+  (calls static `__deserialize(dict)` when defined, else the
   constructor matched on parameter names)
 - `tryParse(text)` - returns `null` on error instead of throwing
 - `stringify(value)` - serialize to JSON string (accepts dicts, lists,
   scalars, and user-defined class instances; classes can override with
-  `__serialize__()`)
+  `__serialize()`)
 - `validate(text)` - returns `{"valid": bool, "error": string|null}`
 - `validateDetailed(text)` - returns more detailed error information
 - `reader(source)` - streaming reader (see below)
@@ -80,7 +80,7 @@ Import `xml`:
 user-defined class instances. By default the call emits the
 **public** fields - any field whose name does not start with `_` or
 `__`. Classes can replace the default by implementing
-`__serialize__()`; the return value is recursively serialised.
+`__serialize()`; the return value is recursively serialised.
 
 ```gb
 import json;
@@ -97,7 +97,7 @@ io.println(json.stringify(Point(3, 4)));
 ```
 
 The companion `parseAs(text, ClassRef)` reconstructs an instance.
-It calls a static `__deserialize__(dict)` factory on the target
+It calls a static `__deserialize(dict)` factory on the target
 class when one is defined; otherwise it matches dict keys against
 the constructor's parameter names and calls the constructor
 positionally.

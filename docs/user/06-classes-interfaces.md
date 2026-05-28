@@ -726,9 +726,9 @@ iterators that should not be restarted.
 User-defined iterables compose with `iterable<T>` parameters and slot
 straight into the generator/list/dict iteration paths.
 
-## Context Managers (`with`, `__enter__`, `__exit__`)
+## Context Managers (`with`, `__enter`, `__exit`)
 
-The `with` statement runs the magic methods `__enter__()` and `__exit__()`
+The `with` statement runs the magic methods `__enter()` and `__exit()`
 on the bound resource. It is a scoped-cleanup construct, distinct from the
 destructor lifecycle.
 
@@ -738,12 +738,12 @@ class Transaction {
 
     func Transaction(string label) { this.label = label; }
 
-    func __enter__(): Transaction {
+    func __enter(): Transaction {
         io.println("begin " + this.label);
         return this;
     }
 
-    func __exit__(): void {
+    func __exit(): void {
         io.println("commit " + this.label);
     }
 }
@@ -759,17 +759,17 @@ with (tx = Transaction("write")) {
 ```
 
 Two forms are accepted: `with (expr) { ... }` discards the value;
-`with (name = expr) { ... }` binds the result of `__enter__()` (or the
-expression itself when `__enter__()` is undefined) to `name`. At block exit
+`with (name = expr) { ... }` binds the result of `__enter()` (or the
+expression itself when `__enter()` is undefined) to `name`. At block exit
 - normal completion, exception, `return`, `break`, or `continue` - the
-runtime invokes `__exit__()` if defined; otherwise the block exits as a
+runtime invokes `__exit()` if defined; otherwise the block exits as a
 no-op. The class destructor is **not** called at this point; it fires later
 via the lifetime mechanism described above.
 
 If you want both - per-block cleanup AND end-of-lifetime cleanup - declare
 both methods.
 
-## Serialisation: `__serialize__` And `__deserialize__`
+## Serialisation: `__serialize` And `__deserialize`
 
 Class instances serialise out of the box. `json.stringify`, `yaml.stringify`,
 and `toml.stringify` accept an instance and dump its **public** fields:
@@ -793,7 +793,7 @@ io.println(json.stringify(Point(3, 4)));
 /* {"x":3,"y":4} - _secret is omitted. */
 ```
 
-A class can replace the default by implementing `__serialize__()`. The return
+A class can replace the default by implementing `__serialize()`. The return
 value is itself serialised by the stringify call, so any dict/list/scalar shape
 works:
 
@@ -804,7 +804,7 @@ class Tagged {
     func Tagged(string kind, string label) {
         this.kind = kind; this.label = label;
     }
-    func __serialize__(): dict {
+    func __serialize(): dict {
         return {"kind": this.kind, "label": this.label, "v": 1};
     }
 }
@@ -818,7 +818,7 @@ io.println(p.x);
 io.println(p.y);
 ```
 
-`parseAs` first looks for a static `__deserialize__(dict)` factory on the
+`parseAs` first looks for a static `__deserialize(dict)` factory on the
 target class. When present it is called with the parsed value:
 
 ```gb
@@ -828,13 +828,13 @@ class Tagged {
     func Tagged(string kind, string label) {
         this.kind = kind; this.label = label;
     }
-    static func __deserialize__(dict d): Tagged {
+    static func __deserialize(dict d): Tagged {
         return Tagged(d["kind"], d["label"]);
     }
 }
 ```
 
-When no `__deserialize__` exists, `parseAs` matches the dict keys to the
+When no `__deserialize` exists, `parseAs` matches the dict keys to the
 constructor's parameter names and calls the constructor positionally. A
 missing required parameter raises a runtime error.
 

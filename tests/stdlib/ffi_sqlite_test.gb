@@ -1,0 +1,101 @@
+/**
+ * @title FFI sqlite acceptance
+ * @summary End-to-end acceptance test for Phase 1 FFI: open an
+ * in-memory SQLite database, prepare a statement, step through
+ * results, and tear everything down. Every FFI primitive flexed
+ * here is what real users will use.
+ *
+ * Skips when libsqlite3 is not on the loader path. Requires
+ * --allow-ffi 'libsqlite3*' to run.
+ */
+import test;
+import ffi;
+import io;
+
+class FFISQLiteTest extends test.Test {
+    /* SQLITE_OK = 0, SQLITE_ROW = 100, SQLITE_DONE = 101. */
+    func loadOrSkip(): ?ffi.Library {
+        let candidates = ["libsqlite3.so.0", "libsqlite3.so"];
+        for (path in candidates) {
+            try {
+                return ffi.dlopen(path as string);
+            } catch (Error e) {
+                /* try next candidate */
+            }
+        }
+        return null;
+    }
+
+    @test
+    func endToEndQuery(): void {
+        let lib = this.loadOrSkip();
+        if (lib == null) {
+            io.println("skipping: libsqlite3 not available");
+            return;
+        }
+
+        /* sqlite3_open(filename, &db) -> int */
+        let openDb = lib.symbol("sqlite3_open", [ffi.CSTRING, ffi.PTR], ffi.INT32);
+        /* sqlite3_close(db) -> int */
+        let closeDb = lib.symbol("sqlite3_close", [ffi.PTR], ffi.INT32);
+        /* sqlite3_exec(db, sql, callback, arg, errMsg) -> int */
+        let exec = lib.symbol("sqlite3_exec", [ffi.PTR, ffi.CSTRING, ffi.PTR, ffi.PTR, ffi.PTR], ffi.INT32);
+        /* sqlite3_prepare_v2(db, sql, n, &stmt, &tail) -> int */
+        let prepare = lib.symbol("sqlite3_prepare_v2", [ffi.PTR, ffi.CSTRING, ffi.INT32, ffi.PTR, ffi.PTR], ffi.INT32);
+        /* sqlite3_step(stmt) -> int */
+        let step = lib.symbol("sqlite3_step", [ffi.PTR], ffi.INT32);
+        /* sqlite3_column_int(stmt, col) -> int */
+        let columnInt = lib.symbol("sqlite3_column_int", [ffi.PTR, ffi.INT32], ffi.INT32);
+        /* sqlite3_finalize(stmt) -> int */
+        let finalize = lib.symbol("sqlite3_finalize", [ffi.PTR], ffi.INT32);
+
+        /* Allocate a pointer-sized slot for sqlite3_open's out-arg. */
+        let dbHandleSlot = ffi.alloc(8);
+        let rc = openDb(":memory:", dbHandleSlot) as int;
+        this.assertEquals(0 as int, rc);
+
+        /* The db handle lives at the slot; read the 8-byte pointer out. */
+        let dbPtrBytes = ffi.readBytes(dbHandleSlot, 8);
+        ffi.free(dbHandleSlot);
+
+        /* Convert the 8 little-endian bytes back into a pointer-as-int. */
+        let db = 0;
+        for (i in 0..7) {
+            db = db + ((dbPtrBytes[i] as int) << (i * 8));
+        }
+        this.assertTrue(db != 0);
+
+        /* Exec a CREATE / INSERT round-trip. */
+        rc = exec(db, "CREATE TABLE t (n INT); INSERT INTO t VALUES (42), (99);", 0, 0, 0) as int;
+        this.assertEquals(0 as int, rc);
+
+        /* Prepare a SELECT and read the rows. */
+        let stmtSlot = ffi.alloc(8);
+        rc = prepare(db, "SELECT n FROM t ORDER BY n", -1, stmtSlot, 0) as int;
+        this.assertEquals(0 as int, rc);
+        let stmtBytes = ffi.readBytes(stmtSlot, 8);
+        ffi.free(stmtSlot);
+
+        let stmt = 0;
+        for (i in 0..7) {
+            stmt = stmt + ((stmtBytes[i] as int) << (i * 8));
+        }
+        this.assertTrue(stmt != 0);
+
+        /* First row: 42. SQLITE_ROW == 100. */
+        this.assertEquals(100 as int, step(stmt) as int);
+        this.assertEquals(42 as int, columnInt(stmt, 0) as int);
+
+        /* Second row: 99. */
+        this.assertEquals(100 as int, step(stmt) as int);
+        this.assertEquals(99 as int, columnInt(stmt, 0) as int);
+
+        /* SQLITE_DONE == 101 when no more rows. */
+        this.assertEquals(101 as int, step(stmt) as int);
+
+        this.assertEquals(0 as int, finalize(stmt) as int);
+        this.assertEquals(0 as int, closeDb(db) as int);
+
+        lib.close();
+    }
+}

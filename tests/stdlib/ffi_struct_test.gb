@@ -1,0 +1,107 @@
+/**
+ * @title FFI struct layout
+ * @summary ffi.StructOf builds a C struct layout that user code
+ * can pass through C-ABI calls by pointer. Tests cover layout +
+ * alignment, the read / write round-trip, and a real round-trip
+ * through libc gettimeofday.
+ *
+ * Requires: --allow-ffi 'libc.so.*' for the gettimeofday test.
+ */
+import test;
+import ffi;
+import io;
+
+class FFIStructTest extends test.Test {
+    func tryOpenLibc(): ?ffi.Library {
+        try {
+            return ffi.dlopen("libc.so.6");
+        } catch (PermissionError e) {
+            io.println("skipping: FFI not permitted (" + e.message + ")");
+            return null;
+        } catch (Error e) {
+            io.println("skipping: libc not available (" + e.message + ")");
+            return null;
+        }
+    }
+
+    @test
+    func sizeMatchesPackedLayout(): void {
+        let Point = ffi.StructOf([
+            ["x", ffi.INT32],
+            ["y", ffi.INT32],
+        ]);
+        this.assertEquals(8 as int, Point.size);
+    }
+
+    @test
+    func sizeRespectsAlignment(): void {
+        /* { int8 a; int32 b; int8 c; int64 d; } -> 24 bytes */
+        let S = ffi.StructOf([
+            ["a", ffi.INT8],
+            ["b", ffi.INT32],
+            ["c", ffi.INT8],
+            ["d", ffi.INT64],
+        ]);
+        this.assertEquals(24 as int, S.size);
+    }
+
+    @test
+    func getSetRoundTrip(): void {
+        let S = ffi.StructOf([
+            ["i", ffi.INT32],
+            ["u", ffi.UINT64],
+            ["f", ffi.DOUBLE],
+        ]);
+        let ptr = S.alloc();
+        S.set(ptr, "i", -42);
+        S.set(ptr, "u", 4000000000);
+        S.set(ptr, "f", 3.141592653589793);
+        this.assertEquals(-42 as int, S.get(ptr, "i") as int);
+        this.assertEquals(4000000000 as int, S.get(ptr, "u") as int);
+        let f = S.get(ptr, "f") as decimal;
+        let diff = (f - 3.141592653589793).abs();
+        this.assertTrue(diff < 0.000000000001);
+        ffi.free(ptr);
+    }
+
+    @test
+    func unknownFieldRejected(): void {
+        let S = ffi.StructOf([["x", ffi.INT32]]);
+        let ptr = S.alloc();
+        this.assertThrows(func(): void {
+            S.get(ptr, "missing");
+        });
+        ffi.free(ptr);
+    }
+
+    @test
+    func duplicateFieldRejected(): void {
+        this.assertThrows(func(): void {
+            ffi.StructOf([
+                ["x", ffi.INT32],
+                ["x", ffi.INT32],
+            ]);
+        });
+    }
+
+    @test
+    func gettimeofdayFillsStruct(): void {
+        let libc = this.tryOpenLibc();
+        if (libc == null) { return; }
+        let gettimeofday = libc.symbol("gettimeofday", [ffi.PTR, ffi.PTR], ffi.INT32);
+        let Timeval = ffi.StructOf([
+            ["tv_sec", ffi.INT64],
+            ["tv_usec", ffi.INT64],
+        ]);
+        let tv = Timeval.alloc();
+        let rc = gettimeofday(tv, 0) as int;
+        this.assertEquals(0 as int, rc);
+        let sec = Timeval.get(tv, "tv_sec") as int;
+        let usec = Timeval.get(tv, "tv_usec") as int;
+        this.assertTrue(sec > 1600000000);
+        this.assertTrue(usec >= 0);
+        this.assertTrue(usec < 1000000);
+        ffi.free(tv);
+        libc.close();
+    }
+}

@@ -120,7 +120,7 @@ func TestCompletionOffersMagicMethods(t *testing.T) {
 		Position:     Position{Line: 0, Character: 2},
 	}})
 
-	for _, want := range []string{"__iter", "__done", "__next", "__invoke", "__enter__", "__exit__"} {
+	for _, want := range []string{"__iter", "__done", "__next", "__invoke", "__enter", "__exit"} {
 		if !hasCompletion(items, want) {
 			t.Fatalf("expected magic method %s completion, got %#v", want, items)
 		}

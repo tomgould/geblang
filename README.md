@@ -1,7 +1,7 @@
 # Geblang
 
 Geblang is a statically-typed scripting language implemented in Go.
-Current version: **1.4.5**. It combines the ergonomics of PHP and
+Current version: **1.5.0**. It combines the ergonomics of PHP and
 Python with strong static typing, generics, decorators, async, and
 runtime reflection.
 
@@ -41,6 +41,9 @@ Types are checked statically. `any` is opt-in for dynamic boundaries
   (`async.scope.scope`), and `async.race` / `async.all` /
   `async.timeout` combinators. Optional reactor backend for
   high-throughput TCP / HTTP via `{reactor: true}`.
+- **FFI** for calling C-ABI shared libraries directly (libtorch,
+  libsqlite, libcurl, ...). In-process dispatch with no IPC;
+  capability-gated default-off.
 - **Bytecode VM** with a tree-walking evaluator as the reference
   semantics and fallback. Compiled bytecode is cached on disk by
   source hash so subsequent runs skip parse and compile.
@@ -257,6 +260,28 @@ server.close();
 `sockets.Server` and the per-connection `streams.IOStream` are
 typed; the inbound `raw["stream"]` boundary is the only `any`
 crossing in the example.
+
+### FFI: calling C-ABI shared libraries
+
+```gb
+import ffi;
+import io;
+
+let lib = ffi.dlopen("libm.so.6");
+let sin = lib.symbol("sin", [ffi.DOUBLE], ffi.DOUBLE);
+let hypot = lib.symbol("hypot", [ffi.DOUBLE, ffi.DOUBLE], ffi.DOUBLE);
+
+io.println(sin(1.5707963267948966));   /* 1.0 */
+io.println(hypot(3.0, 4.0));           /* 5.0 */
+lib.close();
+```
+
+Run with `geblang --allow-ffi 'libm.so.*' script.gb`, or declare
+the allow-list in `geblang.yaml` under `permissions.ffi`. The
+dispatch is in-process - no IPC overhead - and covers primitive
+integers, floats, pointers, C strings, and bytes. Use it for
+numeric kernels and library bindings; for sandboxed extensions,
+the subprocess `ext` protocol is the better fit.
 
 ### HTTP server (web boundary)
 

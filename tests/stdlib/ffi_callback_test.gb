@@ -1,0 +1,87 @@
+/**
+ * @title FFI callbacks
+ * @summary ffi.callback wraps a Geblang function in a C function
+ * pointer that native code can invoke. Tests cover signature
+ * validation and the canonical libc qsort acceptance case.
+ *
+ * Requires: --allow-ffi 'libc.so.*'.
+ */
+import test;
+import ffi;
+import io;
+
+class FFICallbackTest extends test.Test {
+    func tryOpenLibc(): ?ffi.Library {
+        try {
+            return ffi.dlopen("libc.so.6");
+        } catch (PermissionError e) {
+            io.println("skipping: FFI not permitted (" + e.message + ")");
+            return null;
+        } catch (Error e) {
+            io.println("skipping: libc not available (" + e.message + ")");
+            return null;
+        }
+    }
+
+    @test
+    func returnsNonZeroPointer(): void {
+        let cb = ffi.callback(func(int a, int b): int {
+            return (a as int) + (b as int);
+        }, [ffi.INT32, ffi.INT32], ffi.INT32);
+        this.assertTrue(cb != 0);
+    }
+
+    @test
+    func rejectsFloatArgType(): void {
+        this.assertThrows(func(): void {
+            ffi.callback(func(int x): int { return x; }, [ffi.DOUBLE], ffi.INT32);
+        });
+    }
+
+    @test
+    func rejectsCStringArgType(): void {
+        this.assertThrows(func(): void {
+            ffi.callback(func(int x): int { return x; }, [ffi.CSTRING], ffi.INT32);
+        });
+    }
+
+    @test
+    func rejectsBytesArgType(): void {
+        this.assertThrows(func(): void {
+            ffi.callback(func(int x): int { return x; }, [ffi.BYTES], ffi.INT32);
+        });
+    }
+
+    @test
+    func qsortWithGeblangComparator(): void {
+        let libc = this.tryOpenLibc();
+        if (libc == null) { return; }
+        let qsort = libc.symbol("qsort", [ffi.PTR, ffi.UINT64, ffi.UINT64, ffi.PTR], ffi.VOID);
+        let Item = ffi.StructOf([["v", ffi.INT32]]);
+
+        let cmp = ffi.callback(func(int pa, int pb): int {
+            let abytes = ffi.readBytes(pa as int, 4);
+            let bbytes = ffi.readBytes(pb as int, 4);
+            let ai = (abytes[0] as int) | ((abytes[1] as int) << 8) | ((abytes[2] as int) << 16) | ((abytes[3] as int) << 24);
+            let bi = (bbytes[0] as int) | ((bbytes[1] as int) << 8) | ((bbytes[2] as int) << 16) | ((bbytes[3] as int) << 24);
+            return ai - bi;
+        }, [ffi.PTR, ffi.PTR], ffi.INT32);
+
+        let buf = ffi.alloc(20);
+        Item.set(buf, "v", 5);
+        Item.set(buf + 4, "v", 2);
+        Item.set(buf + 8, "v", 8);
+        Item.set(buf + 12, "v", 1);
+        Item.set(buf + 16, "v", 4);
+
+        qsort(buf, 5, 4, cmp);
+
+        let want = [1, 2, 4, 5, 8];
+        for (i in 0..4) {
+            this.assertEquals(want[i] as int, Item.get(buf + i * 4, "v") as int);
+        }
+
+        ffi.free(buf);
+        libc.close();
+    }
+}

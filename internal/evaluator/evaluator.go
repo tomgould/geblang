@@ -43,6 +43,7 @@ import (
 
 	"geblang/internal/ast"
 	"geblang/internal/concurrent"
+	"geblang/internal/ffi"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
 	"geblang/internal/native"
@@ -224,6 +225,7 @@ type Evaluator struct {
 	extMu                 sync.Mutex
 	nextExtID             int64
 	extConns              map[int64]*extHandle
+	ffi                   *ffiState
 }
 
 type builtinFunc func(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error)
@@ -436,6 +438,7 @@ type packageManifest struct {
 	Paths        []string
 	Dependencies map[string]packageDependency
 	Extensions   map[string]*extConfig
+	Permissions  permissionsBlock
 }
 
 type packageDependency struct {
@@ -468,10 +471,15 @@ type packageManifestFile struct {
 	ModulePaths  []string                     `yaml:"modulePaths"`
 	Dependencies map[string]packageDependency `yaml:"dependencies"`
 	Extensions   map[string]*extConfig        `yaml:"extensions"`
+	Permissions  permissionsBlock             `yaml:"permissions"`
 	Package      struct {
 		Name    string `yaml:"name"`
 		Version string `yaml:"version"`
 	} `yaml:"package"`
+}
+
+type permissionsBlock struct {
+	FFI *ffi.PolicyConfig `yaml:"ffi" json:"ffi"`
 }
 
 type processSpec struct {
@@ -562,6 +570,13 @@ func (e thrownError) Error() string {
 	return e.value.Inspect()
 }
 
+// ErrorClass exposes the carried Geblang error class so the VM /
+// other native call sites can preserve the typed throw across the
+// native-to-script boundary via runtime.TypedError.
+func (e thrownError) ErrorClass() string {
+	return e.value.Class
+}
+
 func New(stdout io.Writer) *Evaluator {
 	return NewWithArgs(stdout, nil)
 }
@@ -574,7 +589,7 @@ func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []st
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*websocket.Conn{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*websocket.Conn{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}}
 	e.builtins = e.builtinModules()
 	// Register an InstanceInvoker so native code (e.g.
 	// convert.go's __serialize__ dispatch) can call class
@@ -594,7 +609,7 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 	if !ok {
 		return nil, fmt.Errorf("deserialize: expected class, got %s", classValue.TypeName())
 	}
-	if method, ok := lookupStaticMethod(class, "__deserialize__"); ok {
+	if method, ok := lookupStaticDunderEval(class, "__deserialize", "__deserialize__"); ok {
 		return e.applyFunction(method, []runtime.Value{value})
 	}
 	dict, ok := value.(runtime.Dict)
@@ -1456,6 +1471,7 @@ func (e *Evaluator) loadPackageManifest(path string) (*packageManifest, error) {
 		Paths:        paths,
 		Dependencies: parsed.Dependencies,
 		Extensions:   parsed.Extensions,
+		Permissions:  parsed.Permissions,
 	}
 	if manifest.Dependencies == nil {
 		manifest.Dependencies = map[string]packageDependency{}
@@ -2654,6 +2670,7 @@ func (e *Evaluator) installBuiltinTypes(env *runtime.Environment) error {
 		"assertLessThan",
 		"assertLessThanOrEqual",
 		"assertThrows",
+		"assertThrowsOf",
 		"fail",
 	} {
 		testClass.Methods[strings.ToLower(methodName)] = []runtime.Function{{Name: methodName, Native: e.nativeTestAssertion(methodName)}}
@@ -5773,7 +5790,7 @@ func (e *Evaluator) evalWithStatement(stmt *ast.WithStatement, env *runtime.Envi
 	}
 	bound := resource
 	if instance, ok := resource.(*runtime.Instance); ok {
-		if method, ok := lookupMethod(instance.Class, "__enter__"); ok {
+		if method, ok := lookupDunderEval(instance.Class, "__enter", "__enter__"); ok {
 			value, err := e.applyFunctionWithThis(method, nil, instance)
 			if err != nil {
 				return signal{}, err
@@ -5849,11 +5866,25 @@ func (e *Evaluator) runWithCleanup(resource runtime.Value) error {
 	if !ok {
 		return nil
 	}
-	if method, ok := lookupMethod(instance.Class, "__exit__"); ok {
+	if method, ok := lookupDunderEval(instance.Class, "__exit", "__exit__"); ok {
 		_, err := e.applyFunctionWithThis(method, nil, instance)
 		return err
 	}
 	return nil
+}
+
+func lookupDunderEval(class *runtime.Class, canonical, legacy string) (runtime.Function, bool) {
+	if m, ok := lookupMethod(class, canonical); ok {
+		return m, true
+	}
+	return lookupMethod(class, legacy)
+}
+
+func lookupStaticDunderEval(class *runtime.Class, canonical, legacy string) (runtime.Function, bool) {
+	if m, ok := lookupStaticMethod(class, canonical); ok {
+		return m, true
+	}
+	return lookupStaticMethod(class, legacy)
 }
 
 func catchMatches(clause ast.CatchClause, err runtime.Error) bool {
@@ -5877,7 +5908,7 @@ func errorTypeMatches(class string, target string) bool {
 
 func errorParent(class string) string {
 	switch class {
-	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError":
+	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError":
 		return "Error"
 	default:
 		return ""
@@ -5889,7 +5920,7 @@ func (e *Evaluator) errorParent(class string) string {
 		return parent
 	}
 	switch class {
-	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError":
+	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError":
 		return "Error"
 	default:
 		return ""
@@ -7654,7 +7685,8 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"migrate":    e.dbMigrate,
 			"close":      e.dbClose,
 		},
-		"ext": e.extBuiltins(),
+		"ext":       e.extBuiltins(),
+		"ffinative": e.ffiBuiltins(),
 		"net": {
 			"joinHostPort":  netJoinHostPort,
 			"splitHostPort": netSplitHostPort,
@@ -20975,7 +21007,7 @@ func valueToTOML(value runtime.Value) (any, error) {
 
 func isBuiltinErrorClass(name string) bool {
 	switch name {
-	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError":
+	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError":
 		return true
 	default:
 		return false
@@ -25503,12 +25535,83 @@ func (e *Evaluator) nativeTestAssertion(name string) func(*runtime.Instance, []r
 		if strings.EqualFold(name, "assertThrows") {
 			return e.assertThrowsImpl(args)
 		}
+		if strings.EqualFold(name, "assertThrowsOf") {
+			return e.assertThrowsOfImpl(args)
+		}
 		value, handled, err := runtime.RunTestAssertion(name, args)
 		if !handled {
 			return nil, fmt.Errorf("unknown test assertion %s", name)
 		}
 		return value, err
 	}
+}
+
+// assertThrowsOfImpl asserts the callable raises an error whose class
+// matches `expectedClass` (walking the parent chain like a catch
+// clause). The class argument is either a class value or a string
+// class name; the latter lets built-in error classes
+// (RuntimeError, PermissionError, ...) be referenced without
+// requiring them to be reified as runtime values. Optional third
+// argument is a substring that must appear in the error message.
+func (e *Evaluator) assertThrowsOfImpl(args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("Test.assertThrowsOf expects (callable, classOrName[, expectedSubstring])")
+	}
+	fn, ok := args[0].(runtime.Function)
+	if !ok {
+		return nil, fmt.Errorf("Test.assertThrowsOf expects a callable as the first argument")
+	}
+	expectedClass, err := classNameFromValue(args[1])
+	if err != nil {
+		return nil, fmt.Errorf("Test.assertThrowsOf: %w", err)
+	}
+	var expectedSub string
+	if len(args) == 3 {
+		s, ok := args[2].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("Test.assertThrowsOf: third argument must be a string substring")
+		}
+		expectedSub = s.Value
+	}
+	_, err = e.applyFunction(fn, nil)
+	if err == nil {
+		return nil, fmt.Errorf("expected callable to throw %s, but it returned normally", expectedClass)
+	}
+	actualClass := extractErrorClass(err)
+	if !e.errorTypeMatches(actualClass, expectedClass) {
+		return nil, fmt.Errorf("expected %s, got %s: %s", expectedClass, actualClass, err.Error())
+	}
+	if expectedSub != "" && !strings.Contains(err.Error(), expectedSub) {
+		return nil, fmt.Errorf("expected error containing %q, got %q", expectedSub, err.Error())
+	}
+	return runtime.Null{}, nil
+}
+
+// classNameFromValue projects a class reference into its name.
+// Accepts a string (for built-in error classes whose identifiers
+// aren't reified as values) or a runtime class value (user-
+// defined classes referenced by name in source).
+func classNameFromValue(v runtime.Value) (string, error) {
+	switch x := v.(type) {
+	case runtime.String:
+		return x.Value, nil
+	case *runtime.Class:
+		return x.Name, nil
+	case runtime.BytecodeClass:
+		return x.Name, nil
+	}
+	return "", fmt.Errorf("expected class value or class name string, got %s", v.TypeName())
+}
+
+// extractErrorClass pulls the carried Geblang class name out of a
+// thrown error, falling back to "RuntimeError" when the wrapped
+// value doesn't carry an explicit class.
+func extractErrorClass(err error) string {
+	var typed runtime.TypedError
+	if errors.As(err, &typed) {
+		return typed.ErrorClass()
+	}
+	return runtime.RecoverableErrorClass(err)
 }
 
 // assertThrowsImpl invokes the callable arg and asserts it raises.

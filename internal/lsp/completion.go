@@ -551,11 +551,11 @@ var magicMethods = []struct {
 	{"__done", "iterator-protocol: true when iteration finished"},
 	{"__next", "iterator-protocol: next value (called when not done)"},
 	// Context managers.
-	{"__enter__", "with-block entry hook (return value bound to `with (n = ...)`)"},
-	{"__exit__", "with-block exit hook (always runs on any block exit)"},
+	{"__enter", "with-block entry hook (return value bound to `with (n = ...)`)"},
+	{"__exit", "with-block exit hook (always runs on any block exit)"},
 	// Serialisation.
-	{"__serialize__", "json/yaml/toml.stringify override (returns plain value)"},
-	{"__deserialize__", "json/yaml/toml.parse factory (static method)"},
+	{"__serialize", "json/yaml/toml.stringify override (returns plain value)"},
+	{"__deserialize", "json/yaml/toml.parse factory (static method)"},
 	// Type coercion.
 	{"__string", "implicit-string conversion (str / interpolation / `+`)"},
 	{"__int", "implicit-int conversion (cast-as / arithmetic)"},

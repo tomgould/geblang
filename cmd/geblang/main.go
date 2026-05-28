@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"geblang/internal/ast"
 	"geblang/internal/bundle"
 	"geblang/internal/bytecode"
@@ -109,6 +111,10 @@ func main() {
 		runBuild(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "bind" {
+		runBind(os.Args[2:])
+		return
+	}
 	if len(os.Args) > 1 && (os.Args[1] == "-m" || os.Args[1] == "--module") {
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "usage: geblang -m <module> [args...]")
@@ -153,6 +159,7 @@ func main() {
 	mode := executionAuto
 	traceExec := false
 	moduleName := ""
+	var allowFFI []string
 	args := os.Args[1:]
 	for len(args) > 0 {
 		switch args[0] {
@@ -165,6 +172,13 @@ func main() {
 		case "--trace-exec":
 			traceExec = true
 			args = args[1:]
+		case "--allow-ffi":
+			if len(args) < 2 {
+				fmt.Fprintln(os.Stderr, "usage: --allow-ffi <path-or-glob>")
+				os.Exit(2)
+			}
+			allowFFI = append(allowFFI, args[1])
+			args = args[2:]
 		case "-m", "--module":
 			if len(args) < 2 {
 				fmt.Fprintln(os.Stderr, "usage: geblang -m <module> [args...]")
@@ -178,6 +192,7 @@ func main() {
 		}
 	}
 doneFlags:
+	_ = allowFFI
 
 	if moduleName != "" {
 		exitCode, err := runModule(moduleName, args, mode, traceExec, os.Stdout, os.Stderr)
@@ -228,7 +243,7 @@ doneFlags:
 		}
 	}
 
-	exitCode, err := runScript(args[0], args[1:], source, program, mode, os.Stdout, traceWriter(traceExec, os.Stderr))
+	exitCode, err := runScript(args[0], args[1:], source, program, mode, allowFFI, os.Stdout, traceWriter(traceExec, os.Stderr))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -258,6 +273,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  geblang check [--strict] <path>    parse + lint without executing")
 	fmt.Fprintln(writer, "  geblang test [--tag n] [-v] <p>    discover and run *_test.gb files")
 	fmt.Fprintln(writer, "  geblang doc [--format m|json] <p>  extract API documentation from doc comments")
+	fmt.Fprintln(writer, "  geblang bind <manifest.yaml>       generate a Geblang module wrapping a C-ABI shared library (FFI)")
 	fmt.Fprintln(writer)
 	fmt.Fprintln(writer, "IDE / tooling integration:")
 	fmt.Fprintln(writer, "  geblang lsp                        start the Language Server Protocol server (stdio)")
@@ -440,6 +456,19 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "  geblang doc --format json src/")
 		fmt.Fprintln(writer, "  geblang doc --out build/api.md src/")
 		return true
+	case "bind":
+		fmt.Fprintln(writer, "usage: geblang bind [--out file] <manifest.yaml>")
+		fmt.Fprintln(writer)
+		fmt.Fprintln(writer, "Generates a Geblang module wrapping a C-ABI shared library according to the")
+		fmt.Fprintln(writer, "manifest. With no --out, prints the generated source to stdout.")
+		fmt.Fprintln(writer)
+		fmt.Fprintln(writer, "Manifest sections: module, library, doc, constants, structs, functions.")
+		fmt.Fprintln(writer, "Types: VOID, INT8..INT64, UINT8..UINT64, FLOAT, DOUBLE, PTR, CSTRING, BYTES.")
+		fmt.Fprintln(writer)
+		fmt.Fprintln(writer, "Examples:")
+		fmt.Fprintln(writer, "  geblang bind bindings/sqlite.yaml --out src/sqlite.gb")
+		fmt.Fprintln(writer, "  geblang bind bindings/libm.yaml > src/libm.gb")
+		return true
 	case "cache":
 		fmt.Fprintln(writer, "usage: geblang cache clean")
 		fmt.Fprintln(writer, "       geblang cache stats [--json]")
@@ -492,6 +521,18 @@ type doctorReport struct {
 	ManifestError    string              `json:"manifestError,omitempty"`
 	Cache            doctorCacheSnapshot `json:"cache"`
 	CacheError       string              `json:"cacheError,omitempty"`
+	FFI              doctorFFI           `json:"ffi"`
+}
+
+type doctorFFI struct {
+	Enabled bool             `json:"enabled"`
+	Source  string           `json:"source,omitempty"` // "manifest" or "none"
+	Entries []doctorFFIEntry `json:"entries,omitempty"`
+}
+
+type doctorFFIEntry struct {
+	Path string `json:"path,omitempty"`
+	Glob string `json:"glob,omitempty"`
 }
 
 type doctorManifest struct {
@@ -520,6 +561,45 @@ func parseDoctorArgs(args []string) (doctorConfig, error) {
 	return config, nil
 }
 
+// readDoctorFFI parses just the permissions.ffi block from the
+// project manifest. Lives here rather than in internal/ffi to
+// keep the modules package free of cross-cutting deps on the FFI
+// runtime; the doctor only needs the user-visible rules, not the
+// runtime Policy struct.
+func readDoctorFFI(manifestPath string) doctorFFI {
+	out := doctorFFI{Source: "none"}
+	if manifestPath == "" {
+		return out
+	}
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return out
+	}
+	var parsed struct {
+		Permissions struct {
+			FFI *struct {
+				Enabled   bool `yaml:"enabled"`
+				Libraries []struct {
+					Path string `yaml:"path"`
+					Glob string `yaml:"glob"`
+				} `yaml:"libraries"`
+			} `yaml:"ffi"`
+		} `yaml:"permissions"`
+	}
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		return out
+	}
+	if parsed.Permissions.FFI == nil {
+		return out
+	}
+	out.Source = "manifest"
+	out.Enabled = parsed.Permissions.FFI.Enabled
+	for _, lib := range parsed.Permissions.FFI.Libraries {
+		out.Entries = append(out.Entries, doctorFFIEntry{Path: lib.Path, Glob: lib.Glob})
+	}
+	return out
+}
+
 func collectDoctorReport(lookPath func(string) (string, error)) (doctorReport, error) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -541,6 +621,7 @@ func collectDoctorReport(lookPath func(string) (string, error)) (doctorReport, e
 			Version: manifest.Version,
 			Source:  manifest.Source,
 		}
+		report.FFI = readDoctorFFI(manifest.Path)
 	}
 	stats, err := bytecodeCacheStats()
 	if err != nil {
@@ -573,6 +654,31 @@ func writeDoctorReport(writer io.Writer, report doctorReport) {
 		fmt.Fprintf(writer, "cache: error: %v\n", report.CacheError)
 	} else {
 		fmt.Fprintf(writer, "cache: %s files=%d bytes=%d\n", report.Cache.Root, report.Cache.Files, report.Cache.Bytes)
+	}
+	writeDoctorFFI(writer, report.FFI)
+}
+
+func writeDoctorFFI(writer io.Writer, ffi doctorFFI) {
+	switch ffi.Source {
+	case "manifest":
+		if !ffi.Enabled {
+			fmt.Fprintln(writer, "ffi: disabled by manifest (permissions.ffi.enabled is false)")
+			return
+		}
+		if len(ffi.Entries) == 0 {
+			fmt.Fprintln(writer, "ffi: enabled, allow-list empty (no libraries can load)")
+			return
+		}
+		fmt.Fprintf(writer, "ffi: enabled, %d allow-list rule(s)\n", len(ffi.Entries))
+		for _, entry := range ffi.Entries {
+			if entry.Path != "" {
+				fmt.Fprintf(writer, "  path %s\n", entry.Path)
+			} else if entry.Glob != "" {
+				fmt.Fprintf(writer, "  glob %s\n", entry.Glob)
+			}
+		}
+	default:
+		fmt.Fprintln(writer, "ffi: not configured (pass --allow-ffi or add a permissions.ffi block)")
 	}
 }
 
@@ -1001,7 +1107,7 @@ func discoverGeblangFiles(path string) ([]string, error) {
 	return files, err
 }
 
-func runScript(sourcePath string, scriptArgs []string, source []byte, program *ast.Program, mode executionMode, stdout io.Writer, trace io.Writer) (int, error) {
+func runScript(sourcePath string, scriptArgs []string, source []byte, program *ast.Program, mode executionMode, allowFFI []string, stdout io.Writer, trace io.Writer) (int, error) {
 	if mode != executionEvaluatorOnly {
 		chunk, err := loadOrCompileBytecode(sourcePath, source, program)
 		if err == nil {
@@ -1011,6 +1117,11 @@ func runScript(sourcePath string, scriptArgs []string, source []byte, program *a
 			loader.hasMainChunk = true
 			stateful := evaluator.NewWithArgsAndModulePaths(stdout, scriptArgs, []string{filepath.Dir(sourcePath)})
 			defer stateful.Cleanup()
+			if policy, perr := stateful.BuildFFIPolicy(filepath.Dir(sourcePath), allowFFI); perr == nil {
+				stateful.SetFFIPolicy(policy)
+			} else {
+				return 1, perr
+			}
 			loader.stateful = stateful
 			vm := bytecode.NewVMWithModuleLoader(chunk, stdout, loader)
 			defer vm.Cleanup()
@@ -1041,7 +1152,7 @@ func runScript(sourcePath string, scriptArgs []string, source []byte, program *a
 	} else {
 		traceExecution(trace, "evaluator", "--disable-vm")
 	}
-	return runEvaluator(sourcePath, scriptArgs, program, stdout)
+	return runEvaluator(sourcePath, scriptArgs, program, allowFFI, stdout)
 }
 
 func runModule(moduleName string, moduleArgs []string, mode executionMode, traceExec bool, stdout io.Writer, stderr io.Writer) (int, error) {
@@ -1066,7 +1177,7 @@ if (__geb_result != null) {
 		return 1, err
 	}
 	sourcePath := filepath.Join(wd, "__geblang_module__.gb")
-	return runScript(sourcePath, moduleArgs, source, program, mode, stdout, traceWriter(traceExec, stderr))
+	return runScript(sourcePath, moduleArgs, source, program, mode, nil, stdout, traceWriter(traceExec, stderr))
 }
 
 func traceWriter(enabled bool, writer io.Writer) io.Writer {
@@ -1087,8 +1198,13 @@ func traceExecution(writer io.Writer, engine string, reason string) {
 	fmt.Fprintf(writer, "geblang: execution=%s reason=%s\n", engine, reason)
 }
 
-func runEvaluator(sourcePath string, scriptArgs []string, program *ast.Program, stdout io.Writer) (int, error) {
+func runEvaluator(sourcePath string, scriptArgs []string, program *ast.Program, allowFFI []string, stdout io.Writer) (int, error) {
 	e := evaluator.NewWithArgsAndModulePaths(stdout, scriptArgs, []string{filepath.Dir(sourcePath)})
+	if policy, err := e.BuildFFIPolicy(filepath.Dir(sourcePath), allowFFI); err == nil {
+		e.SetFFIPolicy(policy)
+	} else {
+		return 1, err
+	}
 	defer e.Cleanup()
 	result, err := e.Eval(program)
 	if err != nil {
@@ -1211,6 +1327,7 @@ func runTests(args []string) {
 	methodFilters := []string{}
 	paths := []string{}
 	format := "summary"
+	allowFFI := []string{}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--tag":
@@ -1243,6 +1360,13 @@ func runTests(args []string) {
 			}
 			format = args[i+1]
 			i++
+		case "--allow-ffi":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "geblang test --allow-ffi expects a path or glob")
+				os.Exit(2)
+			}
+			allowFFI = append(allowFFI, args[i+1])
+			i++
 		default:
 			paths = append(paths, args[i])
 		}
@@ -1269,7 +1393,7 @@ func runTests(args []string) {
 	total := int64(0)
 	failed := int64(0)
 	for _, file := range files {
-		fileTotal, fileFailed, err := runTestFile(file, tags, classFilter, methodFilters, format)
+		fileTotal, fileFailed, err := runTestFile(file, tags, classFilter, methodFilters, format, allowFFI)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
 			os.Exit(1)
@@ -1311,7 +1435,7 @@ func discoverTestFiles(path string) ([]string, error) {
 	return files, err
 }
 
-func runTestFile(path string, tags []string, classFilter string, methodFilters []string, format string) (int64, int64, error) {
+func runTestFile(path string, tags []string, classFilter string, methodFilters []string, format string, allowFFI []string) (int64, int64, error) {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		return 0, 0, err
@@ -1342,7 +1466,13 @@ func runTestFile(path string, tags []string, classFilter string, methodFilters [
 	// Pass the script's directory as a module path so the resolver
 	// can walk up to find a project's geblang.yaml when the test
 	// lives inside a non-stdlib package (e.g. gebweb/tests/).
-	result, err := evaluator.NewWithArgsAndModulePaths(&out, nil, []string{filepath.Dir(path)}).Eval(program)
+	ev := evaluator.NewWithArgsAndModulePaths(&out, nil, []string{filepath.Dir(path)})
+	if policy, perr := ev.BuildFFIPolicy(filepath.Dir(path), allowFFI); perr == nil {
+		ev.SetFFIPolicy(policy)
+	} else {
+		return 0, 0, perr
+	}
+	result, err := ev.Eval(program)
 	if err != nil {
 		return 0, 0, err
 	}

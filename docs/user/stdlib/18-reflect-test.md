@@ -191,6 +191,7 @@ failure, and the test runner records the thrown error as a failed test.
 | `assertLessThan(expected, actual)` | Ordered numeric or string comparison |
 | `assertLessThanOrEqual(expected, actual)` | Ordered numeric or string comparison |
 | `assertThrows(callable)` / `assertThrows(callable, substring)` | Fails unless the no-arg callable raises; the optional `substring` must appear in the error message |
+| `assertThrowsOf(callable, classOrName)` / `assertThrowsOf(callable, classOrName, substring)` | Fails unless the no-arg callable raises an error whose class matches (walking the parent chain); pass either a class value or a class name string |
 | `fail()` / `fail(message)` | Fails immediately |
 
 Prefer the `assert...` names in new tests. The shorter legacy names remain
@@ -211,6 +212,91 @@ class UserTest extends test.Test {
         this.assertGreaterThan(1, profile["roles"].length());
     }
 }
+```
+
+### Asserting on raised errors
+
+`assertThrows` covers the common case: the callable must raise,
+and an optional substring must appear in the error message.
+
+```gb
+import test;
+import bytes;
+
+class DecoderTest extends test.Test {
+    @test
+    func emptyInputRaises(): void {
+        this.assertThrows(func(): void {
+            bytes.fromHex("");
+        });
+    }
+
+    @test
+    func badNibbleMentionsByteOffset(): void {
+        this.assertThrows(func(): void {
+            bytes.fromHex("zz");
+        }, "invalid byte");
+    }
+}
+```
+
+`assertThrowsOf` adds a class check on top. The second argument is
+either a class value (for user-defined classes that are in scope
+as identifiers) or a class name as a string (which also covers
+the built-in error classes - `RuntimeError`, `TypeError`,
+`ValueError`, `IOError`, `ParseError`, `MatchError`,
+`ImmutableError`, `PermissionError`). The optional third argument
+is a substring that must appear in the error message:
+
+```gb
+import test;
+import ffi;
+
+class CustomError extends RuntimeError {
+    func CustomError(string msg) { parent(msg); }
+}
+
+class ThrowsTest extends test.Test {
+    @test
+    func builtinClassByName(): void {
+        /* Built-in errors are referenced by name string. */
+        this.assertThrowsOf(func(): void {
+            ffi.dlopen("/etc/blocked.so");
+        }, "PermissionError");
+    }
+
+    @test
+    func builtinClassWithMessage(): void {
+        /* Class + substring narrows the contract further. */
+        this.assertThrowsOf(func(): void {
+            ffi.dlopen("/etc/blocked.so");
+        }, "PermissionError", "not in permissions.ffi.libraries");
+    }
+
+    @test
+    func userClassByReference(): void {
+        /* User classes are referenced as values. */
+        this.assertThrowsOf(func(): void {
+            throw CustomError("kaboom");
+        }, CustomError);
+    }
+
+    @test
+    func parentClassMatchesSubclass(): void {
+        /* The check walks the parent chain like a catch clause:
+         * CustomError extends RuntimeError, so RuntimeError matches. */
+        this.assertThrowsOf(func(): void {
+            throw CustomError("kaboom");
+        }, "RuntimeError");
+    }
+}
+```
+
+When the assertion fails, the message names both the expected
+and the actual class, so the diff is obvious:
+
+```
+expected TypeError, got RuntimeError: RuntimeError: ...
 ```
 
 `testing.assertions` is a source module with string assertion helpers:

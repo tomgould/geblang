@@ -1,0 +1,81 @@
+/**
+ * @title assertThrowsOf
+ * @summary Class-aware error assertion. Tests both the class-name
+ * string form (works for built-in errors) and the class-value
+ * form (for user-defined classes), plus the parent-chain walk
+ * and the optional substring argument.
+ */
+import test;
+
+class UserError extends RuntimeError {
+    func UserError(string msg) { parent(msg); }
+}
+
+class AssertThrowsOfTest extends test.Test {
+    @test
+    func builtinClassByName(): void {
+        this.assertThrowsOf(func(): void {
+            throw RuntimeError("boom");
+        }, "RuntimeError");
+    }
+
+    @test
+    func builtinClassByNameWithSubstring(): void {
+        this.assertThrowsOf(func(): void {
+            throw RuntimeError("out of range index 42");
+        }, "RuntimeError", "out of range");
+    }
+
+    @test
+    func userClassByReference(): void {
+        this.assertThrowsOf(func(): void {
+            throw UserError("custom failure");
+        }, UserError);
+    }
+
+    @test
+    func userClassByReferenceWithSubstring(): void {
+        this.assertThrowsOf(func(): void {
+            throw UserError("missing field name");
+        }, UserError, "missing field");
+    }
+
+    @test
+    func parentClassMatchesSubclass(): void {
+        this.assertThrowsOf(func(): void {
+            throw UserError("kaboom");
+        }, "RuntimeError");
+    }
+
+    @test
+    func wrongClassFailsWithDescriptiveMessage(): void {
+        this.assertThrows(func(): void {
+            this.assertThrowsOf(func(): void {
+                throw RuntimeError("boom");
+            }, "TypeError");
+        }, "expected TypeError, got RuntimeError");
+    }
+
+    @test
+    func nonThrowingCallableFails(): void {
+        this.assertThrows(func(): void {
+            this.assertThrowsOf(func(): void { /* nothing */ }, "RuntimeError");
+        }, "expected callable to throw");
+    }
+
+    @test
+    func substringMismatchFails(): void {
+        this.assertThrows(func(): void {
+            this.assertThrowsOf(func(): void {
+                throw RuntimeError("wrong words");
+            }, "RuntimeError", "expected pattern");
+        }, "expected error containing");
+    }
+
+    @test
+    func legacyAssertThrowsStillWorks(): void {
+        this.assertThrows(func(): void {
+            throw RuntimeError("denied access");
+        }, "denied");
+    }
+}

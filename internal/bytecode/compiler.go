@@ -5695,7 +5695,7 @@ func isEvaluatorOnlyBuiltinImport(path []string) bool {
 func isStatefulBytecodeBuiltinModule(name string) bool {
 	switch name {
 	case "io", "sys", "secrets", "process", "procnative", "sshnative",
-		"http", "websocket", "smtp", "web", "db", "ext", "net", "test", "log", "watch",
+		"http", "websocket", "smtp", "web", "db", "ext", "ffinative", "net", "test", "log", "watch",
 		"csv", "schema", "serde", "metrics", "trace", "profile", "path", "async", "dotenv", "cli",
 		"amqp", "kafka":
 		return true
@@ -5730,7 +5730,7 @@ func isEvaluatorOnlyBuiltinModule(name string) bool {
 
 func isBuiltinErrorClass(name string) bool {
 	switch name {
-	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError":
+	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError":
 		return true
 	default:
 		return false

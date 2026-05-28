@@ -108,6 +108,8 @@ Operations, introspection, and extension:
   decorators, function/class/module reflection, and class-based testing.
 - [Environment and Extensions](env-ext.html): dotenv, external extension
   processes, extension protocol calls, and binary frame handling.
+- [Foreign Function Interface](ffi.html): in-process calls into C-ABI shared
+  libraries (libtorch, libsqlite, libcurl, ...) with capability gating.
 - [Utility Modules](utilities.html): miscellaneous result, option, and helper
   modules that do not fit one larger category.
 

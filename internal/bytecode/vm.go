@@ -4289,14 +4289,14 @@ func (vm *VM) withEnter(instruction Instruction) error {
 		vm.push(value)
 		return nil
 	}
-	indices, ok := vm.lookupMethod(classInfo, "__enter__")
+	indices, name, ok := vm.lookupDunder(classInfo, "__enter", "__enter__")
 	if !ok || len(indices) == 0 {
 		vm.push(value)
 		return nil
 	}
-	result, err := vm.CallMethod(instance, "__enter__", nil)
+	result, err := vm.CallMethod(instance, name, nil)
 	if err != nil {
-		return vm.runtimeError(instruction, "with: __enter__: %s", err.Error())
+		return vm.runtimeError(instruction, "with: %s: %s", name, err.Error())
 	}
 	vm.push(result)
 	return nil
@@ -4320,9 +4320,9 @@ func (vm *VM) withExit(instruction Instruction) error {
 	if !ok {
 		return nil
 	}
-	if indices, ok := vm.lookupMethod(classInfo, "__exit__"); ok && len(indices) > 0 {
-		if _, err := vm.CallMethod(instance, "__exit__", nil); err != nil {
-			return vm.runtimeError(instruction, "with: __exit__: %s", err.Error())
+	if indices, name, ok := vm.lookupDunder(classInfo, "__exit", "__exit__"); ok && len(indices) > 0 {
+		if _, err := vm.CallMethod(instance, name, nil); err != nil {
+			return vm.runtimeError(instruction, "with: %s: %s", name, err.Error())
 		}
 	}
 	return nil
@@ -7792,7 +7792,7 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value) runtime.Value {
 func isStatefulNativeModule(module string) bool {
 	switch module {
 	case "io", "sys", "secrets", "process", "procnative", "sshnative",
-		"http", "websocket", "smtp", "web", "db", "ext", "net", "test", "log", "watch",
+		"http", "websocket", "smtp", "web", "db", "ext", "ffinative", "net", "test", "log", "watch",
 		"csv", "schema", "serde", "metrics", "trace", "profile", "path", "async", "dotenv", "cli":
 		return true
 	default:
@@ -9572,9 +9572,9 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 		return nil, fmt.Errorf("deserialize %s: class index out of range", class.Name)
 	}
 	classInfo := vm.chunk.Classes[class.Index]
-	if indices, ok := vm.lookupStaticMethod(classInfo, "__deserialize__"); ok && len(indices) > 0 {
+	if indices, name, ok := vm.lookupStaticDunder(classInfo, "__deserialize", "__deserialize__"); ok && len(indices) > 0 {
 		args := []runtime.Value{value}
-		functionIndex, err := vm.selectRuntimeFunction(Instruction{}, "__deserialize__", indices, args, 0)
+		functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 0)
 		if err != nil {
 			return nil, fmt.Errorf("deserialize %s: %w", class.Name, err)
 		}
@@ -11522,6 +11522,26 @@ func (vm *VM) lookupMethodLowerUncached(classInfo ClassInfo, lowered string) ([]
 	return nil, false
 }
 
+func (vm *VM) lookupDunder(classInfo ClassInfo, canonical, legacy string) ([]int64, string, bool) {
+	if indices, ok := vm.lookupMethod(classInfo, canonical); ok {
+		return indices, canonical, true
+	}
+	if indices, ok := vm.lookupMethod(classInfo, legacy); ok {
+		return indices, legacy, true
+	}
+	return nil, "", false
+}
+
+func (vm *VM) lookupStaticDunder(classInfo ClassInfo, canonical, legacy string) ([]int64, string, bool) {
+	if indices, ok := vm.lookupStaticMethod(classInfo, canonical); ok {
+		return indices, canonical, true
+	}
+	if indices, ok := vm.lookupStaticMethod(classInfo, legacy); ok {
+		return indices, legacy, true
+	}
+	return nil, "", false
+}
+
 func (vm *VM) lookupStaticValue(classInfo ClassInfo, name string) (int64, bool) {
 	if index, ok := classInfo.StaticValues[name]; ok {
 		return index, true
@@ -12001,7 +12021,98 @@ func (vm *VM) callBuiltinParentMethod(classInfo ClassInfo, instance *runtime.Ins
 		value, err := vm.assertThrowsImpl(args)
 		return value, true, err
 	}
+	if strings.EqualFold(name, "assertThrowsOf") {
+		value, err := vm.assertThrowsOfImpl(args)
+		return value, true, err
+	}
 	return runtime.RunTestAssertion(name, args)
+}
+
+func (vm *VM) assertThrowsOfImpl(args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("Test.assertThrowsOf expects (callable, classOrName[, expectedSubstring])")
+	}
+	expectedClass, err := classNameFromArgValue(args[1])
+	if err != nil {
+		return nil, fmt.Errorf("Test.assertThrowsOf: %w", err)
+	}
+	var expectedSub string
+	if len(args) == 3 {
+		s, ok := args[2].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("Test.assertThrowsOf: third argument must be a string substring")
+		}
+		expectedSub = s.Value
+	}
+	_, err = vm.callCallable(args[0], nil)
+	if err == nil {
+		return nil, fmt.Errorf("expected callable to throw %s, but it returned normally", expectedClass)
+	}
+	actualClass := extractThrownErrorClass(err)
+	if !vm.errorTypeMatchesClass(actualClass, expectedClass) {
+		return nil, fmt.Errorf("expected %s, got %s: %s", expectedClass, actualClass, err.Error())
+	}
+	if expectedSub != "" && !strings.Contains(err.Error(), expectedSub) {
+		return nil, fmt.Errorf("expected error containing %q, got %q", expectedSub, err.Error())
+	}
+	return runtime.Null{}, nil
+}
+
+func classNameFromArgValue(v runtime.Value) (string, error) {
+	switch x := v.(type) {
+	case runtime.String:
+		return x.Value, nil
+	case runtime.BytecodeClass:
+		return x.Name, nil
+	}
+	return "", fmt.Errorf("expected class value or class name string, got %s", v.TypeName())
+}
+
+func extractThrownErrorClass(err error) string {
+	var typed runtime.TypedError
+	if errors.As(err, &typed) {
+		return typed.ErrorClass()
+	}
+	return runtime.RecoverableErrorClass(err)
+}
+
+// errorTypeMatchesClass mirrors the evaluator's errorTypeMatches
+// but walks the chunk's class table for user-defined error
+// hierarchies plus the built-in error chain for system classes.
+func (vm *VM) errorTypeMatchesClass(actual, target string) bool {
+	if target == "" || target == "Error" {
+		return true
+	}
+	if actual == target {
+		return true
+	}
+	for current := actual; current != ""; {
+		if current == target {
+			return true
+		}
+		next, ok := vm.lookupErrorParent(current)
+		if !ok {
+			break
+		}
+		current = next
+	}
+	return false
+}
+
+func (vm *VM) lookupErrorParent(class string) (string, bool) {
+	for _, c := range vm.chunk.Classes {
+		if c.Name == class {
+			if c.ParentName != "" {
+				return c.ParentName, true
+			}
+			break
+		}
+	}
+	switch class {
+	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError":
+		return "Error", true
+	}
+	return "", false
 }
 
 // assertThrowsImpl mirrors the evaluator's assertThrows so VM-mode

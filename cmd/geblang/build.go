@@ -221,7 +221,7 @@ if (__geb_result != null) {
 	}
 
 	sourcePath := filepath.Join(srcDir, "__geblang_bundle__.gb")
-	exitCode, err := runScript(sourcePath, args, source, program, executionAuto, os.Stdout, nil)
+	exitCode, err := runScript(sourcePath, args, source, program, executionAuto, nil, os.Stdout, nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

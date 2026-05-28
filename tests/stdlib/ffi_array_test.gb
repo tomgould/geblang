@@ -1,0 +1,113 @@
+/**
+ * @title FFI arrays + bytesView
+ * @summary ffi.sizeOf, writeArray, readArray, and bytesView. The
+ * array helpers are the standard way to hand a Geblang list of
+ * numbers to a C function that takes pointer + length. bytesView
+ * is the zero-copy escape hatch for performance-sensitive paths.
+ *
+ * Requires: --allow-ffi 'libc.so.*' for the qsort acceptance.
+ */
+import test;
+import ffi;
+import bytes;
+import io;
+
+class FFIArrayTest extends test.Test {
+    func tryOpenLibc(): ?ffi.Library {
+        try {
+            return ffi.dlopen("libc.so.6");
+        } catch (PermissionError e) {
+            io.println("skipping: FFI not permitted (" + e.message + ")");
+            return null;
+        } catch (Error e) {
+            io.println("skipping: libc not available (" + e.message + ")");
+            return null;
+        }
+    }
+
+    @test
+    func sizeOfPrimitives(): void {
+        this.assertEquals(1 as int, ffi.sizeOf(ffi.INT8));
+        this.assertEquals(2 as int, ffi.sizeOf(ffi.INT16));
+        this.assertEquals(4 as int, ffi.sizeOf(ffi.INT32));
+        this.assertEquals(8 as int, ffi.sizeOf(ffi.INT64));
+        this.assertEquals(4 as int, ffi.sizeOf(ffi.FLOAT));
+        this.assertEquals(8 as int, ffi.sizeOf(ffi.DOUBLE));
+        this.assertEquals(8 as int, ffi.sizeOf(ffi.PTR));
+    }
+
+    @test
+    func writeReadInt32Array(): void {
+        let n = 4;
+        let buf = ffi.alloc(n * ffi.sizeOf(ffi.INT32));
+        ffi.writeArray(buf, ffi.INT32, [1, -2, 3, -4]);
+        let got = ffi.readArray(buf, ffi.INT32, n);
+        this.assertEquals(4 as int, got.length());
+        this.assertEquals(1 as int, got[0] as int);
+        this.assertEquals(-2 as int, got[1] as int);
+        this.assertEquals(3 as int, got[2] as int);
+        this.assertEquals(-4 as int, got[3] as int);
+        ffi.free(buf);
+    }
+
+    @test
+    func writeReadDoubleArray(): void {
+        let n = 3;
+        let buf = ffi.alloc(n * ffi.sizeOf(ffi.DOUBLE));
+        ffi.writeArray(buf, ffi.DOUBLE, [1.5, -2.25, 3.141592653589793]);
+        let got = ffi.readArray(buf, ffi.DOUBLE, n);
+        this.assertEquals(3 as int, got.length());
+        this.assertTrue(((got[0] as decimal) - 1.5).abs() < 0.0000000001);
+        this.assertTrue(((got[1] as decimal) + 2.25).abs() < 0.0000000001);
+        this.assertTrue(((got[2] as decimal) - 3.141592653589793).abs() < 0.0000000001);
+        ffi.free(buf);
+    }
+
+    @test
+    func readArrayZeroLength(): void {
+        let got = ffi.readArray(0, ffi.INT32, 0);
+        this.assertEquals(0 as int, got.length());
+    }
+
+    @test
+    func bytesViewAliasesCMemory(): void {
+        let buf = ffi.alloc(4);
+        ffi.writeBytes(buf, bytes.fromHex("01020304"));
+        let view = ffi.bytesView(buf, 4);
+        this.assertEquals(4 as int, view.length());
+        this.assertEquals(1 as int, view[0] as int);
+        this.assertEquals(4 as int, view[3] as int);
+        ffi.free(buf);
+    }
+
+    @test
+    func bytesViewZeroLength(): void {
+        let view = ffi.bytesView(0, 0);
+        this.assertEquals(0 as int, view.length());
+    }
+
+    @test
+    func qsortInt32ArrayViaWriteReadArray(): void {
+        let libc = this.tryOpenLibc();
+        if (libc == null) { return; }
+        let qsort = libc.symbol("qsort", [ffi.PTR, ffi.UINT64, ffi.UINT64, ffi.PTR], ffi.VOID);
+        let cmp = ffi.callback(func(int pa, int pb): int {
+            let a = ffi.readArray(pa as int, ffi.INT32, 1);
+            let b = ffi.readArray(pb as int, ffi.INT32, 1);
+            return (a[0] as int) - (b[0] as int);
+        }, [ffi.PTR, ffi.PTR], ffi.INT32);
+
+        let n = 5;
+        let buf = ffi.alloc(n * ffi.sizeOf(ffi.INT32));
+        ffi.writeArray(buf, ffi.INT32, [5, 2, 8, 1, 4]);
+        qsort(buf, n, ffi.sizeOf(ffi.INT32), cmp);
+        let got = ffi.readArray(buf, ffi.INT32, n);
+
+        let want = [1, 2, 4, 5, 8];
+        for (i in 0..4) {
+            this.assertEquals(want[i] as int, got[i] as int);
+        }
+        ffi.free(buf);
+        libc.close();
+    }
+}

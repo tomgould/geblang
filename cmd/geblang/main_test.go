@@ -1254,7 +1254,7 @@ io.println(u.label());
 	}
 
 	var out bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, nil)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, nil)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1294,7 +1294,7 @@ io.println("unreachable");
 	}
 
 	var out bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, nil)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, nil)
 	if err == nil {
 		t.Fatal("expected static analysis to abort the run")
 	}
@@ -1333,7 +1333,7 @@ io.println(natpath.clean("/a/../b"));
 	}
 
 	var out, trace bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, &trace)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1372,7 +1372,7 @@ io.println(natpath.clean("/a/../b"));
 	}
 
 	var out bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionVMStrict, &out, nil)
+	code, err := runScript(sourcePath, nil, source, program, executionVMStrict, nil, &out, nil)
 	if err != nil {
 		t.Fatalf("run --vm-strict: %v", err)
 	}
@@ -1414,7 +1414,7 @@ class Foo {
 	}
 
 	var out bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionVMStrict, &out, nil)
+	code, err := runScript(sourcePath, nil, source, program, executionVMStrict, nil, &out, nil)
 	if err == nil {
 		t.Fatal("expected strict VM error")
 	}
@@ -1476,7 +1476,7 @@ io.println(user.label());
 
 	var out bytes.Buffer
 	var trace bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, &trace)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1604,7 +1604,7 @@ io.println(bang("ok"));
 
 	var out bytes.Buffer
 	var trace bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, &trace)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1664,7 +1664,7 @@ io.println(reflect.decorators(util.greet)[0]["args"][0]);
 
 	var out bytes.Buffer
 	var trace bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, &trace)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1724,7 +1724,7 @@ io.println(await task);
 
 	var out bytes.Buffer
 	var trace bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, &trace)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1810,7 +1810,7 @@ io.println(reflect.decorators(staticMethod)[0]["args"][0]);
 
 	var out bytes.Buffer
 	var trace bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, &trace)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1855,7 +1855,7 @@ io.println(metrics.get("hits"));
 
 	var out bytes.Buffer
 	var trace bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, &trace)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -1910,7 +1910,7 @@ io.println(response["headers"]["X-App"]);
 
 	var out bytes.Buffer
 	var trace bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, &trace)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -2060,7 +2060,7 @@ io.println(auth.verifyCsrf(csrfRequest, "secret"));
 
 	var out bytes.Buffer
 	var trace bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, &trace)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -2136,7 +2136,7 @@ http.close(server);
 
 	var out bytes.Buffer
 	var trace bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, &trace)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -2230,7 +2230,7 @@ client.close();
 
 	var out bytes.Buffer
 	var trace bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, &trace)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -2271,7 +2271,7 @@ io.println("fast");
 
 	var out bytes.Buffer
 	var trace bytes.Buffer
-	code, err := runScript(sourcePath, nil, source, program, executionAuto, &out, &trace)
+	code, err := runScript(sourcePath, nil, source, program, executionAuto, nil, &out, &trace)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}

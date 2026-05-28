@@ -1,0 +1,97 @@
+/**
+ * @title FFI SQLite (end-to-end)
+ * @summary Open an in-memory SQLite database, run a couple of
+ * statements, and step through results. Demonstrates the
+ * recommended pattern: wrap C handles in a Geblang class with
+ * a destructor and use `with` blocks for lifecycle control.
+ *
+ * Run with --allow-ffi 'libsqlite3*'.
+ * @category Standard Library
+ */
+import ffi;
+import io;
+
+let lib = ffi.dlopen("libsqlite3.so.0");
+
+let sqlite3_open = lib.symbol("sqlite3_open", [ffi.CSTRING, ffi.PTR], ffi.INT32);
+let sqlite3_close = lib.symbol("sqlite3_close", [ffi.PTR], ffi.INT32);
+let sqlite3_exec = lib.symbol("sqlite3_exec",
+    [ffi.PTR, ffi.CSTRING, ffi.PTR, ffi.PTR, ffi.PTR], ffi.INT32);
+let sqlite3_prepare_v2 = lib.symbol("sqlite3_prepare_v2",
+    [ffi.PTR, ffi.CSTRING, ffi.INT32, ffi.PTR, ffi.PTR], ffi.INT32);
+let sqlite3_step = lib.symbol("sqlite3_step", [ffi.PTR], ffi.INT32);
+let sqlite3_column_int = lib.symbol("sqlite3_column_int", [ffi.PTR, ffi.INT32], ffi.INT32);
+let sqlite3_column_text = lib.symbol("sqlite3_column_text", [ffi.PTR, ffi.INT32], ffi.CSTRING);
+let sqlite3_finalize = lib.symbol("sqlite3_finalize", [ffi.PTR], ffi.INT32);
+
+/* readPointerSlot reads a pointer-sized out-arg back into a
+ * Geblang int by walking the eight bytes little-endian. */
+func readPointerSlot(int slot): int {
+    let raw = ffi.readBytes(slot, 8);
+    int result = 0;
+    for (i in 0..7) {
+        result = result + ((raw[i] as int) << (i * 8));
+    }
+    return result;
+}
+
+class Database {
+    int handle;
+    func Database(int handle) { this.handle = handle; }
+    func __enter(): Database { return this; }
+    func __exit(): void { sqlite3_close(this.handle); }
+}
+
+class Statement {
+    int handle;
+    func Statement(int handle) { this.handle = handle; }
+    func __enter(): Statement { return this; }
+    func __exit(): void { sqlite3_finalize(this.handle); }
+}
+
+func openInMemory(): Database {
+    let slot = ffi.alloc(8);
+    let rc = sqlite3_open(":memory:", slot) as int;
+    if (rc != 0) {
+        ffi.free(slot);
+        throw RuntimeError("sqlite3_open returned " + rc.toString());
+    }
+    let handle = readPointerSlot(slot);
+    ffi.free(slot);
+    return Database(handle);
+}
+
+func prepare(Database db, string sql): Statement {
+    let slot = ffi.alloc(8);
+    let rc = sqlite3_prepare_v2(db.handle, sql, -1, slot, 0) as int;
+    if (rc != 0) {
+        ffi.free(slot);
+        throw RuntimeError("sqlite3_prepare_v2 returned " + rc.toString());
+    }
+    let handle = readPointerSlot(slot);
+    ffi.free(slot);
+    return Statement(handle);
+}
+
+with (db = openInMemory()) {
+    let rc = sqlite3_exec(db.handle,
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);"
+        + "INSERT INTO users (name) VALUES ('Ada'), ('Carla'), ('Ed');",
+        0, 0, 0) as int;
+    if (rc != 0) {
+        throw RuntimeError("exec failed: " + rc.toString());
+    }
+
+    with (stmt = prepare(db, "SELECT id, name FROM users ORDER BY id")) {
+        /* SQLITE_ROW == 100 */
+        while (sqlite3_step(stmt.handle) as int == 100) {
+            let id = sqlite3_column_int(stmt.handle, 0) as int;
+            let name = sqlite3_column_text(stmt.handle, 1) as string;
+            io.println(id.toString() + ": " + name);
+        }
+        /* __exit runs here, finalizes the prepared statement */
+    }
+    /* __exit runs here, closes the connection */
+}
+
+lib.close();

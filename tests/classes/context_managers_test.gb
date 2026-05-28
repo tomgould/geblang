@@ -1,8 +1,8 @@
 /**
  * @title Context managers test
- * @summary with-block invokes __enter__ on entry and __exit__ on
+ * @summary with-block invokes __enter on entry and __exit on
  *          every exit path (normal, return, break, continue,
- *          exception). __exit__ never falls back to the destructor.
+ *          exception). __exit never falls back to the destructor.
  */
 import test;
 
@@ -17,13 +17,13 @@ class Resource {
         this.exitCount = 0;
     }
 
-    func __enter__(): Resource {
+    func __enter(): Resource {
         this.enterCount = this.enterCount + 1;
         this.log = this.log.push("enter");
         return this;
     }
 
-    func __exit__(): void {
+    func __exit(): void {
         this.exitCount = this.exitCount + 1;
         this.log = this.log.push("exit");
     }
@@ -112,7 +112,7 @@ class ContextManagerTest extends test.Test {
 
     @test
     func withoutExitMethodIsNoop(): void {
-        /* Resource without __exit__: with-block exits cleanly. */
+        /* Resource without __exit: with-block exits cleanly. */
         let s = Plain();
         with (s) {
             s.count = s.count + 1;

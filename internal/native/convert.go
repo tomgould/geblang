@@ -65,14 +65,13 @@ func GetClassDeserializer() ClassDeserializerFunc {
 	return nil
 }
 
-// invokeInstanceSerialize calls __serialize__ on the instance if
-// the class defines it. Returns (result, true, nil) when invoked,
-// (nil, false, nil) when the class has no hook, (nil, false, err)
-// on error.
 func invokeInstanceSerialize(instance *runtime.Instance) (runtime.Value, bool, error) {
 	fn := GetInstanceInvoker()
 	if fn == nil {
 		return nil, false, nil
+	}
+	if result, ok, err := fn(instance, "__serialize", nil); ok || err != nil {
+		return result, ok, err
 	}
 	return fn(instance, "__serialize__", nil)
 }

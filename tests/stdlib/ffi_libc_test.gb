@@ -1,0 +1,125 @@
+/**
+ * @title FFI libc
+ * @summary Calls into libc through the ffi module. Exercises
+ * integer return values, CSTRING in / out, pointer round-trips,
+ * BYTES zero-copy passing, memory helpers, and errno.
+ *
+ * Requires: --allow-ffi 'libc.so.*' or equivalent platform glob.
+ */
+import test;
+import ffi;
+import bytes;
+import io;
+
+class FFILibCTest extends test.Test {
+    func tryOpen(): ?ffi.Library {
+        try {
+            return ffi.dlopen("libc.so.6");
+        } catch (PermissionError e) {
+            io.println("skipping: FFI not permitted (" + e.message + ")");
+            return null;
+        } catch (Error e) {
+            io.println("skipping: libc not available (" + e.message + ")");
+            return null;
+        }
+    }
+
+    @test
+    func getpidReturnsPositiveInt(): void {
+        let lib = this.tryOpen();
+        if (lib == null) { return; }
+        let getpid = lib.symbol("getpid", [], ffi.INT32);
+        let pid = getpid() as int;
+        this.assertTrue(pid > 0);
+        lib.close();
+    }
+
+    @test
+    func strlenAcceptsCString(): void {
+        let lib = this.tryOpen();
+        if (lib == null) { return; }
+        let strlen = lib.symbol("strlen", [ffi.CSTRING], ffi.UINT64);
+        this.assertEquals(0 as int, strlen("") as int);
+        this.assertEquals(5 as int, strlen("hello") as int);
+        this.assertEquals(11 as int, strlen("hello world") as int);
+        lib.close();
+    }
+
+    @test
+    func strerrorReturnsCString(): void {
+        let lib = this.tryOpen();
+        if (lib == null) { return; }
+        let strerror = lib.symbol("strerror", [ffi.INT32], ffi.CSTRING);
+        /* EINVAL == 22 on Linux / macOS. */
+        let msg = strerror(22) as string;
+        this.assertTrue(msg.length() > 0);
+        this.assertTrue(msg.lower().contains("invalid"));
+        lib.close();
+    }
+
+    @test
+    func mallocFreeRoundTrip(): void {
+        let lib = this.tryOpen();
+        if (lib == null) { return; }
+        let malloc = lib.symbol("malloc", [ffi.UINT64], ffi.PTR);
+        let memfree = lib.symbol("free", [ffi.PTR], ffi.VOID);
+        let ptr = malloc(64) as int;
+        this.assertTrue(ptr != 0);
+        memfree(ptr);
+        lib.close();
+    }
+
+    @test
+    func writeAndReadBytesRoundTrip(): void {
+        let ptr = ffi.alloc(8);
+        this.assertTrue(ptr != 0);
+        let payload = bytes.fromHex("0102030405060708");
+        ffi.writeBytes(ptr, payload);
+        let readback = ffi.readBytes(ptr, 8);
+        this.assertEquals(payload.length(), readback.length());
+        for (i in 0..7) {
+            this.assertEquals(payload[i] as int, readback[i] as int);
+        }
+        ffi.free(ptr);
+    }
+
+    @test
+    func cStringRoundTrip(): void {
+        let ptr = ffi.cString("hello geblang");
+        this.assertTrue(ptr != 0);
+        this.assertEquals("hello geblang", ffi.readCString(ptr));
+        ffi.free(ptr);
+    }
+
+    @test
+    func cStringEmpty(): void {
+        let ptr = ffi.cString("");
+        this.assertEquals("", ffi.readCString(ptr));
+        ffi.free(ptr);
+    }
+
+    @test
+    func memcmpWithBytesArgs(): void {
+        let lib = this.tryOpen();
+        if (lib == null) { return; }
+        let memcmp = lib.symbol("memcmp", [ffi.BYTES, ffi.BYTES, ffi.UINT64], ffi.INT32);
+        let a = bytes.fromHex("01020304");
+        let b = bytes.fromHex("01020304");
+        let c = bytes.fromHex("01020305");
+        this.assertEquals(0 as int, memcmp(a, b, 4) as int);
+        this.assertTrue((memcmp(a, c, 4) as int) != 0);
+        lib.close();
+    }
+
+    @test
+    func errnoSetByFailingOpen(): void {
+        let lib = this.tryOpen();
+        if (lib == null) { return; }
+        let open = lib.symbol("open", [ffi.CSTRING, ffi.INT32], ffi.INT32);
+        let fd = open("/definitely-not-a-real-path-zxqwy", 0) as int;
+        this.assertEquals(-1 as int, fd);
+        let e = ffi.errno();
+        this.assertTrue(e != 0);
+        lib.close();
+    }
+}

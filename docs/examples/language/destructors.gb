@@ -7,7 +7,7 @@
  * @category Language
  * @description Destructors are independent from `with`-blocks - they
  *              fire when the object's lifetime ends, not when a
- *              scope exits. Use `__exit__()` for scoped cleanup.
+ *              scope exits. Use `__exit()` for scoped cleanup.
  */
 import io;
 

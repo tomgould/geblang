@@ -115,6 +115,7 @@ var testBaseMethods = map[string]functionDoc{
 	"assertLessThan":           fn([]string{"any expected", "any actual"}, "void", "Ordered numeric or string comparison."),
 	"assertLessThanOrEqual":    fn([]string{"any expected", "any actual"}, "void", "Ordered numeric or string comparison."),
 	"assertThrows":             fn([]string{"callable fn", "string expectedSubstring = \"\""}, "void", "Fails unless the no-arg callable raises. Optional substring must appear in the error message."),
+	"assertThrowsOf":           fn([]string{"callable fn", "any classOrName", "string expectedSubstring = \"\""}, "void", "Fails unless the no-arg callable raises an error whose class matches (walking the parent chain). Pass either a class value or a class name as string. Optional substring must appear in the error message."),
 	"fail":                     fn([]string{"string message = \"\""}, "void", "Fails immediately with an optional message."),
 }
 
@@ -1125,4 +1126,38 @@ var stdlibCatalog = map[string]moduleDoc{
 		"validate":         fn([]string{"string text"}, "bool", "Reports whether text is valid YAML."),
 		"validateDetailed": fn([]string{"string text"}, "dict<string, any>", "Detailed validation result."),
 	}},
+	"ffi": {
+		functions: map[string]functionDoc{
+			"dlopen":      fn([]string{"string path"}, "ffi.Library", "Opens a shared library at path. Throws PermissionError when the active capability policy does not include the path."),
+			"alloc":       fn([]string{"int n"}, "int", "Allocates n bytes via libc malloc and returns the pointer. Caller must Free."),
+			"free":        fn([]string{"int ptr"}, "void", "Releases memory previously allocated by alloc. NULL-safe."),
+			"readBytes":   fn([]string{"int ptr", "int n"}, "bytes", "Copies n bytes from the C-side buffer at ptr into a fresh Geblang bytes value."),
+			"writeBytes":  fn([]string{"int ptr", "bytes data"}, "void", "Writes data into the C-side buffer at ptr."),
+			"readCString": fn([]string{"int ptr"}, "string", "Reads a null-terminated C string starting at ptr."),
+			"cString":     fn([]string{"string s"}, "int", "Allocates a null-terminated copy of s on the libc heap; returns the pointer. Caller must Free."),
+			"errno":       fn([]string{}, "int", "Returns the value of the C errno variable on the calling thread."),
+			"StructOf":    fn([]string{"list<list<any>> fields"}, "ffi.Struct", "Builds a C struct layout from [name, type] pairs in C declaration order. Field alignment follows standard C rules."),
+			"callback":    fn([]string{"callable fn", "list<int> argTypes", "int retType"}, "int", "Builds a C function pointer that dispatches into fn when C calls it. INT*, UINT*, PTR only in the signature; floats / strings / bytes are not supported. Callbacks live for process lifetime."),
+			"sizeOf":      fn([]string{"int elemType"}, "int", "Returns the byte size of the given FFI type code."),
+			"writeArray":  fn([]string{"int ptr", "int elemType", "list<any> values"}, "void", "Packs the typed list into a C-side buffer at ptr. The buffer must be at least values.length() * sizeOf(elemType) bytes."),
+			"readArray":   fn([]string{"int ptr", "int elemType", "int length"}, "list<any>", "Reads length elements of elemType from the C-side buffer at ptr into a Geblang list."),
+			"bytesView":   fn([]string{"int ptr", "int length"}, "bytes", "Zero-copy view of length bytes at ptr as a Geblang bytes value. The bytes ALIAS the C memory; the caller guarantees the buffer outlives every use of the value."),
+		},
+		classes: map[string]string{
+			"Library": "An opened shared library handle. Construct via ffi.dlopen.",
+			"Struct":  "A C struct layout descriptor. Construct via ffi.StructOf. Exposes size, alloc, get, set.",
+		},
+		classMethods: map[string]map[string]functionDoc{
+			"Library": {
+				"symbol":   fn([]string{"string name", "list<int> argTypes", "int retType"}, "callable", "Resolves a symbol and returns a Geblang callable bound to the C function. Invoking the callable dispatches into C through libffi-style trampolines."),
+				"close":    fn([]string{}, "void", "Releases the library handle. Idempotent."),
+				"isClosed": fn([]string{}, "bool", "True once close() has run."),
+			},
+			"Struct": {
+				"alloc": fn([]string{}, "int", "Allocates `size` bytes for one struct instance and returns the pointer. Caller frees via ffi.free."),
+				"get":   fn([]string{"int ptr", "string name"}, "any", "Reads the named field from the struct pointed at by ptr."),
+				"set":   fn([]string{"int ptr", "string name", "any value"}, "void", "Writes the named field of the struct pointed at by ptr."),
+			},
+		},
+	},
 }

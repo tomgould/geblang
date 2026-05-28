@@ -1,5 +1,93 @@
 # Release Notes
 
+## 1.5.0
+
+### In-process FFI for C-ABI shared libraries
+
+New `ffi` stdlib module loads shared libraries through dlopen and
+calls into them with no IPC overhead. Sits alongside the existing
+subprocess [`ext` protocol](stdlib/env-ext.html); use FFI for
+hot numeric kernels and library bindings (libtorch, libsqlite,
+libcurl, libopencv), `ext` for sandboxed or polyglot extensions.
+
+- `ffi.dlopen(path)` returns a `Library` handle. `Library.symbol(
+  name, [argTypes], retType)` returns a Geblang callable bound to
+  the native function; invoking it dispatches into C through a
+  per-signature trampoline cached on the library.
+- Type table covers `INT8`-`INT64`, `UINT8`-`UINT64`, `FLOAT`,
+  `DOUBLE`, `PTR`, `CSTRING`, `BYTES`, `VOID`. CSTRING marshals
+  both directions; BYTES is zero-copy in.
+- Memory helpers: `ffi.alloc`, `ffi.free`, `ffi.readBytes`,
+  `ffi.writeBytes`, `ffi.readCString`, `ffi.cString`, `ffi.errno`.
+- C struct layouts via `ffi.StructOf([[name, type], ...])`.
+  `Struct.size` reports the byte size, `Struct.alloc()` allocates
+  one instance, `Struct.get(ptr, name)` and
+  `Struct.set(ptr, name, value)` read and write fields with
+  standard C alignment.
+- `ffi.callback(fn, argTypes, retType)` wraps a Geblang function
+  in a C function pointer for libraries that drive their own loop
+  (qsort comparators, libcurl multi-handle, audio callbacks).
+  Signature types restricted to INT*, UINT*, PTR. Callbacks live
+  for process lifetime.
+- Typed arrays: `ffi.sizeOf(type)`, `ffi.writeArray(ptr, type,
+  list)`, `ffi.readArray(ptr, type, length)` for passing
+  homogeneous arrays of primitives by pointer + length. Element
+  types: INT*, UINT*, FLOAT, DOUBLE, PTR.
+- `ffi.bytesView(ptr, length)` is the zero-copy view counterpart
+  to `ffi.readBytes`. The returned bytes value aliases the C
+  memory; callers guarantee the buffer outlives every use.
+- `geblang bind <manifest.yaml>` generates a Geblang module
+  wrapping a C-ABI shared library from a declarative manifest
+  (library + constants + structs + function signatures). The
+  output is a normal Geblang module; `import` it and call
+  exported functions like any other code. Sugar over the raw
+  `lib.symbol(...)` form, useful for libraries with more than a
+  handful of functions.
+- Capability-gated, default-off. Projects opt in through a
+  `permissions.ffi` block in `geblang.yaml`; standalone scripts
+  opt in via repeated `--allow-ffi <path-or-glob>` CLI flags
+  (also accepted by `geblang test`). `PermissionError` is a new
+  built-in error class, catchable from Geblang.
+- Recommended pattern: wrap C handles in a Geblang class with
+  `__enter` / `__exit` and lifecycle them with `with` blocks so
+  the release call fires automatically at scope exit.
+- `geblang doctor` reports the active FFI policy and allow-list
+  rules. LSP catalog covers the `ffi` module surface; VS Code
+  ships `ffidlopen`, `ffisymbol`, and `ffihandle` snippets.
+
+Dispatch backs onto `purego` (pure-Go reimplementation of
+dlopen + dispatch); no cgo, no extra build dependency. Supported
+platforms: Linux/macOS/Windows on x86_64 and arm64.
+
+See [Foreign Function Interface](stdlib/ffi.html) for the full
+reference. Real-library acceptance tests cover libm (sin, cos,
+sqrt, hypot), libc (getpid, strlen, malloc/free, memcmp, errno),
+and a complete SQLite open/exec/prepare/step/finalize/close
+walkthrough.
+
+### Test framework
+
+- New `this.assertThrowsOf(callable, classOrName[, substring])`
+  narrows the existing `assertThrows` contract to a specific
+  exception class. `classOrName` accepts either a class value
+  (for user-defined classes in scope as identifiers) or a class
+  name as string (works for the built-in errors that aren't
+  reified - `RuntimeError`, `TypeError`, `ValueError`, `IOError`,
+  `ParseError`, `MatchError`, `ImmutableError`, `PermissionError`).
+  The match walks the parent chain like a catch clause, so a
+  subclass instance matches the parent class. Optional third
+  argument is a substring that must appear in the error message.
+  Failure messages name both expected and actual class.
+
+### Language
+
+- Dunder method names normalised to prefix-only: `__enter`,
+  `__exit`, `__serialize`, `__deserialize` are now the canonical
+  forms, matching the rest of the dunder surface (`__get`,
+  `__set`, `__call`, `__eq`, `__read`, `__write`, `__close`,
+  `__iter`, ...). The legacy prefix-and-suffix forms still work
+  so existing tests and scripts keep running.
+
 ## 1.4.5
 
 ### Engine

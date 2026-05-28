@@ -1,7 +1,7 @@
 /**
  * @title Context managers
- * @summary `with (...) { ... }` calls `__enter__()` on entry and
- *          `__exit__()` on exit. Unrelated to destructors -
+ * @summary `with (...) { ... }` calls `__enter()` on entry and
+ *          `__exit()` on exit. Unrelated to destructors -
  *          end-of-lifetime cleanup lives in `~ClassName()`.
  * @category Classes
  */
@@ -12,12 +12,12 @@ class Transaction {
 
     func Transaction(string label) { this.label = label; }
 
-    func __enter__(): Transaction {
+    func __enter(): Transaction {
         io.println("begin " + this.label);
         return this;
     }
 
-    func __exit__(): void {
+    func __exit(): void {
         io.println("commit " + this.label);
     }
 }
@@ -31,13 +31,13 @@ with (tx = Transaction("write")) {
  *   commit write
  */
 
-/* `__exit__()` runs on every exit path - normal completion,
+/* `__exit()` runs on every exit path - normal completion,
  * exception, return, break, and continue. */
 class Span {
     string name;
     func Span(string n) { this.name = n; }
-    func __enter__(): Span { return this; }
-    func __exit__(): void { io.println("end " + this.name); }
+    func __enter(): Span { return this; }
+    func __exit(): void { io.println("end " + this.name); }
 }
 
 for (i in [1, 2, 3]) {

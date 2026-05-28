@@ -1,9 +1,9 @@
 /**
  * @title Class Serialization
  * @summary `json.stringify` accepts class instances; the default
- *          dumps public fields. `__serialize__` overrides output;
+ *          dumps public fields. `__serialize` overrides output;
  *          `json.parseAs(text, Class)` reconstructs an instance,
- *          preferring a static `__deserialize__(dict)` factory
+ *          preferring a static `__deserialize(dict)` factory
  *          when defined.
  * @category Language
  * @description The same protocol works for `yaml.stringify` /
@@ -39,11 +39,11 @@ class Tagged {
         this.label = label;
     }
 
-    func __serialize__(): dict {
+    func __serialize(): dict {
         return {"kind": this.kind, "label": this.label, "v": 1};
     }
 
-    static func __deserialize__(dict d): Tagged {
+    static func __deserialize(dict d): Tagged {
         return Tagged(d["kind"], d["label"]);
     }
 }

@@ -1,0 +1,23 @@
+/**
+ * @title FFI libm
+ * @summary Minimum-viable FFI: open libm and call a few math
+ * functions. Run with --allow-ffi 'libm.so.*'.
+ * @category Standard Library
+ */
+import ffi;
+import io;
+
+let lib = ffi.dlopen("libm.so.6");
+
+let sin = lib.symbol("sin", [ffi.DOUBLE], ffi.DOUBLE);
+let cos = lib.symbol("cos", [ffi.DOUBLE], ffi.DOUBLE);
+let sqrt = lib.symbol("sqrt", [ffi.DOUBLE], ffi.DOUBLE);
+let hypot = lib.symbol("hypot", [ffi.DOUBLE, ffi.DOUBLE], ffi.DOUBLE);
+
+io.println("sin(0)          = " + (sin(0.0) as string));
+io.println("sin(pi/2)       = " + (sin(1.5707963267948966) as string));
+io.println("cos(pi)         = " + (cos(3.141592653589793) as string));
+io.println("sqrt(2)         = " + (sqrt(2.0) as string));
+io.println("hypot(3, 4)     = " + (hypot(3.0, 4.0) as string));
+
+lib.close();
