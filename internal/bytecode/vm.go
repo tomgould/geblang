@@ -9789,7 +9789,7 @@ func (vm *VM) CallMethod(instance *runtime.Instance, name string, args []runtime
 	}
 	indices, ok := vm.lookupMethod(classInfo, name)
 	if !ok {
-		return nil, fmt.Errorf("unknown method %s.%s", instance.Class.Name, name)
+		return nil, &runtime.MethodNotFoundError{Class: instance.Class.Name, Method: name}
 	}
 	functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 1)
 	if err != nil {
@@ -11056,6 +11056,10 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			}
 			result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, nameValue.Value, instance, vm.wrapStatefulNativeArgs(args))
 			if err != nil {
+				var notFound *runtime.MethodNotFoundError
+				if errors.As(err, &notFound) {
+					return vm.throwTyped(instruction, ip, "RuntimeError", fmt.Sprintf("unknown method %s.%s", notFound.Class, notFound.Method))
+				}
 				return vm.propagateModuleError(instruction, ip, err)
 			}
 			vm.push(result)
@@ -11105,7 +11109,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if nextIP, err, handled := vm.callInterfaceDefault(instruction, ip, instance, loweredName, args); handled {
 				return nextIP, err
 			}
-			return 0, vm.runtimeError(instruction, "unknown method %s.%s", instance.Class.Name, nameValue.Value)
+			return vm.throwTyped(instruction, ip, "RuntimeError", fmt.Sprintf("unknown method %s.%s", instance.Class.Name, nameValue.Value))
 		}
 		functionIndex, err := vm.selectRuntimeFunction(instruction, nameValue.Value, indices, args, 1)
 		if err != nil {
@@ -11521,7 +11525,7 @@ func (vm *VM) methodCallNamed(instruction Instruction, ip int) (int, error) {
 	}
 	indices, ok := vm.lookupMethod(classInfo, nameValue.Value)
 	if !ok {
-		return 0, vm.runtimeError(instruction, "unknown method %s.%s", instance.Class.Name, nameValue.Value)
+		return vm.throwTyped(instruction, ip, "RuntimeError", fmt.Sprintf("unknown method %s.%s", instance.Class.Name, nameValue.Value))
 	}
 	functionIndex, ordered, err := vm.selectRuntimeNamedFunction(instruction, nameValue.Value, indices, args, names, 1)
 	if err != nil {
