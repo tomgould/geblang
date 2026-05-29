@@ -268,6 +268,8 @@ func (l fakeModuleLoader) LookupModuleInterface(module, name string) (bytecode.I
 	return bytecode.InterfaceInfo{}, false
 }
 
+func (l fakeModuleLoader) ListAllClasses() []runtime.Value { return nil }
+
 func TestVMRunsStatefulNativeBridge(t *testing.T) {
 	source := []byte(`import io;
 import metrics;

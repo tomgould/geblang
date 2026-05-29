@@ -6635,6 +6635,9 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 	if strings.EqualFold(module, "reflect") && (name == "function" || name == "class" || name == "module") {
 		return e.evalReflectLookupCall(call, env, name)
 	}
+	if strings.EqualFold(module, "reflect") && name == "classes" {
+		return e.evalReflectClassesCall(call, env)
+	}
 	if !e.imports[module] {
 		if selector, ok := call.Callee.(*ast.SelectorExpression); ok {
 			if value, handled, err := e.evalParentMethodCall(selector, call, env); handled {
@@ -6731,6 +6734,26 @@ func (e *Evaluator) callModuleExport(module, name string, call *ast.CallExpressi
 		return e.instantiateClassFromCall(class, call, env, expected)
 	}
 	return nil, fmt.Errorf("%s.%s is not callable", module, name)
+}
+
+func (e *Evaluator) evalReflectClassesCall(call *ast.CallExpression, env *runtime.Environment) (runtime.Value, error) {
+	args, err := e.evalCallArguments(call, env)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 0 {
+		return nil, fmt.Errorf("reflect.classes takes no arguments")
+	}
+	names := make([]string, 0, len(e.globalClasses))
+	for n := range e.globalClasses {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]runtime.Value, 0, len(names))
+	for _, n := range names {
+		out = append(out, e.globalClasses[n])
+	}
+	return runtime.List{Elements: out}, nil
 }
 
 func (e *Evaluator) evalReflectLookupCall(call *ast.CallExpression, env *runtime.Environment, name string) (runtime.Value, error) {

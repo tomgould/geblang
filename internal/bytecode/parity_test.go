@@ -246,6 +246,20 @@ func (l *stdlibModuleLoader) CallParentInModule(module string, className string,
 	return vm.CallMethodAs(className, instance, methodName, args)
 }
 
+func (l *stdlibModuleLoader) ListAllClasses() []runtime.Value {
+	out := []runtime.Value{}
+	for module, chunk := range l.chunks {
+		for i, classInfo := range chunk.Classes {
+			out = append(out, runtime.BytecodeClass{
+				Name: classInfo.Name, Index: int64(i), Module: module,
+				Decorators:       classInfo.Decorators,
+				MethodDecorators: classInfo.MethodDecorators,
+			})
+		}
+	}
+	return out
+}
+
 func (l *stdlibModuleLoader) LookupModuleInterface(module, name string) (bytecode.InterfaceInfo, bool) {
 	chunk, ok := l.chunks[module]
 	if !ok {
@@ -5916,6 +5930,32 @@ replaced:ada
 [wrap] Ada
 Hello, Ada!
 `)
+}
+
+func TestParityReflectClassesEnumeratesEveryUserClass(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+
+@Service
+class A { func A() {} }
+
+@Controller
+class B { func B() {} }
+
+class C { func C() {} }
+
+let names = [];
+for (cls in reflect.classes()) {
+    let n = reflect.className(cls);
+    if (n != null) {
+        let s = n as string;
+        if (s == "A" || s == "B" || s == "C") {
+            names = names.push(s);
+        }
+    }
+}
+io.println(names.join(","));
+`, "A,B,C\n")
 }
 
 func TestParityTwoHopCrossModuleMethodDispatch(t *testing.T) {

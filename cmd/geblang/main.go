@@ -1976,6 +1976,27 @@ func (l *bytecodeModuleLoader) CallModuleMethod(module string, className string,
 	return vm.CallMethod(instance, methodName, args)
 }
 
+func (l *bytecodeModuleLoader) ListAllClasses() []runtime.Value {
+	out := []runtime.Value{}
+	for module, chunk := range l.chunks {
+		for i, classInfo := range chunk.Classes {
+			out = append(out, runtime.BytecodeClass{
+				Name:             classInfo.Name,
+				Doc:              classInfo.Doc,
+				Index:            int64(i),
+				Module:           module,
+				Parent:           classInfo.ParentName,
+				Fields:           append([]string(nil), classInfo.FieldNames...),
+				Interfaces:       append([]string(nil), classInfo.Implements...),
+				Decorators:       classInfo.Decorators,
+				MethodDecorators: classInfo.MethodDecorators,
+				StaticDecorators: classInfo.StaticDecorators,
+			})
+		}
+	}
+	return out
+}
+
 func (l *bytecodeModuleLoader) LookupModuleInterface(module, name string) (bytecode.InterfaceInfo, bool) {
 	var chunk bytecode.Chunk
 	if module == "" {

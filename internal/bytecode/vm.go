@@ -170,6 +170,7 @@ type ModuleLoader interface {
 	ConstructorsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error)
 	FieldsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error)
 	LookupModuleInterface(module, name string) (InterfaceInfo, bool)
+	ListAllClasses() []runtime.Value
 }
 
 type StatefulNativeCaller interface {
@@ -6874,6 +6875,15 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 			return nil, fmt.Errorf("reflect.module expects module, got %s", args[0].TypeName())
 		}
 		return module, nil
+	case "classes":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("reflect.classes takes no arguments")
+		}
+		out := vm.collectChunkClasses(vm.chunk)
+		if vm.moduleLoader != nil {
+			out = append(out, vm.moduleLoader.ListAllClasses()...)
+		}
+		return runtime.List{Elements: dedupeClassValues(out)}, nil
 	case "exports":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("reflect.exports expects module")
@@ -9657,6 +9667,30 @@ func (vm *VM) ReflectConstructorsForChunkClass(class runtime.BytecodeClass) (run
 
 func (vm *VM) ReflectFieldsForChunkClass(class runtime.BytecodeClass) (runtime.Value, error) {
 	return vm.reflectFieldsResult(class, runtime.ClassMetadata{}), nil
+}
+
+func (vm *VM) collectChunkClasses(chunk Chunk) []runtime.Value {
+	out := make([]runtime.Value, 0, len(chunk.Classes))
+	for i, classInfo := range chunk.Classes {
+		out = append(out, vm.bytecodeClassFromInfo(classInfo, int64(i)))
+	}
+	return out
+}
+
+func dedupeClassValues(values []runtime.Value) []runtime.Value {
+	seen := map[string]bool{}
+	out := make([]runtime.Value, 0, len(values))
+	for _, v := range values {
+		if bc, ok := v.(runtime.BytecodeClass); ok {
+			key := bc.Module + "." + bc.Name
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 // DeserializeIntoChunkClass is the public entry the moduleLoader uses

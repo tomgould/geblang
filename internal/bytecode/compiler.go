@@ -3700,6 +3700,14 @@ func (c *Compiler) compileReflectCall(expr *ast.CallExpression, name string) err
 		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "reflect.exports"})
 		c.emitAt(OpNativeCall, expr.Token.Line, expr.Token.Column, nameIndex, 1)
 		return nil
+	case "classes":
+		if len(expr.Arguments) != 0 {
+			return fmt.Errorf("reflect.classes takes no arguments")
+		}
+		nameIndex := int64(len(c.chunk.Constants))
+		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "reflect.classes"})
+		c.emitAt(OpNativeCall, expr.Token.Line, expr.Token.Column, nameIndex, 0)
+		return nil
 	default:
 		return fmt.Errorf("bytecode compiler does not support reflect.%s", name)
 	}
