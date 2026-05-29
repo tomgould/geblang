@@ -1862,6 +1862,29 @@ func (l *bytecodeModuleLoader) ConstructorsForModuleClass(class runtime.Bytecode
 	return vm.ReflectConstructorsForChunkClass(class)
 }
 
+func (l *bytecodeModuleLoader) FieldsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error) {
+	var chunk bytecode.Chunk
+	if class.Module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("reflect.fields %s: main chunk is not registered", class.Name)
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunks[class.Module]
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", class.Module)
+		}
+		chunk = c
+	}
+	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
+	vm.SetModuleName(class.Module)
+	vm.SetModulePaths(l.modulePaths)
+	vm.SetStatefulNativeCaller(l.stateful)
+	vm.RestoreGlobals(l.globals[class.Module])
+	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
+	return vm.ReflectFieldsForChunkClass(class)
+}
+
 // DeserializeModuleClass picks the right chunk for a class returned
 // from another module (or the main program) and runs the local
 // deserialize path on a sub-VM bound to that chunk.

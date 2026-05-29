@@ -982,11 +982,8 @@ type Interface struct {
 	TypeParameters []string
 	Parents        []*Interface
 	Methods        []*ast.FunctionSignature
-	// Default method implementations and declared properties from
-	// the interface body. Implementing classes inherit non-overridden
-	// defaults and gain declared fields automatically.
-	Defaults []*ast.FunctionStatement
-	Fields   []*ast.DeclarationStatement
+	Defaults       []*ast.FunctionStatement
+	Fields         []*ast.DeclarationStatement
 }
 
 func (v *Interface) TypeName() string { return "interface" }

@@ -2615,10 +2615,6 @@ func collectionMatchesGenericType(value runtime.Value, base string, args []strin
 	return false
 }
 
-// Mutates stmt.Members to include interface defaults the class
-// hasn't overridden, plus interface-declared fields the class
-// hasn't declared. Errors when two interfaces supply a default
-// for the same method name and the class doesn't override.
 func mergeInterfaceMembers(stmt *ast.ClassStatement, ifaces []*runtime.Interface) error {
 	declaredMethods := map[string]bool{}
 	declaredFields := map[string]bool{}
@@ -5193,8 +5189,6 @@ func evaluatorExpressionContainsParentConstructorCall(expr ast.Expression) bool 
 	return false
 }
 
-// Walks class.Fields for `name` and runs each decorator as a
-// transform `(value) -> value`. Run order is bottom-up.
 func (e *Evaluator) applyFieldDecorators(class *runtime.Class, name string, value runtime.Value, env *runtime.Environment) (runtime.Value, error) {
 	for c := class; c != nil; c = c.Parent {
 		for _, field := range c.Fields {

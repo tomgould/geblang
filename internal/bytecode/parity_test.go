@@ -197,6 +197,31 @@ func (l *stdlibModuleLoader) ConstructorsForModuleClass(class runtime.BytecodeCl
 	return vm.ReflectConstructorsForChunkClass(class)
 }
 
+func (l *stdlibModuleLoader) FieldsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error) {
+	if class.Module == "" || class.Module == "parity" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("reflect.fields %s: main chunk not registered in test loader", class.Name)
+		}
+		vm := bytecode.NewVMWithModuleLoader(l.mainChunk, l.stdout, l)
+		vm.SetModuleName(class.Module)
+		vm.SetModulePaths(l.modulePaths)
+		if l.stateful != nil {
+			vm.SetStatefulNativeCaller(l.stateful)
+		}
+		return vm.ReflectFieldsForChunkClass(class)
+	}
+	vm, err := l.newSubVM(class.Module)
+	if err != nil {
+		return nil, err
+	}
+	return vm.ReflectFieldsForChunkClass(class)
+}
+
+func (l *stdlibModuleLoader) registerMainChunk(chunk bytecode.Chunk) {
+	l.mainChunk = chunk
+	l.hasMainChunk = true
+}
+
 func (l *stdlibModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value) (runtime.Value, error) {
 	vm, err := l.newSubVM(class.Module)
 	if err != nil {
@@ -5893,9 +5918,65 @@ Hello, Ada!
 `)
 }
 
-// TestParityCrossModuleInterfaceDefaults covers interface default
-// method bodies and property declarations when the interface lives
-// in a different module than the implementing class.
+func TestParityCrossModuleReflectFields(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "probe.gb"), []byte(`module probe;
+import io;
+import reflect;
+export func dump(any cls): void {
+    for (f in reflect.fields(cls)) {
+        let fd = f as dict<string, any>;
+        io.println((fd["name"] as string) + ":" + (fd["type"] as string));
+    }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write probe: %v", err)
+	}
+
+	source := `import probe;
+class GreetingDTO {
+    string name;
+    ?string greeting;
+}
+probe.dump(GreetingDTO);
+`
+
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+	want := "greeting:?string\nname:string\n"
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: got %q, want %q", evOut.String(), want)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	loader.registerMainChunk(chunk)
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: got %q, want %q", vmOut.String(), want)
+	}
+}
+
 func TestParityCrossModuleInterfaceDefaults(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "iface.gb"), []byte(`module iface;
@@ -5962,9 +6043,6 @@ io.println(Loud("bo", 4).greet());
 	}
 }
 
-// TestParityInterfaceDefaults covers interface default method bodies:
-// classes that don't override inherit the default; classes that do
-// override get their own.
 func TestParityInterfaceDefaults(t *testing.T) {
 	runParity(t, `import io;
 
@@ -5994,9 +6072,6 @@ io.println(l.greet());
 `, "hello, ada\nADA\nHELLO, ada\n")
 }
 
-// TestParityInterfaceDiamondConflict covers the compile-time error
-// when two implemented interfaces both provide a default for the
-// same method and the class doesn't override.
 func TestParityInterfaceDiamondConflict(t *testing.T) {
 	source := `import io;
 interface A { func foo(): string { return "A"; } }
@@ -6027,8 +6102,6 @@ io.println(C().foo());
 	}
 }
 
-// TestParityInterfaceDiamondOverride covers the same diamond where
-// the class explicitly overrides the conflicting method.
 func TestParityInterfaceDiamondOverride(t *testing.T) {
 	runParity(t, `import io;
 interface A { func foo(): string { return "A"; } }

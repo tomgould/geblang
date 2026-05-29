@@ -395,12 +395,9 @@ type InterfaceInfo struct {
 	TypeParameters []string
 	Parents        []string
 	Methods        []runtime.FunctionMetadata
-	// Default method bodies; key is the lowered method name, value
-	// is the function index in the defining chunk.
-	Defaults map[string]int64
-	// Property declarations; FieldTypes parallels Fields.
-	Fields     []string
-	FieldTypes []string
+	Defaults       map[string]int64
+	Fields         []string
+	FieldTypes     []string
 }
 
 type ExportInfo struct {

@@ -31,10 +31,8 @@ type Compiler struct {
 	functionCursors map[string]int
 	classes         map[string]int64
 	interfaces      map[string]int64
-	// Source AST per interface, keyed by lowered name. Used to inject
-	// default methods and declared fields into implementing classes.
-	interfaceAST map[string]*ast.InterfaceStatement
-	enums        map[string]int64
+	interfaceAST    map[string]*ast.InterfaceStatement
+	enums           map[string]int64
 	typeAliases     map[string]*ast.TypeRef
 	inFunc          int
 	classStack      []int64
@@ -1219,9 +1217,6 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 	return nil
 }
 
-// Mutates stmt.Members to add interface defaults + fields the class
-// hasn't already declared, and reports an ambiguous-default conflict
-// across multiple implemented interfaces.
 func (c *Compiler) injectInterfaceMembers(stmt *ast.ClassStatement) error {
 	declaredMethods := map[string]bool{}
 	declaredFields := map[string]bool{}

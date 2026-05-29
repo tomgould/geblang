@@ -260,6 +260,10 @@ func (l fakeModuleLoader) ConstructorsForModuleClass(class runtime.BytecodeClass
 	return nil, fmt.Errorf("module %s is not loaded", class.Module)
 }
 
+func (l fakeModuleLoader) FieldsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error) {
+	return nil, fmt.Errorf("module %s is not loaded", class.Module)
+}
+
 func (l fakeModuleLoader) LookupModuleInterface(module, name string) (bytecode.InterfaceInfo, bool) {
 	return bytecode.InterfaceInfo{}, false
 }

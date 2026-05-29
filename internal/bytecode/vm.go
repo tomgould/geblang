@@ -70,10 +70,7 @@ type VM struct {
 	applyingDecorators  bool
 	rawFunctionCalls    map[int64]bool
 	methodReceiverFuncs map[int64]bool
-	// Method-name -> cross-module default for cross-chunk interface
-	// defaults the class inherits. Populated at OpDefineClass.
-	interfaceFallbacks map[int64]map[string]crossModuleDefault
-	// Extra fields a class inherits from cross-chunk interfaces.
+	interfaceFallbacks   map[int64]map[string]crossModuleDefault
 	interfaceExtraFields map[int64][]extraField
 	forwardThis         *runtime.Instance
 	generatorExecution  bool
@@ -171,9 +168,7 @@ type ModuleLoader interface {
 	// originating class's actual constructor list rather than the
 	// caller chunk's stale view.
 	ConstructorsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error)
-	// Returns the InterfaceInfo for `name` declared in `module`, or
-	// false if not found. Used to inherit cross-module interface
-	// default methods and property declarations.
+	FieldsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error)
 	LookupModuleInterface(module, name string) (InterfaceInfo, bool)
 }
 
@@ -6192,11 +6187,6 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 	return ip, nil
 }
 
-// Walks classInfo.FieldDecorators for the field named `name` and
-// runs each decorator as a transform (`(value) -> value`). Decorators
-// with literal args are invoked as `dec(args, value)`; decorators
-// without args are called as `dec(value)`. Run order is bottom-up
-// (closest decorator to the field first).
 func (vm *VM) applyFieldDecorators(instruction Instruction, classInfo ClassInfo, name string, value runtime.Value) (runtime.Value, error) {
 	fieldIndex := -1
 	for i, fname := range classInfo.FieldNames {
@@ -9661,11 +9651,12 @@ func (vm *VM) CallClosure(closure runtime.BytecodeClosure, args []runtime.Value)
 	return vm.callCallable(closure, args)
 }
 
-// ReflectConstructorsForChunkClass is the public entry the moduleLoader
-// calls into to evaluate `reflect.constructors(class)` against the
-// chunk that declared the class.
 func (vm *VM) ReflectConstructorsForChunkClass(class runtime.BytecodeClass) (runtime.Value, error) {
 	return vm.reflectConstructors(class)
+}
+
+func (vm *VM) ReflectFieldsForChunkClass(class runtime.BytecodeClass) (runtime.Value, error) {
+	return vm.reflectFieldsResult(class, runtime.ClassMetadata{}), nil
 }
 
 // DeserializeIntoChunkClass is the public entry the moduleLoader uses
@@ -11657,9 +11648,6 @@ type extraField struct {
 	typ  string
 }
 
-// Dispatches `instance.method(args)` via a cross-module interface
-// default registered at OpDefineClass. Returns (nextIP, error, true)
-// when the call was handled.
 func (vm *VM) callInterfaceDefault(instruction Instruction, ip int, instance *runtime.Instance, methodName string, args []runtime.Value) (int, error, bool) {
 	idx, ok := vm.classIndex[strings.ToLower(instance.Class.Name)]
 	if !ok {
@@ -11983,6 +11971,11 @@ func (vm *VM) errorClassMatches(errValue runtime.Error, target string) bool {
 // back to "any" for builtin classes or compile-time targets without
 // type info.
 func (vm *VM) reflectFieldsResult(target runtime.Value, metadata runtime.ClassMetadata) runtime.Value {
+	if bc, ok := target.(runtime.BytecodeClass); ok && vm.moduleLoader != nil && bc.Module != vm.moduleName {
+		if result, err := vm.moduleLoader.FieldsForModuleClass(bc); err == nil {
+			return result
+		}
+	}
 	if instance, ok := target.(*runtime.Instance); ok && instance != nil && instance.Class != nil {
 		// Prefer the chunk-local ClassInfo when the instance's class
 		// is in this VM's classIndex - it carries full FieldTypes
