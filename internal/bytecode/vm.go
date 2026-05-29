@@ -9740,16 +9740,19 @@ func (vm *VM) CallMethodAs(className string, instance *runtime.Instance, name st
 	}
 	indices, ok := vm.lookupMethod(classInfo, name)
 	if !ok {
-		// Constructors are stored separately from methods. When the
-		// method name equals the class name, fall back to the
-		// class's constructor list so cross-module parent
-		// constructors can dispatch through the same entry point.
 		if strings.EqualFold(name, className) {
 			indices = append([]int64(nil), classInfo.ConstructorIndices...)
 			if len(indices) == 0 {
 				return runtime.Null{}, nil
 			}
 		} else {
+			if classInfo.ParentIndex < 0 && strings.Contains(classInfo.ParentName, ".") && vm.moduleLoader != nil {
+				if module, parentClass, mok := splitQualifiedClassName(classInfo.ParentName); mok {
+					if _, lerr := vm.moduleLoader.LoadModule(module, module); lerr == nil {
+						return vm.moduleLoader.CallParentInModule(module, parentClass, name, instance, args)
+					}
+				}
+			}
 			return nil, &runtime.MethodNotFoundError{Class: className, Method: name}
 		}
 	}
@@ -9780,6 +9783,13 @@ func (vm *VM) CallMethod(instance *runtime.Instance, name string, args []runtime
 	}
 	indices, ok := vm.lookupMethod(classInfo, name)
 	if !ok {
+		if classInfo.ParentIndex < 0 && strings.Contains(classInfo.ParentName, ".") && vm.moduleLoader != nil {
+			if module, parentClass, mok := splitQualifiedClassName(classInfo.ParentName); mok {
+				if _, lerr := vm.moduleLoader.LoadModule(module, module); lerr == nil {
+					return vm.moduleLoader.CallParentInModule(module, parentClass, name, instance, args)
+				}
+			}
+		}
 		return nil, &runtime.MethodNotFoundError{Class: instance.Class.Name, Method: name}
 	}
 	functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 1)

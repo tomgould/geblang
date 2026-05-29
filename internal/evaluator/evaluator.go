@@ -177,7 +177,7 @@ type Evaluator struct {
 	webApps               map[int64]*webApp
 	wsMu                  sync.Mutex
 	nextWSID              int64
-	websockets            map[int64]*websocket.Conn
+	websockets            map[int64]*wsHandle
 	amqpMu                sync.Mutex
 	nextAmqpConnID        int64
 	amqpConns             map[int64]*amqp091.Connection
@@ -593,7 +593,7 @@ func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []st
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*websocket.Conn{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, decoratedClassIdents: map[string]string{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, decoratedClassIdents: map[string]string{}}
 	e.builtins = e.builtinModules()
 	// Register an InstanceInvoker so native code (e.g.
 	// convert.go's __serialize__ dispatch) can call class
@@ -936,9 +936,10 @@ func (e *Evaluator) Cleanup() error {
 
 	e.wsMu.Lock()
 	websockets := e.websockets
-	e.websockets = map[int64]*websocket.Conn{}
+	e.websockets = map[int64]*wsHandle{}
 	e.wsMu.Unlock()
-	for _, conn := range websockets {
+	for _, h := range websockets {
+		conn := h.conn
 		record(conn.Close())
 	}
 
@@ -15105,11 +15106,22 @@ func httpStreamResponse(call *ast.CallExpression, args []runtime.Value) (runtime
 	return runtime.Dict{Entries: entries}, nil
 }
 
+type wsHandle struct {
+	conn    *websocket.Conn
+	writeMu sync.Mutex
+}
+
+func (h *wsHandle) writeMessage(messageType int, data []byte) error {
+	h.writeMu.Lock()
+	defer h.writeMu.Unlock()
+	return h.conn.WriteMessage(messageType, data)
+}
+
 func (e *Evaluator) registerWebSocket(conn *websocket.Conn) runtime.Value {
 	e.wsMu.Lock()
 	defer e.wsMu.Unlock()
 	e.nextWSID++
-	e.websockets[e.nextWSID] = conn
+	e.websockets[e.nextWSID] = &wsHandle{conn: conn}
 	return runtime.NewInt64(e.nextWSID)
 }
 
@@ -15215,7 +15227,7 @@ func (e *Evaluator) websocketSendText(call *ast.CallExpression, args []runtime.V
 	if len(args) != 2 {
 		return nil, fmt.Errorf("%s expects connection and text", call.Callee.String())
 	}
-	conn, err := e.websocketConn(args[0])
+	h, err := e.websocketHandle(args[0])
 	if err != nil {
 		return nil, fmt.Errorf("%s %w", call.Callee.String(), err)
 	}
@@ -15223,7 +15235,7 @@ func (e *Evaluator) websocketSendText(call *ast.CallExpression, args []runtime.V
 	if !ok {
 		return nil, fmt.Errorf("%s text must be string", call.Callee.String())
 	}
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(text.Value)); err != nil {
+	if err := h.writeMessage(websocket.TextMessage, []byte(text.Value)); err != nil {
 		return nil, err
 	}
 	return runtime.Null{}, nil
@@ -15233,11 +15245,11 @@ func (e *Evaluator) websocketReadText(call *ast.CallExpression, args []runtime.V
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects connection", call.Callee.String())
 	}
-	conn, err := e.websocketConn(args[0])
+	h, err := e.websocketHandle(args[0])
 	if err != nil {
 		return nil, fmt.Errorf("%s %w", call.Callee.String(), err)
 	}
-	messageType, data, err := conn.ReadMessage()
+	messageType, data, err := h.conn.ReadMessage()
 	if err != nil {
 		return nil, err
 	}
@@ -15251,7 +15263,7 @@ func (e *Evaluator) websocketSendBytes(call *ast.CallExpression, args []runtime.
 	if len(args) != 2 {
 		return nil, fmt.Errorf("%s expects connection and bytes", call.Callee.String())
 	}
-	conn, err := e.websocketConn(args[0])
+	h, err := e.websocketHandle(args[0])
 	if err != nil {
 		return nil, fmt.Errorf("%s %w", call.Callee.String(), err)
 	}
@@ -15259,7 +15271,7 @@ func (e *Evaluator) websocketSendBytes(call *ast.CallExpression, args []runtime.
 	if !ok {
 		return nil, fmt.Errorf("%s data must be bytes", call.Callee.String())
 	}
-	if err := conn.WriteMessage(websocket.BinaryMessage, data.Value); err != nil {
+	if err := h.writeMessage(websocket.BinaryMessage, data.Value); err != nil {
 		return nil, err
 	}
 	return runtime.Null{}, nil
@@ -15269,11 +15281,11 @@ func (e *Evaluator) websocketReadBytes(call *ast.CallExpression, args []runtime.
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects connection", call.Callee.String())
 	}
-	conn, err := e.websocketConn(args[0])
+	h, err := e.websocketHandle(args[0])
 	if err != nil {
 		return nil, fmt.Errorf("%s %w", call.Callee.String(), err)
 	}
-	_, data, err := conn.ReadMessage()
+	_, data, err := h.conn.ReadMessage()
 	if err != nil {
 		return nil, err
 	}
@@ -15293,7 +15305,7 @@ func (e *Evaluator) websocketClose(call *ast.CallExpression, args []runtime.Valu
 
 func (e *Evaluator) closeWebSocketID(id int64) error {
 	e.wsMu.Lock()
-	conn, ok := e.websockets[id]
+	h, ok := e.websockets[id]
 	if ok {
 		delete(e.websockets, id)
 	}
@@ -15301,24 +15313,24 @@ func (e *Evaluator) closeWebSocketID(id int64) error {
 	if !ok {
 		return fmt.Errorf("unknown websocket connection %d", id)
 	}
-	return conn.Close()
+	return h.conn.Close()
 }
 
-func (e *Evaluator) websocketConn(value runtime.Value) (*websocket.Conn, error) {
+func (e *Evaluator) websocketHandle(value runtime.Value) (*wsHandle, error) {
 	id, err := websocketHandleID(value)
 	if err != nil {
 		return nil, err
 	}
 	e.wsMu.Lock()
-	conn, ok := e.websockets[id]
+	h, ok := e.websockets[id]
 	e.wsMu.Unlock()
 	if !ok && e.parent != nil {
-		return e.parent.websocketConn(value)
+		return e.parent.websocketHandle(value)
 	}
 	if !ok {
 		return nil, fmt.Errorf("unknown websocket connection %d", id)
 	}
-	return conn, nil
+	return h, nil
 }
 
 func websocketHandleID(value runtime.Value) (int64, error) {
