@@ -1,0 +1,61 @@
+/**
+ * @title reflect.classes() enumeration
+ * @summary reflect.classes() returns every user-declared class value
+ *          loaded into the runtime. Stdlib classes are not included.
+ *          Used by framework discovery (gebweb auto-registration etc.).
+ */
+import test;
+import reflect;
+
+class EnumA {
+    func EnumA() {}
+}
+
+class EnumB {
+    func EnumB() {}
+}
+
+@abstract
+class EnumC {
+    func describe(): string { return "c"; }
+}
+
+class ReflectClassesEnumerationTest extends test.Test {
+    func collectUserClasses(): list<string> {
+        let names = [];
+        for (cls in reflect.classes()) {
+            let n = reflect.className(cls);
+            if (n == null) { continue; }
+            string s = n as string;
+            if (s == "EnumA" || s == "EnumB" || s == "EnumC") {
+                names = names.push(s);
+            }
+        }
+        return names;
+    }
+
+    @test
+    func enumerationIncludesPlainUserClasses(): void {
+        let names = this.collectUserClasses();
+        this.assertTrue(names.contains("EnumA"));
+        this.assertTrue(names.contains("EnumB"));
+    }
+
+    @test
+    func enumerationIncludesAbstractDecoratedClass(): void {
+        this.assertTrue(this.collectUserClasses().contains("EnumC"));
+    }
+
+    @test
+    func enumerationReturnsActualClassValues(): void {
+        for (cls in reflect.classes()) {
+            let n = reflect.className(cls);
+            if (n != null && (n as string) == "EnumA") {
+                let a = cls();
+                this.assertEquals("EnumA", reflect.className(a));
+                return;
+            }
+        }
+        this.fail("EnumA not enumerated");
+    }
+}

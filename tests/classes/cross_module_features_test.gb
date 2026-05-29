@@ -1,0 +1,58 @@
+/**
+ * @title Cross-module language features
+ * @summary Verifies three cross-module engine features added this
+ *          session: inherited methods that throw propagate to
+ *          try/catch across module boundaries; interface default
+ *          methods and property declarations carry across modules;
+ *          two-hop inheritance (sub > middle.M > donor.B) dispatches
+ *          inherited methods through both module hops.
+ */
+import test;
+import cross_module_chain_donor as donor;
+import cross_module_chain_middle as mid;
+
+class User implements donor.Greetable {
+    func User(string n) {
+        this.name = n;
+    }
+    func describe(): string { return "user " + this.name; }
+}
+
+class Leaf extends mid.Middle {
+    func Leaf() { parent(); }
+}
+
+class CrossModuleFeaturesTest extends test.Test {
+    @test
+    func interfaceDefaultMethodInheritedAcrossModule(): void {
+        let u = User("ada");
+        this.assertEquals("hello, ada", u.greet());
+    }
+
+    @test
+    func interfaceFieldDeclarationAutoAddsAcrossModule(): void {
+        let u = User("ada");
+        this.assertEquals("ada", u.name);
+    }
+
+    @test
+    func twoHopCrossModuleDispatchResolvesInheritedMethod(): void {
+        let leaf = Leaf();
+        this.assertEquals("from-base", leaf.describe());
+    }
+
+    @test
+    func inheritedThrowFromAnotherModuleReachesUserTryCatch(): void {
+        let leaf = Leaf();
+        bool caught = false;
+        string seenMessage = "";
+        try {
+            leaf.boom();
+        } catch (RuntimeError e) {
+            caught = true;
+            seenMessage = e.message;
+        }
+        this.assertTrue(caught);
+        this.assertEquals("base-boom", seenMessage);
+    }
+}

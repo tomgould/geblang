@@ -1,0 +1,53 @@
+/**
+ * @title Unknown method is a catchable RuntimeError
+ * @summary Calling a method that doesn't exist on an instance throws
+ *          a RuntimeError that user code can catch with `try/catch`.
+ *          Previously this was a non-catchable engine error.
+ */
+import test;
+
+class Plain {
+    func Plain() {}
+    func known(): string { return "ok"; }
+}
+
+class UnknownMethodCatchableTest extends test.Test {
+    @test
+    func knownMethodStillCallableNormally(): void {
+        this.assertEquals("ok", Plain().known());
+    }
+
+    @test
+    func unknownMethodCallIsCatchableAsRuntimeError(): void {
+        let p = Plain();
+        bool caught = false;
+        try {
+            p.notThere();
+        } catch (RuntimeError e) {
+            caught = true;
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func unknownMethodErrorMentionsClassAndMethodName(): void {
+        let p = Plain();
+        this.assertThrowsOf(func(): void {
+            p.notThere("arg");
+        }, "RuntimeError", "unknown method Plain.notThere");
+    }
+
+    @test
+    func executionContinuesAfterCatch(): void {
+        let p = Plain();
+        let history = [];
+        try {
+            p.notThere();
+        } catch (RuntimeError e) {
+            history = history.push("caught");
+        }
+        history = history.push("after");
+        this.assertEquals(2, history.length());
+        this.assertEquals("after", history[1]);
+    }
+}

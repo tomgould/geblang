@@ -1,0 +1,15 @@
+module cross_module_chain_donor;
+
+export interface Greetable {
+    string name;
+    func greet(): string {
+        return "hello, " + this.name;
+    }
+    func describe(): string;
+}
+
+export class Base {
+    func Base() {}
+    func describe(): string { return "from-base"; }
+    func boom(): void { throw RuntimeError("base-boom"); }
+}

@@ -182,11 +182,16 @@ func reflectFunctionMetadataFromStatement(c *Compiler, stmt *ast.FunctionStateme
 		if param.Name != nil {
 			name = param.Name.Value
 		}
+		paramDecs, err := decoratorsMetadata(param.Decorators, "parameter", 0)
+		if err != nil {
+			return runtime.FunctionMetadata{}, err
+		}
 		parameters = append(parameters, runtime.ParameterMetadata{
 			Name:       name,
 			Type:       c.bytecodeTypeName(param.Type),
 			Variadic:   param.Variadic,
 			HasDefault: param.Default != nil,
+			Decorators: paramDecs,
 		})
 	}
 	dec, err := decoratorsMetadata(stmt.Decorators, target, overload)
@@ -214,11 +219,13 @@ func reflectFunctionMetadataFromSignature(c *Compiler, sig *ast.FunctionSignatur
 		if param.Name != nil {
 			name = param.Name.Value
 		}
+		paramDecs, _ := decoratorsMetadata(param.Decorators, "parameter", 0)
 		parameters = append(parameters, runtime.ParameterMetadata{
 			Name:       name,
 			Type:       c.bytecodeTypeName(param.Type),
 			Variadic:   param.Variadic,
 			HasDefault: param.Default != nil,
+			Decorators: paramDecs,
 		})
 	}
 	name := ""
@@ -925,11 +932,13 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	paramSlots := make([]int64, 0, len(stmt.Parameters))
 	paramNames := make([]string, 0, len(stmt.Parameters))
 	paramTypes := make([]string, 0, len(stmt.Parameters))
+	paramDecorators := make([][]runtime.DecoratorMetadata, 0, len(stmt.Parameters))
 	defaultConstants := make([]int64, 0, len(stmt.Parameters))
 	if receiverName != "" {
 		paramNames = append(paramNames, strings.ToLower(receiverName))
 		paramSlots = append(paramSlots, c.defineLocalWithType(receiverName, ""))
 		paramTypes = append(paramTypes, "")
+		paramDecorators = append(paramDecorators, nil)
 		defaultConstants = append(defaultConstants, -1)
 	}
 	allTypeParams := append(typeParameterNames(stmt.Generics), c.currentClassTypeParams()...)
@@ -946,6 +955,15 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 		paramType := c.bytecodeTypeNameForParam(param.Type, allTypeParams)
 		paramSlots = append(paramSlots, c.defineLocalWithType(param.Name.Value, c.bytecodeTypeName(param.Type)))
 		paramTypes = append(paramTypes, paramType)
+		paramDecs, err := decoratorsMetadata(param.Decorators, "parameter", 0)
+		if err != nil {
+			if !nestedStatement {
+				c.popFunctionLocals()
+			}
+			c.popScope()
+			return err
+		}
+		paramDecorators = append(paramDecorators, paramDecs)
 		if param.Default == nil {
 			defaultConstants = append(defaultConstants, -1)
 			continue
@@ -970,6 +988,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	c.chunk.Functions[index].ParamNames = paramNames
 	c.chunk.Functions[index].ParamSlots = paramSlots
 	c.chunk.Functions[index].ParamTypes = paramTypes
+	c.chunk.Functions[index].ParamDecorators = paramDecorators
 	c.chunk.Functions[index].ReturnType = c.bytecodeReturnType(stmt.ReturnType)
 	c.chunk.Functions[index].DefaultConstants = defaultConstants
 	c.chunk.Functions[index].IsGenerator = blockContainsYield(stmt.Body)

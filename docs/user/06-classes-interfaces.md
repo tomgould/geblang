@@ -601,6 +601,52 @@ class Item {
 `@Groups("read", "write", "admin")` to metadata
 `{name: "Groups", args: ["read", "write", "admin"]}`.
 
+### Parameter-level decorators
+
+Parameter decorators are **metadata-only**. They never run, never
+wrap the value, never alter the call. They sit on the parameter
+and `reflect.parameters(target)` surfaces them so frameworks can
+read them back.
+
+```gb
+class DbConn {
+    func DbConn(@Param("db.url") string url) { ... }
+}
+
+@Get("/users/{id}")
+func show(
+    @PathParam("id") string id,
+    @QueryParam("limit") int limit = 10,
+    @Header("X-Api-Key") string apiKey
+): User { ... }
+```
+
+Same arg rules as field decorators: literal strings, ints, floats,
+decimals, bools, null, and literal list/dict/set composites of
+those. Names from scope are not resolved.
+
+Reflection:
+
+```gb
+for (p in reflect.parameters(show)) {
+    if ((p as dict<string, any>).contains("decorators")) {
+        for (d in p["decorators"] as list<any>) {
+            io.println((d as dict<string, any>)["name"]);
+        }
+    }
+}
+/* PathParam, QueryParam, Header */
+```
+
+The `decorators` key is only present on parameters that carry at
+least one. The dict per decorator has the same shape as
+`reflect.decorators(target)` returns: `name`, `args`, `namedArgs`,
+`target` (`"parameter"`), `position`, `overload`, `line`, `column`.
+
+Parameter decorators work on constructor parameters, method
+parameters, free-function parameters, and lambda parameters - one
+rule, every parameter list.
+
 ### Reading decorator metadata
 
 | Call | Returns |

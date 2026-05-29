@@ -1,0 +1,57 @@
+/**
+ * @title Callable field decorators (write barrier)
+ * @summary A field decorator whose name resolves to a function in
+ *          scope runs on every assignment to that field (including
+ *          the constructor's first write). Decorators stack bottom-
+ *          up, output of one feeds into the next. Throwing rejects
+ *          the assignment.
+ */
+import test;
+
+func upper(string v): string { return v.upper(); }
+func trim(string v): string { return v.trim(); }
+func prefix(string p, string v): string { return p + v; }
+func minLen(int min, string v): string {
+    if (v.length() < min) { throw RuntimeError("too short"); }
+    return v;
+}
+
+class Person {
+    @prefix("hi-")
+    @minLen(2)
+    @upper
+    @trim
+    string name;
+
+    func Person(string n) { this.name = n; }
+}
+
+class FieldDecoratorWriteBarrierTest extends test.Test {
+    @test
+    func constructorAssignmentFlowsThroughDecoratorChain(): void {
+        let p = Person("  ada  ");
+        this.assertEquals("hi-ADA", p.name);
+    }
+
+    @test
+    func laterAssignmentAlsoFlowsThroughDecoratorChain(): void {
+        let p = Person("ada");
+        p.name = "  bo  ";
+        this.assertEquals("hi-BO", p.name);
+    }
+
+    @test
+    func decoratorThrowingRejectsAssignment(): void {
+        let p = Person("ada");
+        this.assertThrows(func(): void { p.name = "x"; });
+    }
+
+    @test
+    func decoratorsRunInBottomUpOrder(): void {
+        /* @trim runs first (closest to field), then @upper, then
+         * @minLen, then @prefix. If @upper ran before @trim the
+         * leading-space input would have stayed lower-cased. */
+        let p = Person("  ada  ");
+        this.assertEquals("hi-ADA", p.name);
+    }
+}

@@ -575,6 +575,7 @@ type ParameterMetadata struct {
 	Type       string
 	Variadic   bool
 	HasDefault bool
+	Decorators []DecoratorMetadata
 }
 
 type FunctionMetadata struct {

@@ -7777,6 +7777,13 @@ func parameterMetadataDict(parameter runtime.ParameterMetadata) runtime.Dict {
 	putBytecodeDict(entries, "type", runtime.String{Value: parameter.Type})
 	putBytecodeDict(entries, "variadic", runtime.Bool{Value: parameter.Variadic})
 	putBytecodeDict(entries, "hasDefault", runtime.Bool{Value: parameter.HasDefault})
+	if len(parameter.Decorators) > 0 {
+		decValues := make([]runtime.Value, 0, len(parameter.Decorators))
+		for _, dec := range parameter.Decorators {
+			decValues = append(decValues, decoratorMetadataDict(dec))
+		}
+		putBytecodeDict(entries, "decorators", runtime.List{Elements: decValues})
+	}
 	return runtime.Dict{Entries: entries}
 }
 
@@ -8622,11 +8629,16 @@ func parameterMetadataFromFunctionInfo(info FunctionInfo, paramOffset int) []run
 		if i < len(info.DefaultConstants) {
 			hasDefault = info.DefaultConstants[i] >= 0
 		}
+		var decs []runtime.DecoratorMetadata
+		if i < len(info.ParamDecorators) {
+			decs = info.ParamDecorators[i]
+		}
 		parameters = append(parameters, runtime.ParameterMetadata{
 			Name:       info.ParamNames[i],
 			Type:       typ,
 			Variadic:   info.Variadic && i == len(info.ParamNames)-1,
 			HasDefault: hasDefault,
+			Decorators: decs,
 		})
 	}
 	return parameters

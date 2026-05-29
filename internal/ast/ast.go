@@ -79,10 +79,11 @@ func (t *TypeRef) String() string {
 }
 
 type Parameter struct {
-	Name     *Identifier
-	Type     *TypeRef
-	Default  Expression
-	Variadic bool
+	Name       *Identifier
+	Type       *TypeRef
+	Default    Expression
+	Variadic   bool
+	Decorators []Decorator
 }
 
 func (p Parameter) String() string {

@@ -1802,6 +1802,7 @@ func (p *Parser) parseParameterList() []ast.Parameter {
 	}
 	for {
 		p.nextToken()
+		decorators := p.parseParameterDecorators()
 		paramType := p.parseTypeRefFromCurrent()
 		variadic := false
 		if p.peekTokenIs(token.Ellipsis) {
@@ -1811,7 +1812,7 @@ func (p *Parser) parseParameterList() []ast.Parameter {
 		if !p.expectPeek(token.Ident) {
 			return params
 		}
-		param := ast.Parameter{Type: paramType, Name: &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}, Variadic: variadic}
+		param := ast.Parameter{Type: paramType, Name: &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}, Variadic: variadic, Decorators: decorators}
 		if !variadic && p.peekTokenIs(token.Assign) {
 			p.nextToken()
 			p.nextToken()
@@ -1825,6 +1826,33 @@ func (p *Parser) parseParameterList() []ast.Parameter {
 	}
 	p.expectPeek(token.RParen)
 	return params
+}
+
+func (p *Parser) parseParameterDecorators() []ast.Decorator {
+	var decorators []ast.Decorator
+	for p.curTokenIs(token.At) {
+		decorator := ast.Decorator{Token: p.curToken}
+		if !p.expectPeek(token.Ident) {
+			return decorators
+		}
+		nameToken := p.curToken
+		name := p.curToken.Literal
+		for p.peekTokenIs(token.Dot) {
+			p.nextToken()
+			if !p.expectPeekIdentifierName() {
+				return decorators
+			}
+			name = name + "." + p.curToken.Literal
+		}
+		decorator.Name = &ast.Identifier{Token: nameToken, Value: name}
+		if p.peekTokenIs(token.LParen) {
+			p.nextToken()
+			decorator.Arguments = p.parseCallArguments()
+		}
+		decorators = append(decorators, decorator)
+		p.nextToken()
+	}
+	return decorators
 }
 
 func (p *Parser) parseFunctionSignature() *ast.FunctionSignature {

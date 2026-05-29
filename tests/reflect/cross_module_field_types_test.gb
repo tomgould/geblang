@@ -1,0 +1,27 @@
+/**
+ * @title reflect.fields preserves field type information across modules
+ * @summary When a class is passed to another module's helper and the
+ *          helper calls reflect.fields on it, the field metadata
+ *          retains the declared type strings and nullability. The
+ *          earlier behaviour collapsed every field to type "any" /
+ *          nullable false, which broke framework-side OpenAPI
+ *          schema generation.
+ */
+import test;
+import cross_module_fields_donor as donor;
+
+class GreetingDTO {
+    string name;
+    ?string greeting;
+    int count;
+}
+
+class CrossModuleFieldTypesTest extends test.Test {
+    @test
+    func donorModuleSeesDeclaredFieldTypeStrings(): void {
+        let entries = donor.describeFields(GreetingDTO);
+        this.assertTrue(entries.contains("name:string"));
+        this.assertTrue(entries.contains("greeting:?string"));
+        this.assertTrue(entries.contains("count:int"));
+    }
+}

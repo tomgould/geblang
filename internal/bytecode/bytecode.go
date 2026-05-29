@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(60)
+	Version = uint16(61)
 )
 
 type Op byte
@@ -322,6 +322,7 @@ type FunctionInfo struct {
 	ParamNames               []string
 	ParamSlots               []int64
 	ParamTypes               []string
+	ParamDecorators          [][]runtime.DecoratorMetadata
 	ReturnType               string
 	DefaultConstants         []int64
 	UpvalueCount             int64
@@ -467,6 +468,14 @@ func Encode(chunk Chunk) ([]byte, error) {
 		for _, typ := range function.ParamTypes {
 			out = binary.BigEndian.AppendUint16(out, uint16(len(typ)))
 			out = append(out, []byte(typ)...)
+		}
+		out = binary.BigEndian.AppendUint16(out, uint16(len(function.ParamDecorators)))
+		for _, decs := range function.ParamDecorators {
+			var err error
+			out, err = appendDecoratorMetadata(out, decs)
+			if err != nil {
+				return nil, err
+			}
 		}
 		out = binary.BigEndian.AppendUint16(out, uint16(len(function.ReturnType)))
 		out = append(out, []byte(function.ReturnType)...)
@@ -723,6 +732,13 @@ func Decode(data []byte) (Chunk, error) {
 		function.ParamTypes = make([]string, 0, typeCount)
 		for j := 0; j < typeCount; j++ {
 			function.ParamTypes = append(function.ParamTypes, string(reader.read(int(reader.u16()))))
+		}
+		paramDecCount := int(reader.u16())
+		if paramDecCount > 0 {
+			function.ParamDecorators = make([][]runtime.DecoratorMetadata, 0, paramDecCount)
+			for j := 0; j < paramDecCount; j++ {
+				function.ParamDecorators = append(function.ParamDecorators, reader.decoratorMetadata())
+			}
 		}
 		function.ReturnType = string(reader.read(int(reader.u16())))
 		defaultCount := int(reader.u16())
@@ -1050,6 +1066,11 @@ func appendFunctionMetadata(out []byte, metadata *runtime.FunctionMetadata) ([]b
 		} else {
 			out = append(out, 0)
 		}
+		var err error
+		out, err = appendDecoratorMetadata(out, parameter.Decorators)
+		if err != nil {
+			return nil, err
+		}
 	}
 	out, err := appendDecoratorMetadata(out, metadata.Decorators)
 	if err != nil {
@@ -1336,12 +1357,14 @@ func (r *byteReader) functionMetadata() *runtime.FunctionMetadata {
 	paramCount := int(r.u16())
 	metadata.Parameters = make([]runtime.ParameterMetadata, 0, paramCount)
 	for i := 0; i < paramCount; i++ {
-		metadata.Parameters = append(metadata.Parameters, runtime.ParameterMetadata{
+		param := runtime.ParameterMetadata{
 			Name:       r.string(),
 			Type:       r.string(),
 			Variadic:   r.u8() != 0,
 			HasDefault: r.u8() != 0,
-		})
+		}
+		param.Decorators = r.decoratorMetadata()
+		metadata.Parameters = append(metadata.Parameters, param)
 	}
 	metadata.Decorators = r.decoratorMetadata()
 	return &metadata

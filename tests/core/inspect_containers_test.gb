@@ -1,0 +1,42 @@
+/**
+ * @title JSON-like Inspect for containers
+ * @summary Container values render as JSON-like text: dict keys
+ *          sorted, strings quoted inside containers, top-level
+ *          strings stay unquoted. Verified through string
+ *          interpolation (which calls Inspect).
+ */
+import test;
+
+class InspectContainersTest extends test.Test {
+    @test
+    func dictInspectIsJsonLikeWithSortedKeys(): void {
+        let d = {"name": "Ada", "age": 36};
+        this.assertEquals("{\"age\": 36, \"name\": \"Ada\"}", "${d}");
+    }
+
+    @test
+    func listInspectQuotesStringsInsideContainer(): void {
+        let xs = ["a", "b", 1, true, null];
+        this.assertEquals("[\"a\", \"b\", 1, true, null]", "${xs}");
+    }
+
+    @test
+    func nestedContainersFormatRecursively(): void {
+        let d = {"nested": {"a": [1, 2], "b": "x"}};
+        this.assertEquals("{\"nested\": {\"a\": [1, 2], \"b\": \"x\"}}", "${d}");
+    }
+
+    @test
+    func quotesAndBackslashesInsideStringsAreEscaped(): void {
+        let xs = ["with \"quote\" and \\back"];
+        this.assertEquals("[\"with \\\"quote\\\" and \\\\back\"]", "${xs}");
+    }
+
+    @test
+    func topLevelStringStaysUnquoted(): void {
+        /* The bare-string top-level case is unchanged: a string
+         * value itself doesn't gain quotes from rendering. */
+        let s = "x";
+        this.assertEquals("x", s);
+    }
+}

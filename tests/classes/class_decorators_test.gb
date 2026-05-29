@@ -1,0 +1,76 @@
+/**
+ * @title Class decorators - register, wrap, typed delegation
+ * @summary Three runtime shapes a class decorator can take:
+ *          1) register-in-place: return the class, side effect only.
+ *          2) wrap: return a callable that becomes the new constructor.
+ *          3) typed delegation: wrap closure returns an instance of a
+ *             different class; the result is `instanceof` both the
+ *             original and the actual class.
+ */
+import test;
+import reflect;
+
+dict<string, int> registry = {};
+
+func register(any cls): any {
+    string name = (reflect.className(cls) ?? "?") as string;
+    registry[name] = (registry.contains(name) ? (registry[name] as int) : 0) + 1;
+    return cls;
+}
+
+@register
+class RegisteredService {
+    int n;
+    func RegisteredService() { this.n = 1; }
+}
+
+func wrap(any cls): any {
+    return func(string label): any {
+        return cls(label + "!");
+    };
+}
+
+@wrap
+class WrappedGreeter {
+    string greeting;
+    func WrappedGreeter(string label) { this.greeting = "hello " + label; }
+    func say(): string { return this.greeting; }
+}
+
+class JsonRepository {
+    string conn;
+    func JsonRepository(string conn) { this.conn = conn; }
+    func find(string id): string { return "json[" + this.conn + "]:" + id; }
+}
+
+func storage(any cls): any {
+    return func(string conn): any { return JsonRepository(conn); };
+}
+
+@storage
+class UserRepository {
+    func UserRepository(string conn) {}
+}
+
+class ClassDecoratorPatternsTest extends test.Test {
+    @test
+    func registerStyleDecoratorRunsAtDefinitionTime(): void {
+        this.assertEquals(1, registry["RegisteredService"]);
+        let s = RegisteredService();
+        this.assertEquals(1, s.n);
+    }
+
+    @test
+    func wrapStyleDecoratorInterceptsConstruction(): void {
+        let g = WrappedGreeter("ada");
+        this.assertEquals("hello ada!", g.say());
+    }
+
+    @test
+    func typedDelegationKeepsInstanceOfOriginalAndReplacement(): void {
+        let ur = UserRepository("postgres://x");
+        this.assertTrue(ur instanceof UserRepository);
+        this.assertTrue(ur instanceof JsonRepository);
+        this.assertEquals("json[postgres://x]:ada", ur.find("ada"));
+    }
+}

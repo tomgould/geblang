@@ -5932,6 +5932,122 @@ Hello, Ada!
 `)
 }
 
+func TestParityUnknownMethodThrowsCatchableRuntimeError(t *testing.T) {
+	runParity(t, `import io;
+
+class Plain {
+    func Plain() {}
+    func known(): string { return "ok"; }
+}
+
+let p = Plain();
+io.println(p.known());
+
+try {
+    p.notThere("argument");
+    io.println("FAIL: no throw");
+} catch (RuntimeError e) {
+    io.println("caught: " + e.message);
+}
+
+io.println("after try");
+`, "ok\ncaught: unknown method Plain.notThere\nafter try\n")
+}
+
+func TestParityUnknownMethodOnForeignInstanceIsCatchable(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "remote.gb"), []byte(`module remote;
+export class Remote {
+    func Remote() {}
+    func known(): string { return "remote-ok"; }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write remote: %v", err)
+	}
+
+	source := `import io;
+import remote;
+
+let r = remote.Remote();
+io.println(r.known());
+
+try {
+    r.missing("x");
+    io.println("FAIL: no throw");
+} catch (RuntimeError e) {
+    io.println("caught: " + e.message);
+}
+
+io.println("after try");
+`
+
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse: %v", p.Errors())
+	}
+	want := "remote-ok\ncaught: unknown method Remote.missing\nafter try\n"
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: got %q, want %q", evOut.String(), want)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	loader.mainChunk = chunk
+	loader.hasMainChunk = true
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	stateful.SetMethodDispatcher(vm)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: got %q, want %q", vmOut.String(), want)
+	}
+}
+
+func TestParityParameterDecoratorsAreSurfacedByReflect(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+
+@Get("/x")
+func handler(
+    @PathParam("id") string id,
+    @QueryParam("limit") int limit = 10,
+    @Header("X-Api-Key") @Inject string apiKey
+): void { }
+
+for (p in reflect.parameters(handler)) {
+    let pd = p as dict<string, any>;
+    string name = pd["name"] as string;
+    if (!pd.contains("decorators")) {
+        io.println(name + " no-decorators");
+        continue;
+    }
+    let decs = pd["decorators"] as list<any>;
+    let names = [];
+    for (d in decs) {
+        let dd = d as dict<string, any>;
+        names = names.push(dd["name"] as string);
+    }
+    io.println(name + " " + names.join(","));
+}
+`, "id PathParam\nlimit QueryParam\napiKey Header,Inject\n")
+}
+
 func TestParityReflectClassesEnumeratesEveryUserClass(t *testing.T) {
 	runParity(t, `import io;
 import reflect;

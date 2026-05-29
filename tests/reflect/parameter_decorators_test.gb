@@ -1,0 +1,90 @@
+/**
+ * @title Parameter-level decorators (metadata only)
+ * @summary @-prefixed annotations on function/method parameters are
+ *          recorded as metadata and surfaced by reflect.parameters
+ *          under a "decorators" key. They never run, never wrap the
+ *          value; frameworks read them back to drive DI, route
+ *          binding, OpenAPI enrichment, etc.
+ */
+import test;
+import reflect;
+
+@Get("/x")
+func handler(
+    @PathParam("id") string id,
+    @QueryParam("limit") int limit = 10,
+    @Header("X-Api-Key") @Inject string apiKey
+): void { }
+
+func plainFunc(string a, int b): void { }
+
+class Service {
+    func Service(@Param("db.url") string url, int port = 5432) { }
+}
+
+class ParameterDecoratorMetadataTest extends test.Test {
+    func decoratorNamesFor(any fn, string paramName): list<string> {
+        for (p in reflect.parameters(fn)) {
+            let pd = p as dict<string, any>;
+            if ((pd["name"] as string) != paramName) { continue; }
+            if (!pd.contains("decorators")) { return []; }
+            let decs = pd["decorators"] as list<any>;
+            let names = [];
+            for (d in decs) {
+                names = names.push((d as dict<string, any>)["name"] as string);
+            }
+            return names;
+        }
+        return [];
+    }
+
+    @test
+    func singleDecoratorOnParameterIsSurfaced(): void {
+        let names = this.decoratorNamesFor(handler, "id");
+        this.assertEquals(1, names.length());
+        this.assertEquals("PathParam", names[0]);
+    }
+
+    @test
+    func multipleDecoratorsOnParameterPreserveOrder(): void {
+        let names = this.decoratorNamesFor(handler, "apiKey");
+        this.assertEquals(2, names.length());
+        this.assertEquals("Header", names[0]);
+        this.assertEquals("Inject", names[1]);
+    }
+
+    @test
+    func decoratorArgsAreReadableLiterals(): void {
+        for (p in reflect.parameters(handler)) {
+            let pd = p as dict<string, any>;
+            if ((pd["name"] as string) != "id") { continue; }
+            let decs = pd["decorators"] as list<any>;
+            let d = decs[0] as dict<string, any>;
+            let args = d["args"] as list<any>;
+            this.assertEquals(1, args.length());
+            this.assertEquals("id", args[0]);
+            return;
+        }
+        this.fail("id param missing");
+    }
+
+    @test
+    func parameterWithNoDecoratorsOmitsKey(): void {
+        for (p in reflect.parameters(plainFunc)) {
+            let pd = p as dict<string, any>;
+            this.assertTrue(!pd.contains("decorators"));
+        }
+    }
+
+    @test
+    func decoratorTargetIsParameter(): void {
+        for (p in reflect.parameters(handler)) {
+            let pd = p as dict<string, any>;
+            if (!pd.contains("decorators")) { continue; }
+            let decs = pd["decorators"] as list<any>;
+            for (d in decs) {
+                this.assertEquals("parameter", (d as dict<string, any>)["target"]);
+            }
+        }
+    }
+}

@@ -1,0 +1,60 @@
+/**
+ * @title @abstract decorator
+ * @summary @abstract on a class or method makes the class abstract.
+ *          Direct instantiation throws RuntimeError. Subclasses that
+ *          override every abstract method instantiate normally.
+ */
+import test;
+
+@abstract
+class AbstractBase {
+    func name(): string { return "base"; }
+}
+
+class Derived extends AbstractBase {}
+
+class Shape {
+    @abstract
+    func area(): int { return 0; }
+}
+
+class Circle extends Shape {
+    int r;
+    func Circle(int r) { this.r = r; }
+    func area(): int { return 3 * this.r * this.r; }
+}
+
+class Square extends Shape {}
+
+class AbstractDecoratorTest extends test.Test {
+    @test
+    func classDecoratedAbstractCannotBeInstantiatedDirectly(): void {
+        this.assertThrows(func(): void { AbstractBase(); });
+    }
+
+    @test
+    func subclassOfAbstractClassInstantiatesNormally(): void {
+        let d = Derived();
+        this.assertEquals("base", d.name());
+    }
+
+    @test
+    func classWithUnimplementedAbstractMethodIsAbstract(): void {
+        this.assertThrows(func(): void { Shape(); });
+    }
+
+    @test
+    func subclassOverridingAbstractMethodIsConcrete(): void {
+        this.assertEquals(12, Circle(2).area());
+    }
+
+    @test
+    func subclassNotOverridingAbstractMethodRemainsAbstract(): void {
+        this.assertThrows(func(): void { Square(); });
+    }
+
+    @test
+    func errorMessageMentionsClassAndUnimplementedMethod(): void {
+        this.assertThrowsOf(func(): void { Square(); }, "RuntimeError", "abstract method Shape.area");
+    }
+}

@@ -12343,6 +12343,7 @@ func reflectInterfaceMethods(call *ast.CallExpression, args []runtime.Value) (ru
 				Type:       ptype,
 				Variadic:   param.Variadic,
 				HasDefault: param.Default != nil,
+				Decorators: decoratorsMetadataFromAST(param.Decorators, "parameter"),
 			}
 			params = append(params, parameterMetadataValue(pm))
 		}
@@ -12746,6 +12747,7 @@ func functionMetadataFromRuntimeFunction(fn runtime.Function) runtime.FunctionMe
 			Type:       typ,
 			Variadic:   param.Variadic,
 			HasDefault: param.Default != nil,
+			Decorators: decoratorsMetadataFromAST(param.Decorators, "parameter"),
 		})
 	}
 	returnType := "void"
@@ -12846,7 +12848,65 @@ func parameterMetadataValue(parameter runtime.ParameterMetadata) runtime.Value {
 	putDict(entries, "type", runtime.String{Value: parameter.Type})
 	putDict(entries, "variadic", runtime.Bool{Value: parameter.Variadic})
 	putDict(entries, "hasDefault", runtime.Bool{Value: parameter.HasDefault})
+	if len(parameter.Decorators) > 0 {
+		decValues := make([]runtime.Value, 0, len(parameter.Decorators))
+		for _, dec := range parameter.Decorators {
+			decValues = append(decValues, decoratorMetadataDictValue(dec))
+		}
+		putDict(entries, "decorators", runtime.List{Elements: decValues})
+	}
 	return runtime.Dict{Entries: entries}
+}
+
+func decoratorMetadataDictValue(metadata runtime.DecoratorMetadata) runtime.Value {
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "name", runtime.String{Value: metadata.Name})
+	putDict(entries, "target", runtime.String{Value: metadata.Target})
+	putDict(entries, "position", runtime.NewInt64(metadata.Position))
+	putDict(entries, "overload", runtime.NewInt64(metadata.Overload))
+	args := make([]runtime.Value, 0, len(metadata.Args))
+	args = append(args, metadata.Args...)
+	putDict(entries, "args", runtime.List{Elements: args})
+	namedArgs := map[string]runtime.DictEntry{}
+	for k, v := range metadata.NamedArgs {
+		putDict(namedArgs, k, v)
+	}
+	putDict(entries, "namedArgs", runtime.Dict{Entries: namedArgs})
+	putDict(entries, "line", runtime.NewInt64(metadata.Line))
+	putDict(entries, "column", runtime.NewInt64(metadata.Column))
+	return runtime.Dict{Entries: entries}
+}
+
+func decoratorsMetadataFromAST(decorators []ast.Decorator, target string) []runtime.DecoratorMetadata {
+	if len(decorators) == 0 {
+		return nil
+	}
+	out := make([]runtime.DecoratorMetadata, 0, len(decorators))
+	for position, dec := range decorators {
+		item := runtime.DecoratorMetadata{
+			Target:    target,
+			Position:  int64(position),
+			Line:      int64(dec.Token.Line),
+			Column:    int64(dec.Token.Column),
+			NamedArgs: map[string]runtime.Value{},
+		}
+		if dec.Name != nil {
+			item.Name = dec.Name.Value
+		}
+		for _, arg := range dec.Arguments {
+			value, err := decoratorMetadataValue(arg.Value)
+			if err != nil {
+				continue
+			}
+			if arg.Name != nil {
+				item.NamedArgs[arg.Name.Value] = value
+			} else {
+				item.Args = append(item.Args, value)
+			}
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func decoratorMetadataValue(expr ast.Expression) (runtime.Value, error) {

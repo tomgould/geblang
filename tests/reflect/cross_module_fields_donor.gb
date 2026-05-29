@@ -1,0 +1,13 @@
+module cross_module_fields_donor;
+
+import io;
+import reflect;
+
+export func describeFields(any cls): list<string> {
+    list<string> out = [];
+    for (f in reflect.fields(cls)) {
+        let fd = f as dict<string, any>;
+        out = out.push((fd["name"] as string) + ":" + (fd["type"] as string));
+    }
+    return out;
+}

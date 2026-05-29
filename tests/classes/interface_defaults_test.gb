@@ -1,0 +1,76 @@
+/**
+ * @title Interface default methods and property declarations
+ * @summary Interface methods with a body are default implementations;
+ *          implementing classes inherit them when they don't override.
+ *          Interface property declarations auto-add to every
+ *          implementing class. Multiple defaults for the same method
+ *          require the class to override explicitly.
+ */
+import test;
+
+interface Greetable {
+    string name;
+    int age;
+
+    func greet(): string {
+        return "hello, " + this.name + " (" + (this.age as string) + ")";
+    }
+
+    func describe(): string;
+}
+
+class User implements Greetable {
+    func User(string n, int a) {
+        this.name = n;
+        this.age = a;
+    }
+    func describe(): string { return "user " + this.name; }
+}
+
+class Loud implements Greetable {
+    func Loud(string n, int a) {
+        this.name = n;
+        this.age = a;
+    }
+    func greet(): string { return "HELLO, " + this.name; }
+    func describe(): string { return "LOUD"; }
+}
+
+interface A { func foo(): string { return "A"; } }
+interface B { func foo(): string { return "B"; } }
+
+class C implements A, B {
+    func foo(): string { return "C"; }
+}
+
+class InterfaceDefaultsTest extends test.Test {
+    @test
+    func classInheritsInterfaceDefaultMethod(): void {
+        let u = User("ada", 36);
+        this.assertEquals("hello, ada (36)", u.greet());
+    }
+
+    @test
+    func classOverridingDefaultMethodWins(): void {
+        let l = Loud("bo", 4);
+        this.assertEquals("HELLO, bo", l.greet());
+    }
+
+    @test
+    func interfaceFieldsAutoAddToImplementingClass(): void {
+        let u = User("ada", 36);
+        this.assertEquals("ada", u.name);
+        this.assertEquals(36, u.age);
+    }
+
+    @test
+    func classMustImplementSignaturesWithNoDefault(): void {
+        let u = User("ada", 36);
+        this.assertEquals("user ada", u.describe());
+    }
+
+    @test
+    func diamondResolvedByExplicitOverride(): void {
+        this.assertEquals("C", C().foo());
+    }
+}
