@@ -325,6 +325,84 @@ class CachedUsers {
 }
 ```
 
+### Default method implementations
+
+An interface method with a body is a **default implementation**.
+Classes that implement the interface and don't override the method
+inherit the body as-is. Classes that override get their own.
+
+```gb
+interface Greetable {
+    string name;
+    func greet(): string {
+        return "hello, " + this.name;
+    }
+    func loudName(): string;
+}
+
+class User implements Greetable {
+    func User(string n) { this.name = n; }
+    func loudName(): string { return this.name.upper(); }
+    /* greet inherited from Greetable */
+}
+
+class Loud implements Greetable {
+    func Loud(string n) { this.name = n; }
+    func greet(): string { return "HELLO, " + this.name; }
+    func loudName(): string { return this.name.upper(); }
+}
+
+io.println(User("ada").greet());   /* "hello, ada" */
+io.println(Loud("ada").greet());   /* "HELLO, ada" */
+```
+
+### Interface properties
+
+An interface can declare property requirements as bare field
+declarations. Every implementing class automatically gains those
+fields - no need to redeclare them in the class body.
+
+```gb
+interface Greetable {
+    string name;          /* every implementer has `name` */
+    int age;              /* and `age` */
+    func greet(): string { return this.name + " is " + (this.age as string); }
+}
+
+class User implements Greetable {
+    func User(string n, int a) {
+        this.name = n;    /* set the inherited field */
+        this.age = a;
+    }
+}
+```
+
+When a class implements multiple interfaces that declare the same
+field name, the runtime keeps one field as long as the declared
+types match. Conflicting types are a compile-time error.
+
+### Multi-interface defaults: the diamond
+
+When `class C implements A, B` and **both** `A` and `B` provide a
+default body for the same method signature, `C` must override the
+method explicitly. Inheriting one of the two defaults silently
+would be ambiguous, so the compiler rejects the class:
+
+```gb
+interface A { func foo(): string { return "A"; } }
+interface B { func foo(): string { return "B"; } }
+
+class C implements A, B {}              /* error: ambiguous default for foo() */
+
+class C implements A, B {
+    func foo(): string { return "C"; }   /* OK */
+}
+```
+
+The rule only fires for **conflicting defaults**. If only one of
+the interfaces provides a default and the other declares the same
+signature without a body, `C` inherits the default unambiguously.
+
 ## Decorators
 
 Decorators are `@`-prefixed annotations applied to classes, functions,
@@ -359,6 +437,69 @@ first, then the underlying body runs. Multiple decorators stack in
 source order. The topmost decorator wraps the inner wrapped value
 last.
 
+The same rule applies to **class decorators**. A class decorator
+receives the class value at definition time and decides what to
+return. Two useful shapes:
+
+```gb
+/* Register-in-place. Side effect, return the class unchanged. */
+dict<string, any> services = {};
+func service(any cls): any {
+    services[reflect.className(cls)] = cls;
+    return cls;
+}
+
+@service
+class Auth { ... }
+
+/* Wrap. Return a callable that becomes the new constructor. */
+func audited(any cls): any {
+    return func(...args): any {
+        io.println("constructing", reflect.className(cls));
+        return cls(...args);
+    };
+}
+
+@audited
+class Order { ... }
+```
+
+Inside a wrap closure, calling the captured `cls(args)` constructs
+the original class without re-triggering the decorator chain, so
+the body can pre/post-process around construction without
+recursing.
+
+**Typed delegation.** A wrap closure may return an instance of a
+*different* class than the decorated one. The runtime stamps the
+returned instance so it still satisfies `instanceof` against the
+original class name:
+
+```gb
+class JsonRepository {
+    func JsonRepository(string conn) { ... }
+    func find(string id): User { ... }
+}
+
+func storage(any cls): any {
+    return func(string conn): any { return JsonRepository(conn); };
+}
+
+@storage
+class UserRepository {
+    func UserRepository(string conn) {}
+}
+
+let ur = UserRepository("postgres://...");
+io.println(ur instanceof UserRepository);  /* true */
+io.println(ur instanceof JsonRepository);  /* true */
+ur.find("ada");                            /* JsonRepository's find runs */
+```
+
+The instance is structurally a JsonRepository (its methods + fields)
+but typed as both. Useful when one declared type fronts an
+implementation that gets chosen by a decorator at definition time
+(swap-by-config, ORM proxies, test stubs).
+
 ### Annotation-only (metadata) decorators
 
 A decorator whose name does **not** resolve to a function in scope is
@@ -384,10 +525,44 @@ annotations under a common prefix.
 
 ### Field-level decorators
 
-Decorators on a field declaration **are always annotation-only**.
-There is no value to wrap (a field is not a callable), and the runtime
-does not intercept field reads or writes. They exist exclusively for
-reflective consumption.
+A field decorator whose name resolves to a function in scope is a
+**write barrier**: it runs on every assignment to that field
+(including the constructor's first write), transforms the incoming
+value, and the transformed value is what gets stored. Use them for
+normalisation, validation, formatting, audit.
+
+```gb
+func upper(string v): string { return v.upper(); }
+func minLen(int min, string v): string {
+    if (v.length() < min) { throw RuntimeError("too short"); }
+    return v;
+}
+
+class User {
+    @minLen(2)
+    @upper
+    string name;
+    func User(string n) { this.name = n; }
+}
+
+let u = User("ada");
+io.println(u.name);  /* "ADA" - @upper ran on the constructor write */
+
+u.name = "x";        /* throws RuntimeError("too short") */
+```
+
+The decorator's last parameter is the value being assigned. Any
+earlier parameters come from the decorator's literal args
+(`@minLen(2)` passes `2` to `min`). Decorators stack bottom-up:
+the one closest to the field declaration runs first, and each
+transform's output feeds the next.
+
+A field decorator whose name does **not** resolve to a function is
+treated as **pure metadata**: the runtime never executes it, but
+frameworks read it back via reflection to drive
+configuration-by-annotation. This is the form used by libraries
+like Gebweb for validation rules, serialisation filters, OpenAPI
+hints, and similar concerns:
 
 ```gb
 class CreateUserDTO {
@@ -400,26 +575,19 @@ class CreateUserDTO {
 }
 ```
 
-`reflect.fields(CreateUserDTO)` returns one entry per field. When a
-field has annotations, the entry includes a `decorators` key: a list
-of `{name, args, namedArgs, ...}` dicts. Frameworks like Gebweb read
-these to drive validation, serialisation filters, ORM hints, OpenAPI
-schema enrichment, etc.
+Here `@Assert.email` doesn't resolve to a function called `Assert.email`
+in scope, so it stays metadata; `reflect.fields(CreateUserDTO)` returns
+each field's decorator list as `{name, args, namedArgs, ...}` dicts.
 
-**When do field decorators run?** Never automatically. They are
-*static* metadata: parsed once at class compile time and frozen onto
-the class definition. The runtime never executes a field decorator
-on its own. Assigning or reading the field always proceeds without
-consulting the annotation list. Anything dynamic happens because
-*some piece of code* (your framework, your test harness, your code)
-reads the decorators via reflection and decides what to do.
+**Resolution rule.** When the runtime sees `@foo` on a field, it
+looks up `foo` in scope. Callable -> write barrier. Unresolved ->
+metadata only. The same name can mean different things in different
+scopes; that's fine.
 
-**What can a field decorator's arguments be?** Literal values
-(strings, ints, floats, decimals, bools, null) and literal
-list / dict / set composites built from those. Names from scope are
-not resolved at field-decorator time; the value must be expressible
-as a constant. This keeps the metadata stable and serialisable into
-the compiled chunk.
+**Decorator arguments.** Literal values (strings, ints, floats,
+decimals, bools, null) and literal list / dict / set composites
+built from those. Names from scope are not resolved at decorator-arg
+time, so the metadata stays serialisable into the compiled chunk.
 
 ```gb
 class Item {
@@ -446,6 +614,43 @@ class Item {
 instance (in which case the call delegates to the instance's class).
 Names match exactly: `@Assert.email` is the name `"Assert.email"`,
 not `"Assert"` with a sub-key.
+
+### Built-in decorator: `@abstract`
+
+`@abstract` marks a class or method as not directly instantiable.
+A class is abstract when **either**:
+
+- the class itself is decorated `@abstract`, or
+- it has (or inherits) a method decorated `@abstract` with no
+  concrete override in any more-derived class.
+
+Direct construction of an abstract class throws `RuntimeError`.
+
+```gb
+@abstract
+class Repository {
+    func describe(): string { return "repo"; }
+}
+
+class Storage {
+    @abstract
+    func read(string key): string { return ""; }
+}
+
+class MemoryStorage extends Storage {
+    func read(string key): string { return "..."; }
+}
+
+Repository();       /* throws: cannot instantiate abstract class Repository */
+Storage();          /* throws: cannot instantiate Storage: abstract method
+                       Storage.read is not implemented */
+MemoryStorage();    /* OK - read() is overridden */
+```
+
+Method bodies on `@abstract` methods are still parsed (Geblang has no
+`abstract` keyword) and they execute if a concrete subclass calls
+`parent.read(key)` against them, so it's reasonable to put a sensible
+default or an explicit throw in there.
 
 ## Magic Methods
 

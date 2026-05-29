@@ -110,7 +110,11 @@ type Evaluator struct {
 	// class registers here at definition time so reflect.class(name)
 	// from any module can find it.
 	globalClasses  map[string]*runtime.Class
-	errorSentinels map[string]*runtime.Class
+	// Identifier name -> original class name for class identifiers
+	// that a class decorator rebound to a callable. Used by
+	// applyCallableValue to stamp the returned instance.
+	decoratedClassIdents map[string]string
+	errorSentinels       map[string]*runtime.Class
 	deferFrames    []*deferFrame
 	yieldFrames    []*yieldFrame
 	callStack      []evalFrame
@@ -589,7 +593,7 @@ func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []st
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*websocket.Conn{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*websocket.Conn{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, decoratedClassIdents: map[string]string{}}
 	e.builtins = e.builtinModules()
 	// Register an InstanceInvoker so native code (e.g.
 	// convert.go's __serialize__ dispatch) can call class
@@ -1691,8 +1695,8 @@ func mergeDecoratedFunctionMetadata(original runtime.Function, decorated runtime
 	return decorated
 }
 
-func (e *Evaluator) applyCallableClassDecorators(class *runtime.Class, decorators []ast.Decorator, env *runtime.Environment) (*runtime.Class, error) {
-	current := class
+func (e *Evaluator) applyCallableClassDecorators(class *runtime.Class, decorators []ast.Decorator, env *runtime.Environment) (runtime.Value, error) {
+	var current runtime.Value = class
 	for i := len(decorators) - 1; i >= 0; i-- {
 		decorator := decorators[i]
 		if decorator.Name == nil {
@@ -1738,16 +1742,19 @@ func (e *Evaluator) applyCallableClassDecorators(class *runtime.Class, decorator
 		if err != nil {
 			return nil, err
 		}
-		next, ok := result.(*runtime.Class)
-		if !ok {
-			return nil, fmt.Errorf("decorator %s must return class, got %s", decorator.Name.Value, result.TypeName())
+		switch next := result.(type) {
+		case *runtime.Class:
+			current = mergeDecoratedClassMetadata(class, next)
+		case runtime.Function, runtime.OverloadedFunction:
+			current = result
+		default:
+			return nil, fmt.Errorf("decorator %s must return class or callable, got %s", decorator.Name.Value, result.TypeName())
 		}
-		current = mergeDecoratedClassMetadata(class, next)
 	}
 	return current, nil
 }
 
-func (e *Evaluator) decoratorClassCallArguments(class *runtime.Class, decorator ast.Decorator, env *runtime.Environment) ([]evaluatedCallArg, error) {
+func (e *Evaluator) decoratorClassCallArguments(class runtime.Value, decorator ast.Decorator, env *runtime.Environment) ([]evaluatedCallArg, error) {
 	args := []evaluatedCallArg{{value: class}}
 	for _, arg := range decorator.Arguments {
 		value, err := e.evalExpression(arg.Value, env)
@@ -1995,16 +2002,17 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 				callableDecorators = append(callableDecorators, dec)
 			}
 		}
-		class, err = e.applyCallableClassDecorators(class, callableDecorators, env)
+		decorated, err := e.applyCallableClassDecorators(class, callableDecorators, env)
 		if err != nil {
 			return signal{}, err
 		}
-		// Register globally so reflect.class(name) from another
-		// module can resolve to this class. The env.Define below
-		// scopes the binding for normal lookup; the global registry
-		// is the cross-module fallback consulted by reflect.
+		if decoratedClass, ok := decorated.(*runtime.Class); ok {
+			class = decoratedClass
+		} else {
+			e.decoratedClassIdents[stmt.Name.Value] = class.Name
+		}
 		e.registerGlobalClass(class)
-		return signal{}, env.Define(stmt.Name.Value, class, true)
+		return signal{}, env.Define(stmt.Name.Value, decorated, true)
 	case *ast.InterfaceStatement:
 		iface, err := e.buildInterface(stmt, env)
 		if err != nil {
@@ -2500,6 +2508,11 @@ func valueMatchesType(value runtime.Value, typeName string) bool {
 				return true
 			}
 		}
+		for _, extra := range instance.ExtraTypeNames {
+			if typeNamesEqual(simpleTypeName(extra), typeName) {
+				return true
+			}
+		}
 		// Fall through: an instance with an `__invoke` method matches
 		// the `callable` family even when its class isn't named callable.
 		if isCallableTypeName(typeName) && runtime.IsCallableValue(value) {
@@ -2602,8 +2615,66 @@ func collectionMatchesGenericType(value runtime.Value, base string, args []strin
 	return false
 }
 
+// Mutates stmt.Members to include interface defaults the class
+// hasn't overridden, plus interface-declared fields the class
+// hasn't declared. Errors when two interfaces supply a default
+// for the same method name and the class doesn't override.
+func mergeInterfaceMembers(stmt *ast.ClassStatement, ifaces []*runtime.Interface) error {
+	declaredMethods := map[string]bool{}
+	declaredFields := map[string]bool{}
+	for _, member := range stmt.Members {
+		switch m := member.(type) {
+		case *ast.FunctionStatement:
+			declaredMethods[strings.ToLower(m.Name.Value)] = true
+		case *ast.DeclarationStatement:
+			if !strings.HasPrefix(m.Kind, "static") {
+				declaredFields[strings.ToLower(m.Name.Value)] = true
+			}
+		}
+	}
+	defaultSource := map[string]string{}
+	defaultMethod := map[string]*ast.FunctionStatement{}
+	fieldSource := map[string]string{}
+	fieldDecl := map[string]*ast.DeclarationStatement{}
+	for _, iface := range ifaces {
+		for _, def := range iface.Defaults {
+			key := strings.ToLower(def.Name.Value)
+			if declaredMethods[key] {
+				continue
+			}
+			if prev, seen := defaultSource[key]; seen && prev != iface.Name {
+				return fmt.Errorf("class %s inherits multiple defaults for %s from %s and %s; class must override", stmt.Name.Value, def.Name.Value, prev, iface.Name)
+			}
+			defaultSource[key] = iface.Name
+			defaultMethod[key] = def
+		}
+		for _, field := range iface.Fields {
+			key := strings.ToLower(field.Name.Value)
+			if declaredFields[key] {
+				continue
+			}
+			if prev, seen := fieldSource[key]; seen {
+				prevField := fieldDecl[key]
+				if prevField.Type.String() != field.Type.String() {
+					return fmt.Errorf("class %s inherits field %s from %s (%s) and %s (%s) with conflicting types", stmt.Name.Value, field.Name.Value, prev, prevField.Type.String(), iface.Name, field.Type.String())
+				}
+				continue
+			}
+			fieldSource[key] = iface.Name
+			fieldDecl[key] = field
+		}
+	}
+	for _, field := range fieldDecl {
+		stmt.Members = append(stmt.Members, field)
+	}
+	for _, method := range defaultMethod {
+		stmt.Members = append(stmt.Members, method)
+	}
+	return nil
+}
+
 func (e *Evaluator) buildInterface(stmt *ast.InterfaceStatement, env *runtime.Environment) (*runtime.Interface, error) {
-	iface := &runtime.Interface{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), Methods: e.resolveFunctionSignatures(stmt.Methods)}
+	iface := &runtime.Interface{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), Methods: e.resolveFunctionSignatures(stmt.Methods), Defaults: stmt.Defaults, Fields: stmt.Fields}
 	for _, parentRef := range stmt.Parents {
 		parentValue, ok, err := e.resolveTypeValue(parentRef, env)
 		if err != nil {
@@ -4610,6 +4681,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 			}
 		}
 	}
+	implementedIfaces := make([]*runtime.Interface, 0, len(stmt.Implements))
 	for _, ifaceRef := range stmt.Implements {
 		ifaceValue, ok, err := e.resolveTypeValue(ifaceRef, env)
 		if err != nil {
@@ -4623,6 +4695,10 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 			return nil, fmt.Errorf("%q is not an interface", ifaceRef.Name)
 		}
 		class.Implements = append(class.Implements, iface)
+		implementedIfaces = append(implementedIfaces, iface)
+	}
+	if err := mergeInterfaceMembers(stmt, implementedIfaces); err != nil {
+		return nil, err
 	}
 	for _, member := range stmt.Members {
 		switch member := member.(type) {
@@ -4724,6 +4800,9 @@ func isErrorDerived(class *runtime.Class) bool {
 }
 
 func (e *Evaluator) instantiateClass(class *runtime.Class, args []runtime.Value) (runtime.Value, error) {
+	if reason, abstract := classAbstractnessReason(class); abstract {
+		return nil, thrownError{value: e.withTrace(runtime.Error{Class: "RuntimeError", Message: reason, Parents: []string{"RuntimeError", "Error"}})}
+	}
 	if isErrorDerived(class) {
 		if len(class.Fields) > 0 || len(class.Constructors) > 0 {
 			return e.instantiateUserErrorClass(class, args)
@@ -4836,6 +4915,9 @@ func (e *Evaluator) errorParentChain(className string) []string {
 }
 
 func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.CallExpression, env *runtime.Environment, declared ...*ast.TypeRef) (runtime.Value, error) {
+	if reason, abstract := classAbstractnessReason(class); abstract {
+		return nil, thrownError{value: e.withTrace(runtime.Error{Class: "RuntimeError", Message: reason, Parents: []string{"RuntimeError", "Error"}})}
+	}
 	if isErrorDerived(class) {
 		if len(class.Fields) > 0 || len(class.Constructors) > 0 {
 			args, err := e.evalCallArguments(call, env)
@@ -5109,6 +5191,85 @@ func evaluatorExpressionContainsParentConstructorCall(expr ast.Expression) bool 
 			evaluatorExpressionContainsParentConstructorCall(expr.ElseExpr)
 	}
 	return false
+}
+
+// Walks class.Fields for `name` and runs each decorator as a
+// transform `(value) -> value`. Run order is bottom-up.
+func (e *Evaluator) applyFieldDecorators(class *runtime.Class, name string, value runtime.Value, env *runtime.Environment) (runtime.Value, error) {
+	for c := class; c != nil; c = c.Parent {
+		for _, field := range c.Fields {
+			if !strings.EqualFold(field.Name, name) {
+				continue
+			}
+			for i := len(field.Decorators) - 1; i >= 0; i-- {
+				dec := field.Decorators[i]
+				if dec.Name == nil {
+					continue
+				}
+				decoratorValue, found := env.Get(dec.Name.Value)
+				if !found && e.globalClasses != nil {
+					if v, ok := envOrGlobalFunc(env, dec.Name.Value); ok {
+						decoratorValue = v
+						found = true
+					}
+				}
+				if !found {
+					continue
+				}
+				callArgs := []runtime.Value{}
+				for _, arg := range dec.Arguments {
+					v, err := e.evalExpression(arg.Value, env)
+					if err != nil {
+						return nil, fmt.Errorf("field decorator @%s: %w", dec.Name.Value, err)
+					}
+					callArgs = append(callArgs, v)
+				}
+				callArgs = append(callArgs, value)
+				result, err := e.applyCallableNoCall(decoratorValue, callArgs)
+				if err != nil {
+					return nil, err
+				}
+				value = result
+			}
+			return value, nil
+		}
+	}
+	return value, nil
+}
+
+func envOrGlobalFunc(env *runtime.Environment, name string) (runtime.Value, bool) {
+	if v, ok := env.Get(name); ok {
+		return v, true
+	}
+	return nil, false
+}
+
+// Apply a callable runtime.Value to args without going through an
+// AST CallExpression; used by field decorators which need to invoke
+// the transform from inside an assignment path.
+func (e *Evaluator) applyCallableNoCall(callee runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	switch fn := callee.(type) {
+	case runtime.Function:
+		return e.applyFunction(fn, args)
+	case runtime.OverloadedFunction:
+		for _, overload := range fn.Overloads {
+			bound, ok := bindEvaluatedFunctionCallArguments(overload, evaluatedCallArgsFromValues(args))
+			if !ok || !functionArgumentsMatch(overload, bound) {
+				continue
+			}
+			return e.applyFunction(overload, bound)
+		}
+		return nil, fmt.Errorf("no matching overload for %s", fn.Name)
+	}
+	return nil, fmt.Errorf("decorator is not callable: %s", callee.TypeName())
+}
+
+func evaluatedCallArgsFromValues(args []runtime.Value) []evaluatedCallArg {
+	result := make([]evaluatedCallArg, len(args))
+	for i, v := range args {
+		result[i] = evaluatedCallArg{value: v}
+	}
+	return result
 }
 
 func (e *Evaluator) initializeFields(instance *runtime.Instance, class *runtime.Class) error {
@@ -6281,6 +6442,14 @@ func (e *Evaluator) evalBoolCondition(expr ast.Expression, env *runtime.Environm
 // form `(obj.fn)(args)` that must invoke obj.fn's value rather than
 // dispatch as a method call.
 func (e *Evaluator) applyCallableValue(callee runtime.Value, call *ast.CallExpression, env *runtime.Environment, expected *ast.TypeRef) (runtime.Value, error) {
+	result, err := e.applyCallableValueRaw(callee, call, env, expected)
+	if err == nil {
+		e.stampDecoratedClassResult(call.Callee, result)
+	}
+	return result, err
+}
+
+func (e *Evaluator) applyCallableValueRaw(callee runtime.Value, call *ast.CallExpression, env *runtime.Environment, expected *ast.TypeRef) (runtime.Value, error) {
 	if fn, ok := callee.(runtime.Function); ok {
 		args, err := e.evalFunctionCallArguments(fn, call, env)
 		if err != nil {
@@ -6313,6 +6482,25 @@ func (e *Evaluator) applyCallableValue(callee runtime.Value, call *ast.CallExpre
 		return e.applyFunctionWithThis(method, args, instance)
 	}
 	return nil, fmt.Errorf("%s is not callable", call.Callee.String())
+}
+
+func (e *Evaluator) stampDecoratedClassResult(callee ast.Expression, result runtime.Value) {
+	ident, ok := callee.(*ast.Identifier)
+	if !ok {
+		return
+	}
+	className, ok := e.decoratedClassIdents[ident.Value]
+	if !ok {
+		return
+	}
+	instance, ok := result.(*runtime.Instance)
+	if !ok || instance == nil || instance.Class == nil {
+		return
+	}
+	if instance.Class.Name == className {
+		return
+	}
+	instance.ExtraTypeNames = append(instance.ExtraTypeNames, className)
 }
 
 func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runtime.Environment, expected *ast.TypeRef) (runtime.Value, error) {
@@ -11595,6 +11783,58 @@ func hasDecorator(decorators []ast.Decorator, name string) bool {
 		}
 	}
 	return false
+}
+
+// classAbstractnessReason reports whether `class` cannot be
+// instantiated directly. A class is abstract when it carries the
+// @abstract class-level decorator, or any method declared on it or
+// an ancestor carries @abstract and no more-derived class provides
+// a concrete override.
+func classAbstractnessReason(class *runtime.Class) (string, bool) {
+	if class == nil {
+		return "", false
+	}
+	if hasDecorator(class.Decorators, "abstract") {
+		return "cannot instantiate abstract class " + class.Name, true
+	}
+	overridden := map[string]bool{}
+	abstractDecl := map[string]string{}
+	walk := func(c *runtime.Class) {
+		for methodName, overloads := range c.Methods {
+			isAbstract := false
+			for _, fn := range overloads {
+				if hasDecorator(fn.Decorators, "abstract") {
+					isAbstract = true
+					break
+				}
+			}
+			if isAbstract {
+				if !overridden[methodName] {
+					if _, seen := abstractDecl[methodName]; !seen {
+						abstractDecl[methodName] = c.Name
+					}
+				}
+			} else {
+				overridden[methodName] = true
+				delete(abstractDecl, methodName)
+			}
+		}
+	}
+	walk(class)
+	for c := class.Parent; c != nil; c = c.Parent {
+		walk(c)
+	}
+	if len(abstractDecl) == 0 {
+		return "", false
+	}
+	var sample, sampleClass string
+	for name, owner := range abstractDecl {
+		if sample == "" || name < sample {
+			sample = name
+			sampleClass = owner
+		}
+	}
+	return "cannot instantiate " + class.Name + ": abstract method " + sampleClass + "." + sample + " is not implemented", true
 }
 
 func reflectDecorators(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -23535,6 +23775,11 @@ func (e *Evaluator) assignSelector(expr *ast.SelectorExpression, newValue runtim
 		if instance.Frozen {
 			return thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen instance of " + instance.Class.Name}}
 		}
+		transformed, err := e.applyFieldDecorators(instance.Class, expr.Name.Value, newValue, env)
+		if err != nil {
+			return err
+		}
+		newValue = transformed
 		if _, ok := instance.Fields[expr.Name.Value]; ok {
 			instance.Fields[expr.Name.Value] = newValue
 			return nil

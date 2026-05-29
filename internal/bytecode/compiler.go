@@ -31,7 +31,10 @@ type Compiler struct {
 	functionCursors map[string]int
 	classes         map[string]int64
 	interfaces      map[string]int64
-	enums           map[string]int64
+	// Source AST per interface, keyed by lowered name. Used to inject
+	// default methods and declared fields into implementing classes.
+	interfaceAST map[string]*ast.InterfaceStatement
+	enums        map[string]int64
 	typeAliases     map[string]*ast.TypeRef
 	inFunc          int
 	classStack      []int64
@@ -85,6 +88,7 @@ func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk
 		functionCursors: map[string]int{},
 		classes:         map[string]int64{},
 		interfaces:      map[string]int64{},
+		interfaceAST:    map[string]*ast.InterfaceStatement{},
 		enums:           map[string]int64{},
 		typeAliases:     map[string]*ast.TypeRef{},
 		reflectFuncs:    map[string]runtime.DecoratorTarget{},
@@ -1084,6 +1088,9 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 		}
 		class.Implements = append(class.Implements, ifaceRef.Name)
 	}
+	if err := c.injectInterfaceMembers(stmt); err != nil {
+		return err
+	}
 	c.chunk.Classes[index] = class
 	c.classStack = append(c.classStack, index)
 	defer func() {
@@ -1212,13 +1219,78 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 	return nil
 }
 
+// Mutates stmt.Members to add interface defaults + fields the class
+// hasn't already declared, and reports an ambiguous-default conflict
+// across multiple implemented interfaces.
+func (c *Compiler) injectInterfaceMembers(stmt *ast.ClassStatement) error {
+	declaredMethods := map[string]bool{}
+	declaredFields := map[string]bool{}
+	for _, member := range stmt.Members {
+		switch m := member.(type) {
+		case *ast.FunctionStatement:
+			declaredMethods[strings.ToLower(m.Name.Value)] = true
+		case *ast.DeclarationStatement:
+			if !strings.HasPrefix(m.Kind, "static") {
+				declaredFields[strings.ToLower(m.Name.Value)] = true
+			}
+		}
+	}
+	defaultSource := map[string]string{}
+	defaultMethod := map[string]*ast.FunctionStatement{}
+	fieldSource := map[string]string{}
+	fieldDecl := map[string]*ast.DeclarationStatement{}
+	for _, ifaceRef := range stmt.Implements {
+		iface, ok := c.interfaceAST[strings.ToLower(ifaceRef.Name)]
+		if !ok {
+			continue
+		}
+		for _, def := range iface.Defaults {
+			key := strings.ToLower(def.Name.Value)
+			if declaredMethods[key] {
+				continue
+			}
+			if prev, seen := defaultSource[key]; seen && prev != iface.Name.Value {
+				return c.withStatementLocation(stmt, fmt.Errorf("class %s inherits multiple defaults for %s from %s and %s; class must override", stmt.Name.Value, def.Name.Value, prev, iface.Name.Value))
+			}
+			defaultSource[key] = iface.Name.Value
+			defaultMethod[key] = def
+		}
+		for _, field := range iface.Fields {
+			key := strings.ToLower(field.Name.Value)
+			if declaredFields[key] {
+				continue
+			}
+			if prev, seen := fieldSource[key]; seen {
+				prevField := fieldDecl[key]
+				if prevField.Type.String() != field.Type.String() {
+					return c.withStatementLocation(stmt, fmt.Errorf("class %s inherits field %s from %s (%s) and %s (%s) with conflicting types", stmt.Name.Value, field.Name.Value, prev, prevField.Type.String(), iface.Name.Value, field.Type.String()))
+				}
+				continue
+			}
+			fieldSource[key] = iface.Name.Value
+			fieldDecl[key] = field
+		}
+	}
+	for _, field := range fieldDecl {
+		stmt.Members = append(stmt.Members, field)
+	}
+	for _, method := range defaultMethod {
+		stmt.Members = append(stmt.Members, method)
+	}
+	return nil
+}
+
 func (c *Compiler) compileInterfaceStatement(stmt *ast.InterfaceStatement) error {
+	c.interfaceAST[strings.ToLower(stmt.Name.Value)] = stmt
 	index := c.declareInterface(stmt.Name.Value)
 	iface := c.chunk.Interfaces[index]
 	iface.Doc = stmt.Doc
 	iface.TypeParameters = typeParameterNames(stmt.Generics)
 	iface.Parents = iface.Parents[:0]
 	iface.Methods = iface.Methods[:0]
+	iface.Fields = iface.Fields[:0]
+	iface.FieldTypes = iface.FieldTypes[:0]
+	iface.Defaults = nil
 	for _, parent := range stmt.Parents {
 		if _, ok := c.interfaces[strings.ToLower(parent.Name)]; !ok {
 			if !strings.Contains(parent.Name, ".") {
@@ -1230,8 +1302,36 @@ func (c *Compiler) compileInterfaceStatement(stmt *ast.InterfaceStatement) error
 	for _, method := range stmt.Methods {
 		iface.Methods = append(iface.Methods, reflectFunctionMetadataFromSignature(c, method))
 	}
+	for _, field := range stmt.Fields {
+		iface.Fields = append(iface.Fields, field.Name.Value)
+		typeStr := ""
+		if field.Type != nil {
+			typeStr = field.Type.String()
+		}
+		iface.FieldTypes = append(iface.FieldTypes, typeStr)
+	}
+	if len(stmt.Defaults) > 0 {
+		iface.Defaults = make(map[string]int64, len(stmt.Defaults))
+		for _, def := range stmt.Defaults {
+			fnIndex, err := c.compileInterfaceDefault(stmt.Name.Value, def)
+			if err != nil {
+				return err
+			}
+			iface.Defaults[strings.ToLower(def.Name.Value)] = fnIndex
+		}
+	}
 	c.chunk.Interfaces[index] = iface
 	return nil
+}
+
+func (c *Compiler) compileInterfaceDefault(ifaceName string, def *ast.FunctionStatement) (int64, error) {
+	wrapped := *def
+	wrapped.Static = false
+	functionName := ifaceName + "." + def.Name.Value
+	if err := c.compileFunction(&wrapped, functionName, "this"); err != nil {
+		return -1, err
+	}
+	return c.lastFunctionIndex(functionName)
 }
 
 func (c *Compiler) compileSimpleStatement(stmt *ast.SimpleStatement) error {
@@ -4470,6 +4570,9 @@ func (c *Compiler) staticallyResolveMethodCall(selector *ast.SelectorExpression,
 	}
 	classInfo := c.chunk.Classes[classIndex]
 	if len(classInfo.TypeParameters) > 0 {
+		return 0, false
+	}
+	if len(classInfo.Decorators) > 0 {
 		return 0, false
 	}
 	methodName := selector.Name.Value

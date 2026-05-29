@@ -512,6 +512,12 @@ type InterfaceStatement struct {
 	Generics []*TypeParam
 	Parents  []*TypeRef
 	Methods  []*FunctionSignature
+	// Default method implementations. Inherited as-is by classes
+	// that implement the interface and don't override the method.
+	Defaults []*FunctionStatement
+	// Property declarations. Auto-added as fields on every class
+	// that implements the interface.
+	Fields []*DeclarationStatement
 }
 
 func (*InterfaceStatement) statementNode()         {}

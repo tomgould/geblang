@@ -16,6 +16,17 @@ type TypedError interface {
 	ErrorClass() string
 }
 
+// Returned by cross-module method dispatch when the target method
+// doesn't exist, so callers distinguish "missing" from "ran-and-threw".
+type MethodNotFoundError struct {
+	Class  string
+	Method string
+}
+
+func (e *MethodNotFoundError) Error() string {
+	return "unknown method " + e.Class + "." + e.Method
+}
+
 func NewRecoverableError(err error) Error {
 	return Error{Class: RecoverableErrorClass(err), Message: recoverableErrorMessage(err)}
 }

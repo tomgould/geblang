@@ -1,0 +1,34 @@
+/**
+ * @title Callable field decorators
+ * @summary A field decorator whose name resolves to a function in
+ * scope runs on every assignment to that field (including the
+ * constructor's first write). Use them for normalisation,
+ * validation, or formatting at the field's write boundary.
+ * @category Classes
+ */
+import io;
+
+func upper(string v): string { return v.upper(); }
+func trim(string v): string { return v.trim(); }
+func minLen(int min, string v): string {
+    if (v.length() < min) { throw RuntimeError("too short"); }
+    return v;
+}
+
+class User {
+    @minLen(2)
+    @upper
+    @trim
+    string name;
+
+    func User(string n) { this.name = n; }
+}
+
+let u = User("  ada  ");
+io.println(u.name);
+
+u.name = "  bo  ";
+io.println(u.name);
+
+try { u.name = "x"; }
+catch (RuntimeError e) { io.println(e.message); }

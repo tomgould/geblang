@@ -59,6 +59,40 @@ func TestAPISlug(t *testing.T) {
 	}
 }
 
+func TestMarkdownLinkRewriterStripsPrefixAndChangesExtension(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"01-getting-started.md", "getting-started.html"},
+		{"22-ffi.md", "ffi.html"},
+		{"stdlib/19-env-ext.md", "stdlib/env-ext.html"},
+		{"sibling.md", "sibling.html"},
+		{"01-getting-started.md#install", "getting-started.html#install"},
+		{"https://example.com/page.md", "https://example.com/page.md"},
+		{"//example.com/page.md", "//example.com/page.md"},
+		{"mailto:foo@bar.md", "mailto:foo@bar.md"},
+		{"#section", "#section"},
+		{"sibling.html", "sibling.html"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		got := string(rewriteMarkdownLink(c.in))
+		if got != c.want {
+			t.Errorf("rewriteMarkdownLink(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestMarkdownToHTMLRewritesLocalMDLinks(t *testing.T) {
+	html := markdownToHTML([]byte("[ext](19-env-ext.md) and [home](01-getting-started.md)"))
+	if !strings.Contains(html, `href="env-ext.html"`) {
+		t.Errorf("expected env-ext.html in output: %s", html)
+	}
+	if !strings.Contains(html, `href="getting-started.html"`) {
+		t.Errorf("expected getting-started.html in output: %s", html)
+	}
+}
+
 func TestMarkdownToHTMLSupportsGitHubEmojiAndStyledQuotes(t *testing.T) {
 	html := markdownToHTML([]byte("> :bulb: Use `:bulb:` in docs.\n\n`:warning:`\n"))
 	if !strings.Contains(html, "&#x1f4a1;") {

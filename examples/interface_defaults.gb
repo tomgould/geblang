@@ -1,0 +1,57 @@
+/**
+ * @title Interface defaults and properties
+ * @summary Interfaces can declare property requirements and default
+ * method bodies. Implementing classes inherit non-overridden
+ * defaults and gain declared fields automatically.
+ * @category Classes
+ */
+import io;
+
+interface Greetable {
+    string name;
+    int age;
+
+    func greet(): string {
+        return "hello, " + this.name + " (" + (this.age as string) + ")";
+    }
+
+    func describe(): string;
+}
+
+class User implements Greetable {
+    func User(string n, int a) {
+        this.name = n;
+        this.age = a;
+    }
+
+    func describe(): string {
+        return "user " + this.name;
+    }
+}
+
+class Loud implements Greetable {
+    func Loud(string n, int a) {
+        this.name = n;
+        this.age = a;
+    }
+
+    func greet(): string {
+        return "HELLO, " + this.name.upper();
+    }
+
+    func describe(): string {
+        return "LOUD";
+    }
+}
+
+io.println(User("ada", 36).greet());
+io.println(Loud("bo", 4).greet());
+
+interface A { func foo(): string { return "A"; } }
+interface B { func foo(): string { return "B"; } }
+
+class C implements A, B {
+    func foo(): string { return "C"; }
+}
+
+io.println(C().foo());

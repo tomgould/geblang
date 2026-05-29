@@ -14,9 +14,12 @@ import (
 
 	"github.com/yuin/goldmark"
 	emoji "github.com/yuin/goldmark-emoji"
+	gast "github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
 	goldhtml "github.com/yuin/goldmark/renderer/html"
+	gtext "github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
 
 type page struct {
@@ -29,9 +32,54 @@ type page struct {
 
 var docMarkdown = goldmark.New(
 	goldmark.WithExtensions(extension.GFM, emoji.Emoji),
-	goldmark.WithParserOptions(parser.WithAutoHeadingID()),
+	goldmark.WithParserOptions(
+		parser.WithAutoHeadingID(),
+		parser.WithASTTransformers(util.Prioritized(mdLinkRewriter{}, 999)),
+	),
 	goldmark.WithRendererOptions(goldhtml.WithUnsafe()),
 )
+
+// mdLinkRewriter rewrites local markdown links so docsite output
+// matches its slug convention: `01-getting-started.md` -> `getting-started.html`.
+// External URLs (those with a scheme or starting with `//`) and
+// anchors (`#section`) are untouched.
+type mdLinkRewriter struct{}
+
+func (mdLinkRewriter) Transform(node *gast.Document, reader gtext.Reader, _ parser.Context) {
+	_ = gast.Walk(node, func(n gast.Node, entering bool) (gast.WalkStatus, error) {
+		if !entering {
+			return gast.WalkContinue, nil
+		}
+		link, ok := n.(*gast.Link)
+		if !ok {
+			return gast.WalkContinue, nil
+		}
+		link.Destination = rewriteMarkdownLink(string(link.Destination))
+		return gast.WalkContinue, nil
+	})
+}
+
+func rewriteMarkdownLink(dest string) []byte {
+	target := dest
+	fragment := ""
+	if i := strings.Index(target, "#"); i >= 0 {
+		fragment = target[i:]
+		target = target[:i]
+	}
+	if target == "" {
+		return []byte(dest)
+	}
+	if strings.Contains(target, "://") || strings.HasPrefix(target, "//") || strings.HasPrefix(target, "mailto:") {
+		return []byte(dest)
+	}
+	if !strings.HasSuffix(strings.ToLower(target), ".md") {
+		return []byte(dest)
+	}
+	dir, base := filepath.Split(target)
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	rewritten := filepath.ToSlash(filepath.Join(dir, slugBase(stem)+".html")) + fragment
+	return []byte(rewritten)
+}
 
 func main() {
 	srcDir := arg(1, "docs/user")

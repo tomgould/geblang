@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -15,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(59)
+	Version = uint16(60)
 )
 
 type Op byte
@@ -394,6 +395,12 @@ type InterfaceInfo struct {
 	TypeParameters []string
 	Parents        []string
 	Methods        []runtime.FunctionMetadata
+	// Default method bodies; key is the lowered method name, value
+	// is the function index in the defining chunk.
+	Defaults map[string]int64
+	// Property declarations; FieldTypes parallels Fields.
+	Fields     []string
+	FieldTypes []string
 }
 
 type ExportInfo struct {
@@ -617,6 +624,28 @@ func Encode(chunk Chunk) ([]byte, error) {
 				return nil, err
 			}
 		}
+		out = binary.BigEndian.AppendUint16(out, uint16(len(iface.Defaults)))
+		defaultNames := make([]string, 0, len(iface.Defaults))
+		for name := range iface.Defaults {
+			defaultNames = append(defaultNames, name)
+		}
+		sort.Strings(defaultNames)
+		for _, name := range defaultNames {
+			out = binary.BigEndian.AppendUint16(out, uint16(len(name)))
+			out = append(out, []byte(name)...)
+			out = binary.BigEndian.AppendUint64(out, uint64(iface.Defaults[name]))
+		}
+		out = binary.BigEndian.AppendUint16(out, uint16(len(iface.Fields)))
+		for i, name := range iface.Fields {
+			out = binary.BigEndian.AppendUint16(out, uint16(len(name)))
+			out = append(out, []byte(name)...)
+			typeStr := ""
+			if i < len(iface.FieldTypes) {
+				typeStr = iface.FieldTypes[i]
+			}
+			out = binary.BigEndian.AppendUint16(out, uint16(len(typeStr)))
+			out = append(out, []byte(typeStr)...)
+		}
 	}
 	out = binary.BigEndian.AppendUint16(out, uint16(len(chunk.Exports)))
 	for _, export := range chunk.Exports {
@@ -823,6 +852,21 @@ func Decode(data []byte) (Chunk, error) {
 			if metadata != nil {
 				iface.Methods = append(iface.Methods, *metadata)
 			}
+		}
+		defaultCount := int(reader.u16())
+		if defaultCount > 0 {
+			iface.Defaults = make(map[string]int64, defaultCount)
+			for j := 0; j < defaultCount; j++ {
+				name := string(reader.read(int(reader.u16())))
+				iface.Defaults[name] = int64(reader.u64())
+			}
+		}
+		fieldCount := int(reader.u16())
+		iface.Fields = make([]string, 0, fieldCount)
+		iface.FieldTypes = make([]string, 0, fieldCount)
+		for j := 0; j < fieldCount; j++ {
+			iface.Fields = append(iface.Fields, string(reader.read(int(reader.u16()))))
+			iface.FieldTypes = append(iface.FieldTypes, string(reader.read(int(reader.u16()))))
 		}
 		chunk.Interfaces = append(chunk.Interfaces, iface)
 	}

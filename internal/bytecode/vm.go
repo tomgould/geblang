@@ -70,6 +70,11 @@ type VM struct {
 	applyingDecorators  bool
 	rawFunctionCalls    map[int64]bool
 	methodReceiverFuncs map[int64]bool
+	// Method-name -> cross-module default for cross-chunk interface
+	// defaults the class inherits. Populated at OpDefineClass.
+	interfaceFallbacks map[int64]map[string]crossModuleDefault
+	// Extra fields a class inherits from cross-chunk interfaces.
+	interfaceExtraFields map[int64][]extraField
 	forwardThis         *runtime.Instance
 	generatorExecution  bool
 	generatorYield      chan vmGeneratorItem
@@ -166,6 +171,10 @@ type ModuleLoader interface {
 	// originating class's actual constructor list rather than the
 	// caller chunk's stale view.
 	ConstructorsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error)
+	// Returns the InterfaceInfo for `name` declared in `module`, or
+	// false if not found. Used to inherit cross-module interface
+	// default methods and property declarations.
+	LookupModuleInterface(module, name string) (InterfaceInfo, bool)
 }
 
 type StatefulNativeCaller interface {
@@ -370,7 +379,7 @@ func NewVM(chunk Chunk, stdout io.Writer) *VM {
 	// per-VM metadata (typeParamSet, paramTypeSpecs, etc.) without
 	// racing concurrent VMs that share the same source chunk.
 	chunk.Functions = append([]FunctionInfo(nil), chunk.Functions...)
-	vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), dirtyGlobals: make([]bool, globalSize), localsStack: make([]runtime.VMValue, 0, localsCap), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: classIndex, natives: native.NewBuiltinRegistry(), nativeCache: make([]native.Function, len(chunk.Constants)), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
+	vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), dirtyGlobals: make([]bool, globalSize), localsStack: make([]runtime.VMValue, 0, localsCap), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: classIndex, natives: native.NewBuiltinRegistry(), nativeCache: make([]native.Function, len(chunk.Constants)), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, interfaceFallbacks: map[int64]map[string]crossModuleDefault{}, interfaceExtraFields: map[int64][]extraField{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
 	vm.prepareFunctionTypeMetadata()
 	// Register an InstanceInvoker so native code (e.g.
 	// convert.go's __serialize__ dispatch) can call class
@@ -1608,6 +1617,9 @@ func (vm *VM) Run() (err error) {
 				if decorated {
 					vm.decoratedClasses[classIndex] = classValue
 				}
+				if err := vm.resolveCrossModuleInterfaceMembers(instruction, classIndex, classInfo); err != nil {
+					return err
+				}
 			}
 		case OpConstructClass:
 			nextIP, err := vm.constructClass(instruction, ip)
@@ -2371,6 +2383,7 @@ func (vm *VM) applyCallableDecoratorsForClass(index int64, classInfo ClassInfo) 
 		MethodMetadata:      methodMetadata,
 		StaticMetadata:      staticMetadata,
 		ConstructorMetadata: vm.constructorFunctionMetadata(classInfo.ConstructorIndices),
+		Raw:                 true,
 	}
 	var current runtime.Value = initial
 	decorated := false
@@ -2395,11 +2408,12 @@ func (vm *VM) applyCallableDecoratorsForClass(index int64, classInfo ClassInfo) 
 		if err != nil {
 			return nil, false, fmt.Errorf("decorator @%s: %w", decorator.Name, err)
 		}
-		if _, ok := result.(runtime.BytecodeClass); ok {
+		switch result.(type) {
+		case runtime.BytecodeClass, runtime.BytecodeClosure, runtime.Function, runtime.OverloadedFunction, runtime.BytecodeFunction, runtime.DecoratorTarget:
 			current = result
 			decorated = true
-		} else {
-			return nil, false, fmt.Errorf("decorator @%s must return class, got %s", decorator.Name, result.TypeName())
+		default:
+			return nil, false, fmt.Errorf("decorator @%s must return class or callable, got %s", decorator.Name, result.TypeName())
 		}
 	}
 	return current, decorated, nil
@@ -5672,7 +5686,6 @@ func (vm *VM) constructClass(instruction Instruction, ip int) (int, error) {
 	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
 		return 0, vm.runtimeError(instruction, "class index out of range")
 	}
-	classInfo := vm.chunk.Classes[classIndex]
 	args := make([]runtime.Value, argc)
 	for i := argc - 1; i >= 0; i-- {
 		value, err := vm.pop()
@@ -5680,6 +5693,37 @@ func (vm *VM) constructClass(instruction Instruction, ip int) (int, error) {
 			return 0, vm.runtimeError(instruction, "%s", err.Error())
 		}
 		args[i] = value
+	}
+	return vm.constructClassWithArgs(instruction, ip, classIndex, args, false)
+}
+
+func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex int64, args []runtime.Value, raw bool) (int, error) {
+	classInfo := vm.chunk.Classes[classIndex]
+	if !raw {
+		if decorated, ok := vm.decoratedClasses[classIndex]; ok {
+			switch dec := decorated.(type) {
+			case runtime.BytecodeClass:
+				if dec.Index != classIndex {
+					return vm.constructDecoratedClass(instruction, ip, dec, args)
+				}
+			default:
+				result, err := vm.callCallable(decorated, args)
+				if err != nil {
+					return 0, vm.runtimeError(instruction, "%s", err.Error())
+				}
+				classInfo := vm.chunk.Classes[classIndex]
+				if instance, ok := result.(*runtime.Instance); ok && instance != nil && instance.Class != nil && instance.Class.Name != classInfo.Name {
+					instance.ExtraTypeNames = append(instance.ExtraTypeNames, classInfo.Name)
+				}
+				vm.push(result)
+				return ip, nil
+			}
+		}
+	}
+	if reason, abstract := vm.classAbstractnessReason(classInfo); abstract {
+		thrown := runtime.Error{Class: "RuntimeError", Message: reason}
+		vm.pendingThrow = &thrown
+		return vm.jumpToExceptionHandler(instruction, ip)
 	}
 	instance := &runtime.Instance{
 		Class: &runtime.Class{
@@ -5730,7 +5774,7 @@ func (vm *VM) constructClass(instruction Instruction, ip int) (int, error) {
 		return 0, err
 	}
 	if len(classInfo.ConstructorIndices) == 0 {
-		if argc != 0 {
+		if len(args) != 0 {
 			return 0, vm.runtimeError(instruction, "%s expects no constructor arguments", classInfo.Name)
 		}
 		if vm.classExtendsBuiltinError(classInfo) {
@@ -5788,6 +5832,10 @@ func (vm *VM) constructClass(instruction Instruction, ip int) (int, error) {
 		}
 	}
 	return nextIP, nil
+}
+
+func (vm *VM) constructDecoratedClass(instruction Instruction, ip int, replacement runtime.BytecodeClass, args []runtime.Value) (int, error) {
+	return vm.constructClassWithArgs(instruction, ip, replacement.Index, args, false)
 }
 
 // runtimeFieldsForClass builds the per-field metadata on a
@@ -5916,6 +5964,11 @@ func (vm *VM) initializeFields(instruction Instruction, instance *runtime.Instan
 			value = cloneContainerDefault(vm.chunk.Constants[defaultIndex])
 		}
 		instance.Fields[field] = value
+	}
+	for _, extra := range vm.interfaceExtraFields[classIndex] {
+		if _, exists := instance.Fields[extra.name]; !exists {
+			instance.Fields[extra.name] = runtime.Null{}
+		}
 	}
 	return nil
 }
@@ -6095,6 +6148,13 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 	if instance.Frozen {
 		return vm.throwTyped(instruction, ip, "ImmutableError", "cannot modify frozen instance of "+instance.Class.Name)
 	}
+	if classInfo, ok := vm.classInfo(instance.Class.Name); ok {
+		transformed, err := vm.applyFieldDecorators(instruction, classInfo, name, value)
+		if err != nil {
+			return vm.propagateModuleError(instruction, ip, err)
+		}
+		value = transformed
+	}
 	if vm.fieldLookupValid && vm.fieldLookupClass == instance.Class && vm.fieldLookupName == name && vm.fieldLookupOnClass {
 		instance.Fields[name] = value
 		vm.push(value)
@@ -6130,6 +6190,51 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 	instance.Fields[name] = value
 	vm.push(value)
 	return ip, nil
+}
+
+// Walks classInfo.FieldDecorators for the field named `name` and
+// runs each decorator as a transform (`(value) -> value`). Decorators
+// with literal args are invoked as `dec(args, value)`; decorators
+// without args are called as `dec(value)`. Run order is bottom-up
+// (closest decorator to the field first).
+func (vm *VM) applyFieldDecorators(instruction Instruction, classInfo ClassInfo, name string, value runtime.Value) (runtime.Value, error) {
+	fieldIndex := -1
+	for i, fname := range classInfo.FieldNames {
+		if strings.EqualFold(fname, name) {
+			fieldIndex = i
+			break
+		}
+	}
+	if fieldIndex < 0 || fieldIndex >= len(classInfo.FieldDecorators) {
+		return value, nil
+	}
+	decorators := classInfo.FieldDecorators[fieldIndex]
+	if len(decorators) == 0 {
+		return value, nil
+	}
+	for i := len(decorators) - 1; i >= 0; i-- {
+		dec := decorators[i]
+		if dec.Name == "" {
+			continue
+		}
+		indices := vm.decoratorFunctionIndices(dec.Name)
+		if len(indices) == 0 {
+			continue
+		}
+		callArgs := make([]runtime.Value, 0, len(dec.Args)+1)
+		callArgs = append(callArgs, dec.Args...)
+		callArgs = append(callArgs, value)
+		functionIndex, err := vm.selectRuntimeFunction(instruction, dec.Name, indices, callArgs, 0)
+		if err != nil {
+			return nil, vm.runtimeError(instruction, "field decorator @%s: %s", dec.Name, err.Error())
+		}
+		result, err := vm.CallFunction(functionIndex, callArgs)
+		if err != nil {
+			return nil, err
+		}
+		value = result
+	}
+	return value, nil
 }
 
 func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error) {
@@ -9654,7 +9759,7 @@ func (vm *VM) CallMethodAs(className string, instance *runtime.Instance, name st
 				return runtime.Null{}, nil
 			}
 		} else {
-			return nil, fmt.Errorf("unknown method %s.%s", className, name)
+			return nil, &runtime.MethodNotFoundError{Class: className, Method: name}
 		}
 	}
 	functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 1)
@@ -10018,6 +10123,12 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 		if runtimeClassMatches(instance.Class, stripped) {
 			vm.push(runtime.Bool{Value: true})
 			return nil
+		}
+		for _, extra := range instance.ExtraTypeNames {
+			if strings.EqualFold(stripModulePrefix(extra), stripped) {
+				vm.push(runtime.Bool{Value: true})
+				return nil
+			}
 		}
 		vm.push(runtime.Bool{Value: false})
 		return nil
@@ -10984,8 +11095,15 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 							vm.push(result)
 							return ip, nil
 						}
+						var notFound *runtime.MethodNotFoundError
+						if !errors.As(err, &notFound) {
+							return vm.propagateModuleError(instruction, ip, err)
+						}
 					}
 				}
+			}
+			if nextIP, err, handled := vm.callInterfaceDefault(instruction, ip, instance, loweredName, args); handled {
+				return nextIP, err
 			}
 			return 0, vm.runtimeError(instruction, "unknown method %s.%s", instance.Class.Name, nameValue.Value)
 		}
@@ -11195,6 +11313,9 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 				}
 				vm.push(result)
 				return ip, nil
+			}
+			if class.Raw {
+				return vm.constructClassWithArgs(instruction, ip, class.Index, args, true)
 			}
 			result, err := vm.ConstructClass(class.Index, args)
 			if err != nil {
@@ -11520,6 +11641,151 @@ func (vm *VM) lookupMethodLowerUncached(classInfo ClassInfo, lowered string) ([]
 		return vm.lookupMethodLowerUncached(vm.chunk.Classes[classInfo.ParentIndex], lowered)
 	}
 	return nil, false
+}
+
+type crossModuleDefault struct {
+	module string
+	index  int64
+}
+
+type extraField struct {
+	name string
+	typ  string
+}
+
+// Dispatches `instance.method(args)` via a cross-module interface
+// default registered at OpDefineClass. Returns (nextIP, error, true)
+// when the call was handled.
+func (vm *VM) callInterfaceDefault(instruction Instruction, ip int, instance *runtime.Instance, methodName string, args []runtime.Value) (int, error, bool) {
+	idx, ok := vm.classIndex[strings.ToLower(instance.Class.Name)]
+	if !ok {
+		return 0, nil, false
+	}
+	fallback, ok := vm.interfaceFallbacks[int64(idx)][methodName]
+	if !ok {
+		return 0, nil, false
+	}
+	if vm.moduleLoader == nil {
+		return 0, nil, false
+	}
+	fn := runtime.BytecodeFunction{Module: fallback.module, Index: fallback.index}
+	callArgs := append([]runtime.Value{instance}, args...)
+	result, err := vm.moduleLoader.CallModuleFunction(fn, callArgs)
+	if err != nil {
+		return vm.propagateModuleErrorReturn(instruction, ip, err)
+	}
+	vm.push(result)
+	return ip, nil, true
+}
+
+func (vm *VM) propagateModuleErrorReturn(instruction Instruction, ip int, err error) (int, error, bool) {
+	nextIP, perr := vm.propagateModuleError(instruction, ip, err)
+	return nextIP, perr, true
+}
+
+func (vm *VM) resolveCrossModuleInterfaceMembers(instruction Instruction, classIndex int64, classInfo ClassInfo) error {
+	if len(classInfo.Implements) == 0 {
+		return nil
+	}
+	declaredFields := map[string]bool{}
+	for _, name := range classInfo.FieldNames {
+		declaredFields[strings.ToLower(name)] = true
+	}
+	defaultSource := map[string]string{}
+	for _, ifaceRef := range classInfo.Implements {
+		module, name, ok := splitQualifiedClassName(ifaceRef)
+		if !ok {
+			continue
+		}
+		if vm.moduleLoader == nil {
+			continue
+		}
+		if _, err := vm.moduleLoader.LoadModule(module, module); err != nil {
+			continue
+		}
+		iface, ok := vm.moduleLoader.LookupModuleInterface(module, name)
+		if !ok {
+			continue
+		}
+		for i, fieldName := range iface.Fields {
+			lower := strings.ToLower(fieldName)
+			if declaredFields[lower] {
+				continue
+			}
+			declaredFields[lower] = true
+			typ := ""
+			if i < len(iface.FieldTypes) {
+				typ = iface.FieldTypes[i]
+			}
+			vm.interfaceExtraFields[classIndex] = append(vm.interfaceExtraFields[classIndex], extraField{name: fieldName, typ: typ})
+		}
+		for methodName, fnIndex := range iface.Defaults {
+			if _, exists := classInfo.Methods[methodName]; exists {
+				continue
+			}
+			if existing, ok := vm.interfaceFallbacks[classIndex][methodName]; ok {
+				if existing.module != module || existing.index != fnIndex {
+					return vm.runtimeError(instruction, "class %s inherits multiple defaults for %s from %s and %s; class must override", classInfo.Name, methodName, defaultSource[methodName], ifaceRef)
+				}
+				continue
+			}
+			if vm.interfaceFallbacks[classIndex] == nil {
+				vm.interfaceFallbacks[classIndex] = map[string]crossModuleDefault{}
+			}
+			vm.interfaceFallbacks[classIndex][methodName] = crossModuleDefault{module: module, index: fnIndex}
+			defaultSource[methodName] = ifaceRef
+		}
+	}
+	return nil
+}
+
+// Reports (reason, true) when the class is @abstract or carries an
+// unoverridden @abstract method. Walks ParentIndex only.
+func (vm *VM) classAbstractnessReason(classInfo ClassInfo) (string, bool) {
+	for _, dec := range classInfo.Decorators {
+		if strings.EqualFold(dec.Name, "abstract") {
+			return "cannot instantiate abstract class " + classInfo.Name, true
+		}
+	}
+	overridden := map[string]bool{}
+	abstractDecl := map[string]string{}
+	walk := func(ci ClassInfo) {
+		for method := range ci.Methods {
+			isAbstract := false
+			for _, dec := range ci.MethodDecorators[method] {
+				if strings.EqualFold(dec.Name, "abstract") {
+					isAbstract = true
+					break
+				}
+			}
+			if isAbstract {
+				if !overridden[method] {
+					if _, seen := abstractDecl[method]; !seen {
+						abstractDecl[method] = ci.Name
+					}
+				}
+			} else {
+				overridden[method] = true
+				delete(abstractDecl, method)
+			}
+		}
+	}
+	walk(classInfo)
+	for ci := classInfo; ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(vm.chunk.Classes); {
+		ci = vm.chunk.Classes[ci.ParentIndex]
+		walk(ci)
+	}
+	if len(abstractDecl) == 0 {
+		return "", false
+	}
+	var sample, sampleClass string
+	for name, owner := range abstractDecl {
+		if sample == "" || name < sample {
+			sample = name
+			sampleClass = owner
+		}
+	}
+	return "cannot instantiate " + classInfo.Name + ": abstract method " + sampleClass + "." + sample + " is not implemented", true
 }
 
 func (vm *VM) lookupDunder(classInfo ClassInfo, canonical, legacy string) ([]int64, string, bool) {

@@ -2,6 +2,79 @@
 
 ## 1.5.0
 
+### Decorators
+
+- `@abstract` class decorator: direct instantiation throws
+  RuntimeError. Subclasses without `@abstract` instantiate normally.
+- `@abstract` method decorator: a class that declares (or inherits)
+  any abstract method without a concrete override is itself abstract.
+  Error message names the unimplemented method.
+- Class decorators that return a callable are now supported as the
+  third runtime shape, alongside the existing register-in-place and
+  swap shapes. The returned callable becomes the new constructor; the
+  captured class value is marked raw so calling it from the closure
+  builds the original without re-triggering the decorator chain.
+- Typed delegation: a wrap closure may return an instance of a
+  different class than the decorated one. The runtime stamps the
+  instance so `instanceof` against the original class still returns
+  true, even though the runtime class is the replacement. Useful when
+  one declared type fronts an implementation chosen by a decorator
+  at definition time.
+
+### Field decorators run as write barriers
+
+A field decorator whose name resolves to a callable in scope now
+runs on every assignment to that field (including the constructor's
+first write), transforms the incoming value, and the transformed
+value is what gets stored. Decorators stack bottom-up, output of one
+feeds the next. Names that don't resolve stay as pure metadata (the
+existing framework-annotation contract).
+
+```gb
+func upper(string v): string { return v.upper(); }
+func minLen(int min, string v): string {
+    if (v.length() < min) { throw RuntimeError("too short"); }
+    return v;
+}
+
+class User {
+    @minLen(2) @upper
+    string name;
+    func User(string n) { this.name = n; }
+}
+```
+
+### Interface default methods and properties
+
+Interface bodies now accept three forms:
+
+- abstract method signatures (`func foo(): T;`) - the prior surface
+- default method bodies (`func foo(): T { ... }`) - implementing
+  classes inherit the body when they don't override
+- property declarations (`string name;`) - implementing classes gain
+  the field automatically, no redeclaration needed
+
+When two implemented interfaces both provide a default for the same
+method signature and the class doesn't override, the compiler rejects
+the class with an error naming both source interfaces. The rule fires
+only on conflicting defaults; one default + one signature inherits
+unambiguously.
+
+### JSON-like container Inspect
+
+`io.println(dict)`, `io.println(list)`, and `io.println(set)` now
+produce JSON-like output (sorted dict keys, quoted strings inside
+containers, depth guard for cycles). Top-level strings stay unquoted
+so `io.println("x")` -> `x` is unchanged.
+
+### Cross-module throws no longer swallowed
+
+A method inherited from a parent class in another module could throw
+silently: the bytecode VM's cross-module dispatch fallback treated any
+loader error as "method not found" and dropped real `throw` errors on
+the floor. The dispatcher now distinguishes the two and propagates a
+throw to the calling VM's nearest `try / catch`.
+
 ### In-process FFI for C-ABI shared libraries
 
 New `ffi` stdlib module loads shared libraries through dlopen and

@@ -1953,6 +1953,28 @@ func (l *bytecodeModuleLoader) CallModuleMethod(module string, className string,
 	return vm.CallMethod(instance, methodName, args)
 }
 
+func (l *bytecodeModuleLoader) LookupModuleInterface(module, name string) (bytecode.InterfaceInfo, bool) {
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return bytecode.InterfaceInfo{}, false
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunks[module]
+		if !ok {
+			return bytecode.InterfaceInfo{}, false
+		}
+		chunk = c
+	}
+	for _, iface := range chunk.Interfaces {
+		if strings.EqualFold(iface.Name, name) {
+			return iface, true
+		}
+	}
+	return bytecode.InterfaceInfo{}, false
+}
+
 // FindFunctionByName scans every loaded module's chunk for an
 // exported function by name. Returns nil when no match.
 func (l *bytecodeModuleLoader) FindFunctionByName(name string) (runtime.Value, bool) {

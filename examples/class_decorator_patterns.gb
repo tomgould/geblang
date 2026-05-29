@@ -1,0 +1,60 @@
+/**
+ * @title Class decorator patterns
+ * @summary Two useful shapes for class decorators: register-in-place
+ * (side-effect, return cls) and wrap (return a callable that becomes
+ * the new constructor).
+ * @category Classes
+ */
+import io;
+import reflect;
+
+dict<string, any> services = {};
+
+func service(any cls): any {
+    services[reflect.className(cls)] = cls;
+    return cls;
+}
+
+@service
+class AuthService {
+    func describe(): string { return "auth service"; }
+}
+
+io.println(services.hasKey("AuthService"));
+io.println(AuthService().describe());
+
+func audited(any cls): any {
+    return func(string name): any {
+        io.println("[audit] constructing " + reflect.className(cls) + " for " + name);
+        return cls(name);
+    };
+}
+
+@audited
+class Order {
+    string buyer;
+    func Order(string buyer) { this.buyer = buyer; }
+    func describe(): string { return "order for " + this.buyer; }
+}
+
+io.println(Order("Ada").describe());
+
+class JsonRepository {
+    string conn;
+    func JsonRepository(string conn) { this.conn = conn; }
+    func find(string id): string { return "json[" + this.conn + "]:" + id; }
+}
+
+func storage(any cls): any {
+    return func(string conn): any { return JsonRepository(conn); };
+}
+
+@storage
+class UserRepository {
+    func UserRepository(string conn) {}
+}
+
+let ur = UserRepository("postgres://localhost/users");
+io.println(ur instanceof UserRepository);
+io.println(ur instanceof JsonRepository);
+io.println(ur.find("ada"));

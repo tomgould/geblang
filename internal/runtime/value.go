@@ -233,7 +233,7 @@ func (v List) TypeName() string { return "list" }
 func (v List) Inspect() string {
 	parts := make([]string, 0, len(v.Elements))
 	for _, el := range v.Elements {
-		parts = append(parts, el.Inspect())
+		parts = append(parts, inspectInsideContainer(el, 0))
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
 }
@@ -247,7 +247,21 @@ type Dict struct {
 }
 
 func (v Dict) TypeName() string { return "dict" }
-func (v Dict) Inspect() string  { return "{...}" }
+func (v Dict) Inspect() string {
+	keys := make([]string, 0, len(v.Entries))
+	for k := range v.Entries {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		entry := v.Entries[k]
+		kStr := inspectInsideContainer(entry.Key, 0)
+		vStr := inspectInsideContainer(entry.Value, 0)
+		parts = append(parts, kStr+": "+vStr)
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
+}
 
 type DictEntry struct {
 	Key   Value
@@ -266,10 +280,78 @@ func (v Set) TypeName() string { return "set" }
 func (v Set) Inspect() string {
 	parts := make([]string, 0, len(v.Elements))
 	for _, entry := range v.Elements {
-		parts = append(parts, entry.Value.Inspect())
+		parts = append(parts, inspectInsideContainer(entry.Value, 0))
 	}
 	sort.Strings(parts)
 	return "set{" + strings.Join(parts, ", ") + "}"
+}
+
+const maxInspectDepth = 30
+
+func inspectInsideContainer(v Value, depth int) string {
+	if depth > maxInspectDepth {
+		return `"<cycle>"`
+	}
+	switch x := v.(type) {
+	case String:
+		return jsonQuoteString(x.Value)
+	case List:
+		parts := make([]string, 0, len(x.Elements))
+		for _, el := range x.Elements {
+			parts = append(parts, inspectInsideContainer(el, depth+1))
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case Dict:
+		keys := make([]string, 0, len(x.Entries))
+		for k := range x.Entries {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			entry := x.Entries[k]
+			kStr := inspectInsideContainer(entry.Key, depth+1)
+			vStr := inspectInsideContainer(entry.Value, depth+1)
+			parts = append(parts, kStr+": "+vStr)
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	case Set:
+		parts := make([]string, 0, len(x.Elements))
+		for _, entry := range x.Elements {
+			parts = append(parts, inspectInsideContainer(entry.Value, depth+1))
+		}
+		sort.Strings(parts)
+		return "set{" + strings.Join(parts, ", ") + "}"
+	}
+	return v.Inspect()
+}
+
+func jsonQuoteString(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 2)
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			if r < 0x20 {
+				fmt.Fprintf(&b, `\u%04x`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 type SetEntry struct {
@@ -635,6 +717,10 @@ type BytecodeClass struct {
 	StaticMetadata      map[string][]FunctionMetadata
 	ConstructorMetadata []FunctionMetadata
 	Immutable           bool
+	// True for the class value passed to a class decorator so
+	// calling the captured class from inside the decorator's
+	// closure bypasses the swap and doesn't recurse.
+	Raw bool
 	// DefLine / DefColumn capture the source position of the
 	// class declaration, surfaced by reflect.location.
 	DefLine   int64
@@ -896,6 +982,11 @@ type Interface struct {
 	TypeParameters []string
 	Parents        []*Interface
 	Methods        []*ast.FunctionSignature
+	// Default method implementations and declared properties from
+	// the interface body. Implementing classes inherit non-overridden
+	// defaults and gain declared fields automatically.
+	Defaults []*ast.FunctionStatement
+	Fields   []*ast.DeclarationStatement
 }
 
 func (v *Interface) TypeName() string { return "interface" }
@@ -911,6 +1002,9 @@ type Instance struct {
 	// sweep). The flag is one-way; once set, neither the sweep nor
 	// a subsequent `del` will invoke the destructor again.
 	Destroyed bool
+	// Extra class names checked by `instanceof` on top of the
+	// regular parent chain; set by class-decorator typed delegation.
+	ExtraTypeNames []string
 }
 
 func (v *Instance) TypeName() string { return v.Class.Name }

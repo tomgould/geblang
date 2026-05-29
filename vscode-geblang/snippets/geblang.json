@@ -161,6 +161,37 @@
         ],
         "description": "@test-decorated method"
     },
+    "@abstract class": {
+        "prefix": "abstractclass",
+        "body": [
+            "@abstract",
+            "class ${1:Name} {",
+            "\tfunc ${1:Name}() {}",
+            "$0",
+            "}"
+        ],
+        "description": "Abstract class - direct instantiation throws RuntimeError"
+    },
+    "@abstract method": {
+        "prefix": "abstractmethod",
+        "body": [
+            "@abstract",
+            "func ${1:name}(${2:params}): ${3:returnType} { return ${4:default}; }"
+        ],
+        "description": "Abstract method - subclasses must override or class becomes abstract"
+    },
+    "Interface with default method": {
+        "prefix": "interfacedefault",
+        "body": [
+            "interface ${1:Name} {",
+            "\t${2:string} ${3:property};",
+            "\tfunc ${4:method}(${5:params}): ${6:returnType} {",
+            "\t\t${0:/* default body */}",
+            "\t}",
+            "}"
+        ],
+        "description": "Interface with property and default method body"
+    },
     "assertThrows": {
         "prefix": "assertThrows",
         "body": [

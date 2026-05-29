@@ -221,6 +221,19 @@ func (l *stdlibModuleLoader) CallParentInModule(module string, className string,
 	return vm.CallMethodAs(className, instance, methodName, args)
 }
 
+func (l *stdlibModuleLoader) LookupModuleInterface(module, name string) (bytecode.InterfaceInfo, bool) {
+	chunk, ok := l.chunks[module]
+	if !ok {
+		return bytecode.InterfaceInfo{}, false
+	}
+	for _, iface := range chunk.Interfaces {
+		if strings.EqualFold(iface.Name, name) {
+			return iface, true
+		}
+	}
+	return bytecode.InterfaceInfo{}, false
+}
+
 func (l *stdlibModuleLoader) FindFunctionByName(name string) (runtime.Value, bool) {
 	for _, module := range l.modules {
 		if module == nil {
@@ -379,6 +392,27 @@ func runParity(t *testing.T, source string, want string) {
 	if want != "" && evOut.String() != want {
 		t.Errorf("wrong output: got %q, want %q", evOut.String(), want)
 	}
+}
+
+// TestParityContainerInspectIsJSONLike pins the Inspect output for
+// dicts, lists, and sets across both backends. Strings inside a
+// container are JSON-quoted; top-level strings stay unquoted to
+// match the existing io.println contract.
+func TestParityContainerInspectIsJSONLike(t *testing.T) {
+	runParity(t, `import io;
+io.println({"name": "Ada", "age": 36});
+io.println(["a", "b", 1, true, null]);
+io.println({"nested": {"a": [1, 2], "b": "x"}});
+io.println("plain");
+io.println(42);
+io.println(["with \"quote\""]);
+`, `{"age": 36, "name": "Ada"}
+["a", "b", 1, true, null]
+{"nested": {"a": [1, 2], "b": "x"}}
+plain
+42
+["with \"quote\""]
+`)
 }
 
 func TestParityArithmetic(t *testing.T) {
@@ -4034,7 +4068,7 @@ let diff = collections.differenceBy(words, exclude, func(string s): string { ret
 let inter = collections.intersectionBy(words, exclude, func(string s): string { return s[0]; });
 io.println(diff);
 io.println(inter);
-`, "[banana]\n[apple, cherry, avocado]\n")
+`, "[\"banana\"]\n[\"apple\", \"cherry\", \"avocado\"]\n")
 }
 
 func TestParityCollectionsZipWith(t *testing.T) {
@@ -4113,7 +4147,7 @@ import collections;
 let g = {"a": ["b", "c"], "b": ["d"], "c": ["d"], "d": []};
 let r = collections.bfs(g, "a");
 io.println(r);
-`, "[a, b, c, d]\n")
+`, "[\"a\", \"b\", \"c\", \"d\"]\n")
 }
 
 func TestParityCollectionsBFSChain(t *testing.T) {
@@ -4122,7 +4156,7 @@ import collections;
 let g = {"a": ["b"], "b": ["c"], "c": []};
 io.println(collections.bfs(g, "a"));
 io.println(collections.bfs(g, "c"));
-`, "[a, b, c]\n[c]\n")
+`, "[\"a\", \"b\", \"c\"]\n[\"c\"]\n")
 }
 
 func TestParityCollectionsDFS(t *testing.T) {
@@ -4131,7 +4165,7 @@ import collections;
 let g = {"a": ["b", "c"], "b": ["d"], "c": ["d"], "d": []};
 let r = collections.dfs(g, "a");
 io.println(r);
-`, "[a, b, d, c]\n")
+`, "[\"a\", \"b\", \"d\", \"c\"]\n")
 }
 
 func TestParityCollectionsDFSChain(t *testing.T) {
@@ -4139,7 +4173,7 @@ func TestParityCollectionsDFSChain(t *testing.T) {
 import collections;
 let g = {"a": ["b"], "b": ["c"], "c": []};
 io.println(collections.dfs(g, "a"));
-`, "[a, b, c]\n")
+`, "[\"a\", \"b\", \"c\"]\n")
 }
 
 func TestParityCollectionsTopologicalSort(t *testing.T) {
@@ -4148,7 +4182,7 @@ import collections;
 let g = {"a": ["b", "c"], "b": ["d"], "c": ["d"], "d": []};
 let r = collections.topologicalSort(g);
 io.println(r);
-`, "[a, b, c, d]\n")
+`, "[\"a\", \"b\", \"c\", \"d\"]\n")
 }
 
 func TestParityCollectionsTopologicalSortChain(t *testing.T) {
@@ -4156,7 +4190,7 @@ func TestParityCollectionsTopologicalSortChain(t *testing.T) {
 import collections;
 let g = {"a": ["b"], "b": ["c"], "c": []};
 io.println(collections.topologicalSort(g));
-`, "[a, b, c]\n")
+`, "[\"a\", \"b\", \"c\"]\n")
 }
 
 func TestParityCollectionsTopologicalSortCycleError(t *testing.T) {
@@ -4172,7 +4206,7 @@ import collections;
 let g = {"a": ["b", "c"], "b": ["d"], "c": ["d"], "d": []};
 io.println(collections.shortestPath(g, "a", "d"));
 io.println(collections.shortestPath(g, "a", "a"));
-`, "[a, b, d]\n[a]\n")
+`, "[\"a\", \"b\", \"d\"]\n[\"a\"]\n")
 }
 
 func TestParityCollectionsShortestPathUnreachable(t *testing.T) {
@@ -4189,7 +4223,7 @@ func TestParityCollectionsShortestPathChain(t *testing.T) {
 import collections;
 let g = {"a": ["b"], "b": ["c"], "c": []};
 io.println(collections.shortestPath(g, "a", "c"));
-`, "[a, b, c]\n")
+`, "[\"a\", \"b\", \"c\"]\n")
 }
 
 func TestParityMarkdownRenderHtml(t *testing.T) {
@@ -5798,6 +5832,393 @@ io.println(l.name);
 	}
 }
 
+// TestParityClassDecoratorPatterns covers the three class-decorator
+// shapes: register-in-place (return cls), swap-to-another-class
+// (return DifferentClass), and wrap-as-callable (return a closure
+// that becomes the new constructor). Prior to the fix the VM
+// silently ignored swaps and both engines rejected callable returns.
+func TestParityClassDecoratorPatterns(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+
+func register(any cls): any {
+    io.println("[register] " + reflect.className(cls));
+    return cls;
+}
+
+@register
+class Service {
+    string name;
+    func Service(string n) { this.name = n; }
+}
+
+io.println(Service("alpha").name);
+
+class Replacement {
+    string label;
+    func Replacement(string n) { this.label = "replaced:" + n; }
+    func describe(): string { return this.label; }
+}
+
+func swap(any cls): any { return Replacement; }
+
+@swap
+class Original {
+    func Original(string n) {}
+    func describe(): string { return "original"; }
+}
+
+io.println(Original("ada").describe());
+
+func wrap(any cls): any {
+    return func(string n): any {
+        io.println("[wrap] " + n);
+        return cls(n + "!");
+    };
+}
+
+@wrap
+class Greeter {
+    string greeting;
+    func Greeter(string n) { this.greeting = "Hello, " + n; }
+    func say(): string { return this.greeting; }
+}
+
+io.println(Greeter("Ada").say());
+`, `[register] Service
+alpha
+replaced:ada
+[wrap] Ada
+Hello, Ada!
+`)
+}
+
+// TestParityCrossModuleInterfaceDefaults covers interface default
+// method bodies and property declarations when the interface lives
+// in a different module than the implementing class.
+func TestParityCrossModuleInterfaceDefaults(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "iface.gb"), []byte(`module iface;
+export interface Greetable {
+    string name;
+    int age;
+    func greet(): string {
+        return "hello, " + this.name + " (" + (this.age as string) + ")";
+    }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write iface: %v", err)
+	}
+
+	source := `import io;
+import iface;
+
+class User implements iface.Greetable {
+    func User(string n, int a) { this.name = n; this.age = a; }
+}
+
+class Loud implements iface.Greetable {
+    func Loud(string n, int a) { this.name = n; this.age = a; }
+    func greet(): string { return "HELLO, " + this.name; }
+}
+
+io.println(User("ada", 36).greet());
+io.println(Loud("bo", 4).greet());
+`
+
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	want := "hello, ada (36)\nHELLO, bo\n"
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: unexpected error: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: got %q, want %q", evOut.String(), want)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: unexpected error: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: got %q, want %q", vmOut.String(), want)
+	}
+}
+
+// TestParityInterfaceDefaults covers interface default method bodies:
+// classes that don't override inherit the default; classes that do
+// override get their own.
+func TestParityInterfaceDefaults(t *testing.T) {
+	runParity(t, `import io;
+
+interface Greetable {
+    string name;
+    func greet(): string { return "hello, " + this.name; }
+    func upper(): string;
+}
+
+class User implements Greetable {
+    func User(string n) { this.name = n; }
+    func upper(): string { return this.name.upper(); }
+}
+
+class Loud implements Greetable {
+    func Loud(string n) { this.name = n; }
+    func greet(): string { return "HELLO, " + this.name; }
+    func upper(): string { return this.name.upper(); }
+}
+
+let u = User("ada");
+io.println(u.greet());
+io.println(u.upper());
+
+let l = Loud("ada");
+io.println(l.greet());
+`, "hello, ada\nADA\nHELLO, ada\n")
+}
+
+// TestParityInterfaceDiamondConflict covers the compile-time error
+// when two implemented interfaces both provide a default for the
+// same method and the class doesn't override.
+func TestParityInterfaceDiamondConflict(t *testing.T) {
+	source := `import io;
+interface A { func foo(): string { return "A"; } }
+interface B { func foo(): string { return "B"; } }
+class C implements A, B {}
+io.println(C().foo());
+`
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	var evOut bytes.Buffer
+	ev := evaluator.New(&evOut)
+	if _, err := ev.Eval(program); err == nil {
+		t.Fatalf("evaluator: expected ambiguous-default error, got nil")
+	} else if !strings.Contains(err.Error(), "multiple defaults") {
+		t.Fatalf("evaluator: error should mention multiple defaults: %v", err)
+	}
+
+	_, err := bytecode.Compile(program, []byte(source), "parity")
+	if err == nil {
+		t.Fatalf("bytecode: expected ambiguous-default error, got nil")
+	}
+	if !strings.Contains(err.Error(), "multiple defaults") {
+		t.Fatalf("bytecode: error should mention multiple defaults: %v", err)
+	}
+}
+
+// TestParityInterfaceDiamondOverride covers the same diamond where
+// the class explicitly overrides the conflicting method.
+func TestParityInterfaceDiamondOverride(t *testing.T) {
+	runParity(t, `import io;
+interface A { func foo(): string { return "A"; } }
+interface B { func foo(): string { return "B"; } }
+class C implements A, B {
+    func foo(): string { return "C"; }
+}
+io.println(C().foo());
+`, "C\n")
+}
+
+// TestParityFieldCallableDecorators covers callable field decorators:
+// every assignment (including constructor) flows through the decorator
+// chain bottom-up; transforms can reshape the value, or throw to reject.
+func TestParityFieldCallableDecorators(t *testing.T) {
+	runParity(t, `import io;
+
+func upper(string v): string { return v.upper(); }
+func prefix(string p, string v): string { return p + v; }
+func minLen(int min, string v): string {
+    if (v.length() < min) { throw RuntimeError("too short"); }
+    return v;
+}
+
+class User {
+    @prefix("hello-")
+    @minLen(2)
+    @upper
+    string name;
+    func User(string n) { this.name = n; }
+}
+
+let u = User("ada");
+io.println(u.name);
+
+u.name = "bo";
+io.println(u.name);
+
+try { u.name = "x"; io.println("FAIL"); }
+catch (RuntimeError e) { io.println(e.message); }
+`, "hello-ADA\nhello-BO\ntoo short\n")
+}
+
+// TestParityClassDecoratorTypedDelegation covers the typed-delegation
+// pattern: when a wrap closure on @storage returns an instance of
+// a different class, the returned instance still satisfies
+// `instanceof OriginalClass` via an auto-extended type list.
+func TestParityClassDecoratorTypedDelegation(t *testing.T) {
+	runParity(t, `import io;
+
+class JsonRepository {
+    string a;
+    func JsonRepository(string a) { this.a = a; }
+    func describe(): string { return "json:" + this.a; }
+}
+
+func storage(any cls): any {
+    return func(string a): any { return JsonRepository(a); };
+}
+
+@storage
+class UserRepository {
+    func UserRepository(string a) {}
+}
+
+let ur = UserRepository("ada");
+io.println(ur instanceof UserRepository);
+io.println(ur instanceof JsonRepository);
+io.println(ur.describe());
+`, "true\ntrue\njson:ada\n")
+}
+
+// TestParityAbstractDecorator covers the @abstract class/method
+// decorator. A class is abstract when either:
+//   - it carries @abstract on the class itself, or
+//   - it (or an ancestor) has a method decorated @abstract and no
+//     more-derived class provides a concrete override.
+// Direct instantiation of an abstract class throws RuntimeError;
+// concrete subclasses instantiate normally.
+func TestParityAbstractDecorator(t *testing.T) {
+	runParity(t, `import io;
+
+@abstract
+class AbstractBase {
+    func name(): string { return "base"; }
+}
+class Derived extends AbstractBase {}
+
+class Shape {
+    @abstract
+    func area(): int { return 0; }
+}
+class Circle extends Shape {
+    int r;
+    func Circle(int r) { this.r = r; }
+    func area(): int { return 3 * this.r * this.r; }
+}
+class Square extends Shape {}
+
+try { AbstractBase(); io.println("FAIL: abstract class instantiated"); }
+catch (RuntimeError e) { io.println(e.message); }
+
+io.println(Derived().name());
+
+try { Shape(); io.println("FAIL: shape instantiated"); }
+catch (RuntimeError e) { io.println(e.message); }
+
+io.println(Circle(2).area());
+
+try { Square(); io.println("FAIL: square instantiated"); }
+catch (RuntimeError e) { io.println(e.message); }
+`, `cannot instantiate abstract class AbstractBase
+base
+cannot instantiate Shape: abstract method Shape.area is not implemented
+12
+cannot instantiate Square: abstract method Shape.area is not implemented
+`)
+}
+
+// TestParityCrossModuleInheritedThrow covers the fix where a method
+// inherited from a parent class in another module threw an error
+// that was silently swallowed by the bytecode cross-module dispatch
+// fallback - the loader's error was treated as "method not found"
+// rather than as a real throw, so try/catch never saw it.
+func TestParityCrossModuleInheritedThrow(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "probemod.gb"), []byte(`module probemod;
+export class Base {
+    func Base() {}
+    func ok(): int { return 42; }
+    func boom(): void { throw RuntimeError("bang"); }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write probemod: %v", err)
+	}
+
+	source := `import io;
+import probemod;
+
+class Sub extends probemod.Base {
+    func go(): void {
+        io.println(this.ok());
+        try {
+            this.boom();
+            io.println("after-try");
+        } catch (Error e) {
+            io.println("caught: " + e.message);
+        }
+        io.println("end");
+    }
+}
+Sub().go();
+`
+
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	want := "42\ncaught: bang\nend\n"
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: unexpected error: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: got %q, want %q", evOut.String(), want)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: unexpected error: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: got %q, want %q", vmOut.String(), want)
+	}
+}
+
 // TestParityAliasedNativeImport verifies the bytecode compiler now
 // recognises aliased native imports - calls like `natpath.clean(...)`
 // dispatch to the canonical `path.clean(...)` on both backends without
@@ -6423,7 +6844,7 @@ func TestParityCharRange(t *testing.T) {
 	runParity(t, `import io;
 io.println('a'..'e');
 io.println('a'..<'e');
-`, "[a, b, c, d, e]\n[a, b, c, d]\n")
+`, "[\"a\", \"b\", \"c\", \"d\", \"e\"]\n[\"a\", \"b\", \"c\", \"d\"]\n")
 }
 
 // TestParityListToListNoop verifies list.toList() is a no-op pass-through,
@@ -7260,7 +7681,7 @@ io.println(Child().name());
 
 // TestParityDictKeyFastPath guards the VM's `dictKeyFor` helper
 // (a fast-path wrapper around native.DictKey for the common String
-// and SmallInt key types). Hot dict ops (`dict[k]`, `dict.get`,
+// and SmallInt key types). Hot dict ops (`dict[\"k\"]`, `dict.get`,
 // `dict.contains`) use it; mixed key types still produce the
 // canonical key string via native.DictKey.
 func TestParityDictKeyFastPath(t *testing.T) {

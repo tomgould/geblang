@@ -755,14 +755,66 @@ func (p *Parser) parseInterfaceStatement() ast.Statement {
 		if p.curTokenIs(token.RBrace) || p.curTokenIs(token.EOF) {
 			break
 		}
-		if !p.curTokenIs(token.Func) {
-			p.errorf(p.curToken, "expected interface method signature, got %s", p.curToken.Type)
-			p.synchronize()
+		if p.curTokenIs(token.Func) {
+			p.parseInterfaceMember(stmt)
 			continue
 		}
-		stmt.Methods = append(stmt.Methods, p.parseFunctionSignature())
+		if p.canStartFieldDeclaration() {
+			if field := p.parseInterfaceField(); field != nil {
+				stmt.Fields = append(stmt.Fields, field)
+			}
+			continue
+		}
+		p.errorf(p.curToken, "expected interface method signature, default method, or field, got %s", p.curToken.Type)
+		p.synchronize()
 	}
 	return stmt
+}
+
+func (p *Parser) parseInterfaceMember(stmt *ast.InterfaceStatement) {
+	startToken := p.curToken
+	startDoc := p.curToken.Doc
+	if !p.expectPeekIdentifierName() {
+		return
+	}
+	name := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	generics := p.parseGenericNames()
+	params := p.parseParameterList()
+	var returnType *ast.TypeRef
+	if p.peekTokenIs(token.Colon) {
+		p.nextToken()
+		p.nextToken()
+		returnType = p.parseTypeRefFromCurrent()
+	}
+	if p.peekTokenIs(token.LBrace) {
+		p.nextToken()
+		body := p.parseBlockStatement()
+		stmt.Defaults = append(stmt.Defaults, &ast.FunctionStatement{
+			Token: startToken, Doc: startDoc, Name: name,
+			Generics: generics, Parameters: params, ReturnType: returnType, Body: body,
+		})
+		return
+	}
+	p.expectPeek(token.Semicolon)
+	stmt.Methods = append(stmt.Methods, &ast.FunctionSignature{
+		Token: startToken, Doc: startDoc, Name: name,
+		Generics: generics, Parameters: params, ReturnType: returnType,
+	})
+}
+
+func (p *Parser) canStartFieldDeclaration() bool {
+	return p.curTokenIs(token.Question) || isTypeStartToken(p.curToken.Type)
+}
+
+func (p *Parser) parseInterfaceField() *ast.DeclarationStatement {
+	decl := &ast.DeclarationStatement{Token: p.curToken}
+	decl.Type = p.parseTypeRefFromCurrent()
+	if !p.expectPeek(token.Ident) {
+		return nil
+	}
+	decl.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	p.expectPeek(token.Semicolon)
+	return decl
 }
 
 func (p *Parser) parseIfStatement() ast.Statement {

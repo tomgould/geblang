@@ -6982,7 +6982,7 @@ io.println(collections.bfs(g, "d"));
 	if _, err := evaluator.New(&out).Eval(program); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got, want := out.String(), "[a, b, c, d]\n[d]\n"; got != want {
+	if got, want := out.String(), "[\"a\", \"b\", \"c\", \"d\"]\n[\"d\"]\n"; got != want {
 		t.Fatalf("output: got %q, want %q", got, want)
 	}
 }
@@ -7002,7 +7002,7 @@ io.println(collections.dfs(g, "a"));
 	if _, err := evaluator.New(&out).Eval(program); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got, want := out.String(), "[a, b, d, c]\n"; got != want {
+	if got, want := out.String(), "[\"a\", \"b\", \"d\", \"c\"]\n"; got != want {
 		t.Fatalf("output: got %q, want %q", got, want)
 	}
 }
@@ -7022,7 +7022,7 @@ io.println(collections.topologicalSort(g));
 	if _, err := evaluator.New(&out).Eval(program); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got, want := out.String(), "[a, b, c, d]\n"; got != want {
+	if got, want := out.String(), "[\"a\", \"b\", \"c\", \"d\"]\n"; got != want {
 		t.Fatalf("output: got %q, want %q", got, want)
 	}
 }
@@ -7063,7 +7063,7 @@ io.println(collections.shortestPath(g, "d", "a"));
 	if _, err := evaluator.New(&out).Eval(program); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got, want := out.String(), "[a, b, d]\n[a]\nnull\n"; got != want {
+	if got, want := out.String(), "[\"a\", \"b\", \"d\"]\n[\"a\"]\nnull\n"; got != want {
 		t.Fatalf("output: got %q, want %q", got, want)
 	}
 }
