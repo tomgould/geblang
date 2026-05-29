@@ -5606,6 +5606,8 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 		}
 	case "decimal":
 		switch v := value.(type) {
+		case runtime.SmallInt:
+			return native.SmallIntToDecimal(v), nil
 		case runtime.Int:
 			return intToDecimal(v), nil
 		case runtime.Float:
@@ -5615,6 +5617,8 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 		}
 	case "float":
 		switch v := value.(type) {
+		case runtime.SmallInt:
+			return runtime.Float{Value: float64(v.Value)}, nil
 		case runtime.Int:
 			f, _ := new(big.Rat).SetInt(v.Value).Float64()
 			return runtime.Float{Value: f}, nil

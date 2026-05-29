@@ -7519,6 +7519,23 @@ io.println(((-3.99) as decimal) as int);
 `, "2\n-2\n2\n1\n0\n3\n-3\n")
 }
 
+// TestParitySmallIntCastsToDecimalAndFloat guards a regression where
+// the evaluator's `int as decimal` and `int as float` paths only
+// handled runtime.Int and rejected runtime.SmallInt with
+// "cannot cast int to decimal". Method results that produce SmallInt
+// (list.length, string.length, range iterators, ...) are the common
+// trigger.
+func TestParitySmallIntCastsToDecimalAndFloat(t *testing.T) {
+	runParity(t, `import io;
+let xs = ["a", "b", "c"];
+io.println(xs.length() as decimal);
+io.println(xs.length() as float);
+any v = xs.length();
+io.println(v as decimal);
+io.println(v as float);
+`, "3.0000000000\n3\n3.0000000000\n3\n")
+}
+
 // TestParityCrossTypeCastsForBytesAndCollections guards the 1.0.2
 // cast extensions: `string <-> bytes` round-trip UTF-8 (errors on
 // invalid byte sequences); `list as set<T>` de-duplicates; and
