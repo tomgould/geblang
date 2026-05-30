@@ -909,5 +909,57 @@
             "$0"
         ],
         "description": "ffi: wrap a C handle in a Geblang class with destructor (1.6.0)"
+    },
+    "llm.client.chat": {
+        "prefix": "llmchat",
+        "body": [
+            "let ${1:client} = llm.client({",
+            "\t\"provider\": \"${2|openai,anthropic,bedrock|}\",",
+            "\t\"apiKey\":   ${3:sys.getenv(\"API_KEY\") as string}",
+            "});",
+            "let ${4:resp} = ${1:client}.chat([",
+            "\t{\"role\": \"user\", \"content\": ${5:\"Hello\"}}",
+            "], {\"model\": \"${6:claude-opus-4-8}\", \"maxTokens\": ${7:1024}});",
+            "$0"
+        ],
+        "description": "llm.client + chat completion"
+    },
+    "llm.client.embed": {
+        "prefix": "llmembed",
+        "body": [
+            "let ${1:resp} = ${2:client}.embed(${3:text}, {\"model\": \"${4:text-embedding-3-small}\"});",
+            "let ${5:vector} = ${1:resp}[\"vector\"] as list<any>;",
+            "$0"
+        ],
+        "description": "llm: embed text into a vector"
+    },
+    "messaging.connect.sqs": {
+        "prefix": "messagingsqs",
+        "body": [
+            "let ${1:queue} = messaging.connect({",
+            "\t\"driver\":    \"sqs\",",
+            "\t\"region\":    \"${2:us-east-1}\",",
+            "\t\"queueUrl\":  ${3:queueUrl},",
+            "\t\"accessKey\": ${4:accessKey},",
+            "\t\"secretKey\": ${5:secretKey}",
+            "});",
+            "$0"
+        ],
+        "description": "messaging.connect AWS SQS queue"
+    },
+    "messaging.topic.sns": {
+        "prefix": "messagingsns",
+        "body": [
+            "let ${1:topic} = messaging.topic({",
+            "\t\"driver\":    \"sns\",",
+            "\t\"region\":    \"${2:us-east-1}\",",
+            "\t\"topicArn\":  ${3:topicArn},",
+            "\t\"queueUrl\":  ${4:queueUrl},",
+            "\t\"accessKey\": ${5:accessKey},",
+            "\t\"secretKey\": ${6:secretKey}",
+            "});",
+            "$0"
+        ],
+        "description": "messaging.topic AWS SNS topic (subscribe via paired SQS queue)"
     }
 }
