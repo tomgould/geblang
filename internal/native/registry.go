@@ -125,7 +125,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"acos": {}, "atan": {}, "atan2": {}, "log": {}, "log10": {}, "exp": {},
 		"pow": {}, "pi": {}, "e": {},
 		"log2": {}, "trunc": {}, "sign": {}, "cbrt": {}, "hypot": {},
-		"inf": {}, "nan": {}, "isNaN": {}, "isInf": {},
+		"inf": {}, "nan": {}, "isNaN": {}, "isInf": {}, "isPrime": {},
 		"median": {}, "percentile": {}, "quantile": {}, "mode": {},
 	},
 	"sys": {

@@ -2950,6 +2950,24 @@ io.println(math.isInf(1.0));
 `, "3\n3\n-3\n-1\n0\n1\n3\n5\ntrue\ntrue\nfalse\nfalse\n")
 }
 
+// TestParityMathIsPrime covers the small / known-prime cases plus
+// negative, zero, one, and the edge between Int and SmallInt.
+func TestParityMathIsPrime(t *testing.T) {
+	runParity(t, `import io;
+import math;
+io.println(math.isPrime(2));
+io.println(math.isPrime(3));
+io.println(math.isPrime(4));
+io.println(math.isPrime(17));
+io.println(math.isPrime(97));
+io.println(math.isPrime(1));
+io.println(math.isPrime(0));
+io.println(math.isPrime(-7));
+io.println(math.isPrime(1000003));
+io.println(math.isPrime(1000004));
+`, "true\ntrue\nfalse\ntrue\ntrue\nfalse\nfalse\nfalse\ntrue\nfalse\n")
+}
+
 func TestParitySysInfo(t *testing.T) {
 	runParity(t, `import io;
 import sys;
@@ -7517,6 +7535,34 @@ io.println(false as int);
 io.println((3.99 as decimal) as int);
 io.println(((-3.99) as decimal) as int);
 `, "2\n-2\n2\n1\n0\n3\n-3\n")
+}
+
+// TestParityFunctionCallDoesNotBindToCaseFoldedClass guards a
+// bytecode-compiler regression where `view(args)` in a module that
+// also exports a `View` class was dispatching to the class
+// constructor because identifier lookup was case-insensitive. The
+// evaluator was always case-sensitive; the VM is now too.
+func TestParityFunctionCallDoesNotBindToCaseFoldedClass(t *testing.T) {
+	runParity(t, `import io;
+
+class View {
+    string label;
+    func View(string label, list<int> nums) {
+        this.label = label + ":" + (nums.length() as string);
+    }
+}
+
+func view(string a, string b, dict<string, any> opts = {}): string {
+    return "fn:" + a + ":" + b + ":" + (opts.keys().length() as string);
+}
+
+func wrap(string a, string b): string {
+    return view(a, b, {"k": 1});
+}
+
+io.println(wrap("x", "y"));
+io.println(View("hello", [1, 2, 3]).label);
+`, "fn:x:y:1\nhello:3\n")
 }
 
 // TestParitySmallIntCastsToDecimalAndFloat guards a regression where

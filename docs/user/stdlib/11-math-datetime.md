@@ -145,6 +145,19 @@ io.println(math.isNaN(42.0f)); # false
 io.println(inf > 1e308f);      # true
 ```
 
+`math.isPrime(n)` tests an integer for primality. Returns `false` for
+`n < 2`. Uses Baillie-PSW plus 20 rounds of Miller-Rabin under the
+hood, so it's deterministic for inputs that fit in an `int64` and
+effectively certain for larger values.
+
+```gb
+io.println(math.isPrime(2));       # true
+io.println(math.isPrime(97));      # true
+io.println(math.isPrime(1000003)); # true
+io.println(math.isPrime(1));       # false
+io.println(math.isPrime(561));     # false (Carmichael number)
+```
+
 ### Statistics
 
 Aggregate stats over a numeric list. `percentile` / `quantile` use R's

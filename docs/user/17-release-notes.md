@@ -160,6 +160,72 @@ walkthrough.
   `__set`, `__call`, `__eq`, `__read`, `__write`, `__close`,
   `__iter`, ...). The legacy prefix-and-suffix forms still work
   so existing tests and scripts keep running.
+- Parameter-level metadata decorators: any name attached to a
+  function or constructor parameter (`@SomeName(args)`) surfaces
+  through `reflect.parameters(fn)` as a `decorators` key per
+  parameter dict, mirroring the existing class- and method-
+  decorator metadata. Pure metadata; the runtime never invokes
+  them. Frameworks read the structure to drive dispatch.
+- Bytecode VM identifier dispatch is now case-sensitive at the
+  call site, matching the evaluator. A module that exports both
+  a `view` function and a `View` class now resolves each call
+  correctly; previously `view(args)` could bind to the class
+  constructor and surface as "no matching overload for View" at
+  runtime.
+
+### Cross-module
+
+- Interface default methods and property declarations
+  (introduced earlier in 1.5.0) now propagate across module
+  boundaries. A class can `implements donor.Greetable` and
+  inherit a default `greet()` plus a declared `name` field.
+- `reflect.fields` returns full type info for class references
+  passed across modules; the receiving module's parity tests
+  now see declared types and nullability rather than the
+  collapsed `any` / non-nullable fallback.
+- Two-hop class extension: `class Leaf extends middle.Middle`
+  where `Middle extends donor.Base` resolves inherited methods
+  through both module hops. Inherited `throw` calls propagate
+  to the caller's `try / catch` across the same chain.
+
+### Reflection
+
+- `reflect.classes()` enumerates every class declared in the
+  current program (user classes plus imports). Useful for
+  framework discovery passes that scan for `@OnMessage`, `@Job`,
+  `@Scheduled`, or other class-level decorators without
+  forcing the user to register handlers explicitly.
+
+### Stdlib
+
+- `math.isPrime(n)` tests primality on arbitrary-precision
+  integers. Backed by Baillie-PSW plus Miller-Rabin (20
+  rounds), so deterministic for inputs that fit in an `int64`
+  and effectively certain for larger values. Returns `false`
+  for `n < 2` including negatives.
+
+### Errors
+
+- "Unknown method" now raises a catchable `RuntimeError`
+  carrying the receiver class and missing method name; a
+  `try / catch (RuntimeError e)` block reaches it on both
+  backends. Previously the bytecode VM dropped the message on
+  the floor for cross-module dispatch.
+
+### Engine parity
+
+- Evaluator widens `SmallInt` to `decimal` and `float` on `as`
+  casts. Method results like `list.length()` produce the
+  compact `SmallInt`; the bytecode VM handled the widening
+  but the evaluator only matched the big-integer variant,
+  surfacing as "cannot cast int to decimal" in `geblang test`
+  runs where the same code worked under `geblang run`.
+
+### Other
+
+- Thread-safe WebSocket writes: concurrent sends from multiple
+  Geblang tasks on the same `WebSocket` value no longer race
+  the underlying TLS / TCP write path.
 
 ## 1.4.5
 

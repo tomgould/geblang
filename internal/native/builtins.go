@@ -327,6 +327,16 @@ func registerMath(r *Registry) {
 		}
 		return runtime.Bool{Value: math.IsInf(v, 0)}, nil
 	})
+	r.Register("math", "isPrime", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("math.isPrime expects exactly one argument")
+		}
+		n, ok := IntValueToBigInt(args[0])
+		if !ok {
+			return nil, fmt.Errorf("math.isPrime: argument must be an integer")
+		}
+		return runtime.Bool{Value: n.ProbablyPrime(20)}, nil
+	})
 	r.Register("math", "median", func(args []runtime.Value) (runtime.Value, error) {
 		nums, err := mathNumericList(args, "math.median")
 		if err != nil {

@@ -8014,6 +8014,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"nan":        e.registryBuiltin("math", "nan"),
 			"isNaN":      e.registryBuiltin("math", "isNaN"),
 			"isInf":      e.registryBuiltin("math", "isInf"),
+			"isPrime":    e.registryBuiltin("math", "isPrime"),
 			"median":     e.registryBuiltin("math", "median"),
 			"percentile": e.registryBuiltin("math", "percentile"),
 			"quantile":   e.registryBuiltin("math", "quantile"),

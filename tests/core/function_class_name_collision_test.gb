@@ -1,0 +1,41 @@
+/**
+ * @title Function and class names with shared case-folded form
+ * @summary `view(...)` calls a function and `View(...)` calls a
+ *          class constructor when both exist in the same module.
+ *          The bytecode VM previously folded identifier lookups
+ *          to lowercase and bound `view(...)` to the View class,
+ *          mis-dispatching at runtime. Both backends now resolve
+ *          identifiers case-sensitively at the call site.
+ */
+import test;
+
+class View {
+    int n;
+    func View(int n) { this.n = n; }
+}
+
+func view(int n): string {
+    return "fn=" + (n as string);
+}
+
+func indirectCall(int n): string {
+    return view(n);
+}
+
+class FunctionClassNameCollisionTest extends test.Test {
+    @test
+    func directCallToLowercaseFunctionResolvesFunction(): void {
+        this.assertEquals("fn=7", view(7));
+    }
+
+    @test
+    func directCallToUppercaseClassConstructsClass(): void {
+        let v = View(42);
+        this.assertEquals(42, v.n);
+    }
+
+    @test
+    func indirectCallAcrossFunctionBoundaryResolvesFunction(): void {
+        this.assertEquals("fn=3", indirectCall(3));
+    }
+}

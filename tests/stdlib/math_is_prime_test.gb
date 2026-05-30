@@ -1,0 +1,46 @@
+/**
+ * @title math.isPrime
+ * @summary Primality test via Baillie-PSW + Miller-Rabin.
+ */
+import test;
+import math;
+
+class MathIsPrimeTest extends test.Test {
+    @test
+    func smallPrimes(): void {
+        this.assertTrue(math.isPrime(2));
+        this.assertTrue(math.isPrime(3));
+        this.assertTrue(math.isPrime(5));
+        this.assertTrue(math.isPrime(7));
+        this.assertTrue(math.isPrime(11));
+        this.assertTrue(math.isPrime(13));
+    }
+
+    @test
+    func smallComposites(): void {
+        this.assertFalse(math.isPrime(4));
+        this.assertFalse(math.isPrime(6));
+        this.assertFalse(math.isPrime(9));
+        this.assertFalse(math.isPrime(15));
+        this.assertFalse(math.isPrime(21));
+    }
+
+    @test
+    func belowTwoIsNotPrime(): void {
+        this.assertFalse(math.isPrime(0));
+        this.assertFalse(math.isPrime(1));
+        this.assertFalse(math.isPrime(-1));
+        this.assertFalse(math.isPrime(-7));
+    }
+
+    @test
+    func largerPrimesAndComposites(): void {
+        this.assertTrue(math.isPrime(97));
+        this.assertTrue(math.isPrime(1009));
+        this.assertTrue(math.isPrime(1000003));
+        this.assertFalse(math.isPrime(1000004));
+        /* Carmichael number; trial-division alone would mis-classify. */
+        this.assertFalse(math.isPrime(561));
+        this.assertFalse(math.isPrime(1729));
+    }
+}

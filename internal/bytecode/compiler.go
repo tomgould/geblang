@@ -621,8 +621,9 @@ func (c *Compiler) tryEmitTailCall(stmt *ast.ReturnStatement) (bool, error) {
 	// Skip class instantiation: `Stream(args)` is OpNew + constructor,
 	// not a direct function call. The constructor function lives in
 	// c.funcs under the class name, but tail-calling it would bypass
-	// OpNew and produce an empty value.
-	if _, isClass := c.classes[strings.ToLower(ident.Value)]; isClass {
+	// OpNew and produce an empty value. Case-sensitive: `view(args)`
+	// must NOT be treated as construction just because `View` exists.
+	if classIndex, isClass := c.classes[strings.ToLower(ident.Value)]; isClass && c.chunk.Classes[classIndex].Name == ident.Value {
 		return false, nil
 	}
 	if _, hasSpread := callSpreadIndex(call.Arguments); hasSpread {
@@ -2327,7 +2328,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 	case *ast.Identifier:
 		resolved, ok := c.resolveName(expr.Value)
 		if !ok {
-			if classIndex, found := c.classes[strings.ToLower(expr.Value)]; found && int(classIndex) < len(c.chunk.Classes) {
+			if classIndex, found := c.classes[strings.ToLower(expr.Value)]; found && int(classIndex) < len(c.chunk.Classes) && c.chunk.Classes[classIndex].Name == expr.Value {
 				classInfo := c.chunk.Classes[classIndex]
 				c.emitConstant(runtime.BytecodeClass{
 					Name:             classInfo.Name,
@@ -2666,7 +2667,11 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				c.emitAt(OpMakeError, expr.Token.Line, expr.Token.Column, classIndex, int64(len(expr.Arguments)))
 				return nil
 			}
-			if classIndex, ok := c.classes[strings.ToLower(ident.Value)]; ok {
+			/* Class dispatch is case-sensitive at the call site: when
+			 * `view(...)` is called we must not bind to a `View`
+			 * class. The compiler's internal storage keys are
+			 * lowercased but the language distinguishes case. */
+			if classIndex, ok := c.classes[strings.ToLower(ident.Value)]; ok && c.chunk.Classes[classIndex].Name == ident.Value {
 				classInfo := c.chunk.Classes[classIndex]
 				if c.classExtendsBuiltinError(classInfo) && len(classInfo.FieldNames) == 0 && len(classInfo.ConstructorIndices) == 0 {
 					if len(expr.Arguments) > 1 {
@@ -4455,7 +4460,7 @@ func (c *Compiler) expressionStaticType(expr ast.Expression) string {
 		}
 	case *ast.CallExpression:
 		if ident, ok := expr.Callee.(*ast.Identifier); ok {
-			if _, ok := c.classes[strings.ToLower(ident.Value)]; ok {
+			if classIndex, ok := c.classes[strings.ToLower(ident.Value)]; ok && c.chunk.Classes[classIndex].Name == ident.Value {
 				return ident.Value
 			}
 		}
