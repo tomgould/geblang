@@ -1,0 +1,360 @@
+module llm.bedrock;
+
+import bytes;
+import crypt;
+import datetime;
+import encoding;
+import http;
+import json;
+
+/**
+ * AWS Bedrock Runtime client. Speaks the InvokeModel REST API at
+ * `https://bedrock-runtime.<region>.amazonaws.com/model/<modelId>/
+ * invoke` and signs each request with AWS Signature V4.
+ *
+ * Bedrock hosts many model families and each accepts its own
+ * request schema. This client emits the Anthropic Messages
+ * schema (`anthropic_version` + `messages` + `max_tokens`) for
+ * chat and image analysis, which covers every Claude model
+ * available through Bedrock. Other model families (Titan, Llama,
+ * Mistral, Stable Diffusion) are not handled by this v1; callers
+ * needing them can use the raw `invoke()` helper to POST a
+ * provider-specific payload to InvokeModel directly.
+ */
+export class BedrockClient {
+    string region;
+    string accessKey;
+    string secretKey;
+    string endpoint;
+
+    func chat(list<dict<string, any>> messages, dict<string, any> opts): dict<string, any> {
+        return this.runMessages(filterSystem(messages), opts);
+    }
+
+    func embed(string text, dict<string, any> opts): dict<string, any> {
+        string model = requireString(opts, "model", "llm.bedrock.embed");
+        if (model.startsWith("amazon.titan-embed")) {
+            return this.embedTitan(text, model);
+        }
+        if (model.startsWith("cohere.embed")) {
+            return this.embedCohere(text, model, opts);
+        }
+        throw RuntimeError("llm.bedrock.embed: model '" + model
+            + "' does not match a known embedding family (amazon.titan-embed*, cohere.embed*); use invoke() with the provider-specific payload for other models.");
+    }
+
+    /* Amazon Titan Text Embeddings v1/v2. Request takes a single
+     * `inputText`; response yields the embedding vector. */
+    func embedTitan(string text, string model): dict<string, any> {
+        let resp = this.invoke(model, {"inputText": text});
+        let vec = (resp["embedding"] ?? []) as list<any>;
+        int inTok = (resp["inputTextTokenCount"] ?? 0) as int;
+        return {
+            "vector": vec,
+            "model":  model,
+            "usage": {
+                "inputTokens":  inTok,
+                "outputTokens": 0,
+                "totalTokens":  inTok
+            }
+        };
+    }
+
+    /* Cohere embed-english/embed-multilingual v3. Request takes a
+     * batch of texts plus an input_type (defaults to
+     * search_document); response wraps the vector under
+     * `embeddings.float[0]`. */
+    func embedCohere(string text, string model, dict<string, any> opts): dict<string, any> {
+        string inputType = opts.contains("inputType") ? (opts["inputType"] as string) : "search_document";
+        let resp = this.invoke(model, {
+            "texts":      [text],
+            "input_type": inputType
+        });
+        let embeddings = (resp["embeddings"] ?? {}) as dict<string, any>;
+        let floats = (embeddings["float"] ?? []) as list<any>;
+        let vec = floats.length() > 0 ? (floats[0] as list<any>) : [];
+        return {
+            "vector": vec,
+            "model":  model,
+            "usage": {
+                "inputTokens":  0,
+                "outputTokens": 0,
+                "totalTokens":  0
+            }
+        };
+    }
+
+    func analyzeImage(bytes image, string prompt, dict<string, any> opts): dict<string, any> {
+        string mime = opts.contains("mimeType") ? (opts["mimeType"] as string) : "image/png";
+        string b64 = encoding.base64Encode(bytes.toString(image));
+        list<dict<string, any>> content = [
+            {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
+            {"type": "text", "text": prompt}
+        ];
+        list<dict<string, any>> messages = [{"role": "user", "content": content}];
+        return this.runMessages(messages, opts);
+    }
+
+    func generateImage(string prompt, dict<string, any> opts): dict<string, any> {
+        string model = requireString(opts, "model", "llm.bedrock.generateImage");
+        if (model.startsWith("amazon.titan-image-")) {
+            return this.generateImageTitan(prompt, model, opts);
+        }
+        if (model.startsWith("stability.")) {
+            return this.generateImageStability(prompt, model, opts);
+        }
+        throw RuntimeError("llm.bedrock.generateImage: model '" + model
+            + "' does not match a known image-generation family (amazon.titan-image-*, stability.*); use invoke() with the provider-specific payload for other models.");
+    }
+
+    /* Amazon Titan Image Generator G1/G2. Request packs prompt +
+     * config under taskType=TEXT_IMAGE; response yields a list of
+     * base64 PNG strings. */
+    func generateImageTitan(string prompt, string model, dict<string, any> opts): dict<string, any> {
+        int n = opts.contains("n") ? (opts["n"] as int) : 1;
+        int width = opts.contains("width") ? (opts["width"] as int) : 1024;
+        int height = opts.contains("height") ? (opts["height"] as int) : 1024;
+        string quality = opts.contains("quality") ? (opts["quality"] as string) : "standard";
+        dict<string, any> payload = {
+            "taskType": "TEXT_IMAGE",
+            "textToImageParams": {"text": prompt},
+            "imageGenerationConfig": {
+                "numberOfImages": n,
+                "quality":        quality,
+                "width":          width,
+                "height":         height
+            }
+        };
+        let resp = this.invoke(model, payload);
+        return {"images": decodeBase64Images((resp["images"] ?? []) as list<any>, "png"), "model": model};
+    }
+
+    /* Stability AI SDXL family. Request takes a list of weighted
+     * text prompts + generation knobs; response returns base64
+     * artifacts. Default cfg_scale/steps/size match the public
+     * Bedrock examples. */
+    func generateImageStability(string prompt, string model, dict<string, any> opts): dict<string, any> {
+        int width = opts.contains("width") ? (opts["width"] as int) : 1024;
+        int height = opts.contains("height") ? (opts["height"] as int) : 1024;
+        int steps = opts.contains("steps") ? (opts["steps"] as int) : 30;
+        int cfgScale = opts.contains("cfgScale") ? (opts["cfgScale"] as int) : 7;
+        dict<string, any> payload = {
+            "text_prompts": [{"text": prompt, "weight": 1}],
+            "cfg_scale":    cfgScale,
+            "steps":        steps,
+            "width":        width,
+            "height":       height
+        };
+        if (opts.contains("seed")) {
+            payload["seed"] = opts["seed"];
+        }
+        let resp = this.invoke(model, payload);
+        let artifacts = (resp["artifacts"] ?? []) as list<any>;
+        list<dict<string, any>> images = [];
+        for (a in artifacts) {
+            let art = a as dict<string, any>;
+            string b64 = (art["base64"] ?? "") as string;
+            if (b64.isEmpty()) { continue; }
+            images = images.push({
+                "bytes":  encoding.base64Decode(b64),
+                "format": "png"
+            });
+        }
+        return {"images": images, "model": model};
+    }
+
+    func runMessages(list<dict<string, any>> messages, dict<string, any> opts): dict<string, any> {
+        string model = requireString(opts, "model", "llm.bedrock");
+        int maxTokens = opts.contains("maxTokens") ? (opts["maxTokens"] as int) : 1024;
+        dict<string, any> payload = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "messages":          messages,
+            "max_tokens":        maxTokens
+        };
+        if (opts.contains("system")) {
+            payload["system"] = opts["system"];
+        }
+        if (opts.contains("temperature")) {
+            payload["temperature"] = opts["temperature"];
+        }
+        if (opts.contains("topP")) {
+            payload["top_p"] = opts["topP"];
+        }
+        let resp = this.invoke(model, payload);
+        let blocks = (resp["content"] ?? []) as list<any>;
+        string text = "";
+        for (b in blocks) {
+            let block = b as dict<string, any>;
+            if ((block["type"] as string) == "text") {
+                text = text + ((block["text"] ?? "") as string);
+            }
+        }
+        let usage = (resp["usage"] ?? {}) as dict<string, any>;
+        int inTok = (usage["input_tokens"] ?? 0) as int;
+        int outTok = (usage["output_tokens"] ?? 0) as int;
+        return {
+            "content":    text,
+            "model":      model,
+            "stopReason": (resp["stop_reason"] ?? "") as string,
+            "usage": {
+                "inputTokens":  inTok,
+                "outputTokens": outTok,
+                "totalTokens":  inTok + outTok
+            }
+        };
+    }
+
+    /** Escape hatch: send any payload to InvokeModel directly.
+     *  Returns the parsed response body. Useful when the caller
+     *  needs a Bedrock model family this v1 doesn't fold into the
+     *  common shape (Titan, Llama, Stable Diffusion, etc.). */
+    func invoke(string model, dict<string, any> payload): dict<string, any> {
+        string path = "/model/" + encoding.urlEncode(model) + "/invoke";
+        string body = json.stringify(payload);
+        return this.request("POST", path, body);
+    }
+
+    func request(string method, string path, string body): dict<string, any> {
+        string host = "bedrock-runtime." + this.region + ".amazonaws.com";
+        let now = datetime.nowUnix();
+        string amzDate = datetime.format(now, "20060102T150405Z");
+        string dateStamp = amzDate.substring(0, 8);
+        string payloadHash = crypt.sha256(body);
+        dict<string, string> headers = {
+            "content-type":         "application/json",
+            "host":                 host,
+            "x-amz-content-sha256": payloadHash,
+            "x-amz-date":           amzDate
+        };
+        let canonical = canonicalRequest(method, path, "", headers, payloadHash);
+        let scope = dateStamp + "/" + this.region + "/bedrock/aws4_request";
+        let stringToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + crypt.sha256(canonical);
+        let key = signingKey(this.secretKey, dateStamp, this.region, "bedrock");
+        let signature = crypt.hmacSha256(bytes.toString(key), stringToSign);
+        string signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
+        string authHeader = "AWS4-HMAC-SHA256 Credential=" + this.accessKey + "/" + scope +
+            ",SignedHeaders=" + signedHeaders + ",Signature=" + signature;
+        let resp = http.requestWithOptions({
+            "method":  method,
+            "url":     this.endpoint + path,
+            "headers": {
+                "Content-Type":         "application/json",
+                "Host":                 host,
+                "X-Amz-Content-Sha256": payloadHash,
+                "X-Amz-Date":           amzDate,
+                "Authorization":        authHeader
+            },
+            "body": body
+        });
+        let status = resp["status"] as int;
+        if (status < 200 || status >= 300) {
+            throw RuntimeError("llm.bedrock " + method + " " + path + " failed: " +
+                (status as string) + " " + (resp["body"] as string));
+        }
+        return json.parse(resp["body"] as string) as dict<string, any>;
+    }
+}
+
+/**
+ * Build a BedrockClient. Required: `region`, `accessKey`,
+ * `secretKey`. Optional: `endpoint` (default
+ * https://bedrock-runtime.<region>.amazonaws.com).
+ */
+export func connect(dict<string, any> opts): BedrockClient {
+    if (!opts.contains("region")) {
+        throw RuntimeError("llm.bedrock: opts.region is required");
+    }
+    if (!opts.contains("accessKey")) {
+        throw RuntimeError("llm.bedrock: opts.accessKey is required");
+    }
+    if (!opts.contains("secretKey")) {
+        throw RuntimeError("llm.bedrock: opts.secretKey is required");
+    }
+    let c = BedrockClient();
+    c.region = opts["region"] as string;
+    c.accessKey = opts["accessKey"] as string;
+    c.secretKey = opts["secretKey"] as string;
+    c.endpoint = opts.contains("endpoint")
+        ? (opts["endpoint"] as string)
+        : ("https://bedrock-runtime." + c.region + ".amazonaws.com");
+    return c;
+}
+
+/* --- helpers --- */
+
+func requireString(dict<string, any> opts, string key, string label): string {
+    if (!opts.contains(key)) {
+        throw RuntimeError(label + ": opts." + key + " is required");
+    }
+    return opts[key] as string;
+}
+
+/* Map a list of base64 strings to the common-shape image dicts.
+ * Titan returns one base64 entry per image; the format is always
+ * PNG for the v1/v2 Titan models. */
+func decodeBase64Images(list<any> b64s, string format): list<dict<string, any>> {
+    list<dict<string, any>> images = [];
+    for (entry in b64s) {
+        string b64 = entry as string;
+        if (b64.isEmpty()) { continue; }
+        images = images.push({
+            "bytes":  encoding.base64Decode(b64),
+            "format": format
+        });
+    }
+    return images;
+}
+
+func filterSystem(list<dict<string, any>> messages): list<dict<string, any>> {
+    list<dict<string, any>> out = [];
+    for (m in messages) {
+        if ((m["role"] as string) != "system") {
+            out = out.push(m);
+        }
+    }
+    return out;
+}
+
+func signingKey(string secretKey, string dateStamp, string region, string service): bytes {
+    let kDate = crypt.hmacSha256Bytes("AWS4" + secretKey, dateStamp);
+    let kRegion = crypt.hmacSha256Bytes(bytes.toString(kDate), region);
+    let kService = crypt.hmacSha256Bytes(bytes.toString(kRegion), service);
+    return crypt.hmacSha256Bytes(bytes.toString(kService), "aws4_request");
+}
+
+func canonicalRequest(string method, string canonicalUri, string canonicalQuery, dict<string, string> headers, string payloadHash): string {
+    let headerNames = sortedKeys(headers);
+    string canonicalHeaders = "";
+    for (name in headerNames) {
+        canonicalHeaders = canonicalHeaders + (name as string) + ":" + headers[name as string] + "\n";
+    }
+    string signedHeaders = joinSlice(headerNames, ";");
+    return method + "\n" + canonicalUri + "\n" + canonicalQuery + "\n" +
+           canonicalHeaders + "\n" + signedHeaders + "\n" + payloadHash;
+}
+
+func sortedKeys(dict<string, string> d): list<string> {
+    list<string> out = [];
+    for (k in d.keys()) {
+        out = out.push(k as string);
+    }
+    for (let i = 1; i < out.length(); i = i + 1) {
+        let cur = out[i];
+        let j = i - 1;
+        while (j >= 0 && out[j] > cur) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = cur;
+    }
+    return out;
+}
+
+func joinSlice(list<string> parts, string sep): string {
+    string out = "";
+    for (let i = 0; i < parts.length(); i = i + 1) {
+        if (i > 0) { out = out + sep; }
+        out = out + parts[i];
+    }
+    return out;
+}

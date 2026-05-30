@@ -1,6 +1,7 @@
 module messaging;
 
 import messaging.sqs as sqs;
+import messaging.sns as sns;
 import messaging.rabbitmq as rabbitmq;
 import messaging.stomp as stomp;
 import messaging.kafka as kafka;
@@ -112,9 +113,12 @@ export func topic(dict<string, any> opts): MessageTopic {
     if (driver == "kafka") {
         return kafka.topic(opts);
     }
+    if (driver == "sns") {
+        return sns.connect(opts);
+    }
     if (driver == "sqs") {
         throw RuntimeError("messaging.topic: SQS does not support pub/sub. Use AWS SNS for fan-out; SQS subscriptions can be created as SNS topic targets.");
     }
     throw RuntimeError("messaging.topic: unknown driver " + driver +
-        " (supported: rabbitmq, stomp, activemq, kafka)");
+        " (supported: rabbitmq, stomp, activemq, kafka, sns)");
 }

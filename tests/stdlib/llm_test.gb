@@ -1,0 +1,405 @@
+/**
+ * @title llm provider-agnostic client
+ * @summary Drives `llm.client` against an in-process HTTP server
+ * that captures the outbound payload + Authorization headers and
+ * returns canned responses. Covers OpenAI, Anthropic, and Bedrock
+ * for the operations each one supports, plus the "unsupported"
+ * fail-fast paths.
+ */
+import test;
+import http;
+import io;
+import json;
+import path;
+import sys;
+import llm;
+import bytes;
+import encoding;
+
+func startMockServer(callable handler): dict<string, any> {
+    let dir = io.tempDir("llmmock_");
+    let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+        let headers = req["headers"] as dict<string, any>;
+        io.writeText(path.join(dir, "method"), req["method"] as string);
+        io.writeText(path.join(dir, "path"), req["path"] as string);
+        io.writeText(path.join(dir, "auth"), (headers["Authorization"] ?? "") as string);
+        io.writeText(path.join(dir, "xkey"), (headers["X-Api-Key"] ?? headers["x-api-key"] ?? "") as string);
+        io.writeText(path.join(dir, "anthropicVer"), (headers["Anthropic-Version"] ?? headers["anthropic-version"] ?? "") as string);
+        io.writeText(path.join(dir, "body"), req["body"] as string);
+        return handler(req);
+    });
+    let port = (http.serverAddr(server).split(":")[1] as string) as int;
+    sys.sleep(20);
+    return {"server": server, "port": port, "dir": dir};
+}
+
+class OpenaiClientTest extends test.Test {
+    @test
+    func chatPostsBearerAuthedJsonAndExtractsContent(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {"Content-Type": "application/json"}, "body":
+                "{\"id\":\"x\",\"model\":\"gpt-5\",\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"Hi there\"}}]," +
+                "\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3,\"total_tokens\":10}}"};
+        });
+        let c = llm.client({
+            "provider": "openai",
+            "apiKey":   "sk-test",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)
+        });
+        let resp = c.chat([{"role": "user", "content": "Hello"}], {"model": "gpt-5", "maxTokens": 100});
+        http.shutdown(mock["server"]);
+
+        this.assertEquals("Hi there", resp["content"] as string);
+        this.assertEquals("gpt-5", resp["model"] as string);
+        this.assertEquals("stop", resp["stopReason"] as string);
+        let usage = resp["usage"] as dict<string, any>;
+        this.assertEquals(7, usage["inputTokens"]);
+        this.assertEquals(3, usage["outputTokens"]);
+        this.assertEquals(10, usage["totalTokens"]);
+
+        let dir = mock["dir"] as string;
+        this.assertEquals("/v1/chat/completions", io.readText(path.join(dir, "path")));
+        this.assertEquals("Bearer sk-test", io.readText(path.join(dir, "auth")));
+        let bodyDict = json.parse(io.readText(path.join(dir, "body"))) as dict<string, any>;
+        this.assertEquals("gpt-5", bodyDict["model"] as string);
+        this.assertEquals(100, bodyDict["max_tokens"]);
+    }
+
+    @test
+    func embedReturnsVector(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"model\":\"text-embedding-3-small\",\"data\":[{\"embedding\":[0.1,0.2,0.3]}]," +
+                "\"usage\":{\"prompt_tokens\":4,\"total_tokens\":4}}"};
+        });
+        let c = llm.client({
+            "provider": "openai",
+            "apiKey":   "sk-test",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)
+        });
+        let resp = c.embed("hello world", {"model": "text-embedding-3-small"});
+        http.shutdown(mock["server"]);
+
+        let vec = resp["vector"] as list<any>;
+        this.assertEquals(3, vec.length());
+        let usage = resp["usage"] as dict<string, any>;
+        this.assertEquals(4, usage["inputTokens"]);
+    }
+
+    @test
+    func analyzeImageWrapsImageAsDataUri(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"model\":\"gpt-4o\",\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"A cat.\"}}]," +
+                "\"usage\":{\"prompt_tokens\":50,\"completion_tokens\":4,\"total_tokens\":54}}"};
+        });
+        let c = llm.client({
+            "provider": "openai",
+            "apiKey":   "sk-test",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)
+        });
+        let img = "fake-png-bytes" as bytes;
+        let resp = c.analyzeImage(img, "What is in this picture?", {"model": "gpt-4o"});
+        http.shutdown(mock["server"]);
+
+        this.assertEquals("A cat.", resp["content"] as string);
+        let bodyDict = json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>;
+        let messages = bodyDict["messages"] as list<any>;
+        let firstMsg = messages[0] as dict<string, any>;
+        let content = firstMsg["content"] as list<any>;
+        let imgPart = content[1] as dict<string, any>;
+        this.assertEquals("image_url", imgPart["type"] as string);
+        let url = (imgPart["image_url"] as dict<string, any>)["url"] as string;
+        this.assertTrue(url.startsWith("data:image/png;base64,"));
+    }
+
+    @test
+    func generateImageDecodesB64Json(): void {
+        let payload = encoding.base64Encode("fake-png");
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"data\":[{\"b64_json\":\"" + payload + "\"}]}"};
+        });
+        let c = llm.client({
+            "provider": "openai",
+            "apiKey":   "sk-test",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)
+        });
+        let resp = c.generateImage("a red square", {"model": "dall-e-3", "size": "1024x1024"});
+        http.shutdown(mock["server"]);
+
+        let images = resp["images"] as list<any>;
+        this.assertEquals(1, images.length());
+        let first = images[0] as dict<string, any>;
+        this.assertEquals("png", first["format"] as string);
+    }
+
+    @test
+    func nonSuccessStatusRaisesRuntimeError(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 401, "headers": {}, "body": "{\"error\":\"invalid_api_key\"}"};
+        });
+        let c = llm.client({
+            "provider": "openai",
+            "apiKey":   "sk-bad",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)
+        });
+        bool caught = false;
+        string seen = "";
+        try {
+            c.chat([{"role": "user", "content": "hi"}], {"model": "gpt-5"});
+        } catch (RuntimeError e) {
+            caught = true;
+            seen = e.message;
+        }
+        http.shutdown(mock["server"]);
+        this.assertTrue(caught);
+        this.assertTrue(seen.contains("401"));
+        this.assertTrue(seen.contains("invalid_api_key"));
+    }
+}
+
+class AnthropicClientTest extends test.Test {
+    @test
+    func chatPostsXApiKeyAndExtractsTextBlocks(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"model\":\"claude-opus-4-8\",\"stop_reason\":\"end_turn\"," +
+                "\"content\":[{\"type\":\"text\",\"text\":\"Sure thing.\"}]," +
+                "\"usage\":{\"input_tokens\":12,\"output_tokens\":3}}"};
+        });
+        let c = llm.client({
+            "provider": "anthropic",
+            "apiKey":   "sk-ant-test",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)
+        });
+        let resp = c.chat([{"role": "user", "content": "Help me"}], {"model": "claude-opus-4-8", "system": "Be terse"});
+        http.shutdown(mock["server"]);
+
+        this.assertEquals("Sure thing.", resp["content"] as string);
+        this.assertEquals("end_turn", resp["stopReason"] as string);
+        let usage = resp["usage"] as dict<string, any>;
+        this.assertEquals(12, usage["inputTokens"]);
+        this.assertEquals(3, usage["outputTokens"]);
+        this.assertEquals(15, usage["totalTokens"]);
+
+        let dir = mock["dir"] as string;
+        this.assertEquals("/v1/messages", io.readText(path.join(dir, "path")));
+        this.assertEquals("sk-ant-test", io.readText(path.join(dir, "xkey")));
+        this.assertEquals("2023-06-01", io.readText(path.join(dir, "anthropicVer")));
+        let bodyDict = json.parse(io.readText(path.join(dir, "body"))) as dict<string, any>;
+        this.assertEquals("Be terse", bodyDict["system"] as string);
+    }
+
+    @test
+    func embedThrowsNotSupported(): void {
+        let c = llm.client({"provider": "anthropic", "apiKey": "x"});
+        this.assertThrows(func(): void {
+            c.embed("hi", {"model": "claude-opus-4-8"});
+        });
+    }
+
+    @test
+    func generateImageThrowsNotSupported(): void {
+        let c = llm.client({"provider": "anthropic", "apiKey": "x"});
+        this.assertThrows(func(): void {
+            c.generateImage("a cat", {"model": "claude-opus-4-8"});
+        });
+    }
+}
+
+class BedrockClientTest extends test.Test {
+    @test
+    func chatPostsSigv4SignedAnthropicSchema(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"stop_reason\":\"end_turn\"," +
+                "\"content\":[{\"type\":\"text\",\"text\":\"Hello!\"}]," +
+                "\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}"};
+        });
+        let c = llm.client({
+            "provider":  "bedrock",
+            "region":    "us-east-1",
+            "accessKey": "AKIATEST",
+            "secretKey": "SECRETTEST",
+            "endpoint":  "http://127.0.0.1:" + ((mock["port"] as int) as string)
+        });
+        let resp = c.chat([{"role": "user", "content": "Hi"}], {"model": "anthropic.claude-opus-4-8-v1:0", "maxTokens": 256});
+        http.shutdown(mock["server"]);
+
+        this.assertEquals("Hello!", resp["content"] as string);
+        let usage = resp["usage"] as dict<string, any>;
+        this.assertEquals(5, usage["inputTokens"]);
+        this.assertEquals(7, usage["totalTokens"]);
+
+        let dir = mock["dir"] as string;
+        let p = io.readText(path.join(dir, "path"));
+        this.assertTrue(p.contains("/model/"));
+        this.assertTrue(p.contains("invoke"));
+        let auth = io.readText(path.join(dir, "auth"));
+        this.assertTrue(auth.contains("AWS4-HMAC-SHA256"));
+        this.assertTrue(auth.contains("/us-east-1/bedrock/aws4_request"));
+        let bodyDict = json.parse(io.readText(path.join(dir, "body"))) as dict<string, any>;
+        this.assertEquals("bedrock-2023-05-31", bodyDict["anthropic_version"] as string);
+        this.assertEquals(256, bodyDict["max_tokens"]);
+    }
+
+    @test
+    func embedDispatchesToTitanShape(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"embedding\":[0.5,0.6,0.7],\"inputTextTokenCount\":11}"};
+        });
+        let c = llm.client({
+            "provider":  "bedrock",
+            "region":    "us-east-1",
+            "accessKey": "k",
+            "secretKey": "s",
+            "endpoint":  "http://127.0.0.1:" + ((mock["port"] as int) as string)
+        });
+        let resp = c.embed("hello world", {"model": "amazon.titan-embed-text-v2:0"});
+        http.shutdown(mock["server"]);
+
+        let vec = resp["vector"] as list<any>;
+        this.assertEquals(3, vec.length());
+        let usage = resp["usage"] as dict<string, any>;
+        this.assertEquals(11, usage["inputTokens"]);
+
+        let bodyDict = json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>;
+        this.assertEquals("hello world", bodyDict["inputText"] as string);
+    }
+
+    @test
+    func embedDispatchesToCohereShape(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"embeddings\":{\"float\":[[0.1,0.2,0.3,0.4]]},\"id\":\"x\"}"};
+        });
+        let c = llm.client({
+            "provider":  "bedrock",
+            "region":    "us-east-1",
+            "accessKey": "k",
+            "secretKey": "s",
+            "endpoint":  "http://127.0.0.1:" + ((mock["port"] as int) as string)
+        });
+        let resp = c.embed("hi", {"model": "cohere.embed-english-v3", "inputType": "search_query"});
+        http.shutdown(mock["server"]);
+
+        let vec = resp["vector"] as list<any>;
+        this.assertEquals(4, vec.length());
+        let bodyDict = json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>;
+        let texts = bodyDict["texts"] as list<any>;
+        this.assertEquals("hi", texts[0] as string);
+        this.assertEquals("search_query", bodyDict["input_type"] as string);
+    }
+
+    @test
+    func generateImageDispatchesToTitanShape(): void {
+        let payload = encoding.base64Encode("titan-png");
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"images\":[\"" + payload + "\"]}"};
+        });
+        let c = llm.client({
+            "provider":  "bedrock",
+            "region":    "us-east-1",
+            "accessKey": "k",
+            "secretKey": "s",
+            "endpoint":  "http://127.0.0.1:" + ((mock["port"] as int) as string)
+        });
+        let resp = c.generateImage("a square", {"model": "amazon.titan-image-generator-v2:0", "width": 512, "height": 512});
+        http.shutdown(mock["server"]);
+
+        let images = resp["images"] as list<any>;
+        this.assertEquals(1, images.length());
+        let first = images[0] as dict<string, any>;
+        this.assertEquals("png", first["format"] as string);
+
+        let bodyDict = json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>;
+        this.assertEquals("TEXT_IMAGE", bodyDict["taskType"] as string);
+        let cfg = bodyDict["imageGenerationConfig"] as dict<string, any>;
+        this.assertEquals(512, cfg["width"]);
+    }
+
+    @test
+    func generateImageDispatchesToStabilityShape(): void {
+        let payload = encoding.base64Encode("sdxl-png");
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"artifacts\":[{\"base64\":\"" + payload + "\",\"seed\":42}]}"};
+        });
+        let c = llm.client({
+            "provider":  "bedrock",
+            "region":    "us-east-1",
+            "accessKey": "k",
+            "secretKey": "s",
+            "endpoint":  "http://127.0.0.1:" + ((mock["port"] as int) as string)
+        });
+        let resp = c.generateImage("a square", {"model": "stability.stable-diffusion-xl-v1", "steps": 20});
+        http.shutdown(mock["server"]);
+
+        let images = resp["images"] as list<any>;
+        this.assertEquals(1, images.length());
+        let bodyDict = json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>;
+        let prompts = bodyDict["text_prompts"] as list<any>;
+        let firstPrompt = prompts[0] as dict<string, any>;
+        this.assertEquals("a square", firstPrompt["text"] as string);
+        this.assertEquals(20, bodyDict["steps"]);
+    }
+
+    @test
+    func embedUnknownModelFamilyThrowsWithGuidance(): void {
+        let c = llm.client({
+            "provider":  "bedrock",
+            "region":    "us-east-1",
+            "accessKey": "k",
+            "secretKey": "s"
+        });
+        bool caught = false;
+        string seen = "";
+        try {
+            c.embed("hi", {"model": "meta.llama3-70b-instruct-v1:0"});
+        } catch (RuntimeError e) {
+            caught = true;
+            seen = e.message;
+        }
+        this.assertTrue(caught);
+        this.assertTrue(seen.contains("invoke()"));
+    }
+
+    @test
+    func generateImageUnknownModelFamilyThrowsWithGuidance(): void {
+        let c = llm.client({
+            "provider":  "bedrock",
+            "region":    "us-east-1",
+            "accessKey": "k",
+            "secretKey": "s"
+        });
+        bool caught = false;
+        string seen = "";
+        try {
+            c.generateImage("a square", {"model": "meta.llama3-70b-instruct-v1:0"});
+        } catch (RuntimeError e) {
+            caught = true;
+            seen = e.message;
+        }
+        this.assertTrue(caught);
+        this.assertTrue(seen.contains("invoke()"));
+    }
+}
+
+class DispatcherTest extends test.Test {
+    @test
+    func unknownProviderThrows(): void {
+        this.assertThrows(func(): void {
+            llm.client({"provider": "nonesuch", "apiKey": "x"});
+        });
+    }
+
+    @test
+    func missingProviderThrows(): void {
+        this.assertThrows(func(): void {
+            llm.client({"apiKey": "x"});
+        });
+    }
+}

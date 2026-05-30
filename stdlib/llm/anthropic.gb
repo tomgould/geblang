@@ -1,0 +1,143 @@
+module llm.anthropic;
+
+import bytes;
+import encoding;
+import http;
+import json;
+
+/**
+ * Anthropic Messages API client. Authenticates via the
+ * `x-api-key` header and pins the `anthropic-version` header to
+ * a known release.
+ *
+ * The Anthropic direct API does not expose embeddings or image
+ * generation; those methods throw "not supported" so the
+ * abstraction can fail fast and let callers route around the
+ * limitation (e.g. embed via OpenAI, then chat via Anthropic).
+ */
+export class AnthropicClient {
+    string apiKey;
+    string endpoint;
+    string apiVersion;
+
+    func chat(list<dict<string, any>> messages, dict<string, any> opts): dict<string, any> {
+        return this.runMessages(textMessages(messages), opts);
+    }
+
+    func embed(string text, dict<string, any> opts): dict<string, any> {
+        throw RuntimeError("llm.anthropic.embed: Anthropic does not provide a public embeddings API; use llm.openai or another provider for vectors.");
+    }
+
+    func analyzeImage(bytes image, string prompt, dict<string, any> opts): dict<string, any> {
+        string mime = opts.contains("mimeType") ? (opts["mimeType"] as string) : "image/png";
+        string b64 = encoding.base64Encode(bytes.toString(image));
+        list<dict<string, any>> content = [
+            {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
+            {"type": "text", "text": prompt}
+        ];
+        list<dict<string, any>> messages = [{"role": "user", "content": content}];
+        return this.runMessages(messages, opts);
+    }
+
+    func generateImage(string prompt, dict<string, any> opts): dict<string, any> {
+        throw RuntimeError("llm.anthropic.generateImage: Anthropic does not expose an image-generation API.");
+    }
+
+    func runMessages(list<dict<string, any>> messages, dict<string, any> opts): dict<string, any> {
+        string model = requireString(opts, "model", "llm.anthropic");
+        int maxTokens = opts.contains("maxTokens") ? (opts["maxTokens"] as int) : 1024;
+        dict<string, any> payload = {"model": model, "messages": messages, "max_tokens": maxTokens};
+        if (opts.contains("system")) {
+            payload["system"] = opts["system"];
+        }
+        if (opts.contains("temperature")) {
+            payload["temperature"] = opts["temperature"];
+        }
+        if (opts.contains("topP")) {
+            payload["top_p"] = opts["topP"];
+        }
+        let resp = this.post("/v1/messages", payload);
+        let blocks = (resp["content"] ?? []) as list<any>;
+        string text = "";
+        for (b in blocks) {
+            let block = b as dict<string, any>;
+            if ((block["type"] as string) == "text") {
+                text = text + ((block["text"] ?? "") as string);
+            }
+        }
+        let usage = (resp["usage"] ?? {}) as dict<string, any>;
+        int inTok = (usage["input_tokens"] ?? 0) as int;
+        int outTok = (usage["output_tokens"] ?? 0) as int;
+        return {
+            "content":    text,
+            "model":      (resp["model"] ?? model) as string,
+            "stopReason": (resp["stop_reason"] ?? "") as string,
+            "usage": {
+                "inputTokens":  inTok,
+                "outputTokens": outTok,
+                "totalTokens":  inTok + outTok
+            }
+        };
+    }
+
+    func post(string path, dict<string, any> payload): dict<string, any> {
+        string body = json.stringify(payload);
+        let resp = http.requestWithOptions({
+            "method":  "POST",
+            "url":     this.endpoint + path,
+            "headers": {
+                "Content-Type":      "application/json",
+                "x-api-key":         this.apiKey,
+                "anthropic-version": this.apiVersion
+            },
+            "body": body
+        });
+        let status = resp["status"] as int;
+        if (status < 200 || status >= 300) {
+            throw RuntimeError("llm.anthropic POST " + path + " failed: " +
+                (status as string) + " " + (resp["body"] as string));
+        }
+        return json.parse(resp["body"] as string) as dict<string, any>;
+    }
+}
+
+/**
+ * Build an AnthropicClient. Required: `apiKey`. Optional:
+ * `endpoint` (default https://api.anthropic.com), `apiVersion`
+ * (default 2023-06-01, the stable Messages API release).
+ */
+export func connect(dict<string, any> opts): AnthropicClient {
+    if (!opts.contains("apiKey")) {
+        throw RuntimeError("llm.anthropic: opts.apiKey is required");
+    }
+    let c = AnthropicClient();
+    c.apiKey = opts["apiKey"] as string;
+    c.endpoint = opts.contains("endpoint") ? (opts["endpoint"] as string) : "https://api.anthropic.com";
+    c.apiVersion = opts.contains("apiVersion") ? (opts["apiVersion"] as string) : "2023-06-01";
+    return c;
+}
+
+/* --- helpers --- */
+
+func textMessages(list<dict<string, any>> messages): list<dict<string, any>> {
+    /* Anthropic's Messages API rejects `role: "system"` inside the
+     * messages array; system prompts go on the top-level `system`
+     * field. Filter them out and let `runMessages` route them via
+     * opts.system when provided. The caller is responsible for
+     * folding any system message into opts; we just defensively
+     * drop them here. */
+    list<dict<string, any>> out = [];
+    for (m in messages) {
+        if ((m["role"] as string) != "system") {
+            out = out.push(m);
+        }
+    }
+    return out;
+}
+
+func requireString(dict<string, any> opts, string key, string label): string {
+    if (!opts.contains(key)) {
+        throw RuntimeError(label + ": opts." + key + " is required");
+    }
+    return opts[key] as string;
+}

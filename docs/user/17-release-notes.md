@@ -221,6 +221,31 @@ walkthrough.
   surfacing as "cannot cast int to decimal" in `geblang test`
   runs where the same code worked under `geblang run`.
 
+### Stdlib (messaging)
+
+- AWS SNS backend for `messaging.topic({"driver": "sns", ...})`.
+  `publish()` signs each request with sigv4 and POSTs to the
+  regional SNS endpoint; `subscribe(handler)` polls a paired SQS
+  queue and forwards notifications to the callback. Joins the
+  existing `rabbitmq` / `stomp` / `kafka` pub/sub drivers.
+
+### Stdlib (LLM)
+
+- New `llm` module: a provider-agnostic client for chat
+  completions, text embeddings, image analysis, and image
+  generation. Pick the backend with `llm.client({"provider":
+  "openai" | "anthropic" | "bedrock", ...})`; the rest of the
+  calling code is the same across providers. OpenAI covers all
+  four operations; Anthropic covers chat + image analysis;
+  Bedrock covers chat + image analysis through the Anthropic
+  Messages schema, embeddings via `amazon.titan-embed-*` and
+  `cohere.embed-*` model families, and image generation via
+  `amazon.titan-image-*` and `stability.*` model families.
+  Calls with an unsupported operation / unrecognised model
+  family raise a `RuntimeError` naming the missing method and,
+  for Bedrock, pointing at the lower-level `invoke(model,
+  payload)` escape hatch.
+
 ### Other
 
 - Thread-safe WebSocket writes: concurrent sends from multiple

@@ -101,6 +101,7 @@ Backends differ in how they implement fan-out:
 | `rabbitmq` | Fanout exchange named after `topic`. Each `subscribe()` declares a server-named, exclusive, auto-delete queue bound to the exchange. |
 | `stomp` / `activemq` | `/topic/<name>` destination namespace; the broker fans out at the destination. Pass `destination` like a queue would; a bare name is auto-prefixed with `/topic/`. |
 | `kafka` | Single topic; each `subscribe()` opens its own consumer group so every subscriber sees every record. |
+| `sns` | AWS SNS Publish for the producer side; subscribers pair an SQS queue with the topic (subscription set up out of band) and poll it. |
 | `sqs` | Not supported. SQS itself does not fan out; AWS SNS is the proper pub/sub primitive and can target SQS subscriptions. Calling `messaging.topic({"driver":"sqs",...})` throws with this guidance. |
 
 `subscribe(handler)` blocks for the lifetime of the topic handle.
@@ -277,6 +278,49 @@ Required options:
 
 The implementation is in `stdlib/messaging/sqs.gb` and can be
 inspected as a reference for adding new backends.
+
+## SNS specifics
+
+The SNS backend handles pub/sub on AWS. `publish()` signs each
+request with sigv4 and POSTs to the regional SNS endpoint
+(`https://sns.<region>.amazonaws.com/`). `subscribe()` polls a
+paired SQS queue: the SNS->SQS subscription is set up out of band
+(`aws sns subscribe ... --protocol sqs --endpoint <queue-arn>`),
+then `subscribe(handler)` drives the SQS consume loop and
+forwards each delivered notification to the handler.
+
+```gb
+let topic = messaging.topic({
+    "driver":    "sns",
+    "region":    "us-east-1",
+    "topicArn":  "arn:aws:sns:us-east-1:123:orders",
+    "queueUrl":  "https://sqs.us-east-1.amazonaws.com/123/orders-sub",
+    "accessKey": env.get("AWS_ACCESS_KEY_ID"),
+    "secretKey": env.get("AWS_SECRET_ACCESS_KEY")
+});
+topic.publish({"orderId": 42});
+topic.subscribe(func(any msg): void {
+    let payload = msg["body"] as string;
+    /* payload is the raw SNS notification JSON; if you want just
+     * the original Message field, parse and extract:
+     * json.parse(payload)["Message"]. */
+});
+```
+
+Required options:
+
+| Key | Notes |
+|-----|-------|
+| `driver` | `"sns"` |
+| `region` | AWS region of the topic. |
+| `topicArn` | Full ARN of the SNS topic. |
+| `accessKey` | IAM access key ID with `sns:Publish` (and `sqs:ReceiveMessage` on the subscription queue if subscribing). |
+| `secretKey` | IAM secret access key. |
+| `queueUrl` | Optional. SQS queue subscribed to the topic. Required to call `subscribe()`; omit if you only publish. |
+
+Publish-only setups can skip `queueUrl`; calling `subscribe()`
+without one throws with a clear error. The implementation is in
+`stdlib/messaging/sns.gb`.
 
 ## Adding a backend
 

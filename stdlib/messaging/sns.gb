@@ -1,0 +1,178 @@
+module messaging.sns;
+
+import bytes;
+import crypt;
+import datetime;
+import encoding;
+import http;
+import json;
+import messaging.sqs as sqs;
+
+/**
+ * AWS SNS topic backend. `publish()` POSTs to the SNS Publish
+ * action with sigv4. `subscribe()` requires a paired SQS queue
+ * (set via `opts.queueUrl` on connect) and polls it; the SNS
+ * subscription itself is set up out of band, normally as a
+ * one-time `aws sns subscribe ... --protocol sqs --endpoint
+ * <queue-arn>` call.
+ *
+ * Duck-types `messaging.MessageTopic`; explicit `implements` is
+ * omitted to break a circular import (the facade imports this
+ * module to dispatch by driver).
+ */
+export class SnsTopic {
+    string region;
+    string topicArn;
+    string accessKey;
+    string secretKey;
+    ?sqs.SqsQueue subQueue;
+
+    func publish(any payload): void {
+        string body = payloadToString(payload);
+        string params = "Action=Publish&Version=2010-03-31" +
+            "&TopicArn=" + encoding.urlEncode(this.topicArn) +
+            "&Message=" + encoding.urlEncode(body);
+        let resp = this.request("POST", params);
+        let status = resp["status"] as int;
+        if (status >= 400) {
+            throw RuntimeError("sns.publish failed: " + (status as string) + " " + (resp["body"] as string));
+        }
+    }
+
+    func subscribe(callable handler): void {
+        if (this.subQueue == null) {
+            throw RuntimeError("sns.subscribe: opts.queueUrl is required to pair the SNS topic with an SQS subscription queue");
+        }
+        (this.subQueue as sqs.SqsQueue).consume(handler);
+    }
+
+    func close(): void {
+        if (this.subQueue != null) {
+            (this.subQueue as sqs.SqsQueue).close();
+        }
+    }
+
+    func request(string method, string params): dict<string, any> {
+        let endpoint = "https://sns." + this.region + ".amazonaws.com/";
+        string host = "sns." + this.region + ".amazonaws.com";
+        let now = datetime.nowUnix();
+        string amzDate = datetime.format(now, "20060102T150405Z");
+        string dateStamp = amzDate.substring(0, 8);
+        string payloadHash = crypt.sha256(params);
+        dict<string, string> headers = {
+            "content-type":         "application/x-www-form-urlencoded",
+            "host":                 host,
+            "x-amz-content-sha256": payloadHash,
+            "x-amz-date":           amzDate
+        };
+        let canonical = canonicalRequest(method, "/", "", headers, payloadHash);
+        let scope = dateStamp + "/" + this.region + "/sns/aws4_request";
+        let stringToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + crypt.sha256(canonical);
+        let key = signingKey(this.secretKey, dateStamp, this.region, "sns");
+        let signature = crypt.hmacSha256(bytes.toString(key), stringToSign);
+        string signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
+        string authHeader = "AWS4-HMAC-SHA256 Credential=" + this.accessKey + "/" + scope +
+            ",SignedHeaders=" + signedHeaders + ",Signature=" + signature;
+        return http.requestWithOptions({
+            "method":  method,
+            "url":     endpoint,
+            "headers": {
+                "Content-Type":         "application/x-www-form-urlencoded",
+                "Host":                 host,
+                "X-Amz-Content-Sha256": payloadHash,
+                "X-Amz-Date":           amzDate,
+                "Authorization":        authHeader
+            },
+            "body": params
+        });
+    }
+}
+
+/**
+ * Build an SnsTopic from a messaging.topic options dict.
+ *
+ * Required: `region`, `topicArn`, `accessKey`, `secretKey`.
+ * Optional: `queueUrl` (an SQS queue subscribed to the topic out
+ * of band; subscribe() polls it).
+ */
+export func connect(dict<string, any> opts): SnsTopic {
+    if (!opts.contains("region")) {
+        throw RuntimeError("messaging.sns: opts.region is required");
+    }
+    if (!opts.contains("topicArn")) {
+        throw RuntimeError("messaging.sns: opts.topicArn is required");
+    }
+    if (!opts.contains("accessKey")) {
+        throw RuntimeError("messaging.sns: opts.accessKey is required");
+    }
+    if (!opts.contains("secretKey")) {
+        throw RuntimeError("messaging.sns: opts.secretKey is required");
+    }
+    let t = SnsTopic();
+    t.region = opts["region"] as string;
+    t.topicArn = opts["topicArn"] as string;
+    t.accessKey = opts["accessKey"] as string;
+    t.secretKey = opts["secretKey"] as string;
+    if (opts.contains("queueUrl")) {
+        t.subQueue = sqs.connect({
+            "region":    t.region,
+            "queueUrl":  opts["queueUrl"],
+            "accessKey": t.accessKey,
+            "secretKey": t.secretKey
+        });
+    }
+    return t;
+}
+
+/* --- internal helpers (kept local to avoid a hard dependency on
+ *     stdlib.messaging.sqs internals) --- */
+
+func payloadToString(any payload): string {
+    if (payload instanceof string) { return payload as string; }
+    if (payload instanceof bytes) { return bytes.toString(payload as bytes); }
+    return json.stringify(payload);
+}
+
+func signingKey(string secretKey, string dateStamp, string region, string service): bytes {
+    let kDate = crypt.hmacSha256Bytes("AWS4" + secretKey, dateStamp);
+    let kRegion = crypt.hmacSha256Bytes(bytes.toString(kDate), region);
+    let kService = crypt.hmacSha256Bytes(bytes.toString(kRegion), service);
+    return crypt.hmacSha256Bytes(bytes.toString(kService), "aws4_request");
+}
+
+func canonicalRequest(string method, string canonicalUri, string canonicalQuery, dict<string, string> headers, string payloadHash): string {
+    let headerNames = sortedKeys(headers);
+    string canonicalHeaders = "";
+    for (name in headerNames) {
+        canonicalHeaders = canonicalHeaders + (name as string) + ":" + headers[name as string] + "\n";
+    }
+    string signedHeaders = joinSlice(headerNames, ";");
+    return method + "\n" + canonicalUri + "\n" + canonicalQuery + "\n" +
+           canonicalHeaders + "\n" + signedHeaders + "\n" + payloadHash;
+}
+
+func sortedKeys(dict<string, string> d): list<string> {
+    list<string> out = [];
+    for (k in d.keys()) {
+        out = out.push(k as string);
+    }
+    for (let i = 1; i < out.length(); i = i + 1) {
+        let cur = out[i];
+        let j = i - 1;
+        while (j >= 0 && out[j] > cur) {
+            out[j + 1] = out[j];
+            j = j - 1;
+        }
+        out[j + 1] = cur;
+    }
+    return out;
+}
+
+func joinSlice(list<string> parts, string sep): string {
+    string out = "";
+    for (let i = 0; i < parts.length(); i = i + 1) {
+        if (i > 0) { out = out + sep; }
+        out = out + parts[i];
+    }
+    return out;
+}

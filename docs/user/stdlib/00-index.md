@@ -110,6 +110,9 @@ Operations, introspection, and extension:
   processes, extension protocol calls, and binary frame handling.
 - [Foreign Function Interface](ffi.html): in-process calls into C-ABI shared
   libraries (libtorch, libsqlite, libcurl, ...) with capability gating.
+- [LLM](llm.html): provider-agnostic client for chat completions, embeddings,
+  image analysis, and image generation across OpenAI, Anthropic, and AWS
+  Bedrock.
 - [Utility Modules](utilities.html): miscellaneous result, option, and helper
   modules that do not fit one larger category.
 
