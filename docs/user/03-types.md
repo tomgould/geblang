@@ -192,6 +192,16 @@ raw instanceof list<int>;    # true (every element is int)
 raw instanceof list<string>; # false
 ```
 
+`any` is universally accepting: every list satisfies `list<any>`,
+every dict satisfies `dict<K, any>`, and so on. Union arguments
+match elementwise on untagged collections and tag-satisfies on
+tagged ones, so both cases below hold:
+
+```gb
+[1, "f", true] instanceof list<string|bool|int>;  # true
+xs instanceof list<int|string>;                   # true (since 1.5.1)
+```
+
 `dict<K,V>` exposes the tag as `{"K": "...", "V": "..."}`;
 `set<T>` exposes `{"T": "..."}`.
 

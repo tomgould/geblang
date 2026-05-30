@@ -1,0 +1,71 @@
+/**
+ * @title Bytes slice method (1.5.1)
+ * @summary bytes.slice(start[, end]) cuts a fresh bytes value out of
+ * a larger one. Negative indices count from the end; out-of-range
+ * bounds clamp. Useful for splitting nonce / ciphertext payloads
+ * without losing the bytes type.
+ */
+import test;
+import bytes;
+
+class BytesSliceTest extends test.Test {
+    @test
+    func basicHeadAndTail(): void {
+        let b = bytes.fromHex("0102030405");
+        this.assertEquals("010203", bytes.toHex(b.slice(0, 3)));
+        this.assertEquals("0405", bytes.toHex(b.slice(3)));
+    }
+
+    @test
+    func middleSliceIsExclusiveOnEnd(): void {
+        let b = bytes.fromHex("000102030405060708");
+        this.assertEquals("020304", bytes.toHex(b.slice(2, 5)));
+    }
+
+    @test
+    func negativeStartCountsFromEnd(): void {
+        let b = bytes.fromHex("aabbccddeeff");
+        this.assertEquals("ddeeff", bytes.toHex(b.slice(-3)));
+    }
+
+    @test
+    func negativeEndCountsFromEnd(): void {
+        let b = bytes.fromHex("aabbccddeeff");
+        this.assertEquals("aabbcc", bytes.toHex(b.slice(0, -3)));
+    }
+
+    @test
+    func outOfRangeClamps(): void {
+        let b = bytes.fromHex("01020304");
+        this.assertEquals("", bytes.toHex(b.slice(100)));
+        this.assertEquals("0102", bytes.toHex(b.slice(-100, 2)));
+        this.assertEquals("01020304", bytes.toHex(b.slice(0, 100)));
+    }
+
+    @test
+    func emptySliceWhenEndBeforeStart(): void {
+        let b = bytes.fromHex("01020304");
+        this.assertEquals("", bytes.toHex(b.slice(3, 1)));
+        this.assertEquals("", bytes.toHex(b.slice(2, 2)));
+    }
+
+    @test
+    func returnedValueIsBytes(): void {
+        let b = bytes.fromHex("01020304");
+        let s = b.slice(1, 3);
+        this.assertEquals("0203", bytes.toHex(s));
+        /* Round-trip a length call to confirm the type. */
+        this.assertEquals(2, s.length());
+    }
+
+    @test
+    func nonceCiphertextSplitPattern(): void {
+        /* The motivating use case: extract a 12-byte AEAD nonce
+         * from the head of a payload, then the rest as ciphertext. */
+        let payload = bytes.fromHex("000102030405060708090a0bdeadbeefdeadbeef");
+        let nonce = payload.slice(0, 12);
+        let cipher = payload.slice(12);
+        this.assertEquals("000102030405060708090a0b", bytes.toHex(nonce));
+        this.assertEquals("deadbeefdeadbeef", bytes.toHex(cipher));
+    }
+}

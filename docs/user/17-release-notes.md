@@ -1,5 +1,25 @@
 # Release Notes
 
+## 1.5.1
+
+### Bytes
+
+- `bytes.slice(start[, end])` cuts a fresh bytes value out of an
+  existing one. Negative indices count from the end; out-of-range
+  bounds clamp. The two-arg form is half-open `[start, end)`.
+
+### `instanceof` over generic collections
+
+- `list<any>` / `dict<K, any>` / `dict<any, V>` / `set<any>` are
+  now universal-accept: every list / dict / set satisfies them,
+  matching the documented "any accepts anything" rule.
+- Union arguments (e.g. `list<string|int>`) match elementwise on
+  untagged collections (each element must satisfy any arm) and
+  satisfy the tagged-collection invariance check when the tag's
+  type appears in the union (`list<int>` satisfies
+  `list<int|string>`).
+- Both fixes apply on the evaluator and bytecode VM in lockstep.
+
 ## 1.5.0
 
 ### Decorators

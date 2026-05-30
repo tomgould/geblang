@@ -7568,7 +7568,7 @@ func vmPrimitiveMethodNamesFor(typeName string) []string {
 	case "string":
 		return []string{"chars", "codeAt", "contains", "endsWith", "format", "indexOf", "isEmpty", "length", "lower", "padLeft", "padRight", "replace", "split", "startsWith", "substring", "toBool", "toDecimal", "toFloat", "toInt", "trim", "trimLeft", "trimRight", "upper"}
 	case "bytes":
-		return []string{"contains", "get", "isEmpty", "length", "toBase64", "toBase64Url", "toHex", "toString"}
+		return []string{"contains", "get", "isEmpty", "length", "slice", "toBase64", "toBase64Url", "toHex", "toString"}
 	case "range":
 		return []string{"contains", "first", "isEmpty", "last", "length", "toList"}
 	}
@@ -10240,7 +10240,7 @@ func vmCollectionMatchesGeneric(value runtime.Value, base string, args []string)
 			return false
 		}
 		if len(v.ElementTypes) >= 1 {
-			return strings.EqualFold(v.ElementTypes[0], args[0])
+			return vmTypeNameSatisfies(v.ElementTypes[0], args[0])
 		}
 		for _, el := range v.Elements {
 			if !vmValueMatchesSimpleType(el, args[0]) {
@@ -10253,7 +10253,7 @@ func vmCollectionMatchesGeneric(value runtime.Value, base string, args []string)
 			return false
 		}
 		if len(v.ElementTypes) >= 1 {
-			return strings.EqualFold(v.ElementTypes[0], args[0])
+			return vmTypeNameSatisfies(v.ElementTypes[0], args[0])
 		}
 		for _, e := range v.Elements {
 			if !vmValueMatchesSimpleType(e.Value, args[0]) {
@@ -10266,7 +10266,7 @@ func vmCollectionMatchesGeneric(value runtime.Value, base string, args []string)
 			return false
 		}
 		if len(v.ElementTypes) >= 2 {
-			return strings.EqualFold(v.ElementTypes[0], args[0]) && strings.EqualFold(v.ElementTypes[1], args[1])
+			return vmTypeNameSatisfies(v.ElementTypes[0], args[0]) && vmTypeNameSatisfies(v.ElementTypes[1], args[1])
 		}
 		for _, e := range v.Entries {
 			if !vmValueMatchesSimpleType(e.Key, args[0]) {
@@ -10282,6 +10282,17 @@ func vmCollectionMatchesGeneric(value runtime.Value, base string, args []string)
 }
 
 func vmValueMatchesSimpleType(value runtime.Value, target string) bool {
+	if target == "any" || target == "?any" {
+		return true
+	}
+	if arms, ok := vmSplitTopLevelUnion(target); ok {
+		for _, arm := range arms {
+			if vmValueMatchesSimpleType(value, arm) {
+				return true
+			}
+		}
+		return false
+	}
 	if base, args, ok := vmSplitGenericTypeName(target); ok {
 		return vmCollectionMatchesGeneric(value, base, args)
 	}
@@ -10300,6 +10311,67 @@ func vmValueMatchesSimpleType(value runtime.Value, target string) bool {
 		return target == "bytes"
 	}
 	return strings.EqualFold(value.TypeName(), target)
+}
+
+// vmSplitTopLevelUnion splits a union on depth-0 `|`, preserving `|`
+// inside nested generic angle brackets.
+func vmSplitTopLevelUnion(typeName string) ([]string, bool) {
+	depth := 0
+	hasTopLevel := false
+	for i := 0; i < len(typeName); i++ {
+		switch typeName[i] {
+		case '<':
+			depth++
+		case '>':
+			if depth > 0 {
+				depth--
+			}
+		case '|':
+			if depth == 0 {
+				hasTopLevel = true
+			}
+		}
+	}
+	if !hasTopLevel {
+		return nil, false
+	}
+	var arms []string
+	depth = 0
+	start := 0
+	for i := 0; i < len(typeName); i++ {
+		switch typeName[i] {
+		case '<':
+			depth++
+		case '>':
+			if depth > 0 {
+				depth--
+			}
+		case '|':
+			if depth == 0 {
+				arms = append(arms, strings.TrimSpace(typeName[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	arms = append(arms, strings.TrimSpace(typeName[start:]))
+	return arms, true
+}
+
+// vmTypeNameSatisfies handles `any` and union arms over the existing
+// case-insensitive invariance rule for tagged collections.
+func vmTypeNameSatisfies(have, want string) bool {
+	if want == "any" || want == "?any" {
+		return true
+	}
+	if arms, ok := vmSplitTopLevelUnion(want); ok {
+		for _, arm := range arms {
+			if vmTypeNameSatisfies(have, arm) {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.EqualFold(have, want)
 }
 
 func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
@@ -13390,6 +13462,43 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 				return runtime.List{Elements: nil}, nil
 			}
 			return runtime.List{Elements: value.Elements[start:end]}, nil
+		case runtime.Bytes:
+			if len(args) < 1 || len(args) > 2 {
+				return nil, fmt.Errorf("bytes.slice expects (start[, end])")
+			}
+			n := len(value.Value)
+			start, err := indexInt(args[0])
+			if err != nil {
+				return nil, fmt.Errorf("bytes.slice: %v", err)
+			}
+			if start < 0 {
+				start = n + start
+			}
+			if start < 0 {
+				start = 0
+			}
+			if start > n {
+				start = n
+			}
+			end := n
+			if len(args) == 2 {
+				end, err = indexInt(args[1])
+				if err != nil {
+					return nil, fmt.Errorf("bytes.slice: %v", err)
+				}
+				if end < 0 {
+					end = n + end
+				}
+				if end < start {
+					end = start
+				}
+				if end > n {
+					end = n
+				}
+			}
+			out := make([]byte, end-start)
+			copy(out, value.Value[start:end])
+			return runtime.Bytes{Value: out}, nil
 		default:
 			return nil, fmt.Errorf("%s has no method %s", receiver.TypeName(), name)
 		}

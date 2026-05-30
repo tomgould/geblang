@@ -3138,6 +3138,45 @@ io.println(b.contains(122));
 `, "true\nfalse\n")
 }
 
+func TestParityBytesSlice(t *testing.T) {
+	runParity(t, `import io;
+import bytes;
+let b = bytes.fromHex("0102030405060708090a0b0c0d0e0f10");
+io.println(bytes.toHex(b.slice(0, 5)));
+io.println(bytes.toHex(b.slice(5)));
+io.println(bytes.toHex(b.slice(2, 7)));
+io.println(bytes.toHex(b.slice(-3)));
+io.println(bytes.toHex(b.slice(0, 0)));
+io.println(bytes.toHex(b.slice(100)));
+io.println(bytes.toHex(b.slice(-100, 3)));
+`, "0102030405\n060708090a0b0c0d0e0f10\n0304050607\n0e0f10\n\n\n010203\n")
+}
+
+func TestParityInstanceofListAnyAndUnion(t *testing.T) {
+	runParity(t, `import io;
+let mixed = [1, "f", true];
+let strs = ["a", "b", "c"];
+io.println(mixed instanceof list<any>);
+io.println(strs instanceof list<any>);
+io.println(mixed instanceof list<string|bool|int>);
+io.println(mixed instanceof list<string>);
+io.println(strs instanceof list<string>);
+io.println([] instanceof list<any>);
+io.println({"a": 1, "b": 2} instanceof dict<string, any>);
+io.println({"a": 1, "b": "x"} instanceof dict<string, int|string>);
+`, "true\ntrue\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\n")
+}
+
+func TestParityInstanceofTaggedSatisfiesAnyAndUnion(t *testing.T) {
+	runParity(t, `import io;
+list<int> xs = [1, 2, 3];
+io.println(xs instanceof list<int>);
+io.println(xs instanceof list<any>);
+io.println(xs instanceof list<int|string>);
+io.println(xs instanceof list<string>);
+`, "true\ntrue\ntrue\nfalse\n")
+}
+
 func TestParityXML(t *testing.T) {
 	runParity(t, `import io;
 import xml;

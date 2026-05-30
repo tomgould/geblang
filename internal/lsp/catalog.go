@@ -208,6 +208,7 @@ var primitiveMethods = map[string]map[string]functionDoc{
 		"toString":    fn([]string{}, "string", "Decode as UTF-8."),
 		"toHex":       fn([]string{}, "string", "Lowercase hex."),
 		"get":         fn([]string{"int index"}, "int", "Byte value at position (0-255)."),
+		"slice":       fn([]string{"int start", "int end = length"}, "bytes", "Fresh bytes value for the [start, end) range. Negative indices count from the end; out-of-range bounds clamp."),
 		"toBase64":    fn([]string{}, "string", "Standard Base64."),
 		"toBase64Url": fn([]string{}, "string", "Unpadded URL-safe Base64 (RFC 4648 section 5)."),
 	},

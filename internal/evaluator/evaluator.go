@@ -2477,7 +2477,17 @@ func (e *Evaluator) valueMatchesType(value runtime.Value, typeName string) bool 
 }
 
 func valueMatchesType(value runtime.Value, typeName string) bool {
-	// Check dotted "EnumType.Variant" before stripping the module prefix.
+	if typeName == "any" || typeName == "?any" {
+		return true
+	}
+	if arms, ok := splitTopLevelUnion(typeName); ok {
+		for _, arm := range arms {
+			if valueMatchesType(value, arm) {
+				return true
+			}
+		}
+		return false
+	}
 	if dotIdx := strings.Index(typeName, "."); dotIdx >= 0 {
 		if ev, ok := value.(runtime.EnumVariant); ok {
 			enumTypeName := typeName[:dotIdx]
@@ -2485,11 +2495,6 @@ func valueMatchesType(value runtime.Value, typeName string) bool {
 			return strings.EqualFold(ev.Enum.Name, enumTypeName) && strings.EqualFold(ev.Variant, variantName)
 		}
 	}
-	// `instanceof list<int>` (and friends) targets a parameterised
-	// collection. Check both the base type and the generic args. When
-	// the value is a tagged collection the args must match exactly
-	// (invariance, same rule as 1.0.1 user-class generics); when the
-	// value is untagged, walk each element and require structural match.
 	if baseName, args, ok := splitGenericTypeName(typeName); ok {
 		return collectionMatchesGenericType(value, baseName, args)
 	}
@@ -2575,7 +2580,7 @@ func collectionMatchesGenericType(value runtime.Value, base string, args []strin
 			return false
 		}
 		if len(v.ElementTypes) >= 1 {
-			return typeNamesEqual(v.ElementTypes[0], args[0])
+			return typeNameSatisfies(v.ElementTypes[0], args[0])
 		}
 		for _, el := range v.Elements {
 			if !valueMatchesType(el, args[0]) {
@@ -2588,7 +2593,7 @@ func collectionMatchesGenericType(value runtime.Value, base string, args []strin
 			return false
 		}
 		if len(v.ElementTypes) >= 1 {
-			return typeNamesEqual(v.ElementTypes[0], args[0])
+			return typeNameSatisfies(v.ElementTypes[0], args[0])
 		}
 		for _, e := range v.Elements {
 			if !valueMatchesType(e.Value, args[0]) {
@@ -2601,7 +2606,7 @@ func collectionMatchesGenericType(value runtime.Value, base string, args []strin
 			return false
 		}
 		if len(v.ElementTypes) >= 2 {
-			return typeNamesEqual(v.ElementTypes[0], args[0]) && typeNamesEqual(v.ElementTypes[1], args[1])
+			return typeNameSatisfies(v.ElementTypes[0], args[0]) && typeNameSatisfies(v.ElementTypes[1], args[1])
 		}
 		for _, e := range v.Entries {
 			if !valueMatchesType(e.Key, args[0]) {
@@ -2614,6 +2619,67 @@ func collectionMatchesGenericType(value runtime.Value, base string, args []strin
 		return true
 	}
 	return false
+}
+
+// splitTopLevelUnion splits a union on depth-0 `|`, preserving `|`
+// inside nested generic angle brackets.
+func splitTopLevelUnion(typeName string) ([]string, bool) {
+	depth := 0
+	hasTopLevel := false
+	for i := 0; i < len(typeName); i++ {
+		switch typeName[i] {
+		case '<':
+			depth++
+		case '>':
+			if depth > 0 {
+				depth--
+			}
+		case '|':
+			if depth == 0 {
+				hasTopLevel = true
+			}
+		}
+	}
+	if !hasTopLevel {
+		return nil, false
+	}
+	var arms []string
+	depth = 0
+	start := 0
+	for i := 0; i < len(typeName); i++ {
+		switch typeName[i] {
+		case '<':
+			depth++
+		case '>':
+			if depth > 0 {
+				depth--
+			}
+		case '|':
+			if depth == 0 {
+				arms = append(arms, strings.TrimSpace(typeName[start:i]))
+				start = i + 1
+			}
+		}
+	}
+	arms = append(arms, strings.TrimSpace(typeName[start:]))
+	return arms, true
+}
+
+// typeNameSatisfies handles `any` and union arms over the existing
+// invariance-by-name rule for tagged collections.
+func typeNameSatisfies(have, want string) bool {
+	if want == "any" || want == "?any" {
+		return true
+	}
+	if arms, ok := splitTopLevelUnion(want); ok {
+		for _, arm := range arms {
+			if typeNameSatisfies(have, arm) {
+				return true
+			}
+		}
+		return false
+	}
+	return typeNamesEqual(have, want)
 }
 
 func mergeInterfaceMembers(stmt *ast.ClassStatement, ifaces []*runtime.Interface) error {
@@ -7046,7 +7112,7 @@ func primitiveMethods(typeName string) []string {
 	case "string":
 		return []string{"contains", "endsWith", "format", "get", "indexOf", "isEmpty", "length", "lower", "replace", "split", "startsWith", "toString", "trim", "upper"}
 	case "bytes":
-		return []string{"contains", "get", "isEmpty", "length", "toBase64", "toBase64Url", "toHex", "toString"}
+		return []string{"contains", "get", "isEmpty", "length", "slice", "toBase64", "toBase64Url", "toHex", "toString"}
 	case "dict":
 		return []string{"contains", "get", "hasKey", "isEmpty", "keys", "length", "set"}
 	case "set":
@@ -12484,7 +12550,7 @@ func primitiveMethodNamesFor(typeName string) []string {
 	case "string":
 		return []string{"chars", "codeAt", "contains", "endsWith", "format", "indexOf", "isEmpty", "length", "lower", "padLeft", "padRight", "replace", "split", "startsWith", "substring", "toBool", "toDecimal", "toFloat", "toInt", "trim", "trimLeft", "trimRight", "upper"}
 	case "bytes":
-		return []string{"contains", "get", "isEmpty", "length", "toBase64", "toBase64Url", "toHex", "toString"}
+		return []string{"contains", "get", "isEmpty", "length", "slice", "toBase64", "toBase64Url", "toHex", "toString"}
 	case "range":
 		return []string{"contains", "first", "isEmpty", "last", "length", "toList"}
 	}
@@ -23168,6 +23234,43 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return runtime.Bool{Value: false}, nil
 			}
 			return runtime.Bool{Value: bytes.Contains(value.Value, []byte{byte(b)})}, nil
+		case "slice":
+			if len(args) < 1 || len(args) > 2 {
+				return nil, fmt.Errorf("bytes.slice expects (start[, end])")
+			}
+			n := len(value.Value)
+			start, err := indexInt(args[0])
+			if err != nil {
+				return nil, fmt.Errorf("bytes.slice: %v", err)
+			}
+			if start < 0 {
+				start = n + start
+			}
+			if start < 0 {
+				start = 0
+			}
+			if start > n {
+				start = n
+			}
+			end := n
+			if len(args) == 2 {
+				end, err = indexInt(args[1])
+				if err != nil {
+					return nil, fmt.Errorf("bytes.slice: %v", err)
+				}
+				if end < 0 {
+					end = n + end
+				}
+				if end < start {
+					end = start
+				}
+				if end > n {
+					end = n
+				}
+			}
+			out := make([]byte, end-start)
+			copy(out, value.Value[start:end])
+			return runtime.Bytes{Value: out}, nil
 		}
 	case runtime.Bool:
 		switch name {

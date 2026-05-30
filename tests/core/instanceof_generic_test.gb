@@ -1,0 +1,96 @@
+/**
+ * @title instanceof with generic collections (1.5.1)
+ * @summary `list<any>` matches every list, `dict<any, any>` every
+ * dict, `set<any>` every set; union args in the requested type
+ * match if any arm matches; the rules apply to both untagged
+ * literals (structural element walk) and tagged collections
+ * (the tag satisfies `any` and union arms).
+ */
+import test;
+import reflect;
+
+class InstanceofAnyTest extends test.Test {
+    @test
+    func listAnyMatchesUntaggedHeterogeneous(): void {
+        let mixed = [1, "f", true];
+        this.assertTrue(mixed instanceof list<any>);
+    }
+
+    @test
+    func listAnyMatchesUntaggedHomogeneous(): void {
+        let strs = ["a", "b", "c"];
+        this.assertTrue(strs instanceof list<any>);
+    }
+
+    @test
+    func listAnyMatchesEmpty(): void {
+        let empty = [];
+        this.assertTrue(empty instanceof list<any>);
+    }
+
+    @test
+    func listAnyMatchesTagged(): void {
+        list<int> xs = [1, 2, 3];
+        this.assertTrue(xs instanceof list<any>);
+    }
+
+    @test
+    func dictAnyValueMatches(): void {
+        let d = {"a": 1, "b": "x", "c": true};
+        this.assertTrue(d instanceof dict<string, any>);
+    }
+
+    @test
+    func setAnyMatches(): void {
+        set<int> s = {1, 2, 3} as set<int>;
+        this.assertTrue(s instanceof set<any>);
+    }
+}
+
+class InstanceofUnionTest extends test.Test {
+    @test
+    func untaggedListMatchesUnionWhenEveryElementSatisfiesOneArm(): void {
+        let mixed = [1, "f", true];
+        this.assertTrue(mixed instanceof list<string|bool|int>);
+    }
+
+    @test
+    func untaggedListRejectsUnionWhenOneElementFails(): void {
+        let mixed = [1, "f", true, 3.14];
+        this.assertFalse(mixed instanceof list<string|bool|int>);
+    }
+
+    @test
+    func taggedListSatisfiesSupersetUnion(): void {
+        list<int> xs = [1, 2, 3];
+        this.assertTrue(xs instanceof list<int|string>);
+    }
+
+    @test
+    func taggedListRejectsUnionMissingTag(): void {
+        list<int> xs = [1, 2, 3];
+        this.assertFalse(xs instanceof list<string|bool>);
+    }
+
+    @test
+    func dictValueUnionMatches(): void {
+        let d = {"a": 1, "b": "x"};
+        this.assertTrue(d instanceof dict<string, int|string>);
+    }
+}
+
+class TypeBindingsUntaggedTest extends test.Test {
+    @test
+    func bindingsEmptyForUntaggedLiteral(): void {
+        let raw = ["a", "b", "c"];
+        let bindings = reflect.typeBindings(raw);
+        this.assertEquals(0, bindings.length());
+    }
+
+    @test
+    func bindingsPresentForTaggedLiteral(): void {
+        list<int> xs = [1, 2, 3];
+        let bindings = reflect.typeBindings(xs);
+        this.assertEquals("int", bindings["T"]);
+    }
+}
