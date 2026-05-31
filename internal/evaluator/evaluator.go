@@ -23291,6 +23291,10 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			return runtime.Bool{Value: !value.Value}, nil
 		}
+	case runtime.SmallInt:
+		// Promote and re-dispatch through the Int branch so every int
+		// method works on both runtime representations.
+		return e.evalMethodCall(runtime.Int{Value: big.NewInt(value.Value)}, name, args)
 	case runtime.Int:
 		switch name {
 		case "abs":

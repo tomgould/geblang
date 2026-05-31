@@ -72,6 +72,10 @@ type interfaceInfo struct {
 type methodInfo struct {
 	name       string
 	parameters []typeInfo
+	// minArgs is the smallest positional arg count a caller may pass.
+	// Defaults to len(parameters); lowered when trailing parameters
+	// declare default values.
+	minArgs    int
 	returnType typeInfo
 	typeParams []typeParam
 }
@@ -818,7 +822,7 @@ func (a *Analyzer) validateCallExpression(expr ast.Expression, expected typeInfo
 	}
 	matches := []methodInfo{}
 	for _, overload := range overloads {
-		if !a.callArgumentsCompatible(args, overload.parameters) {
+		if !a.callArgumentsCompatible(args, overload.parameters, overload.minArgs) {
 			continue
 		}
 		if !a.returnTypeCompatible(expected, overload.returnType) {
@@ -929,8 +933,8 @@ func (a *Analyzer) inferTypeBinding(paramType, actual typeInfo, paramSet map[str
 	}
 }
 
-func (a *Analyzer) callArgumentsCompatible(args, parameters []typeInfo) bool {
-	if len(args) != len(parameters) {
+func (a *Analyzer) callArgumentsCompatible(args, parameters []typeInfo, minArgs int) bool {
+	if len(args) < minArgs || len(args) > len(parameters) {
 		return false
 	}
 	for i, arg := range args {
@@ -1377,8 +1381,12 @@ func (a *Analyzer) methodCompatible(expected, actual methodInfo) bool {
 
 func (a *Analyzer) methodInfoFromFunction(fn *ast.FunctionStatement) methodInfo {
 	info := methodInfo{name: fn.Name.Value, returnType: a.typeInfoFromRef(fn.ReturnType)}
-	for _, param := range fn.Parameters {
+	info.minArgs = len(fn.Parameters)
+	for i, param := range fn.Parameters {
 		info.parameters = append(info.parameters, a.typeInfoFromRef(param.Type))
+		if param.Default != nil && i < info.minArgs {
+			info.minArgs = i
+		}
 	}
 	for _, generic := range fn.Generics {
 		info.typeParams = append(info.typeParams, typeParam{
@@ -1391,8 +1399,12 @@ func (a *Analyzer) methodInfoFromFunction(fn *ast.FunctionStatement) methodInfo 
 
 func (a *Analyzer) methodInfoFromSignature(sig *ast.FunctionSignature) methodInfo {
 	info := methodInfo{name: sig.Name.Value, returnType: a.typeInfoFromRef(sig.ReturnType)}
-	for _, param := range sig.Parameters {
+	info.minArgs = len(sig.Parameters)
+	for i, param := range sig.Parameters {
 		info.parameters = append(info.parameters, a.typeInfoFromRef(param.Type))
+		if param.Default != nil && i < info.minArgs {
+			info.minArgs = i
+		}
 	}
 	for _, generic := range sig.Generics {
 		info.typeParams = append(info.typeParams, typeParam{

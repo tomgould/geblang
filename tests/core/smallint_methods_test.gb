@@ -1,0 +1,59 @@
+/**
+ * @title SmallInt methods (1.5.1)
+ * @summary Methods like toString, abs, isZero, isPositive, and
+ * isNegative work on int results regardless of whether the runtime
+ * representation is SmallInt (int64 range) or Int (arbitrary
+ * precision). Chained method calls like `s.length().toString()`
+ * resolve through the same dispatch.
+ */
+import test;
+
+class SmallIntMethodsTest extends test.Test {
+    @test
+    func toStringWorksOnDirectInt(): void {
+        let n = 42;
+        this.assertEquals("42", n.toString());
+    }
+
+    @test
+    func toStringWorksOnLengthResult(): void {
+        let s = "hello";
+        this.assertEquals("5", s.length().toString());
+    }
+
+    @test
+    func toStringWorksOnListLengthResult(): void {
+        let xs = [1, 2, 3, 4];
+        this.assertEquals("4", xs.length().toString());
+    }
+
+    @test
+    func toStringWorksOnDictLengthResult(): void {
+        let d = {"a": 1, "b": 2, "c": 3};
+        this.assertEquals("3", d.length().toString());
+    }
+
+    @test
+    func absWorksOnDirectInt(): void {
+        let n = -7;
+        this.assertEquals(7, n.abs());
+    }
+
+    @test
+    func isZeroPredicates(): void {
+        let zero = 0;
+        let positive = 5;
+        let negative = -3;
+        this.assertTrue(zero.isZero());
+        this.assertFalse(positive.isZero());
+        this.assertTrue(positive.isPositive());
+        this.assertTrue(negative.isNegative());
+    }
+
+    @test
+    func toStringWithBase(): void {
+        let n = 255;
+        this.assertEquals("ff", n.toString(16));
+        this.assertEquals("11111111", n.toString(2));
+    }
+}

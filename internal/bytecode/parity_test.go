@@ -3200,6 +3200,47 @@ io.println(svcs.keys());
 `, "[\"Gamma\", \"Alpha\", \"Beta\"]\n")
 }
 
+func TestParityDefaultArgInReturnPosition(t *testing.T) {
+	runParity(t, `import io;
+func helper(string greeting = "hi"): string {
+    return greeting;
+}
+func caller(): string {
+    return helper();
+}
+func callerWithArg(): string {
+    return helper("howdy");
+}
+io.println(caller());
+io.println(callerWithArg());
+`, "hi\nhowdy\n")
+}
+
+func TestParityChainedMethodOnSmallIntResult(t *testing.T) {
+	runParity(t, `import io;
+let s = "hello";
+io.println(s.length().toString());
+let xs = [1, 2, 3];
+io.println(xs.length().toString());
+let d = {"a": 1, "b": 2};
+io.println(d.length().toString());
+let n = "42".length();
+io.println(n.toString());
+`, "5\n3\n2\n2\n")
+}
+
+func TestParityDefaultArgInExpressionContexts(t *testing.T) {
+	runParity(t, `import io;
+func two(int a, int b = 10): int {
+    return a + b;
+}
+io.println(two(5));
+io.println(two(5, 20));
+let xs = [two(1), two(1, 1)];
+io.println(xs);
+`, "15\n25\n[11, 2]\n")
+}
+
 func TestParityXML(t *testing.T) {
 	runParity(t, `import io;
 import xml;

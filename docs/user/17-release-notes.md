@@ -20,6 +20,23 @@
   `list<int|string>`).
 - Both fixes apply on the evaluator and bytecode VM in lockstep.
 
+### Methods on `int` work on every int representation
+
+Chained calls like `s.length().toString()` no longer fail on the
+evaluator backend with `unknown method int.toString`. Every
+documented `int` method (`toString`, `abs`, `isZero`,
+`isPositive`, `isNegative`) now dispatches on both runtime
+representations.
+
+### Default arguments work in return position
+
+A function declared with a default argument can now be called
+without that argument from any call site, including `return` of
+a function whose return type matches. The previous behaviour
+required the caller to pass the explicit value (or bind the
+result through `let` first) when the call appeared in return
+position.
+
 ### Dict insertion order is preserved
 
 - `dict.keys()`, `dict.values()`, `dict.items()`, `for ... in dict`,

@@ -1,0 +1,62 @@
+/**
+ * @title Default arguments (1.5.1)
+ * @summary Functions declared with default arguments can be called
+ * with fewer positional args anywhere a call is allowed, including
+ * the `return` position of a function whose return type matches the
+ * helper's return type.
+ */
+import test;
+
+func greet(string name, string greeting = "Hello"): string {
+    return greeting + ", " + name;
+}
+
+func wrap(string value, string left = "[", string right = "]"): string {
+    return left + value + right;
+}
+
+func callerReturningGreet(): string {
+    return greet("Ada");
+}
+
+func callerWithLet(): string {
+    let s = greet("Ada");
+    return s;
+}
+
+func callerWithTwoDefaults(): string {
+    return wrap("x");
+}
+
+class DefaultArgsTest extends test.Test {
+    @test
+    func directCallUsesDefault(): void {
+        this.assertEquals("Hello, Ada", greet("Ada"));
+    }
+
+    @test
+    func directCallWithExplicitArg(): void {
+        this.assertEquals("Hi, Bob", greet("Bob", "Hi"));
+    }
+
+    @test
+    func returnPositionUsesDefault(): void {
+        this.assertEquals("Hello, Ada", callerReturningGreet());
+    }
+
+    @test
+    func letBindingThenReturnUsesDefault(): void {
+        this.assertEquals("Hello, Ada", callerWithLet());
+    }
+
+    @test
+    func skipsMultipleDefaults(): void {
+        this.assertEquals("[x]", callerWithTwoDefaults());
+    }
+
+    @test
+    func skipsAllDefaultsInExpressionContext(): void {
+        let r = greet("Ada");
+        this.assertEquals("Hello, Ada", r);
+    }
+}

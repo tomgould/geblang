@@ -316,3 +316,11 @@ I've released an initial 1.0. Geblang is actively evolving.
 The bytecode VM is the preferred execution path when a feature is supported; 
 the evaluator remains a compatibility path and an implementation aid. 
 Use `--trace-exec` to see which engine ran a script.
+
+## For AI agents
+
+A condensed cheatsheet for AI coding agents working in Geblang
+lives at [AGENTS.md](AGENTS.md). It's denser than this manual,
+focused on syntax, idioms, and common pitfalls, and intended to
+be read once at the start of a session. Point your agent at that
+file before asking it to edit Geblang code.
