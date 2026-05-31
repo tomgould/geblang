@@ -20,6 +20,18 @@
   `list<int|string>`).
 - Both fixes apply on the evaluator and bytecode VM in lockstep.
 
+### Dict insertion order is preserved
+
+- `dict.keys()`, `dict.values()`, `dict.items()`, `for ... in dict`,
+  and string interpolation of a dict now return entries in the
+  order they were inserted, deterministically. Updating an
+  existing key keeps its original position; deleting and
+  re-inserting moves the key to the end.
+- `yaml.parse` and `json.parse` preserve the source mapping /
+  object order.
+- Inspect / string-interpolation output of a dict no longer sorts
+  keys alphabetically. The new order is "what you wrote".
+
 ## 1.5.0
 
 ### Decorators

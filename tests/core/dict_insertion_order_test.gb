@@ -1,0 +1,117 @@
+/**
+ * @title dict insertion order (1.5.1)
+ * @summary `dict.keys()`, `dict.values()`, `dict.items()`, and dict
+ * iteration return entries in insertion order. Applies to dict
+ * literals, programmatic insertion via `d[k] = v`, set/delete via
+ * the method API, and YAML / JSON parses.
+ */
+import test;
+import yaml;
+import json;
+
+class DictInsertionOrderTest extends test.Test {
+    @test
+    func programmaticInsertionPreservesOrder(): void {
+        dict<string, int> d = {};
+        d["zeta"] = 1;
+        d["mu"] = 2;
+        d["alpha"] = 3;
+        let ks = d.keys();
+        this.assertEquals("zeta", ks[0]);
+        this.assertEquals("mu", ks[1]);
+        this.assertEquals("alpha", ks[2]);
+    }
+
+    @test
+    func dictLiteralOrderIsSource(): void {
+        let d = {"third": 3, "first": 1, "second": 2};
+        let ks = d.keys();
+        this.assertEquals("third", ks[0]);
+        this.assertEquals("first", ks[1]);
+        this.assertEquals("second", ks[2]);
+    }
+
+    @test
+    func updatingExistingKeyKeepsOriginalPosition(): void {
+        dict<string, int> d = {};
+        d["a"] = 1;
+        d["b"] = 2;
+        d["c"] = 3;
+        d["a"] = 99;
+        let ks = d.keys();
+        this.assertEquals("a", ks[0]);
+        this.assertEquals("b", ks[1]);
+        this.assertEquals("c", ks[2]);
+    }
+
+    @test
+    func valuesFollowKeyOrder(): void {
+        dict<string, int> d = {};
+        d["x"] = 10;
+        d["y"] = 20;
+        d["z"] = 30;
+        let vs = d.values();
+        this.assertEquals(10, vs[0]);
+        this.assertEquals(20, vs[1]);
+        this.assertEquals(30, vs[2]);
+    }
+
+    @test
+    func itemsFollowKeyOrder(): void {
+        dict<string, int> d = {};
+        d["p"] = 1;
+        d["q"] = 2;
+        let items = d.items();
+        let first = items[0] as list<any>;
+        let second = items[1] as list<any>;
+        this.assertEquals("p", first[0]);
+        this.assertEquals(1, first[1]);
+        this.assertEquals("q", second[0]);
+        this.assertEquals(2, second[1]);
+    }
+
+    @test
+    func deleteRemovesFromOrderToo(): void {
+        dict<string, int> d = {};
+        d["a"] = 1;
+        d["b"] = 2;
+        d["c"] = 3;
+        d.delete("b");
+        let ks = d.keys();
+        this.assertEquals(2, ks.length());
+        this.assertEquals("a", ks[0]);
+        this.assertEquals("c", ks[1]);
+    }
+
+    @test
+    func deletedKeyReinsertedGoesToEnd(): void {
+        dict<string, int> d = {};
+        d["a"] = 1;
+        d["b"] = 2;
+        d.delete("a");
+        d["a"] = 99;
+        let ks = d.keys();
+        this.assertEquals("b", ks[0]);
+        this.assertEquals("a", ks[1]);
+    }
+
+    @test
+    func yamlParsePreservesMappingOrder(): void {
+        let p = yaml.parse("services:\n  Zeta: {}\n  Alpha: {}\n  Mu: {}\n") as dict<string, any>;
+        let svcs = p["services"] as dict<string, any>;
+        let ks = svcs.keys();
+        this.assertEquals("Zeta", ks[0]);
+        this.assertEquals("Alpha", ks[1]);
+        this.assertEquals("Mu", ks[2]);
+    }
+
+    @test
+    func jsonParsePreservesObjectOrder(): void {
+        let p = json.parse("{\"third\":3,\"first\":1,\"second\":2}") as dict<string, any>;
+        let ks = p.keys();
+        this.assertEquals("third", ks[0]);
+        this.assertEquals("first", ks[1]);
+        this.assertEquals("second", ks[2]);
+    }
+
+}

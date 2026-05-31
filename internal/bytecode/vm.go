@@ -1389,8 +1389,9 @@ func (vm *VM) Run() (err error) {
 			if count < 0 {
 				return vm.runtimeError(instruction, "dict entry count out of range")
 			}
-			entries := make(map[string]runtime.DictEntry, int(count))
-			for i := int64(0); i < count; i++ {
+			// Stack is LIFO; reorder pairs so Order tracks source order.
+			pairs := make([][2]runtime.Value, count)
+			for i := count - 1; i >= 0; i-- {
 				value, err := vm.pop()
 				if err != nil {
 					return vm.runtimeError(instruction, "%s", err.Error())
@@ -1399,9 +1400,13 @@ func (vm *VM) Run() (err error) {
 				if err != nil {
 					return vm.runtimeError(instruction, "%s", err.Error())
 				}
-				entries[native.DictKey(key)] = runtime.DictEntry{Key: key, Value: value}
+				pairs[i] = [2]runtime.Value{key, value}
 			}
-			vm.push(runtime.Dict{Entries: entries})
+			d := runtime.NewDict()
+			for _, p := range pairs {
+				d.PutEntry(native.DictKey(p[0]), runtime.DictEntry{Key: p[0], Value: p[1]})
+			}
+			vm.push(d)
 		case OpBuildSet:
 			count := instruction.Operands[0]
 			if count < 0 {
@@ -3902,7 +3907,7 @@ func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 		if value.Frozen {
 			return vm.throwTyped(instruction, ip, "ImmutableError", "cannot modify frozen dict")
 		}
-		value.Entries[dictKeyFor(index)] = runtime.DictEntry{Key: index, Value: newValue}
+		value.PutEntry(dictKeyFor(index), runtime.DictEntry{Key: index, Value: newValue})
 	default:
 		return 0, vm.runtimeError(instruction, "%s does not support index assignment", left.TypeName())
 	}
@@ -13608,11 +13613,11 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			copy(elems, value.Elements)
 			return runtime.List{Elements: elems}, nil
 		case runtime.Dict:
-			entries := make(map[string]runtime.DictEntry, len(value.Entries))
-			for k, v := range value.Entries {
-				entries[k] = v
+			d := runtime.NewDict()
+			for _, k := range value.OrderedKeys() {
+				d.PutEntry(k, value.Entries[k])
 			}
-			return runtime.Dict{Entries: entries}, nil
+			return d, nil
 		case runtime.Set:
 			elements := make(map[string]runtime.SetEntry, len(value.Elements))
 			for k, v := range value.Elements {
@@ -13647,7 +13652,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			if value.Frozen {
 				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen dict"}
 			}
-			value.Entries[native.DictKey(args[0])] = runtime.DictEntry{Key: args[0], Value: args[1]}
+			value.PutEntry(native.DictKey(args[0]), runtime.DictEntry{Key: args[0], Value: args[1]})
 			return runtime.Null{}, nil
 		default:
 			return nil, fmt.Errorf("%s has no method set", receiver.TypeName())
@@ -13663,7 +13668,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if value.Frozen {
 			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen dict"}
 		}
-		delete(value.Entries, native.DictKey(args[0]))
+		value.DelEntry(native.DictKey(args[0]))
 		return runtime.Null{}, nil
 	case "add":
 		if len(args) != 1 {
@@ -13781,9 +13786,10 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if !ok {
 			return nil, fmt.Errorf("%s has no method keys", receiver.TypeName())
 		}
-		keys := make([]runtime.Value, 0, len(value.Entries))
-		for _, entry := range value.Entries {
-			keys = append(keys, entry.Key)
+		ordered := value.OrderedKeys()
+		keys := make([]runtime.Value, 0, len(ordered))
+		for _, k := range ordered {
+			keys = append(keys, value.Entries[k].Key)
 		}
 		return runtime.List{Elements: keys}, nil
 	case "values":
@@ -13794,9 +13800,10 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if !ok {
 			return nil, fmt.Errorf("%s has no method values", receiver.TypeName())
 		}
-		values := make([]runtime.Value, 0, len(value.Entries))
-		for _, entry := range value.Entries {
-			values = append(values, entry.Value)
+		ordered := value.OrderedKeys()
+		values := make([]runtime.Value, 0, len(ordered))
+		for _, k := range ordered {
+			values = append(values, value.Entries[k].Value)
 		}
 		return runtime.List{Elements: values}, nil
 	case "items":
@@ -13807,8 +13814,10 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if !ok {
 			return nil, fmt.Errorf("%s has no method items", receiver.TypeName())
 		}
-		items := make([]runtime.Value, 0, len(value.Entries))
-		for _, entry := range value.Entries {
+		ordered := value.OrderedKeys()
+		items := make([]runtime.Value, 0, len(ordered))
+		for _, k := range ordered {
+			entry := value.Entries[k]
 			items = append(items, runtime.List{Elements: []runtime.Value{entry.Key, entry.Value}})
 		}
 		return runtime.List{Elements: items}, nil

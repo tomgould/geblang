@@ -245,18 +245,18 @@ func NativeToValue(value any) (runtime.Value, error) {
 		}
 		return runtime.List{Elements: elements}, nil
 	case map[string]any:
-		entries := map[string]runtime.DictEntry{}
+		d := runtime.NewDict()
 		for key, item := range value {
 			converted, err := NativeToValue(item)
 			if err != nil {
 				return nil, err
 			}
 			keyValue := runtime.String{Value: key}
-			entries[DictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: converted}
+			d.PutEntry(DictKey(keyValue), runtime.DictEntry{Key: keyValue, Value: converted})
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return d, nil
 	case map[any]any:
-		entries := map[string]runtime.DictEntry{}
+		d := runtime.NewDict()
 		for key, item := range value {
 			keyText, ok := key.(string)
 			if !ok {
@@ -267,9 +267,9 @@ func NativeToValue(value any) (runtime.Value, error) {
 				return nil, err
 			}
 			keyValue := runtime.String{Value: keyText}
-			entries[DictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: converted}
+			d.PutEntry(DictKey(keyValue), runtime.DictEntry{Key: keyValue, Value: converted})
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return d, nil
 	default:
 		return nil, fmt.Errorf("unsupported native value %T", value)
 	}
@@ -798,17 +798,69 @@ func tomlParseError(err error, text string) ParseError {
 
 // ParseYAMLText parses a YAML string into a runtime.Value.
 func ParseYAMLText(text string) (runtime.Value, *ParseError) {
-	var decoded any
-	if err := yamllib.Unmarshal([]byte(text), &decoded); err != nil {
+	var root yamllib.Node
+	if err := yamllib.Unmarshal([]byte(text), &root); err != nil {
 		parseErr := yamlTextParseError(err, text)
 		return nil, &parseErr
 	}
-	value, err := NativeToValue(decoded)
+	value, err := yamlNodeToValue(&root)
 	if err != nil {
 		parseErr := NewParseError(err.Error(), text, -1)
 		return nil, &parseErr
 	}
 	return value, nil
+}
+
+// yamlNodeToValue walks a yaml.v3 Node tree preserving mapping order.
+func yamlNodeToValue(node *yamllib.Node) (runtime.Value, error) {
+	if node == nil {
+		return runtime.Null{}, nil
+	}
+	switch node.Kind {
+	case yamllib.DocumentNode:
+		if len(node.Content) == 0 {
+			return runtime.Null{}, nil
+		}
+		return yamlNodeToValue(node.Content[0])
+	case yamllib.MappingNode:
+		d := runtime.NewDict()
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			keyNode := node.Content[i]
+			valNode := node.Content[i+1]
+			var keyText string
+			if keyNode.Tag == "!!str" || keyNode.Tag == "" {
+				keyText = keyNode.Value
+			} else {
+				keyText = keyNode.Value
+			}
+			keyValue := runtime.String{Value: keyText}
+			child, err := yamlNodeToValue(valNode)
+			if err != nil {
+				return nil, err
+			}
+			d.PutEntry(DictKey(keyValue), runtime.DictEntry{Key: keyValue, Value: child})
+		}
+		return d, nil
+	case yamllib.SequenceNode:
+		elements := make([]runtime.Value, 0, len(node.Content))
+		for _, child := range node.Content {
+			converted, err := yamlNodeToValue(child)
+			if err != nil {
+				return nil, err
+			}
+			elements = append(elements, converted)
+		}
+		return runtime.List{Elements: elements}, nil
+	case yamllib.AliasNode:
+		return yamlNodeToValue(node.Alias)
+	case yamllib.ScalarNode:
+		var decoded any
+		if err := node.Decode(&decoded); err != nil {
+			return nil, err
+		}
+		return NativeToValue(decoded)
+	}
+	return runtime.Null{}, nil
 }
 
 func yamlTextParseError(err error, text string) ParseError {

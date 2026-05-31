@@ -240,19 +240,67 @@ func (v List) Inspect() string {
 
 type Dict struct {
 	Entries map[string]DictEntry
-	Frozen  bool
+	// Insertion-order key list, shared via pointer across value copies.
+	Order  *[]string
+	Frozen bool
 	// ElementTypes mirrors List.ElementTypes for dicts. When set, the
 	// slice has two entries: [keyType, valueType] for `dict<K, V>`.
 	ElementTypes []string
 }
 
-func (v Dict) TypeName() string { return "dict" }
-func (v Dict) Inspect() string {
+func NewDict() Dict {
+	order := make([]string, 0)
+	return Dict{Entries: map[string]DictEntry{}, Order: &order}
+}
+
+func (v Dict) PutEntry(key string, entry DictEntry) {
+	if v.Entries == nil {
+		return
+	}
+	if _, hit := v.Entries[key]; !hit && v.Order != nil {
+		*v.Order = append(*v.Order, key)
+	}
+	v.Entries[key] = entry
+}
+
+func (v Dict) DelEntry(key string) {
+	if v.Entries == nil {
+		return
+	}
+	if _, hit := v.Entries[key]; !hit {
+		return
+	}
+	delete(v.Entries, key)
+	if v.Order == nil {
+		return
+	}
+	for i, k := range *v.Order {
+		if k == key {
+			*v.Order = append((*v.Order)[:i], (*v.Order)[i+1:]...)
+			return
+		}
+	}
+}
+
+// OrderedKeys returns keys in insertion order; falls back to a sort
+// when Order is unpopulated (legacy construction paths).
+func (v Dict) OrderedKeys() []string {
+	if v.Order != nil && len(*v.Order) == len(v.Entries) {
+		out := make([]string, len(*v.Order))
+		copy(out, *v.Order)
+		return out
+	}
 	keys := make([]string, 0, len(v.Entries))
 	for k := range v.Entries {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	return keys
+}
+
+func (v Dict) TypeName() string { return "dict" }
+func (v Dict) Inspect() string {
+	keys := v.OrderedKeys()
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
 		entry := v.Entries[k]

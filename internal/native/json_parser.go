@@ -77,17 +77,11 @@ func (p *jsonParser) parseValue() (runtime.Value, error) {
 
 func (p *jsonParser) parseObject() (runtime.Value, error) {
 	p.pos++ // skip {
-	// Hint a typical JSON-object size so the first few inserts skip
-	// the rehash cycle. Most JSON objects in real payloads have at
-	// least four-five entries; the bench's per-record object has
-	// five. Map grows past this hint if needed. A more accurate
-	// count via a pre-scan turned out net negative (the extra read
-	// pass costs more than the rehash it saves).
-	entries := make(map[string]runtime.DictEntry, 8)
+	d := runtime.NewDict()
 	p.skipWhitespace()
 	if p.pos < len(p.src) && p.src[p.pos] == '}' {
 		p.pos++
-		return runtime.Dict{Entries: entries}, nil
+		return d, nil
 	}
 	for {
 		p.skipWhitespace()
@@ -119,7 +113,7 @@ func (p *jsonParser) parseObject() (runtime.Value, error) {
 				p.keyCache[key] = mapKey
 			}
 		}
-		entries[mapKey] = runtime.DictEntry{Key: keyValue, Value: value}
+		d.PutEntry(mapKey, runtime.DictEntry{Key: keyValue, Value: value})
 		p.skipWhitespace()
 		if p.pos >= len(p.src) {
 			return nil, fmt.Errorf("unexpected end of object")
@@ -130,7 +124,7 @@ func (p *jsonParser) parseObject() (runtime.Value, error) {
 			continue
 		case '}':
 			p.pos++
-			return runtime.Dict{Entries: entries}, nil
+			return d, nil
 		default:
 			return nil, fmt.Errorf("expected ',' or '}' in object")
 		}

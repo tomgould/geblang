@@ -1,17 +1,17 @@
 /**
  * @title JSON-like Inspect for containers
- * @summary Container values render as JSON-like text: dict keys
- *          sorted, strings quoted inside containers, top-level
- *          strings stay unquoted. Verified through string
+ * @summary Container values render as JSON-like text: dict keys in
+ *          insertion order, strings quoted inside containers,
+ *          top-level strings stay unquoted. Verified through string
  *          interpolation (which calls Inspect).
  */
 import test;
 
 class InspectContainersTest extends test.Test {
     @test
-    func dictInspectIsJsonLikeWithSortedKeys(): void {
+    func dictInspectIsJsonLikeWithInsertionOrderKeys(): void {
         let d = {"name": "Ada", "age": 36};
-        this.assertEquals("{\"age\": 36, \"name\": \"Ada\"}", "${d}");
+        this.assertEquals("{\"name\": \"Ada\", \"age\": 36}", "${d}");
     }
 
     @test

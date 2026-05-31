@@ -436,7 +436,8 @@ func runParity(t *testing.T, source string, want string) {
 // TestParityContainerInspectIsJSONLike pins the Inspect output for
 // dicts, lists, and sets across both backends. Strings inside a
 // container are JSON-quoted; top-level strings stay unquoted to
-// match the existing io.println contract.
+// match the existing io.println contract. Dict entries appear in
+// insertion order (since 1.5.1).
 func TestParityContainerInspectIsJSONLike(t *testing.T) {
 	runParity(t, `import io;
 io.println({"name": "Ada", "age": 36});
@@ -445,7 +446,7 @@ io.println({"nested": {"a": [1, 2], "b": "x"}});
 io.println("plain");
 io.println(42);
 io.println(["with \"quote\""]);
-`, `{"age": 36, "name": "Ada"}
+`, `{"name": "Ada", "age": 36}
 ["a", "b", 1, true, null]
 {"nested": {"a": [1, 2], "b": "x"}}
 plain
@@ -3175,6 +3176,28 @@ io.println(xs instanceof list<any>);
 io.println(xs instanceof list<int|string>);
 io.println(xs instanceof list<string>);
 `, "true\ntrue\ntrue\nfalse\n")
+}
+
+func TestParityDictKeysInsertionOrder(t *testing.T) {
+	runParity(t, `import io;
+dict<string, int> d = {};
+d["zeta"] = 1;
+d["mu"] = 2;
+d["alpha"] = 3;
+io.println(d.keys());
+io.println(d.values());
+let lit = {"first": 1, "second": 2, "third": 3};
+io.println(lit.keys());
+`, "[\"zeta\", \"mu\", \"alpha\"]\n[1, 2, 3]\n[\"first\", \"second\", \"third\"]\n")
+}
+
+func TestParityYamlPreservesMappingOrder(t *testing.T) {
+	runParity(t, `import io;
+import yaml;
+let p = yaml.parse("services:\n  Gamma: {}\n  Alpha: {}\n  Beta: {}\n") as dict<string, any>;
+let svcs = p["services"] as dict<string, any>;
+io.println(svcs.keys());
+`, "[\"Gamma\", \"Alpha\", \"Beta\"]\n")
 }
 
 func TestParityXML(t *testing.T) {

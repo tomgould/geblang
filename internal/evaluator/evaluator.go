@@ -2120,7 +2120,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		}
 		return runtime.List{Elements: elements}, nil
 	case *ast.DictLiteral:
-		entries := map[string]runtime.DictEntry{}
+		d := runtime.NewDict()
 		for _, entry := range expr.Entries {
 			key, err := e.evalExpression(entry.Key, env)
 			if err != nil {
@@ -2130,9 +2130,9 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			if err != nil {
 				return nil, err
 			}
-			entries[dictKey(key)] = runtime.DictEntry{Key: key, Value: value}
+			d.PutEntry(dictKey(key), runtime.DictEntry{Key: key, Value: value})
 		}
-		return runtime.Dict{Entries: entries}, nil
+		return d, nil
 	case *ast.SetLiteral:
 		elements := map[string]runtime.SetEntry{}
 		for _, element := range expr.Elements {
@@ -6479,8 +6479,10 @@ func (e *Evaluator) iterableValues(value runtime.Value) ([]runtime.Value, error)
 			values = append(values, next)
 		}
 	case runtime.Dict:
-		values := make([]runtime.Value, 0, len(value.Entries))
-		for _, entry := range value.Entries {
+		ordered := value.OrderedKeys()
+		values := make([]runtime.Value, 0, len(ordered))
+		for _, k := range ordered {
+			entry := value.Entries[k]
 			values = append(values, runtime.List{Elements: []runtime.Value{entry.Key, entry.Value}})
 		}
 		return values, nil
@@ -21489,26 +21491,30 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.keys expects no arguments")
 			}
-			keys := make([]runtime.Value, 0, len(value.Entries))
-			for _, entry := range value.Entries {
-				keys = append(keys, entry.Key)
+			ordered := value.OrderedKeys()
+			keys := make([]runtime.Value, 0, len(ordered))
+			for _, k := range ordered {
+				keys = append(keys, value.Entries[k].Key)
 			}
 			return runtime.List{Elements: keys}, nil
 		case "values":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.values expects no arguments")
 			}
-			values := make([]runtime.Value, 0, len(value.Entries))
-			for _, entry := range value.Entries {
-				values = append(values, entry.Value)
+			ordered := value.OrderedKeys()
+			values := make([]runtime.Value, 0, len(ordered))
+			for _, k := range ordered {
+				values = append(values, value.Entries[k].Value)
 			}
 			return runtime.List{Elements: values}, nil
 		case "items":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.items expects no arguments")
 			}
-			items := make([]runtime.Value, 0, len(value.Entries))
-			for _, entry := range value.Entries {
+			ordered := value.OrderedKeys()
+			items := make([]runtime.Value, 0, len(ordered))
+			for _, k := range ordered {
+				entry := value.Entries[k]
 				items = append(items, runtime.List{Elements: []runtime.Value{entry.Key, entry.Value}})
 			}
 			return runtime.List{Elements: items}, nil
@@ -21528,7 +21534,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen dict"}}
 			}
-			value.Entries[dictKey(args[0])] = runtime.DictEntry{Key: args[0], Value: args[1]}
+			value.PutEntry(dictKey(args[0]), runtime.DictEntry{Key: args[0], Value: args[1]})
 			return runtime.Null{}, nil
 		case "length":
 			if len(args) != 0 {
@@ -21553,7 +21559,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen dict"}}
 			}
-			delete(value.Entries, dictKey(args[0]))
+			value.DelEntry(dictKey(args[0]))
 			return runtime.Null{}, nil
 		case "contains":
 			if len(args) != 1 {
@@ -23955,7 +23961,7 @@ func (e *Evaluator) assignIndex(expr *ast.IndexExpression, newValue runtime.Valu
 		if value.Frozen {
 			return thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen dict"}}
 		}
-		value.Entries[dictKey(index)] = runtime.DictEntry{Key: index, Value: newValue}
+		value.PutEntry(dictKey(index), runtime.DictEntry{Key: index, Value: newValue})
 		return nil
 	default:
 		return fmt.Errorf("%s does not support index assignment", left.TypeName())
