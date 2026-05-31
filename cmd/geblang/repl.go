@@ -830,7 +830,7 @@ func formatREPLValueAt(value runtime.Value, depth int) string {
 		return value.Inspect()
 	}
 	switch v := value.(type) {
-	case runtime.List:
+	case *runtime.List:
 		return replFormatList(v.Elements, depth)
 	case runtime.Dict:
 		return replFormatDict(v, depth)

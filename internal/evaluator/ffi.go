@@ -221,7 +221,7 @@ func (e *Evaluator) ffiWriteArray(_ *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
-	list, ok := args[2].(runtime.List)
+	list, ok := args[2].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("ffi.writeArray values must be list")
 	}
@@ -267,7 +267,7 @@ func (e *Evaluator) ffiReadArray(_ *ast.CallExpression, args []runtime.Value) (r
 		}
 		elems[i] = rv
 	}
-	return runtime.List{Elements: elems}, nil
+	return &runtime.List{Elements: elems}, nil
 }
 
 func (e *Evaluator) ffiBytesView(_ *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -297,7 +297,7 @@ func (e *Evaluator) ffiCallback(_ *ast.CallExpression, args []runtime.Value) (ru
 	if !ok {
 		return nil, fmt.Errorf("ffi.callback fn must be a callable")
 	}
-	argList, ok := args[1].(runtime.List)
+	argList, ok := args[1].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("ffi.callback argTypes must be list<int>")
 	}
@@ -381,7 +381,7 @@ func (e *Evaluator) ffiSymbol(_ *ast.CallExpression, args []runtime.Value) (runt
 	if !ok {
 		return nil, fmt.Errorf("ffi.symbol name must be string")
 	}
-	argTypesList, ok := args[2].(runtime.List)
+	argTypesList, ok := args[2].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("ffi.symbol argTypes must be list<int>")
 	}
@@ -636,13 +636,13 @@ func (e *Evaluator) ffiNewStruct(_ *ast.CallExpression, args []runtime.Value) (r
 	if len(args) != 1 {
 		return nil, fmt.Errorf("ffi.newStruct expects (fields: list<[string, int]>)")
 	}
-	list, ok := args[0].(runtime.List)
+	list, ok := args[0].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("ffi.newStruct fields must be list")
 	}
 	fields := make([]ffi.StructField, 0, len(list.Elements))
 	for i, elem := range list.Elements {
-		pair, ok := elem.(runtime.List)
+		pair, ok := elem.(*runtime.List)
 		if !ok || len(pair.Elements) != 2 {
 			return nil, fmt.Errorf("ffi.newStruct field %d: expected [name, type] pair", i)
 		}

@@ -162,7 +162,7 @@ func ErrorStackTraceMethod(trace runtime.ErrorStackTrace, name string, args []ru
 		for i, frame := range trace.Frames {
 			values[i] = frame
 		}
-		return runtime.List{Elements: values}, nil
+		return &runtime.List{Elements: values}, nil
 	case "length":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("errors.StackTrace.length expects no arguments")
@@ -253,12 +253,12 @@ func ErrorStackFrameMethod(frame runtime.ErrorStackFrame, name string, args []ru
 	}
 }
 
-func errorStackFrameList(frames []runtime.ErrorStackFrame) runtime.List {
+func errorStackFrameList(frames []runtime.ErrorStackFrame) *runtime.List {
 	values := make([]runtime.Value, len(frames))
 	for i, frame := range frames {
 		values[i] = errorStackFrameDict(frame)
 	}
-	return runtime.List{Elements: values}
+	return &runtime.List{Elements: values}
 }
 
 func errorStackFrameDict(frame runtime.ErrorStackFrame) runtime.Dict {

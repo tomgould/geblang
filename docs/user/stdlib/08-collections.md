@@ -40,15 +40,30 @@ code.
 
 ## Built-In List Methods
 
-Lists are mutable, ordered sequences.  Methods that return a new list leave the
-original unchanged; mutation methods (`push`, `pop`, `set`, `insert`,
-`removeAt`) modify the list in place.
+Lists are mutable, ordered sequences with reference semantics: assigning a list
+to another variable, passing it to a function, or storing it in a field shares
+the same underlying list. In-place mutations are visible through every
+reference.
+
+Two flavours of mutation method exist:
+
+- **In-place methods** mutate the receiver and return `null`. Aliases of the
+  same list see the change. These are `set`, `append`, `extend`, and `clear`,
+  plus index assignment (`xs[0] = v`). On a frozen list they raise
+  `ImmutableError`.
+- **Copy-and-return methods** allocate a new list and leave the receiver
+  unchanged. These are `push`, `pop`, `prepend`, `insert`, `concat`, `reverse`,
+  `sort`, `slice`, `map`, `filter`, and friends. To accumulate, either reassign
+  the result (`xs = xs.push(item);`) or use the in-place `append` for
+  amortised O(1) growth.
 
 Generic annotations such as `list<int>` are checked when values cross typed
 declaration and function/method call boundaries. They are not a permanent
-runtime lock on a mutable list value; mutation methods still operate on the
-underlying collection. Validate before mutation when accepting dynamic data, and
-rely on the next typed boundary to catch mismatches when passing values onward.
+runtime lock; the in-place mutators (`append`, `extend`) honour the declared
+element type and raise `TypeError` on mismatch, but only when the list value
+still carries its element-type tag at runtime. Untagged values (lists that
+flowed through `any` without a typed boundary on the way back) skip the check.
+Validate before mutation when accepting dynamic data.
 
 ### Inspection
 
@@ -105,27 +120,57 @@ io.println("hello"[1:4]); # ell
 
 ### Mutation
 
+**In-place** (mutate the receiver, return `null`):
+
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `push(value)` | `null` | Append `value` to the end |
-| `pop()` | `T\|null` | Remove and return the last element |
-| `insert(index, value)` | `null` | Insert `value` before `index` |
-| `removeAt(index)` | `null` | Remove element at `index` |
-| `set(index, value)` | `null` | Replace element at `index` |
+| `set(index, value)` | `null` | Replace element at `index`. Equivalent to `xs[index] = value` |
+| `append(value)` | `null` | Append `value` to the end. Amortised O(1); aliases share the growth |
+| `extend(other)` | `null` | Append every element of `other` |
+| `clear()` | `null` | Empty the list |
+
+**Copy-and-return** (allocate a new list; receiver unchanged):
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `push(value)` | `list<T>` | New list with `value` appended |
+| `pop()` | `list<T>` | New list with the last element removed |
+| `prepend(value)` | `list<T>` | New list with `value` at the front |
+| `unshift(value)` | `list<T>` | Alias for `prepend` |
+| `insert(index, value)` | `list<T>` | New list with `value` inserted before `index` |
 
 ```gb
 import io;
 
 list<string> words = ["a", "b", "c"];
-words.push("d");
+
+# In-place: mutates and returns null.
+words.append("d");
 io.println(words);          # [a, b, c, d]
-io.println(words.pop());    # d
-words.insert(1, "x");
-io.println(words);          # [a, x, b, c]
-words.removeAt(1);
-io.println(words);          # [a, b, c]
+words.extend(["e", "f"]);
+io.println(words);          # [a, b, c, d, e, f]
 words.set(0, "z");
-io.println(words);          # [z, b, c]
+io.println(words);          # [z, b, c, d, e, f]
+
+# Copy-and-return: receiver unchanged.
+let bigger = words.push("g");
+io.println(words);          # [z, b, c, d, e, f]
+io.println(bigger);         # [z, b, c, d, e, f, g]
+
+# Aliases see in-place mutations.
+let alias = words;
+words.append("X");
+io.println(alias);          # [z, b, c, d, e, f, X]
+
+# Reassign the result of a copy-and-return method to accumulate
+# without the in-place fast path.
+let snapshot = ["start"];
+snapshot = snapshot.push("end");
+io.println(snapshot);       # [start, end]
+
+# clear empties the list (and every alias of it).
+words.clear();
+io.println(words);          # []
 ```
 
 ### Ordering And Transformation
@@ -307,7 +352,11 @@ io.println(d.items());       # [[a, 1], [b, 2], [c, 3]]
 |--------|---------|-------------|
 | `set(key, value)` | `null` | Insert or update an entry |
 | `get(key)` | `V\|null` | Retrieve value by key, or `null` if absent |
-| `delete(key)` | `null` | Remove an entry; no-op if key is absent |
+| `delete(key)` | `null` | Remove an entry in place; no-op if key is absent |
+| `clear()` | `null` | Empty the dict in place |
+
+All four mutate the receiver; aliases of the same dict see the change. On
+a frozen dict every mutation raises `ImmutableError`.
 
 ```gb
 import io;
@@ -317,6 +366,8 @@ d.set("y", 20);
 io.println(d.get("y"));  # 20
 d.delete("x");
 io.println(d.hasKey("x")); # false
+d.clear();
+io.println(d.length()); # 0
 ```
 
 ### Combining

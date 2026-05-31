@@ -5253,6 +5253,105 @@ list<int> bad = [1, 2, "oops"];
 `, "element at index 2 is string")
 }
 
+// TestParityListInPlaceAppend covers the new in-place list growth
+// methods (append, extend, clear) that mutate the receiver and
+// participate in reference semantics.
+func TestParityListInPlaceAppend(t *testing.T) {
+	// append mutates in place and is observable through aliases.
+	runParity(t, `import io;
+let xs = [1, 2];
+let ys = xs;
+xs.append(3);
+io.println(ys);
+`, "[1, 2, 3]\n")
+
+	// extend appends every element of another list.
+	runParity(t, `import io;
+let xs = [1, 2];
+xs.extend([3, 4, 5]);
+io.println(xs);
+`, "[1, 2, 3, 4, 5]\n")
+
+	// clear empties the list in place.
+	runParity(t, `import io;
+let xs = [1, 2, 3];
+xs.clear();
+io.println(xs);
+io.println(xs.length());
+`, "[]\n0\n")
+
+	// dict.clear empties the dict in place.
+	runParity(t, `import io;
+let d = {"a": 1, "b": 2};
+d.clear();
+io.println(d);
+io.println(d.length());
+`, "{}\n0\n")
+
+	// append on a frozen list raises ImmutableError.
+	runErrorParity(t, `import freeze;
+let xs = freeze.shallow([1, 2]);
+xs.append(3);
+`, "ImmutableError")
+
+	// extend on a frozen list raises ImmutableError.
+	runErrorParity(t, `import freeze;
+let xs = freeze.shallow([1, 2]);
+xs.extend([3]);
+`, "ImmutableError")
+
+	// clear on a frozen list raises ImmutableError.
+	runErrorParity(t, `import freeze;
+let xs = freeze.shallow([1, 2]);
+xs.clear();
+`, "ImmutableError")
+
+	// clear on a frozen dict raises ImmutableError.
+	runErrorParity(t, `import freeze;
+let d = freeze.shallow({"a": 1});
+d.clear();
+`, "ImmutableError")
+
+	// Typed-list append rejects wrong element type at runtime when
+	// the typed list flows through an any-channel.
+	runParity(t, `import io;
+func bad(any container, any item): void {
+    try {
+        (container as list<int>).append(item);
+    } catch (TypeError e) {
+        io.println(e.message);
+    }
+}
+list<int> xs = [1, 2];
+bad(xs, "oops");
+io.println(xs);
+`, "cannot append string to list<int>\n[1, 2]\n")
+
+	// Typed-list extend rejects wrong element type.
+	runParity(t, `import io;
+func bad(any container, any items): void {
+    try {
+        (container as list<int>).extend(items as list<any>);
+    } catch (TypeError e) {
+        io.println(e.message);
+    }
+}
+list<int> xs = [1, 2];
+bad(xs, [3, "oops"]);
+io.println(xs);
+`, "cannot extend list<int> with string at index 1\n[1, 2]\n")
+
+	// append returns null (in-place methods do not return the receiver).
+	runParity(t, `import io;
+let xs = [1, 2];
+let r = xs.append(3);
+io.println(r);
+`, "null\n")
+
+	// extend rejects non-list argument.
+	runErrorParity(t, `let xs = [1, 2]; xs.extend(99);`, "list.extend expects a list argument")
+}
+
 func TestParityFreeze(t *testing.T) {
 	// freeze.shallow prevents list index mutation.
 	runErrorParity(t, `import freeze; let x = freeze.shallow([1,2,3]); x[0] = 99;`, "ImmutableError")
@@ -7358,7 +7457,7 @@ io.println(reflect.methods([1,2,3])[0]);
 io.println(reflect.methods({"a":1})[0]);
 io.println(reflect.methods("abc")[0]);
 io.println(reflect.methods(1..5)[0]);
-`, "append\ncontains\nchars\ncontains\n")
+`, "append\nclear\nchars\ncontains\n")
 }
 
 // TestParityUserErrorParentChain verifies that user-defined error

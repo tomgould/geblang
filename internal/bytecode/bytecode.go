@@ -114,7 +114,7 @@ const (
 	OpTypeAssert
 	OpShallowFreeze
 	// OpMatchListShape pops the top-of-stack value and pushes a Bool:
-	// true when the value is a runtime.List with exactly Operand[0]
+	// true when the value is a *runtime.List with exactly Operand[0]
 	// elements; false otherwise. Used by match list-pattern compile
 	// (case [a, b, ...]) so the structural test stays a single
 	// dispatch.
@@ -1009,7 +1009,7 @@ func appendConstant(out []byte, value runtime.Value) ([]byte, error) {
 			return nil, fmt.Errorf("unsupported bytecode constant: non-empty dict literal")
 		}
 		return append(out, 10), nil
-	case runtime.List:
+	case *runtime.List:
 		if len(value.Elements) != 0 {
 			return nil, fmt.Errorf("unsupported bytecode constant: non-empty list literal")
 		}
@@ -1149,7 +1149,7 @@ func appendMetadataValue(out []byte, value runtime.Value) ([]byte, error) {
 	switch value := value.(type) {
 	case runtime.Null, runtime.Bool, runtime.SmallInt, runtime.Int, runtime.String, runtime.Decimal, runtime.Float:
 		return appendConstant(out, value)
-	case runtime.List:
+	case *runtime.List:
 		out = append(out, 7)
 		out = binary.BigEndian.AppendUint16(out, uint16(len(value.Elements)))
 		for _, element := range value.Elements {
@@ -1322,7 +1322,7 @@ func (r *byteReader) constant() runtime.Value {
 	case 10:
 		return runtime.Dict{Entries: map[string]runtime.DictEntry{}}
 	case 11:
-		return runtime.List{Elements: nil}
+		return &runtime.List{Elements: nil}
 	case 12:
 		return runtime.Set{Elements: map[string]runtime.SetEntry{}}
 	default:
@@ -1464,7 +1464,7 @@ func (r *byteReader) metadataValue() runtime.Value {
 		for i := 0; i < count; i++ {
 			values = append(values, r.metadataValue())
 		}
-		return runtime.List{Elements: values}
+		return &runtime.List{Elements: values}
 	case 8:
 		count := int(r.u16())
 		entries := map[string]runtime.DictEntry{}

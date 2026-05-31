@@ -106,7 +106,7 @@ func (e *Evaluator) extBuiltins() map[string]builtinFunc {
 			sort.Slice(elems, func(i, j int) bool {
 				return elems[i].(runtime.String).Value < elems[j].(runtime.String).Value
 			})
-			return runtime.List{Elements: elems}, nil
+			return &runtime.List{Elements: elems}, nil
 		},
 	}
 }
@@ -577,7 +577,7 @@ func extMarshalValue(v runtime.Value, slots *[][]byte) (interface{}, error) {
 		slot := len(*slots)
 		*slots = append(*slots, val.Value)
 		return map[string]interface{}{"$type": "bytes", "slot": slot}, nil
-	case runtime.List:
+	case *runtime.List:
 		arr := make([]interface{}, len(val.Elements))
 		for i, elem := range val.Elements {
 			m, err := extMarshalValue(elem, slots)
@@ -638,7 +638,7 @@ func extUnmarshalValue(v interface{}, binarySlots [][]byte) (runtime.Value, erro
 			}
 			elems[i] = rv
 		}
-		return runtime.List{Elements: elems}, nil
+		return &runtime.List{Elements: elems}, nil
 	case map[string]interface{}:
 		// Check for special $type markers.
 		if typ, ok := val["$type"].(string); ok {

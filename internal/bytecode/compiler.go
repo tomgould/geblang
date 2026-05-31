@@ -5708,7 +5708,7 @@ func constantValueFromExpression(expr ast.Expression) (runtime.Value, error) {
 		 * because the VM clones on default-fill to avoid the
 		 * Python-style mutable-default trap. */
 		if len(expr.Elements) == 0 {
-			return runtime.List{Elements: nil}, nil
+			return &runtime.List{Elements: nil}, nil
 		}
 	case *ast.SetLiteral:
 		if len(expr.Elements) == 0 {
@@ -5776,7 +5776,7 @@ func decoratorConstantValue(expr ast.Expression) (runtime.Value, error) {
 			}
 			values = append(values, value)
 		}
-		return runtime.List{Elements: values}, nil
+		return &runtime.List{Elements: values}, nil
 	case *ast.DictLiteral:
 		entries := map[string]runtime.DictEntry{}
 		for _, entry := range expr.Entries {

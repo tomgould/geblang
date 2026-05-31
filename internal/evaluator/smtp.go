@@ -416,7 +416,7 @@ func addressListField(dict runtime.Dict, key string) ([]string, error) {
 	switch value := value.(type) {
 	case runtime.String:
 		return []string{value.Value}, nil
-	case runtime.List:
+	case *runtime.List:
 		out := make([]string, 0, len(value.Elements))
 		for _, item := range value.Elements {
 			text, ok := item.(runtime.String)
@@ -454,7 +454,7 @@ func smtpHeaderMap(value runtime.Value) (map[string][]string, error) {
 		switch value := entry.Value.(type) {
 		case runtime.String:
 			out[key.Value] = []string{value.Value}
-		case runtime.List:
+		case *runtime.List:
 			values := make([]string, 0, len(value.Elements))
 			for _, item := range value.Elements {
 				text, ok := item.(runtime.String)
@@ -472,7 +472,7 @@ func smtpHeaderMap(value runtime.Value) (map[string][]string, error) {
 }
 
 func smtpAttachmentsFromValue(value runtime.Value) ([]smtpAttachment, error) {
-	list, ok := value.(runtime.List)
+	list, ok := value.(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("message.attachments must be list<dict>")
 	}

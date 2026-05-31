@@ -168,7 +168,7 @@ func writeXMLValue(out *bytes.Buffer, value runtime.Value) error {
 		}
 	}
 	if childrenValue, ok := dict.Entries[dictKey("children")]; ok {
-		if children, ok := childrenValue.Value.(runtime.List); ok {
+		if children, ok := childrenValue.Value.(*runtime.List); ok {
 			for _, child := range children.Elements {
 				if err := writeXMLValue(out, child); err != nil {
 					return err
@@ -207,7 +207,7 @@ func xmlNodeValue(node *xmlNode) runtime.Value {
 	return runtime.Dict{Entries: map[string]runtime.DictEntry{
 		dictKey("name"):       {Key: runtime.String{Value: "name"}, Value: runtime.String{Value: node.name}},
 		dictKey("attributes"): {Key: runtime.String{Value: "attributes"}, Value: runtime.Dict{Entries: attrs}},
-		dictKey("children"):   {Key: runtime.String{Value: "children"}, Value: runtime.List{Elements: children}},
+		dictKey("children"):   {Key: runtime.String{Value: "children"}, Value: &runtime.List{Elements: children}},
 		dictKey("text"):       {Key: runtime.String{Value: "text"}, Value: runtime.String{Value: strings.TrimSpace(node.text.String())}},
 	}}
 }

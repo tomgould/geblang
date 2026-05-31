@@ -131,8 +131,8 @@ func assertEqual(expected Value, actual Value, format string) (Value, bool, erro
 // by the evaluator and VM for plain data.
 func ValuesEqual(left Value, right Value) bool {
 	switch leftValue := left.(type) {
-	case List:
-		rightValue, ok := right.(List)
+	case *List:
+		rightValue, ok := right.(*List)
 		if !ok || len(leftValue.Elements) != len(rightValue.Elements) {
 			return false
 		}
@@ -325,7 +325,7 @@ func containsValue(haystack Value, needle Value) bool {
 			return b >= 0 && b <= 255 && bytes.Contains(value.Value, []byte{byte(b)})
 		}
 		return false
-	case List:
+	case *List:
 		for _, element := range value.Elements {
 			if ValuesEqual(element, needle) {
 				return true
@@ -359,7 +359,7 @@ func isEmptyValue(value Value) bool {
 		return v.Value == ""
 	case Bytes:
 		return len(v.Value) == 0
-	case List:
+	case *List:
 		return len(v.Elements) == 0
 	case Dict:
 		return len(v.Entries) == 0

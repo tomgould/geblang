@@ -1656,7 +1656,7 @@ func (e *Evaluator) decoratorCallArguments(fn runtime.Function, decorator ast.De
 			return nil, fmt.Errorf("decorator %s argument: %w", decorator.Name.Value, err)
 		}
 		if arg.Spread {
-			list, ok := value.(runtime.List)
+			list, ok := value.(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("decorator %s spread argument must be a list", decorator.Name.Value)
 			}
@@ -1763,7 +1763,7 @@ func (e *Evaluator) decoratorClassCallArguments(class runtime.Value, decorator a
 			return nil, fmt.Errorf("decorator %s argument: %w", decorator.Name.Value, err)
 		}
 		if arg.Spread {
-			list, ok := value.(runtime.List)
+			list, ok := value.(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("decorator %s spread argument must be a list", decorator.Name.Value)
 			}
@@ -2105,7 +2105,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 				if err != nil {
 					return nil, err
 				}
-				list, ok := value.(runtime.List)
+				list, ok := value.(*runtime.List)
 				if !ok {
 					return nil, fmt.Errorf("spread element must be a list")
 				}
@@ -2118,7 +2118,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			}
 			elements = append(elements, value)
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	case *ast.DictLiteral:
 		d := runtime.NewDict()
 		for _, entry := range expr.Entries {
@@ -2231,7 +2231,7 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 				return nil, err
 			}
 		case *ast.ListLiteral:
-			list, ok := value.(runtime.List)
+			list, ok := value.(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("cannot list-destructure %s", value.TypeName())
 			}
@@ -2407,7 +2407,7 @@ func (e *Evaluator) matchCase(value runtime.Value, c ast.MatchCase, env *runtime
 			}
 		}
 	case c.ListPattern != nil:
-		list, ok := value.(runtime.List)
+		list, ok := value.(*runtime.List)
 		if !ok {
 			matched = false
 			break
@@ -2575,7 +2575,7 @@ func splitGenericTypeName(typeName string) (string, []string, bool) {
 
 func collectionMatchesGenericType(value runtime.Value, base string, args []string) bool {
 	switch v := value.(type) {
-	case runtime.List:
+	case *runtime.List:
 		if base != "list" || len(args) != 1 {
 			return false
 		}
@@ -2900,7 +2900,7 @@ func httpHeadersFromValue(value runtime.Value) (runtime.HTTPHeaders, error) {
 			switch headerValue := entry.Value.(type) {
 			case runtime.String:
 				out.Values[http.CanonicalHeaderKey(key.Value)] = []string{headerValue.Value}
-			case runtime.List:
+			case *runtime.List:
 				values := make([]string, 0, len(headerValue.Elements))
 				for _, element := range headerValue.Elements {
 					text, ok := element.(runtime.String)
@@ -2940,7 +2940,7 @@ func httpHeadersToDict(headers runtime.HTTPHeaders) runtime.Dict {
 			for i, item := range values {
 				elements[i] = runtime.String{Value: item}
 			}
-			value = runtime.List{Elements: elements}
+			value = &runtime.List{Elements: elements}
 		}
 		entries[dictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: value}
 	}
@@ -2983,7 +2983,7 @@ func httpHeadersMethod(receiver runtime.HTTPHeaders, name string, args []runtime
 		for i, value := range values {
 			elements[i] = runtime.String{Value: value}
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	case "has":
 		key, err := singleHeaderName(name, args)
 		if err != nil {
@@ -3030,7 +3030,7 @@ func httpHeadersMethod(receiver runtime.HTTPHeaders, name string, args []runtime
 		for i, key := range keys {
 			elements[i] = runtime.String{Value: key}
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	case "toDict":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("http.Headers.toDict expects no arguments")
@@ -3517,7 +3517,7 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 		for _, column := range h.columns {
 			columns = append(columns, runtime.String{Value: column})
 		}
-		return runtime.List{Elements: columns}, nil
+		return &runtime.List{Elements: columns}, nil
 	}}}
 	rowsClass.Methods["close"] = []runtime.Function{{Name: "close", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {
@@ -3539,7 +3539,7 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 		if err != nil {
 			return nil, err
 		}
-		list := rows.(runtime.List)
+		list := rows.(*runtime.List)
 		return runtime.SmallInt{Value: int64(len(list.Elements))}, nil
 	}}}
 	rowsClass.Methods["isempty"] = []runtime.Function{{Name: "isEmpty", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -3786,7 +3786,7 @@ func (e *Evaluator) dbRowsAll(instance *runtime.Instance) (runtime.Value, error)
 		}
 	}
 	out := append([]runtime.Value(nil), rows.cache...)
-	return runtime.List{Elements: out}, nil
+	return &runtime.List{Elements: out}, nil
 }
 
 func (e *Evaluator) dbRowsFirst(instance *runtime.Instance) (runtime.Value, error) {
@@ -3920,7 +3920,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 			putDict(entries, "httpOnly", runtime.Bool{Value: c.HttpOnly})
 			elems = append(elems, runtime.Dict{Entries: entries})
 		}
-		return runtime.List{Elements: elems}, nil
+		return &runtime.List{Elements: elems}, nil
 	}}}
 	cookieJarClass.Methods["setcookies"] = []runtime.Function{{Name: "setCookies", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
@@ -3930,7 +3930,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		if !ok {
 			return nil, fmt.Errorf("CookieJar.setCookies url must be string")
 		}
-		list, ok := args[1].(runtime.List)
+		list, ok := args[1].(*runtime.List)
 		if !ok {
 			return nil, fmt.Errorf("CookieJar.setCookies expects a list of cookies")
 		}
@@ -4438,7 +4438,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("Client.fetchAll expects a list of request specs")
 		}
-		list, ok := args[0].(runtime.List)
+		list, ok := args[0].(*runtime.List)
 		if !ok {
 			return nil, fmt.Errorf("Client.fetchAll argument must be a list")
 		}
@@ -4480,7 +4480,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 				}(i, sv)
 			}
 			wg.Wait()
-			task.Complete(runtime.List{Elements: results}, nil)
+			task.Complete(&runtime.List{Elements: results}, nil)
 		}()
 		return task, nil
 	}}}
@@ -4488,7 +4488,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("Client.fetchStream expects a list of request specs")
 		}
-		list, ok := args[0].(runtime.List)
+		list, ok := args[0].(*runtime.List)
 		if !ok {
 			return nil, fmt.Errorf("Client.fetchStream argument must be a list")
 		}
@@ -4693,7 +4693,7 @@ func enumVariantField(ev runtime.EnumVariant, name string) (runtime.Value, error
 	case "variant":
 		return runtime.String{Value: ev.Variant}, nil
 	case "fields":
-		return runtime.List{Elements: ev.Fields}, nil
+		return &runtime.List{Elements: ev.Fields}, nil
 	}
 	return nil, fmt.Errorf("enum variant %s.%s has no field %s", ev.Enum.Name, ev.Variant, name)
 }
@@ -5738,12 +5738,12 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 			for _, entry := range v.Elements {
 				out = append(out, entry.Value)
 			}
-			return runtime.List{Elements: out}, nil
+			return &runtime.List{Elements: out}, nil
 		}
 	case "set":
 		/* `list as set` de-duplicates. First occurrence wins; later
 		 * duplicates are dropped. */
-		if v, ok := value.(runtime.List); ok {
+		if v, ok := value.(*runtime.List); ok {
 			elements := make(map[string]runtime.SetEntry, len(v.Elements))
 			for _, elem := range v.Elements {
 				k := dictKey(elem)
@@ -6363,7 +6363,7 @@ func (e *Evaluator) evalForInIteration(stmt *ast.ForStatement, loopEnv *runtime.
 			return signal{}, err
 		}
 	} else {
-		list, ok := value.(runtime.List)
+		list, ok := value.(*runtime.List)
 		if !ok || len(list.Elements) != len(names) {
 			return signal{}, fmt.Errorf("cannot destructure %s into %d loop variables", value.TypeName(), len(names))
 		}
@@ -6382,7 +6382,7 @@ func (e *Evaluator) evalDestructuringStatement(stmt *ast.DestructuringStatement,
 		return signal{}, err
 	}
 	if stmt.IsList {
-		list, ok := val.(runtime.List)
+		list, ok := val.(*runtime.List)
 		if !ok {
 			return signal{}, fmt.Errorf("cannot list-destructure %s", val.TypeName())
 		}
@@ -6464,7 +6464,7 @@ func (e *Evaluator) resolveUserIterator(instance *runtime.Instance) (*runtime.In
 
 func (e *Evaluator) iterableValues(value runtime.Value) ([]runtime.Value, error) {
 	switch value := value.(type) {
-	case runtime.List:
+	case *runtime.List:
 		return value.Elements, nil
 	case *runtime.Generator:
 		values := []runtime.Value{}
@@ -6483,7 +6483,7 @@ func (e *Evaluator) iterableValues(value runtime.Value) ([]runtime.Value, error)
 		values := make([]runtime.Value, 0, len(ordered))
 		for _, k := range ordered {
 			entry := value.Entries[k]
-			values = append(values, runtime.List{Elements: []runtime.Value{entry.Key, entry.Value}})
+			values = append(values, &runtime.List{Elements: []runtime.Value{entry.Key, entry.Value}})
 		}
 		return values, nil
 	default:
@@ -6825,7 +6825,7 @@ func (e *Evaluator) evalReflectClassesCall(call *ast.CallExpression, env *runtim
 	for _, n := range names {
 		out = append(out, e.globalClasses[n])
 	}
-	return runtime.List{Elements: out}, nil
+	return &runtime.List{Elements: out}, nil
 }
 
 func (e *Evaluator) evalReflectLookupCall(call *ast.CallExpression, env *runtime.Environment, name string) (runtime.Value, error) {
@@ -6967,7 +6967,7 @@ func dumpValue(value runtime.Value) string {
 		return "string(" + strconv.Quote(value.Value) + ")"
 	case runtime.Bytes:
 		return fmt.Sprintf("bytes(%q)", value.Value)
-	case runtime.List:
+	case *runtime.List:
 		parts := make([]string, 0, len(value.Elements))
 		for _, element := range value.Elements {
 			parts = append(parts, dumpValue(element))
@@ -7084,7 +7084,7 @@ func dirValue(value runtime.Value) []string {
 		for _, entry := range value.Entries {
 			names = append(names, entry.Key.Inspect())
 		}
-	case runtime.List:
+	case *runtime.List:
 		names = primitiveMethods("list")
 	case runtime.String:
 		names = primitiveMethods("string")
@@ -7147,12 +7147,12 @@ func nativeObjectMethods(kind string) []string {
 	}
 }
 
-func stringList(names []string) runtime.List {
+func stringList(names []string) *runtime.List {
 	elements := make([]runtime.Value, 0, len(names))
 	for _, name := range names {
 		elements = append(elements, runtime.String{Value: name})
 	}
-	return runtime.List{Elements: elements}
+	return &runtime.List{Elements: elements}
 }
 
 func (e *Evaluator) evalSelectorExpression(expr *ast.SelectorExpression, env *runtime.Environment) (runtime.Value, error) {
@@ -7263,7 +7263,7 @@ func (e *Evaluator) evalSelectorExpression(expr *ast.SelectorExpression, env *ru
 			return runtime.SmallInt{Value: int64(len([]rune(v.Value)))}, nil
 		case runtime.Bytes:
 			return runtime.SmallInt{Value: int64(len(v.Value))}, nil
-		case runtime.List:
+		case *runtime.List:
 			return runtime.SmallInt{Value: int64(len(v.Elements))}, nil
 		case runtime.Dict:
 			return runtime.SmallInt{Value: int64(len(v.Entries))}, nil
@@ -8124,7 +8124,7 @@ func collectionsLength(call *ast.CallExpression, args []runtime.Value) (runtime.
 		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
 	}
 	switch value := args[0].(type) {
-	case runtime.List:
+	case *runtime.List:
 		return runtime.SmallInt{Value: int64(len(value.Elements))}, nil
 	case runtime.Dict:
 		return runtime.SmallInt{Value: int64(len(value.Entries))}, nil
@@ -8158,7 +8158,7 @@ func collectionsContains(call *ast.CallExpression, args []runtime.Value) (runtim
 		return nil, fmt.Errorf("%s expects collection and value", call.Callee.String())
 	}
 	switch value := args[0].(type) {
-	case runtime.List:
+	case *runtime.List:
 		for _, element := range value.Elements {
 			if valuesEqualSimple(element, args[1]) {
 				return runtime.Bool{Value: true}, nil
@@ -8193,12 +8193,12 @@ func collectionsReverse(call *ast.CallExpression, args []runtime.Value) (runtime
 		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
 	}
 	switch value := args[0].(type) {
-	case runtime.List:
+	case *runtime.List:
 		out := make([]runtime.Value, len(value.Elements))
 		for i := range value.Elements {
 			out[len(value.Elements)-1-i] = value.Elements[i]
 		}
-		return runtime.List{Elements: out}, nil
+		return &runtime.List{Elements: out}, nil
 	case runtime.String:
 		runes := []rune(value.Value)
 		for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
@@ -8220,7 +8220,7 @@ func collectionsSort(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
 	}
-	list, ok := args[0].(runtime.List)
+	list, ok := args[0].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s expects list", call.Callee.String())
 	}
@@ -8240,14 +8240,14 @@ func collectionsSort(call *ast.CallExpression, args []runtime.Value) (runtime.Va
 	if compareErr != nil {
 		return nil, compareErr
 	}
-	return runtime.List{Elements: out}, nil
+	return &runtime.List{Elements: out}, nil
 }
 
 func collectionsJoin(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("%s expects list and separator", call.Callee.String())
 	}
-	list, ok := args[0].(runtime.List)
+	list, ok := args[0].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s expects list", call.Callee.String())
 	}
@@ -8295,7 +8295,7 @@ func collectionsRangeContains(current, end, step *big.Int, exclusive bool) bool 
 
 func collectionsIteratorFor(value runtime.Value, label string) (collectionsIterator, error) {
 	switch v := value.(type) {
-	case runtime.List:
+	case *runtime.List:
 		index := 0
 		return collectionsIterator{next: func() (runtime.Value, bool, error) {
 			if index >= len(v.Elements) {
@@ -8482,7 +8482,7 @@ func (e *Evaluator) collectionsMethod(name string, arity int) builtinFunc {
 		if len(args) == 0 {
 			return nil, fmt.Errorf("%s expects a collection", call.Callee.String())
 		}
-		list, ok := args[0].(runtime.List)
+		list, ok := args[0].(*runtime.List)
 		if !ok {
 			return nil, fmt.Errorf("%s expects list", call.Callee.String())
 		}
@@ -8505,8 +8505,8 @@ func (e *Evaluator) collectionsGraphMethod(name string, extraArgs int) builtinFu
 
 func valuesEqualSimple(left runtime.Value, right runtime.Value) bool {
 	switch leftValue := left.(type) {
-	case runtime.List:
-		rightValue, ok := right.(runtime.List)
+	case *runtime.List:
+		rightValue, ok := right.(*runtime.List)
 		if !ok || len(leftValue.Elements) != len(rightValue.Elements) {
 			return false
 		}
@@ -8641,7 +8641,7 @@ func schemaValidate(call *ast.CallExpression, args []runtime.Value) (runtime.Val
 	validateValueAgainstSchema(args[0], schema, "$", &errors)
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "valid", runtime.Bool{Value: len(errors) == 0})
-	putDict(entries, "errors", runtime.List{Elements: errors})
+	putDict(entries, "errors", &runtime.List{Elements: errors})
 	return runtime.Dict{Entries: entries}, nil
 }
 
@@ -8653,7 +8653,7 @@ func validateValueAgainstSchema(value runtime.Value, schema runtime.Dict, path s
 		}
 	}
 	if enumValue, ok := dictField(schema, "enum"); ok {
-		if values, ok := enumValue.(runtime.List); ok {
+		if values, ok := enumValue.(*runtime.List); ok {
 			found := false
 			for _, allowed := range values.Elements {
 				if valuesEqualSimple(value, allowed) {
@@ -8705,7 +8705,7 @@ func validateValueAgainstSchema(value runtime.Value, schema runtime.Dict, path s
 			*errors = append(*errors, runtime.String{Value: path + ": schema.items must be dict"})
 			return
 		}
-		list, ok := value.(runtime.List)
+		list, ok := value.(*runtime.List)
 		if !ok {
 			*errors = append(*errors, runtime.String{Value: path + ": expected list for items"})
 			return
@@ -8735,7 +8735,7 @@ func schemaRequiredFields(schema runtime.Dict) map[string]bool {
 	if !ok {
 		return required
 	}
-	list, ok := value.(runtime.List)
+	list, ok := value.(*runtime.List)
 	if !ok {
 		return required
 	}
@@ -9002,7 +9002,7 @@ func (e *Evaluator) cliChoose(call *ast.CallExpression, args []runtime.Value) (r
 	if !ok {
 		return nil, fmt.Errorf("%s prompt must be string", call.Callee.String())
 	}
-	options, ok := args[1].(runtime.List)
+	options, ok := args[1].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s options must be list<string>", call.Callee.String())
 	}
@@ -9243,7 +9243,7 @@ func cliTable(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 	if len(args) < 1 || len(args) > 2 {
 		return nil, fmt.Errorf("%s expects rows and optional options", call.Callee.String())
 	}
-	rows, ok := args[0].(runtime.List)
+	rows, ok := args[0].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s rows must be list", call.Callee.String())
 	}
@@ -9252,7 +9252,7 @@ func cliTable(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 	separator := "  "
 	if len(args) == 2 {
 		switch opts := args[1].(type) {
-		case runtime.List:
+		case *runtime.List:
 			/* Backwards-compatible legacy form: bare list of header
 			 * strings. Columns are inferred from the row dict keys. */
 			for _, header := range opts.Elements {
@@ -9267,7 +9267,7 @@ func cliTable(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 			/* Documented form: an options dict with `columns`,
 			 * `headers`, `separator`. All keys are optional. */
 			if value, ok := dictField(opts, "columns"); ok {
-				list, ok := value.(runtime.List)
+				list, ok := value.(*runtime.List)
 				if !ok {
 					return nil, fmt.Errorf("%s options.columns must be list<string>", call.Callee.String())
 				}
@@ -9280,7 +9280,7 @@ func cliTable(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 				}
 			}
 			if value, ok := dictField(opts, "headers"); ok {
-				list, ok := value.(runtime.List)
+				list, ok := value.(*runtime.List)
 				if !ok {
 					return nil, fmt.Errorf("%s options.headers must be list<string>", call.Callee.String())
 				}
@@ -9433,7 +9433,7 @@ func (e *Evaluator) cliProgressFinish(call *ast.CallExpression, args []runtime.V
 	return runtime.Null{}, nil
 }
 
-func cliTableRows(rows runtime.List, headers []string) ([][]string, []string, error) {
+func cliTableRows(rows *runtime.List, headers []string) ([][]string, []string, error) {
 	out := [][]string{}
 	inferred := append([]string(nil), headers...)
 	for _, row := range rows.Elements {
@@ -9454,7 +9454,7 @@ func cliTableRows(rows runtime.List, headers []string) ([][]string, []string, er
 				}
 			}
 			out = append(out, values)
-		case runtime.List:
+		case *runtime.List:
 			values := make([]string, len(row.Elements))
 			for i, value := range row.Elements {
 				values[i] = value.Inspect()
@@ -9753,7 +9753,7 @@ func (e *Evaluator) declareMetric(call *ast.CallExpression, args []runtime.Value
 			}
 		}
 		if labelEnt, ok := opts.Entries[native.DictKey(runtime.String{Value: "labels"})]; ok {
-			list, ok := labelEnt.Value.(runtime.List)
+			list, ok := labelEnt.Value.(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("%s opts.labels must be list of strings", call.Callee.String())
 			}
@@ -9769,7 +9769,7 @@ func (e *Evaluator) declareMetric(call *ast.CallExpression, args []runtime.Value
 			if kind != "histogram" {
 				return nil, fmt.Errorf("%s opts.buckets is only valid for histograms", call.Callee.String())
 			}
-			list, ok := bucketEnt.Value.(runtime.List)
+			list, ok := bucketEnt.Value.(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("%s opts.buckets must be list of numbers", call.Callee.String())
 			}
@@ -10128,7 +10128,7 @@ func (e *Evaluator) traceSnapshot(call *ast.CallExpression, args []runtime.Value
 	for id, span := range e.traces {
 		spans = append(spans, traceSpanValue(id, span))
 	}
-	return runtime.List{Elements: spans}, nil
+	return &runtime.List{Elements: spans}, nil
 }
 
 func (e *Evaluator) traceReset(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -10472,7 +10472,7 @@ func traceSpanValue(id int64, span *traceSpan) runtime.Dict {
 	for _, event := range span.events {
 		events = append(events, traceEventValue(event))
 	}
-	putDict(entries, "events", runtime.List{Elements: events})
+	putDict(entries, "events", &runtime.List{Elements: events})
 	return runtime.Dict{Entries: entries}
 }
 
@@ -11011,7 +11011,7 @@ func pathGlob(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 	for i, m := range matches {
 		values[i] = runtime.String{Value: m}
 	}
-	return runtime.List{Elements: values}, nil
+	return &runtime.List{Elements: values}, nil
 }
 
 // globRecursive extends filepath.Glob with Python-style `**` to match
@@ -11645,8 +11645,8 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 	putDict(entries, "total", runtime.NewInt64(total))
 	putDict(entries, "passed", runtime.NewInt64(passed))
 	putDict(entries, "failed", runtime.NewInt64(failed))
-	putDict(entries, "failures", runtime.List{Elements: failures})
-	putDict(entries, "tests", runtime.List{Elements: tests})
+	putDict(entries, "failures", &runtime.List{Elements: failures})
+	putDict(entries, "tests", &runtime.List{Elements: tests})
 	return runtime.Dict{Entries: entries}, nil
 }
 
@@ -11770,7 +11770,7 @@ func testRunOptionsFromArgs(call *ast.CallExpression, args []runtime.Value) (tes
 		return options, fmt.Errorf("%s options must be dict", call.Callee.String())
 	}
 	if value, ok := dictField(dict, "tags"); ok {
-		list, ok := value.(runtime.List)
+		list, ok := value.(*runtime.List)
 		if !ok {
 			return options, fmt.Errorf("%s options.tags must be list<string>", call.Callee.String())
 		}
@@ -11784,7 +11784,7 @@ func testRunOptionsFromArgs(call *ast.CallExpression, args []runtime.Value) (tes
 		}
 	}
 	if value, ok := dictField(dict, "methods"); ok {
-		list, ok := value.(runtime.List)
+		list, ok := value.(*runtime.List)
 		if !ok {
 			return options, fmt.Errorf("%s options.methods must be list<string>", call.Callee.String())
 		}
@@ -12012,7 +12012,7 @@ func reflectParameters(call *ast.CallExpression, args []runtime.Value) (runtime.
 	for _, parameter := range fn.Parameters {
 		values = append(values, parameterMetadataValue(parameter))
 	}
-	return runtime.List{Elements: values}, nil
+	return &runtime.List{Elements: values}, nil
 }
 
 func reflectReturnType(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -12087,7 +12087,7 @@ func docMetadataValue(doc string) runtime.Dict {
 	putDict(entries, "text", runtime.String{Value: doc})
 	putDict(entries, "summary", runtime.String{Value: summary})
 	putDict(entries, "body", runtime.String{Value: body})
-	putDict(entries, "lines", runtime.List{Elements: lineValues})
+	putDict(entries, "lines", &runtime.List{Elements: lineValues})
 	return runtime.Dict{Entries: entries}
 }
 
@@ -12180,7 +12180,7 @@ func reflectFields(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 			b := entries[j].(runtime.Dict).Entries[native.DictKey(runtime.String{Value: "name"})].Value.(runtime.String).Value
 			return a < b
 		})
-		return runtime.List{Elements: entries}, nil
+		return &runtime.List{Elements: entries}, nil
 	}
 	metadata, err := reflectClassMetadataValue(call, args)
 	if err != nil {
@@ -12195,7 +12195,7 @@ func reflectFields(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 		putDict(fd, "hasDefault", runtime.Bool{Value: false})
 		entries = append(entries, runtime.Dict{Entries: fd})
 	}
-	return runtime.List{Elements: entries}, nil
+	return &runtime.List{Elements: entries}, nil
 }
 
 func classForReflectFields(v runtime.Value) (*runtime.Class, bool) {
@@ -12333,9 +12333,9 @@ func reflectConstructors(call *ast.CallExpression, args []runtime.Value) (runtim
 			for _, p := range md.Parameters {
 				paramValues = append(paramValues, parameterMetadataValue(p))
 			}
-			overloads = append(overloads, runtime.List{Elements: paramValues})
+			overloads = append(overloads, &runtime.List{Elements: paramValues})
 		}
-		return runtime.List{Elements: overloads}, nil
+		return &runtime.List{Elements: overloads}, nil
 	case runtime.BytecodeClass:
 		overloads := make([]runtime.Value, 0, len(value.ConstructorMetadata))
 		for _, md := range value.ConstructorMetadata {
@@ -12343,12 +12343,12 @@ func reflectConstructors(call *ast.CallExpression, args []runtime.Value) (runtim
 			for _, p := range md.Parameters {
 				paramValues = append(paramValues, parameterMetadataValue(p))
 			}
-			overloads = append(overloads, runtime.List{Elements: paramValues})
+			overloads = append(overloads, &runtime.List{Elements: paramValues})
 		}
-		return runtime.List{Elements: overloads}, nil
+		return &runtime.List{Elements: overloads}, nil
 	case runtime.DecoratorTarget:
 		if value.Class != nil {
-			return runtime.List{Elements: []runtime.Value{}}, nil
+			return &runtime.List{Elements: []runtime.Value{}}, nil
 		}
 	}
 	return nil, fmt.Errorf("%s expects class, got %s", call.Callee.String(), args[0].TypeName())
@@ -12364,7 +12364,7 @@ func reflectTypeBindings(call *ast.CallExpression, args []runtime.Value) (runtim
 		for name, typeName := range v.TypeBindings {
 			putDict(entries, name, runtime.String{Value: typeName})
 		}
-	case runtime.List:
+	case *runtime.List:
 		if len(v.ElementTypes) >= 1 {
 			putDict(entries, "T", runtime.String{Value: v.ElementTypes[0]})
 		}
@@ -12431,7 +12431,7 @@ func reflectInterfaceMethods(call *ast.CallExpression, args []runtime.Value) (ru
 		} else {
 			putDict(entries, "doc", runtime.String{Value: sig.Doc})
 		}
-		putDict(entries, "parameters", runtime.List{Elements: params})
+		putDict(entries, "parameters", &runtime.List{Elements: params})
 		putDict(entries, "returnType", runtime.String{Value: rt})
 		methods = append(methods, methodEntry{name: strings.ToLower(name), val: runtime.Dict{Entries: entries}})
 	}
@@ -12440,7 +12440,7 @@ func reflectInterfaceMethods(call *ast.CallExpression, args []runtime.Value) (ru
 	for i, m := range methods {
 		values[i] = m.val
 	}
-	return runtime.List{Elements: values}, nil
+	return &runtime.List{Elements: values}, nil
 }
 
 func reflectInterfaceParents(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -12503,7 +12503,7 @@ func reflectClassMetadataValue(call *ast.CallExpression, args []runtime.Value) (
 // introspect primitives the same way it introspects user-defined classes.
 func primitiveTypeMetadata(value runtime.Value) (runtime.ClassMetadata, bool) {
 	switch value.(type) {
-	case runtime.List:
+	case *runtime.List:
 		return runtime.ClassMetadata{
 			Name:    "list",
 			Methods: primitiveMethodNamesFor("list"),
@@ -12544,9 +12544,9 @@ func primitiveTypeMetadata(value runtime.Value) (runtime.ClassMetadata, bool) {
 func primitiveMethodNamesFor(typeName string) []string {
 	switch typeName {
 	case "list":
-		return []string{"append", "contains", "filter", "first", "indexOf", "insert", "isEmpty", "join", "last", "length", "map", "pop", "prepend", "push", "remove", "reverse", "set", "slice", "sort", "toList", "unshift"}
+		return []string{"append", "clear", "contains", "extend", "filter", "first", "indexOf", "insert", "isEmpty", "join", "last", "length", "map", "pop", "prepend", "push", "remove", "reverse", "set", "slice", "sort", "toList", "unshift"}
 	case "dict":
-		return []string{"contains", "entries", "get", "insert", "isEmpty", "keys", "length", "remove", "set", "values"}
+		return []string{"clear", "contains", "entries", "get", "insert", "isEmpty", "keys", "length", "remove", "set", "values"}
 	case "set":
 		return []string{"add", "contains", "difference", "intersection", "isEmpty", "length", "remove", "toList", "union"}
 	case "string":
@@ -12861,7 +12861,7 @@ func decoratorListValue(decorators []ast.Decorator, target string, filter string
 		}
 		values = append(values, value)
 	}
-	return runtime.List{Elements: values}, nil
+	return &runtime.List{Elements: values}, nil
 }
 
 func overloadedDecoratorListValue(overloaded runtime.OverloadedFunction, filter string) (runtime.Value, error) {
@@ -12879,7 +12879,7 @@ func overloadedDecoratorListValue(overloaded runtime.OverloadedFunction, filter 
 			values = append(values, value)
 		}
 	}
-	return runtime.List{Elements: values}, nil
+	return &runtime.List{Elements: values}, nil
 }
 
 func decoratorValue(decorator ast.Decorator, target string, position int, overload int) (runtime.Value, error) {
@@ -12908,7 +12908,7 @@ func decoratorValue(decorator ast.Decorator, target string, position int, overlo
 			args = append(args, value)
 		}
 	}
-	putDict(entries, "args", runtime.List{Elements: args})
+	putDict(entries, "args", &runtime.List{Elements: args})
 	putDict(entries, "namedArgs", runtime.Dict{Entries: namedArgs})
 	putDict(entries, "line", runtime.NewInt64(int64(decorator.Token.Line)))
 	putDict(entries, "column", runtime.NewInt64(int64(decorator.Token.Column)))
@@ -12926,7 +12926,7 @@ func parameterMetadataValue(parameter runtime.ParameterMetadata) runtime.Value {
 		for _, dec := range parameter.Decorators {
 			decValues = append(decValues, decoratorMetadataDictValue(dec))
 		}
-		putDict(entries, "decorators", runtime.List{Elements: decValues})
+		putDict(entries, "decorators", &runtime.List{Elements: decValues})
 	}
 	return runtime.Dict{Entries: entries}
 }
@@ -12939,7 +12939,7 @@ func decoratorMetadataDictValue(metadata runtime.DecoratorMetadata) runtime.Valu
 	putDict(entries, "overload", runtime.NewInt64(metadata.Overload))
 	args := make([]runtime.Value, 0, len(metadata.Args))
 	args = append(args, metadata.Args...)
-	putDict(entries, "args", runtime.List{Elements: args})
+	putDict(entries, "args", &runtime.List{Elements: args})
 	namedArgs := map[string]runtime.DictEntry{}
 	for k, v := range metadata.NamedArgs {
 		putDict(namedArgs, k, v)
@@ -13015,7 +13015,7 @@ func decoratorMetadataValue(expr ast.Expression) (runtime.Value, error) {
 			}
 			values = append(values, value)
 		}
-		return runtime.List{Elements: values}, nil
+		return &runtime.List{Elements: values}, nil
 	case *ast.DictLiteral:
 		entries := map[string]runtime.DictEntry{}
 		for _, entry := range expr.Entries {
@@ -13088,7 +13088,7 @@ func netLookupHost(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 	for _, addr := range addrs {
 		values = append(values, runtime.String{Value: addr})
 	}
-	return runtime.List{Elements: values}, nil
+	return &runtime.List{Elements: values}, nil
 }
 
 func (e *Evaluator) netListenTCP(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -14097,7 +14097,7 @@ func (e *Evaluator) dbMigrate(call *ast.CallExpression, args []runtime.Value) (r
 	}
 	idPlaceholder := dbPlaceholder(driver, 1)
 	appliedAtPlaceholder := dbPlaceholder(driver, 2)
-	migrations, ok := args[1].(runtime.List)
+	migrations, ok := args[1].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s migrations must be list<dict>", call.Callee.String())
 	}
@@ -14145,8 +14145,8 @@ func (e *Evaluator) dbMigrate(call *ast.CallExpression, args []runtime.Value) (r
 		return nil, err
 	}
 	entries := map[string]runtime.DictEntry{}
-	putDict(entries, "applied", runtime.List{Elements: applied})
-	putDict(entries, "skipped", runtime.List{Elements: skipped})
+	putDict(entries, "applied", &runtime.List{Elements: applied})
+	putDict(entries, "skipped", &runtime.List{Elements: skipped})
 	return runtime.Dict{Entries: entries}, nil
 }
 
@@ -14190,7 +14190,7 @@ func sqlRowsToRuntime(rows *sql.Rows) (runtime.Value, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return runtime.List{Elements: out}, nil
+	return &runtime.List{Elements: out}, nil
 }
 
 func scanSQLRow(rows *sql.Rows, columns []string) (runtime.Value, error) {
@@ -14619,7 +14619,7 @@ func isDBParamPart(ch byte) bool {
 func dbBindArgs(values []runtime.Value, paramNames []string) ([]any, error) {
 	if len(values) == 1 {
 		switch value := values[0].(type) {
-		case runtime.List:
+		case *runtime.List:
 			return dbArgs(value.Elements)
 		case runtime.Dict:
 			if len(paramNames) == 0 {
@@ -15188,7 +15188,7 @@ func httpRetryOptionsFromDict(opts runtime.Dict) (httpRetryOptions, error) {
 		}
 	}
 	if v, ok := dictField(opts, "retryStatuses"); ok {
-		list, ok := v.(runtime.List)
+		list, ok := v.(*runtime.List)
 		if !ok {
 			return out, fmt.Errorf("retryStatuses must be list<int>")
 		}
@@ -15854,7 +15854,7 @@ func dictStringList(d runtime.Dict, key string) []string {
 		if !ok || k.Value != key {
 			continue
 		}
-		list, ok := entry.Value.(runtime.List)
+		list, ok := entry.Value.(*runtime.List)
 		if !ok {
 			return nil
 		}
@@ -16887,7 +16887,7 @@ func (e *Evaluator) httpFetchAll(call *ast.CallExpression, args []runtime.Value)
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects a list of request specs", call.Callee.String())
 	}
-	list, ok := args[0].(runtime.List)
+	list, ok := args[0].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s argument must be a list", call.Callee.String())
 	}
@@ -16925,7 +16925,7 @@ func (e *Evaluator) httpFetchAll(call *ast.CallExpression, args []runtime.Value)
 			}(i, sv)
 		}
 		wg.Wait()
-		task.Complete(runtime.List{Elements: results}, nil)
+		task.Complete(&runtime.List{Elements: results}, nil)
 	}()
 	return task, nil
 }
@@ -16934,7 +16934,7 @@ func (e *Evaluator) httpFetchStream(call *ast.CallExpression, args []runtime.Val
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects a list of request specs", call.Callee.String())
 	}
-	list, ok := args[0].(runtime.List)
+	list, ok := args[0].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s argument must be a list", call.Callee.String())
 	}
@@ -17790,9 +17790,9 @@ func ioReadCSV(call *ast.CallExpression, args []runtime.Value) (runtime.Value, e
 		for _, field := range record {
 			row = append(row, runtime.String{Value: field})
 		}
-		rows = append(rows, runtime.List{Elements: row})
+		rows = append(rows, &runtime.List{Elements: row})
 	}
-	return runtime.List{Elements: rows}, nil
+	return &runtime.List{Elements: rows}, nil
 }
 
 func ioWriteCSV(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -17803,7 +17803,7 @@ func ioWriteCSV(call *ast.CallExpression, args []runtime.Value) (runtime.Value, 
 	if !ok {
 		return nil, fmt.Errorf("%s path must be string", call.Callee.String())
 	}
-	rows, ok := args[1].(runtime.List)
+	rows, ok := args[1].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s rows must be list", call.Callee.String())
 	}
@@ -17814,7 +17814,7 @@ func ioWriteCSV(call *ast.CallExpression, args []runtime.Value) (runtime.Value, 
 	defer file.Close()
 	writer := csv.NewWriter(file)
 	for _, rowValue := range rows.Elements {
-		rowList, ok := rowValue.(runtime.List)
+		rowList, ok := rowValue.(*runtime.List)
 		if !ok {
 			return nil, fmt.Errorf("%s rows must be list<list<any>>", call.Callee.String())
 		}
@@ -17965,7 +17965,7 @@ func (e *Evaluator) ioReadLines(call *ast.CallExpression, args []runtime.Value) 
 			return nil, readErr
 		}
 	}
-	return runtime.List{Elements: lines}, nil
+	return &runtime.List{Elements: lines}, nil
 }
 
 func ioStat(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -18095,7 +18095,7 @@ func ioListDir(call *ast.CallExpression, args []runtime.Value) (runtime.Value, e
 	for _, entry := range entries {
 		values = append(values, runtime.String{Value: entry.Name()})
 	}
-	return runtime.List{Elements: values}, nil
+	return &runtime.List{Elements: values}, nil
 }
 
 func ioWalkDir(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -18120,7 +18120,7 @@ func ioWalkDir(call *ast.CallExpression, args []runtime.Value) (runtime.Value, e
 	if err != nil {
 		return nil, err
 	}
-	return runtime.List{Elements: values}, nil
+	return &runtime.List{Elements: values}, nil
 }
 
 func (e *Evaluator) fileHandle(value runtime.Value) (*os.File, error) {
@@ -18445,7 +18445,7 @@ func (e *Evaluator) sysArgs(call *ast.CallExpression, args []runtime.Value) (run
 	for _, arg := range e.args {
 		values = append(values, runtime.String{Value: arg})
 	}
-	return runtime.List{Elements: values}, nil
+	return &runtime.List{Elements: values}, nil
 }
 
 func sysRun(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -18516,7 +18516,7 @@ func processSpecFromCombinedArgs(call *ast.CallExpression, args []runtime.Value)
 	}
 	// Two forms: ("cmd", ["arg1", "arg2"]) or ("cmd", "arg1", "arg2", ...)
 	if len(args) == 2 {
-		if list, ok := args[1].(runtime.List); ok {
+		if list, ok := args[1].(*runtime.List); ok {
 			commandArgs := make([]string, 0, len(list.Elements))
 			for _, elem := range list.Elements {
 				s, ok := elem.(runtime.String)
@@ -18569,7 +18569,7 @@ func processSpecFromOptions(call *ast.CallExpression, args []runtime.Value) (pro
 	}
 	spec := processSpec{command: command}
 	if value, ok := dictField(options, "args"); ok {
-		list, ok := value.(runtime.List)
+		list, ok := value.(*runtime.List)
 		if !ok {
 			return processSpec{}, fmt.Errorf("%s options.args must be list<string>", call.Callee.String())
 		}
@@ -18944,7 +18944,7 @@ func (e *Evaluator) procSpawn(call *ast.CallExpression, args []runtime.Value) (r
 	var cmdArgs []string
 	if len(args) >= 2 {
 		switch a := args[1].(type) {
-		case runtime.List:
+		case *runtime.List:
 			cmdArgs = make([]string, 0, len(a.Elements))
 			for _, elem := range a.Elements {
 				s, ok := elem.(runtime.String)
@@ -19598,7 +19598,7 @@ func (e *Evaluator) sshSftpList(call *ast.CallExpression, args []runtime.Value) 
 		putDict(entries, "modUnix", runtime.NewInt64(info.ModTime().Unix()))
 		out = append(out, runtime.Dict{Entries: entries})
 	}
-	return runtime.List{Elements: out}, nil
+	return &runtime.List{Elements: out}, nil
 }
 
 func (e *Evaluator) sshSftpRemove(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -20019,7 +20019,7 @@ func asyncAll(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects one list of tasks", call.Callee.String())
 	}
-	list, ok := args[0].(runtime.List)
+	list, ok := args[0].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s expects a list of tasks", call.Callee.String())
 	}
@@ -20048,7 +20048,7 @@ func asyncAll(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 			}
 			results[i] = r.Value
 		}
-		out.Complete(runtime.List{Elements: results}, nil)
+		out.Complete(&runtime.List{Elements: results}, nil)
 	}()
 	return out, nil
 }
@@ -20057,7 +20057,7 @@ func asyncRace(call *ast.CallExpression, args []runtime.Value) (runtime.Value, e
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects one list of tasks", call.Callee.String())
 	}
-	list, ok := args[0].(runtime.List)
+	list, ok := args[0].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s expects a list of tasks", call.Callee.String())
 	}
@@ -20621,7 +20621,7 @@ func stringListValue(values []string) runtime.Value {
 	for _, value := range values {
 		elements = append(elements, runtime.String{Value: value})
 	}
-	return runtime.List{Elements: elements}
+	return &runtime.List{Elements: elements}
 }
 
 func (e *Evaluator) dispatchCSVStreamEvent(handler *runtime.Instance, event runtime.Value) (bool, error) {
@@ -21138,7 +21138,7 @@ func jsonToValue(value any) (runtime.Value, error) {
 			}
 			elements = append(elements, converted)
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	case map[string]any:
 		entries := map[string]runtime.DictEntry{}
 		for key, item := range value {
@@ -21176,7 +21176,7 @@ func valueToJSON(value runtime.Value) (any, error) {
 		return value.Value, nil
 	case runtime.Bytes:
 		return base64.StdEncoding.EncodeToString(value.Value), nil
-	case runtime.List:
+	case *runtime.List:
 		items := make([]any, 0, len(value.Elements))
 		for _, item := range value.Elements {
 			converted, err := valueToJSON(item)
@@ -21226,7 +21226,7 @@ func valueToYAML(value runtime.Value) (any, error) {
 		return value.Value, nil
 	case runtime.Bytes:
 		return base64.StdEncoding.EncodeToString(value.Value), nil
-	case runtime.List:
+	case *runtime.List:
 		items := make([]any, 0, len(value.Elements))
 		for _, item := range value.Elements {
 			converted, err := valueToYAML(item)
@@ -21314,7 +21314,7 @@ func nativeToValue(value any) (runtime.Value, error) {
 			}
 			elements = append(elements, converted)
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	case map[string]any:
 		entries := map[string]runtime.DictEntry{}
 		for key, item := range value {
@@ -21378,7 +21378,7 @@ func valueToTOML(value runtime.Value) (any, error) {
 		return value.Value, nil
 	case runtime.Bytes:
 		return base64.StdEncoding.EncodeToString(value.Value), nil
-	case runtime.List:
+	case *runtime.List:
 		items := make([]any, 0, len(value.Elements))
 		for _, item := range value.Elements {
 			converted, err := valueToTOML(item)
@@ -21442,7 +21442,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			return e.applyFunction(method, args)
 		}
 		if method, ok := lookupStaticMethod(class, "__callStatic"); ok {
-			return e.applyFunction(method, []runtime.Value{runtime.String{Value: name}, runtime.List{Elements: args}})
+			return e.applyFunction(method, []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}})
 		}
 		return nil, fmt.Errorf("unknown static method %s.%s", class.Name, name)
 	}
@@ -21456,7 +21456,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			return e.applyFunctionWithThis(method, args, instance)
 		}
 		if method, ok := lookupMethod(instance.Class, "__call"); ok {
-			return e.applyFunctionWithThis(method, []runtime.Value{runtime.String{Value: name}, runtime.List{Elements: args}}, instance)
+			return e.applyFunctionWithThis(method, []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}}, instance)
 		}
 		return nil, fmt.Errorf("unknown method %s.%s", instance.Class.Name, name)
 	}
@@ -21496,7 +21496,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			for _, k := range ordered {
 				keys = append(keys, value.Entries[k].Key)
 			}
-			return runtime.List{Elements: keys}, nil
+			return &runtime.List{Elements: keys}, nil
 		case "values":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.values expects no arguments")
@@ -21506,7 +21506,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			for _, k := range ordered {
 				values = append(values, value.Entries[k].Value)
 			}
-			return runtime.List{Elements: values}, nil
+			return &runtime.List{Elements: values}, nil
 		case "items":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.items expects no arguments")
@@ -21515,9 +21515,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			items := make([]runtime.Value, 0, len(ordered))
 			for _, k := range ordered {
 				entry := value.Entries[k]
-				items = append(items, runtime.List{Elements: []runtime.Value{entry.Key, entry.Value}})
+				items = append(items, &runtime.List{Elements: []runtime.Value{entry.Key, entry.Value}})
 			}
-			return runtime.List{Elements: items}, nil
+			return &runtime.List{Elements: items}, nil
 		case "get":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("dict.get expects one argument")
@@ -21561,6 +21561,20 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			value.DelEntry(dictKey(args[0]))
 			return runtime.Null{}, nil
+		case "clear":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("dict.clear expects no arguments")
+			}
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen dict"}}
+			}
+			for k := range value.Entries {
+				delete(value.Entries, k)
+			}
+			if value.Order != nil {
+				*value.Order = (*value.Order)[:0]
+			}
+			return runtime.Null{}, nil
 		case "contains":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("dict.contains expects one argument")
@@ -21580,7 +21594,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				queue = queue[1:]
 				visited = append(visited, node)
 				if entry, ok := value.Entries[dictKey(node)]; ok {
-					if neighbors, ok := entry.Value.(runtime.List); ok {
+					if neighbors, ok := entry.Value.(*runtime.List); ok {
 						for _, nb := range neighbors.Elements {
 							k := dictKey(nb)
 							if !seen[k] {
@@ -21591,7 +21605,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					}
 				}
 			}
-			return runtime.List{Elements: visited}, nil
+			return &runtime.List{Elements: visited}, nil
 		case "dfs":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("collections.dfs expects (graph, start)")
@@ -21610,7 +21624,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				seen[k] = true
 				visited = append(visited, node)
 				if entry, ok := value.Entries[dictKey(node)]; ok {
-					if neighbors, ok := entry.Value.(runtime.List); ok {
+					if neighbors, ok := entry.Value.(*runtime.List); ok {
 						for i := len(neighbors.Elements) - 1; i >= 0; i-- {
 							nb := neighbors.Elements[i]
 							if !seen[dictKey(nb)] {
@@ -21620,7 +21634,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					}
 				}
 			}
-			return runtime.List{Elements: visited}, nil
+			return &runtime.List{Elements: visited}, nil
 		case "topologicalSort":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("collections.topologicalSort expects (graph)")
@@ -21633,7 +21647,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if _, ok := inDegree[k]; !ok {
 					inDegree[k] = 0
 				}
-				if neighbors, ok := entry.Value.(runtime.List); ok {
+				if neighbors, ok := entry.Value.(*runtime.List); ok {
 					for _, nb := range neighbors.Elements {
 						nbKey := dictKey(nb)
 						if _, exists := allNodes[nbKey]; !exists {
@@ -21661,7 +21675,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				queue = queue[1:]
 				result = append(result, node)
 				if entry, ok := value.Entries[dictKey(node)]; ok {
-					if neighbors, ok := entry.Value.(runtime.List); ok {
+					if neighbors, ok := entry.Value.(*runtime.List); ok {
 						for _, nb := range neighbors.Elements {
 							nbKey := dictKey(nb)
 							inDegree[nbKey]--
@@ -21675,7 +21689,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(result) != len(allNodes) {
 				return nil, fmt.Errorf("collections.topologicalSort: cycle detected")
 			}
-			return runtime.List{Elements: result}, nil
+			return &runtime.List{Elements: result}, nil
 		case "shortestPath":
 			if len(args) != 2 {
 				return nil, fmt.Errorf("collections.shortestPath expects (graph, start, end)")
@@ -21694,7 +21708,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					break
 				}
 				if entry, ok := value.Entries[dictKey(node)]; ok {
-					if neighbors, ok := entry.Value.(runtime.List); ok {
+					if neighbors, ok := entry.Value.(*runtime.List); ok {
 						for _, nb := range neighbors.Elements {
 							k := dictKey(nb)
 							if !seen[k] {
@@ -21719,7 +21733,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				path = append([]runtime.Value{p}, path...)
 				cur = p
 			}
-			return runtime.List{Elements: path}, nil
+			return &runtime.List{Elements: path}, nil
 		case "merge":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("dict.merge expects one argument")
@@ -21778,7 +21792,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("set.toList expects no arguments")
 			}
-			return runtime.List{Elements: orderedSetValues(value)}, nil
+			return &runtime.List{Elements: orderedSetValues(value)}, nil
 		case "union":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("set.union expects one argument")
@@ -21823,7 +21837,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			return runtime.Set{Elements: elements}, nil
 		}
-	case runtime.List:
+	case *runtime.List:
 		switch name {
 		case "copy":
 			if len(args) != 0 {
@@ -21831,7 +21845,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			elems := make([]runtime.Value, len(value.Elements))
 			copy(elems, value.Elements)
-			return runtime.List{Elements: elems}, nil
+			return &runtime.List{Elements: elems}, nil
 		case "length":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.length expects no arguments")
@@ -21933,9 +21947,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				}
 			}
 			if start >= end {
-				return runtime.List{Elements: nil}, nil
+				return &runtime.List{Elements: nil}, nil
 			}
-			return runtime.List{Elements: value.Elements[start:end]}, nil
+			return &runtime.List{Elements: value.Elements[start:end]}, nil
 		case "join":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.join expects one argument (separator)")
@@ -21957,7 +21971,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			for i, el := range value.Elements {
 				newElements[len(value.Elements)-1-i] = el
 			}
-			return runtime.List{Elements: newElements}, nil
+			return &runtime.List{Elements: newElements}, nil
 		case "first":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.first expects no arguments")
@@ -21981,7 +21995,53 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			newElements := make([]runtime.Value, len(value.Elements)+1)
 			copy(newElements, value.Elements)
 			newElements[len(value.Elements)] = args[0]
-			return runtime.List{Elements: newElements}, nil
+			return &runtime.List{Elements: newElements}, nil
+		case "append":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("list.append expects one argument")
+			}
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
+			}
+			if len(value.ElementTypes) > 0 {
+				if !typeNameSatisfies(args[0].TypeName(), value.ElementTypes[0]) {
+					return nil, thrownError{value: runtime.Error{
+						Class:   "TypeError",
+						Message: fmt.Sprintf("cannot append %s to list<%s>", args[0].TypeName(), value.ElementTypes[0]),
+					}}
+				}
+			}
+			value.Elements = append(value.Elements, args[0])
+			return runtime.Null{}, nil
+		case "extend":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("list.extend expects one argument")
+			}
+			other, ok := args[0].(*runtime.List)
+			if !ok {
+				return nil, fmt.Errorf("list.extend expects a list argument, got %s", args[0].TypeName())
+			}
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
+			}
+			if len(value.ElementTypes) > 0 {
+				for i, el := range other.Elements {
+					if !typeNameSatisfies(el.TypeName(), value.ElementTypes[0]) {
+						return nil, thrownError{value: runtime.Error{
+							Class:   "TypeError",
+							Message: fmt.Sprintf("cannot extend list<%s> with %s at index %d", value.ElementTypes[0], el.TypeName(), i),
+						}}
+					}
+				}
+			}
+			value.Elements = append(value.Elements, other.Elements...)
+			return runtime.Null{}, nil
+		case "clear":
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
+			}
+			value.Elements = value.Elements[:0]
+			return runtime.Null{}, nil
 		case "toList":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.toList expects no arguments")
@@ -21992,11 +22052,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, fmt.Errorf("list.pop expects no arguments")
 			}
 			if len(value.Elements) == 0 {
-				return runtime.List{Elements: nil}, nil
+				return &runtime.List{Elements: nil}, nil
 			}
 			newElements := make([]runtime.Value, len(value.Elements)-1)
 			copy(newElements, value.Elements[:len(value.Elements)-1])
-			return runtime.List{Elements: newElements}, nil
+			return &runtime.List{Elements: newElements}, nil
 		case "insert":
 			if len(args) != 2 {
 				return nil, fmt.Errorf("list.insert expects two arguments (index, item)")
@@ -22018,7 +22078,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			copy(newElements, value.Elements[:i])
 			newElements[i] = args[1]
 			copy(newElements[i+1:], value.Elements[i:])
-			return runtime.List{Elements: newElements}, nil
+			return &runtime.List{Elements: newElements}, nil
 		case "removeAt":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.removeAt expects one argument")
@@ -22036,19 +22096,19 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			newElements := make([]runtime.Value, len(value.Elements)-1)
 			copy(newElements, value.Elements[:i])
 			copy(newElements[i:], value.Elements[i+1:])
-			return runtime.List{Elements: newElements}, nil
+			return &runtime.List{Elements: newElements}, nil
 		case "concat":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.concat expects one argument")
 			}
-			other, ok := args[0].(runtime.List)
+			other, ok := args[0].(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("list.concat expects list argument")
 			}
 			newElements := make([]runtime.Value, len(value.Elements)+len(other.Elements))
 			copy(newElements, value.Elements)
 			copy(newElements[len(value.Elements):], other.Elements)
-			return runtime.List{Elements: newElements}, nil
+			return &runtime.List{Elements: newElements}, nil
 		case "map":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.map expects one argument (function)")
@@ -22061,7 +22121,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				}
 				result[i] = mapped
 			}
-			return runtime.List{Elements: result}, nil
+			return &runtime.List{Elements: result}, nil
 		case "filter":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.filter expects one argument (function)")
@@ -22076,7 +22136,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					result = append(result, el)
 				}
 			}
-			return runtime.List{Elements: result}, nil
+			return &runtime.List{Elements: result}, nil
 		case "reduce":
 			if len(args) != 2 {
 				return nil, fmt.Errorf("list.reduce expects two arguments (function, initial)")
@@ -22176,20 +22236,20 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if sortErr != nil {
 				return nil, sortErr
 			}
-			return runtime.List{Elements: newElements}, nil
+			return &runtime.List{Elements: newElements}, nil
 		case "flatten":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.flatten expects no arguments")
 			}
 			var result []runtime.Value
 			for _, el := range value.Elements {
-				if nested, ok := el.(runtime.List); ok {
+				if nested, ok := el.(*runtime.List); ok {
 					result = append(result, nested.Elements...)
 				} else {
 					result = append(result, el)
 				}
 			}
-			return runtime.List{Elements: result}, nil
+			return &runtime.List{Elements: result}, nil
 		case "unique":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.unique expects no arguments")
@@ -22213,12 +22273,12 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					result = append(result, el)
 				}
 			}
-			return runtime.List{Elements: result}, nil
+			return &runtime.List{Elements: result}, nil
 		case "zip":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.zip expects one argument (list)")
 			}
-			other, ok := args[0].(runtime.List)
+			other, ok := args[0].(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("list.zip expects list argument")
 			}
@@ -22228,9 +22288,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			result := make([]runtime.Value, n)
 			for i := 0; i < n; i++ {
-				result[i] = runtime.List{Elements: []runtime.Value{value.Elements[i], other.Elements[i]}}
+				result[i] = &runtime.List{Elements: []runtime.Value{value.Elements[i], other.Elements[i]}}
 			}
-			return runtime.List{Elements: result}, nil
+			return &runtime.List{Elements: result}, nil
 		case "groupBy":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.groupBy expects one argument (function)")
@@ -22244,9 +22304,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				dk := native.DictKey(key)
 				existing, ok := entries[dk]
 				if !ok {
-					existing = runtime.DictEntry{Key: key, Value: runtime.List{}}
+					existing = runtime.DictEntry{Key: key, Value: &runtime.List{}}
 				}
-				existing.Value = runtime.List{Elements: append(existing.Value.(runtime.List).Elements, el)}
+				existing.Value = &runtime.List{Elements: append(existing.Value.(*runtime.List).Elements, el)}
 				entries[dk] = existing
 			}
 			return runtime.Dict{Entries: entries}, nil
@@ -22267,9 +22327,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if end > len(value.Elements) {
 					end = len(value.Elements)
 				}
-				chunks = append(chunks, runtime.List{Elements: append([]runtime.Value(nil), value.Elements[i:end]...)})
+				chunks = append(chunks, &runtime.List{Elements: append([]runtime.Value(nil), value.Elements[i:end]...)})
 			}
-			return runtime.List{Elements: chunks}, nil
+			return &runtime.List{Elements: chunks}, nil
 		case "partition":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.partition expects one argument (function)")
@@ -22286,9 +22346,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					no = append(no, el)
 				}
 			}
-			return runtime.List{Elements: []runtime.Value{
-				runtime.List{Elements: yes},
-				runtime.List{Elements: no},
+			return &runtime.List{Elements: []runtime.Value{
+				&runtime.List{Elements: yes},
+				&runtime.List{Elements: no},
 			}}, nil
 		case "findLast":
 			if len(args) != 1 {
@@ -22483,7 +22543,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			for i, p := range pairs {
 				result[i] = p.el
 			}
-			return runtime.List{Elements: result}, nil
+			return &runtime.List{Elements: result}, nil
 		case "topBy":
 			if len(args) != 2 {
 				return nil, fmt.Errorf("list.topBy expects two arguments (function, count)")
@@ -22530,7 +22590,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			for i := 0; i < n; i++ {
 				result[i] = pairs[i].el
 			}
-			return runtime.List{Elements: result}, nil
+			return &runtime.List{Elements: result}, nil
 		case "sumBy":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.sumBy expects one argument (function)")
@@ -22656,7 +22716,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if n > len(newElements) {
 				n = len(newElements)
 			}
-			return runtime.List{Elements: newElements[:n]}, nil
+			return &runtime.List{Elements: newElements[:n]}, nil
 		case "bottomK":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.bottomK expects one argument (count)")
@@ -22689,7 +22749,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if n > len(newElements) {
 				n = len(newElements)
 			}
-			return runtime.List{Elements: newElements[:n]}, nil
+			return &runtime.List{Elements: newElements[:n]}, nil
 		case "frequencies":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.frequencies expects no arguments")
@@ -22747,7 +22807,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.difference expects one argument (list)")
 			}
-			other, ok := args[0].(runtime.List)
+			other, ok := args[0].(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("list.difference: second argument must be a list")
 			}
@@ -22761,12 +22821,12 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					result = append(result, el)
 				}
 			}
-			return runtime.List{Elements: result}, nil
+			return &runtime.List{Elements: result}, nil
 		case "intersection":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.intersection expects one argument (list)")
 			}
-			other, ok := args[0].(runtime.List)
+			other, ok := args[0].(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("list.intersection: second argument must be a list")
 			}
@@ -22780,12 +22840,12 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					result = append(result, el)
 				}
 			}
-			return runtime.List{Elements: result}, nil
+			return &runtime.List{Elements: result}, nil
 		case "differenceBy":
 			if len(args) != 2 {
 				return nil, fmt.Errorf("list.differenceBy expects two arguments (list, function)")
 			}
-			other, ok := args[0].(runtime.List)
+			other, ok := args[0].(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("list.differenceBy: second argument must be a list")
 			}
@@ -22808,12 +22868,12 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					result = append(result, el)
 				}
 			}
-			return runtime.List{Elements: result}, nil
+			return &runtime.List{Elements: result}, nil
 		case "intersectionBy":
 			if len(args) != 2 {
 				return nil, fmt.Errorf("list.intersectionBy expects two arguments (list, function)")
 			}
-			other, ok := args[0].(runtime.List)
+			other, ok := args[0].(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("list.intersectionBy: second argument must be a list")
 			}
@@ -22836,12 +22896,12 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					result = append(result, el)
 				}
 			}
-			return runtime.List{Elements: result}, nil
+			return &runtime.List{Elements: result}, nil
 		case "zipWith":
 			if len(args) != 2 {
 				return nil, fmt.Errorf("list.zipWith expects two arguments (list, function)")
 			}
-			other, ok := args[0].(runtime.List)
+			other, ok := args[0].(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("list.zipWith: second argument must be a list")
 			}
@@ -22858,7 +22918,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				}
 				result[i] = combined
 			}
-			return runtime.List{Elements: result}, nil
+			return &runtime.List{Elements: result}, nil
 		}
 	case runtime.String:
 		switch name {
@@ -23004,7 +23064,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			for i, r := range runes {
 				elements[i] = runtime.String{Value: string(r)}
 			}
-			return runtime.List{Elements: elements}, nil
+			return &runtime.List{Elements: elements}, nil
 		case "codePointAt":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("string.codePointAt expects one argument")
@@ -23071,7 +23131,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			for _, part := range parts {
 				out = append(out, runtime.String{Value: part})
 			}
-			return runtime.List{Elements: out}, nil
+			return &runtime.List{Elements: out}, nil
 		case "splitRegex":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("string.splitRegex expects one argument")
@@ -23443,7 +23503,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				elements = append(elements, runtime.Int{Value: new(big.Int).Set(current)})
 				current.Add(current, step)
 			}
-			return runtime.List{Elements: elements}, nil
+			return &runtime.List{Elements: elements}, nil
 		}
 	case runtime.Float:
 		switch name {
@@ -23565,7 +23625,7 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 			return nil, err
 		}
 		if method, ok := lookupStaticMethod(class, "__callStatic"); ok {
-			return e.applyFunction(method, []runtime.Value{runtime.String{Value: name}, runtime.List{Elements: args}})
+			return e.applyFunction(method, []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}})
 		}
 		return nil, fmt.Errorf("unknown static method %s.%s", class.Name, name)
 	}
@@ -23579,7 +23639,7 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 			return nil, err
 		}
 		if method, ok := lookupMethod(instance.Class, "__call"); ok {
-			return e.applyFunctionWithThis(method, []runtime.Value{runtime.String{Value: name}, runtime.List{Elements: args}}, instance)
+			return e.applyFunctionWithThis(method, []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}}, instance)
 		}
 		return nil, fmt.Errorf("unknown method %s.%s", instance.Class.Name, name)
 	}
@@ -23701,7 +23761,7 @@ func (e *Evaluator) evalIndexExpression(expr *ast.IndexExpression, env *runtime.
 		return nil, err
 	}
 	switch value := left.(type) {
-	case runtime.List:
+	case *runtime.List:
 		i, err := indexInt(index)
 		if err != nil {
 			return nil, err
@@ -23732,7 +23792,7 @@ func (e *Evaluator) evalIndexExpression(expr *ast.IndexExpression, env *runtime.
 
 func (e *Evaluator) evalSliceExpression(left runtime.Value, rng *ast.RangeExpression, env *runtime.Environment) (runtime.Value, error) {
 	switch value := left.(type) {
-	case runtime.List:
+	case *runtime.List:
 		indices, err := e.sliceIndices(rng, len(value.Elements), env)
 		if err != nil {
 			return nil, err
@@ -23741,7 +23801,7 @@ func (e *Evaluator) evalSliceExpression(left runtime.Value, rng *ast.RangeExpres
 		for i, idx := range indices {
 			elements[i] = value.Elements[idx]
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	case runtime.String:
 		runes := []rune(value.Value)
 		indices, err := e.sliceIndices(rng, len(runes), env)
@@ -23945,7 +24005,7 @@ func (e *Evaluator) assignIndex(expr *ast.IndexExpression, newValue runtime.Valu
 		return err
 	}
 	switch value := left.(type) {
-	case runtime.List:
+	case *runtime.List:
 		if value.Frozen {
 			return thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 		}
@@ -24066,7 +24126,7 @@ func tagCollectionWithTypeRef(value runtime.Value, typ *ast.TypeRef) runtime.Val
 		return value
 	}
 	switch v := value.(type) {
-	case runtime.List:
+	case *runtime.List:
 		var tag []string
 		if typ.ListAlias && len(typ.Arguments) == 0 && typ.Name != "" && !strings.EqualFold(typ.Name, "list") {
 			tag = []string{typ.Name}
@@ -24100,7 +24160,7 @@ func tagCollectionWithTypeRef(value runtime.Value, typ *ast.TypeRef) runtime.Val
 
 // rangeToList materialises a range value as a list<int>. Shared by
 // `range()` and `Range.toList()` so both produce identical output.
-func rangeToList(rng runtime.Range) runtime.List {
+func rangeToList(rng runtime.Range) *runtime.List {
 	var elements []runtime.Value
 	current := new(big.Int).Set(rng.Start)
 	step := rng.Step
@@ -24124,7 +24184,7 @@ func rangeToList(rng runtime.Range) runtime.List {
 		elements = append(elements, runtime.Int{Value: new(big.Int).Set(current)})
 		current.Add(current, step)
 	}
-	return runtime.List{Elements: elements}
+	return &runtime.List{Elements: elements}
 }
 
 func (e *Evaluator) evalRangeExpression(expr *ast.RangeExpression, env *runtime.Environment) (runtime.Value, error) {
@@ -24178,7 +24238,7 @@ func (e *Evaluator) evalRangeExpression(expr *ast.RangeExpression, env *runtime.
 				elements = append(elements, runtime.String{Value: string(r)})
 			}
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	}
 	endBig, ok := native.IntValueToBigInt(endValue)
 	if !ok {
@@ -24213,7 +24273,7 @@ func (e *Evaluator) evalCallArguments(call *ast.CallExpression, env *runtime.Env
 			return nil, err
 		}
 		if arg.Spread {
-			list, ok := value.(runtime.List)
+			list, ok := value.(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("spread argument must be a list")
 			}
@@ -24239,7 +24299,7 @@ func (e *Evaluator) evalDetailedCallArguments(call *ast.CallExpression, env *run
 		}
 		if arg.Spread {
 			switch value := value.(type) {
-			case runtime.List:
+			case *runtime.List:
 				for _, elem := range value.Elements {
 					args = append(args, evaluatedCallArg{name: "", value: elem})
 				}
@@ -24393,7 +24453,7 @@ func (e *Evaluator) evalDetailedCallArgumentsWithHints(call *ast.CallExpression,
 		}
 		if arg.Spread {
 			switch value := value.(type) {
-			case runtime.List:
+			case *runtime.List:
 				for _, elem := range value.Elements {
 					args = append(args, evaluatedCallArg{name: "", value: elem})
 				}
@@ -24800,7 +24860,7 @@ func isGeneratorTypeName(name string) bool {
 // caller's actual binding rather than just the class name.
 func descriptiveTypeName(value runtime.Value) string {
 	switch v := value.(type) {
-	case runtime.List:
+	case *runtime.List:
 		if len(v.Elements) > 0 {
 			return "list<" + v.Elements[0].TypeName() + ">"
 		}
@@ -24875,7 +24935,7 @@ func matchValueToTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 			elemType = &ast.TypeRef{Token: typ.Token, Name: typ.Name}
 		}
 		if elemType != nil && !typeParams[strings.ToLower(elemType.Name)] {
-			lst := value.(runtime.List)
+			lst := value.(*runtime.List)
 			for _, elem := range lst.Elements {
 				if !matchValueToTypeRef(typeParams, elem, elemType) {
 					return false
@@ -24928,7 +24988,7 @@ func collectionMismatchSuffix(value runtime.Value, typ *ast.TypeRef) string {
 		return ""
 	}
 	switch v := value.(type) {
-	case runtime.List:
+	case *runtime.List:
 		var elemType *ast.TypeRef
 		if len(typ.Arguments) > 0 {
 			elemType = typ.Arguments[0]
@@ -25047,7 +25107,7 @@ func (e *Evaluator) evalCallArgumentsWithHints(call *ast.CallExpression, env *ru
 			return nil, err
 		}
 		if arg.Spread {
-			list, ok := value.(runtime.List)
+			list, ok := value.(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("spread argument must be a list")
 			}
@@ -25091,7 +25151,7 @@ func (e *Evaluator) inferGenericBindingsFromTypeRef(spec *ast.TypeRef, value run
 	}
 	switch strings.ToLower(spec.Name) {
 	case "list":
-		list, ok := value.(runtime.List)
+		list, ok := value.(*runtime.List)
 		if !ok || len(list.Elements) == 0 || len(spec.Arguments) == 0 {
 			return
 		}
@@ -25260,7 +25320,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 			if i < len(args) {
 				variadicElements = args[i:]
 			}
-			value = runtime.List{Elements: variadicElements}
+			value = &runtime.List{Elements: variadicElements}
 		} else if i < len(args) && args[i] != nil {
 			value = args[i]
 		} else if param.Default != nil {
@@ -25896,8 +25956,8 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 	case runtime.TemplateEngine:
 		rightValue, ok := right.(runtime.TemplateEngine)
 		return ok && leftValue == rightValue
-	case runtime.List:
-		rightValue, ok := right.(runtime.List)
+	case *runtime.List:
+		rightValue, ok := right.(*runtime.List)
 		if !ok || len(leftValue.Elements) != len(rightValue.Elements) {
 			return false
 		}
@@ -26441,7 +26501,7 @@ func dictKey(value runtime.Value) string {
 		return "s" + value.Value
 	case runtime.Bytes:
 		return "y" + hex.EncodeToString(value.Value)
-	case runtime.List:
+	case *runtime.List:
 		parts := make([]string, 0, len(value.Elements))
 		for _, element := range value.Elements {
 			parts = append(parts, dictKey(element))
@@ -26526,7 +26586,7 @@ func indexInt(value runtime.Value) (int, error) {
 	return int(intValue.Value.Int64()), nil
 }
 
-func listElement(value runtime.List, i int) (runtime.Value, error) {
+func listElement(value *runtime.List, i int) (runtime.Value, error) {
 	if i < 0 {
 		i = len(value.Elements) + i
 	}

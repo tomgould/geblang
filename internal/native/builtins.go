@@ -420,7 +420,7 @@ func mathNumericList(args []runtime.Value, label string) ([]float64, error) {
 }
 
 func mathNumericListSingle(v runtime.Value, label string) ([]float64, error) {
-	list, ok := v.(runtime.List)
+	list, ok := v.(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s: argument must be a list", label)
 	}
@@ -2075,7 +2075,7 @@ func registerRandom(r *Registry) {
 		if len(rest) != 1 {
 			return nil, fmt.Errorf("random.choice expects a non-empty list")
 		}
-		lst, ok := rest[0].(runtime.List)
+		lst, ok := rest[0].(*runtime.List)
 		if !ok || len(lst.Elements) == 0 {
 			return nil, fmt.Errorf("random.choice expects a non-empty list")
 		}
@@ -2089,13 +2089,13 @@ func registerRandom(r *Registry) {
 		if len(rest) != 1 {
 			return nil, fmt.Errorf("random.shuffle expects a list")
 		}
-		lst, ok := rest[0].(runtime.List)
+		lst, ok := rest[0].(*runtime.List)
 		if !ok {
 			return nil, fmt.Errorf("random.shuffle expects a list")
 		}
 		out := append([]runtime.Value(nil), lst.Elements...)
 		gen.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
-		return runtime.List{Elements: out}, nil
+		return &runtime.List{Elements: out}, nil
 	})
 	r.Register("random", "Generator", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {
@@ -2212,7 +2212,7 @@ func registerString(r *Registry) {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("string.fromCodePoints expects 1 argument")
 		}
-		list, ok := args[0].(runtime.List)
+		list, ok := args[0].(*runtime.List)
 		if !ok {
 			return nil, fmt.Errorf("string.fromCodePoints expects a list of int codepoints")
 		}
@@ -2902,7 +2902,7 @@ func queryDict(query url.Values) runtime.Dict {
 			for i, item := range values {
 				elements[i] = runtime.String{Value: item}
 			}
-			value = runtime.List{Elements: elements}
+			value = &runtime.List{Elements: elements}
 		}
 		queryEntries[DictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: value}
 	}
@@ -3431,7 +3431,7 @@ func queryValues(value runtime.Value) (url.Values, error) {
 		switch value := entry.Value.(type) {
 		case runtime.String:
 			query.Add(key.Value, value.Value)
-		case runtime.List:
+		case *runtime.List:
 			for _, item := range value.Elements {
 				text, ok := item.(runtime.String)
 				if !ok {
@@ -3473,7 +3473,7 @@ func reMatchDict(re *regexp.Regexp, match []string) runtime.Dict {
 
 	entries := map[string]runtime.DictEntry{
 		DictKey(textKey):   {Key: textKey, Value: runtime.String{Value: match[0]}},
-		DictKey(groupsKey): {Key: groupsKey, Value: runtime.List{Elements: groupsElems}},
+		DictKey(groupsKey): {Key: groupsKey, Value: &runtime.List{Elements: groupsElems}},
 		DictKey(namedKey):  {Key: namedKey, Value: runtime.Dict{Entries: namedEntries}},
 	}
 	return runtime.Dict{Entries: entries}
@@ -3576,7 +3576,7 @@ func registerRe(r *Registry) {
 		for i, m := range matches {
 			elements[i] = runtime.String{Value: m}
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	})
 	r.Register("re", "match", func(args []runtime.Value) (runtime.Value, error) {
 		pattern, text, err := twoStrings(args, "re.match")
@@ -3607,7 +3607,7 @@ func registerRe(r *Registry) {
 		for _, m := range all {
 			elements = append(elements, reMatchDict(re, m))
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	})
 	r.Register("re", "replace", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 3 {
@@ -3639,7 +3639,7 @@ func registerRe(r *Registry) {
 		for i, p := range parts {
 			elements[i] = runtime.String{Value: p}
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	})
 }
 
@@ -3690,7 +3690,7 @@ func markdownRenderHTML(src string) string {
 	return buf.String()
 }
 
-func markdownParse(src string) runtime.List {
+func markdownParse(src string) *runtime.List {
 	reader := goldtext.NewReader([]byte(src))
 	doc := gfmMarkdown.Parser().Parse(reader)
 	source := []byte(src)
@@ -3703,7 +3703,7 @@ func markdownParse(src string) runtime.List {
 	if results == nil {
 		results = []runtime.Value{}
 	}
-	return runtime.List{Elements: results}
+	return &runtime.List{Elements: results}
 }
 
 func markdownStripText(src string) string {
@@ -3847,7 +3847,7 @@ func goldmarkListToBlock(list *goldast.List, source []byte) runtime.Dict {
 		if items == nil {
 			items = []runtime.Value{}
 		}
-		putMarkdownDict(entries, "items", runtime.List{Elements: items})
+		putMarkdownDict(entries, "items", &runtime.List{Elements: items})
 	} else if list.IsOrdered() {
 		putMarkdownDict(entries, "type", runtime.String{Value: "ordered_list"})
 		var items []runtime.Value
@@ -3860,7 +3860,7 @@ func goldmarkListToBlock(list *goldast.List, source []byte) runtime.Dict {
 		if items == nil {
 			items = []runtime.Value{}
 		}
-		putMarkdownDict(entries, "items", runtime.List{Elements: items})
+		putMarkdownDict(entries, "items", &runtime.List{Elements: items})
 	} else {
 		putMarkdownDict(entries, "type", runtime.String{Value: "list"})
 		var items []runtime.Value
@@ -3873,7 +3873,7 @@ func goldmarkListToBlock(list *goldast.List, source []byte) runtime.Dict {
 		if items == nil {
 			items = []runtime.Value{}
 		}
-		putMarkdownDict(entries, "items", runtime.List{Elements: items})
+		putMarkdownDict(entries, "items", &runtime.List{Elements: items})
 	}
 
 	return runtime.Dict{Entries: entries}
@@ -3904,7 +3904,7 @@ func goldmarkTableToBlock(n goldast.Node, source []byte) runtime.Dict {
 			if cells == nil {
 				cells = []runtime.Value{}
 			}
-			rows = append(rows, runtime.List{Elements: cells})
+			rows = append(rows, &runtime.List{Elements: cells})
 		}
 	}
 
@@ -3915,8 +3915,8 @@ func goldmarkTableToBlock(n goldast.Node, source []byte) runtime.Dict {
 		rows = []runtime.Value{}
 	}
 
-	putMarkdownDict(entries, "headers", runtime.List{Elements: headers})
-	putMarkdownDict(entries, "rows", runtime.List{Elements: rows})
+	putMarkdownDict(entries, "headers", &runtime.List{Elements: headers})
+	putMarkdownDict(entries, "rows", &runtime.List{Elements: rows})
 	return runtime.Dict{Entries: entries}
 }
 
@@ -4382,7 +4382,7 @@ func registerArgs(r *Registry) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("args.parse expects argv list and schema dict")
 		}
-		argv, ok := args[0].(runtime.List)
+		argv, ok := args[0].(*runtime.List)
 		if !ok {
 			return nil, fmt.Errorf("args.parse first argument must be a list")
 		}

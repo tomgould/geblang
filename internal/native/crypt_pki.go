@@ -265,8 +265,8 @@ func registerCryptPKI(r *Registry) {
 		}
 		setEntry("subject", subjectDict)
 		setEntry("issuer", issuerDict)
-		setEntry("dnsNames", runtime.List{Elements: dnsElems})
-		setEntry("ipAddresses", runtime.List{Elements: ipElems})
+		setEntry("dnsNames", &runtime.List{Elements: dnsElems})
+		setEntry("ipAddresses", &runtime.List{Elements: ipElems})
 		setEntry("notBefore", runtime.String{Value: cert.NotBefore.UTC().Format(time.RFC3339)})
 		setEntry("notAfter", runtime.String{Value: cert.NotAfter.UTC().Format(time.RFC3339)})
 		setEntry("serialNumber", runtime.String{Value: cert.SerialNumber.Text(16)})
@@ -410,7 +410,7 @@ func registerCryptPKI(r *Registry) {
 		} else {
 			setEntry("cert", runtime.Null{})
 		}
-		setEntry("caCerts", runtime.List{Elements: caElems})
+		setEntry("caCerts", &runtime.List{Elements: caElems})
 		return runtime.Dict{Entries: entries}, nil
 	})
 
@@ -748,7 +748,7 @@ func parseDNSNames(opts runtime.Dict) []string {
 	if !ok {
 		return nil
 	}
-	list, ok := entry.Value.(runtime.List)
+	list, ok := entry.Value.(*runtime.List)
 	if !ok {
 		return nil
 	}
@@ -766,7 +766,7 @@ func parseIPAddresses(opts runtime.Dict) []net.IP {
 	if !ok {
 		return nil
 	}
-	list, ok := entry.Value.(runtime.List)
+	list, ok := entry.Value.(*runtime.List)
 	if !ok {
 		return nil
 	}
@@ -1171,7 +1171,7 @@ func jwtOptsAllowedAlgs(v runtime.Value, label string) ([]string, error) {
 		if !ok || key.Value != "allowedAlgs" {
 			continue
 		}
-		list, ok := entry.Value.(runtime.List)
+		list, ok := entry.Value.(*runtime.List)
 		if !ok {
 			return nil, fmt.Errorf("%s opts.allowedAlgs must be a list", label)
 		}

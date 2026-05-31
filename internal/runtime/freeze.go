@@ -7,7 +7,7 @@ package runtime
 // also frozen.
 func ShallowFreeze(v Value) Value {
 	switch val := v.(type) {
-	case List:
+	case *List:
 		val.Frozen = true
 		return val
 	case Dict:
@@ -29,12 +29,12 @@ func ShallowFreeze(v Value) Value {
 // DeepFreeze recursively freezes v and all mutable values nested within it.
 func DeepFreeze(v Value) Value {
 	switch val := v.(type) {
-	case List:
+	case *List:
 		elems := make([]Value, len(val.Elements))
 		for i, e := range val.Elements {
 			elems[i] = DeepFreeze(e)
 		}
-		return List{Elements: elems, Frozen: true}
+		return &List{Elements: elems, Frozen: true}
 	case Dict:
 		entries := make(map[string]DictEntry, len(val.Entries))
 		for k, entry := range val.Entries {
@@ -63,7 +63,7 @@ func DeepFreeze(v Value) Value {
 // IsFrozen returns true if v is frozen or is a primitive (always immutable).
 func IsFrozen(v Value) bool {
 	switch val := v.(type) {
-	case List:
+	case *List:
 		return val.Frozen
 	case Dict:
 		return val.Frozen

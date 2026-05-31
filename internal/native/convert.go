@@ -163,7 +163,7 @@ func DictKey(value runtime.Value) string {
 		return dictKeyPrefixString + value.Value
 	case runtime.Bytes:
 		return dictKeyPrefixBytes + hex.EncodeToString(value.Value)
-	case runtime.List:
+	case *runtime.List:
 		parts := make([]string, 0, len(value.Elements))
 		for _, element := range value.Elements {
 			parts = append(parts, DictKey(element))
@@ -243,7 +243,7 @@ func NativeToValue(value any) (runtime.Value, error) {
 			}
 			elements = append(elements, converted)
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	case map[string]any:
 		d := runtime.NewDict()
 		for key, item := range value {
@@ -299,7 +299,7 @@ func JSONToValue(value any) (runtime.Value, error) {
 			}
 			elements = append(elements, converted)
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	case map[string]any:
 		entries := make(map[string]runtime.DictEntry, len(value))
 		for key, item := range value {
@@ -400,7 +400,7 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 		buf.WriteString(base64.StdEncoding.EncodeToString(v.Value))
 		buf.WriteByte('"')
 		return nil
-	case runtime.List:
+	case *runtime.List:
 		buf.WriteByte('[')
 		for i, item := range v.Elements {
 			if i > 0 {
@@ -587,7 +587,7 @@ func ValueToJSON(value runtime.Value) (any, error) {
 		return value.Value, nil
 	case runtime.Bytes:
 		return base64.StdEncoding.EncodeToString(value.Value), nil
-	case runtime.List:
+	case *runtime.List:
 		items := make([]any, 0, len(value.Elements))
 		for _, item := range value.Elements {
 			converted, err := ValueToJSON(item)
@@ -635,7 +635,7 @@ func ValueToTemplateData(value runtime.Value) (any, error) {
 			items[key.Value] = converted
 		}
 		return items, nil
-	case runtime.List:
+	case *runtime.List:
 		items := make([]any, 0, len(value.Elements))
 		for _, item := range value.Elements {
 			converted, err := ValueToTemplateData(item)
@@ -672,7 +672,7 @@ func ValueToTOML(value runtime.Value) (any, error) {
 		return value.Value, nil
 	case runtime.Bytes:
 		return base64.StdEncoding.EncodeToString(value.Value), nil
-	case runtime.List:
+	case *runtime.List:
 		items := make([]any, 0, len(value.Elements))
 		for _, item := range value.Elements {
 			converted, err := ValueToTOML(item)
@@ -725,7 +725,7 @@ func ValueToYAML(value runtime.Value) (any, error) {
 		return value.Value, nil
 	case runtime.Bytes:
 		return base64.StdEncoding.EncodeToString(value.Value), nil
-	case runtime.List:
+	case *runtime.List:
 		items := make([]any, 0, len(value.Elements))
 		for _, item := range value.Elements {
 			converted, err := ValueToYAML(item)
@@ -850,7 +850,7 @@ func yamlNodeToValue(node *yamllib.Node) (runtime.Value, error) {
 			}
 			elements = append(elements, converted)
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	case yamllib.AliasNode:
 		return yamlNodeToValue(node.Alias)
 	case yamllib.ScalarNode:

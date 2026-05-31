@@ -38,7 +38,7 @@ func registerArchive(r *Registry) {
 			}
 			entries = append(entries, archiveEntryDict(f.Name, body, f.FileInfo().IsDir(), int64(f.UncompressedSize64)))
 		}
-		return runtime.List{Elements: entries}, nil
+		return &runtime.List{Elements: entries}, nil
 	})
 	r.Register("archive", "zipWrite", func(args []runtime.Value) (runtime.Value, error) {
 		entries, err := singleArchiveEntries(args, "archive.zipWrite")
@@ -135,7 +135,7 @@ func singleArchiveEntries(args []runtime.Value, label string) ([]archiveEntry, e
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects exactly one argument", label)
 	}
-	list, ok := args[0].(runtime.List)
+	list, ok := args[0].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s expects a list of entry dicts", label)
 	}
@@ -212,7 +212,7 @@ func readTar(src io.Reader, label string) (runtime.Value, error) {
 		}
 		entries = append(entries, archiveEntryDict(hdr.Name, body, isDir, hdr.Size))
 	}
-	return runtime.List{Elements: entries}, nil
+	return &runtime.List{Elements: entries}, nil
 }
 
 func writeTar(dst io.Writer, entries []archiveEntry) error {

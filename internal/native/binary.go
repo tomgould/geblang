@@ -460,13 +460,13 @@ func registerBinary(r *Registry) {
 		if err != nil {
 			return nil, err
 		}
-		return runtime.List{Elements: values}, nil
+		return &runtime.List{Elements: values}, nil
 	})
 	r.Register("binary", "unpackNamed", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("binary.unpackNamed expects spec list and bytes")
 		}
-		spec, ok := args[0].(runtime.List)
+		spec, ok := args[0].(*runtime.List)
 		if !ok {
 			return nil, fmt.Errorf("binary.unpackNamed: spec must be a list")
 		}

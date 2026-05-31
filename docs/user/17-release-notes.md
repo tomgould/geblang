@@ -1,5 +1,52 @@
 # Release Notes
 
+## 1.5.2
+
+### Lists are reference-typed; in-place growth methods landed
+
+Lists now have full reference semantics: two variables bound to the
+same list share its identity, and in-place mutations are visible
+through every reference. This matches the semantics that index
+assignment (`xs[0] = v`) already had and that other engines provide
+for arrays / lists.
+
+Three new in-place methods take advantage of this:
+
+- `list.append(value)` adds a single value to the end. Amortised
+  O(1) per call; building a list of n elements is O(n) total work
+  rather than O(n^2) as it was when accumulating with `push`.
+- `list.extend(other)` appends every element of another list.
+- `list.clear()` empties the list.
+
+All three return `null`, mutate the receiver, and propagate to every
+alias. On a frozen list each one raises `ImmutableError`. When the
+receiver still carries its declared element-type tag at runtime,
+`append` and `extend` reject mismatched values with `TypeError`.
+
+The previously copy-and-return methods (`push`, `pop`, `prepend`,
+`unshift`, `insert`) continue to behave the same way: they allocate
+a new list and leave the receiver unchanged. Reach for `append` when
+you mean to grow the list; reach for `push` when you want a fresh
+list back.
+
+### `dict.clear()`
+
+New in-place method that empties a dict. `dict.delete(key)` already
+mutated in place; `clear` rounds out the surface. Both raise
+`ImmutableError` on a frozen dict.
+
+### `freeze.shallow` now freezes the receiver
+
+Previously `freeze.shallow(xs)` for a list / dict / set returned a
+frozen copy and left the original mutable. The behaviour now matches
+the existing `*Instance` case and the documented "shares internal
+data" promise: a single shared underlying value is marked frozen and
+mutations through any reference are blocked.
+
+If your code relied on the old behaviour to keep a mutable handle
+alongside a frozen copy, build the copy explicitly: `let frozen =
+freeze.shallow(xs.slice(0));`.
+
 ## 1.5.1
 
 ### Bytes

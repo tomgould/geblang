@@ -4,7 +4,7 @@ import "testing"
 
 func TestCloneFunctionDeepCopiesCapturedEnvironment(t *testing.T) {
 	outer := NewEnvironment()
-	sharedList := List{Elements: []Value{NewInt64(1)}}
+	sharedList := &List{Elements: []Value{NewInt64(1)}}
 	if err := outer.Define("items", sharedList, false); err != nil {
 		t.Fatal(err)
 	}
@@ -16,7 +16,7 @@ func TestCloneFunctionDeepCopiesCapturedEnvironment(t *testing.T) {
 	if !ok {
 		t.Fatal("cloned environment is missing captured list")
 	}
-	clonedList, ok := clonedListValue.(List)
+	clonedList, ok := clonedListValue.(*List)
 	if !ok {
 		t.Fatalf("cloned captured value has type %T, want List", clonedListValue)
 	}
@@ -26,7 +26,7 @@ func TestCloneFunctionDeepCopiesCapturedEnvironment(t *testing.T) {
 	if !ok {
 		t.Fatal("original environment is missing captured list")
 	}
-	originalList := originalListValue.(List)
+	originalList := originalListValue.(*List)
 	if got := originalList.Elements[0].(Int).Value.Int64(); got != 1 {
 		t.Fatalf("original captured list was mutated: got %d, want 1", got)
 	}

@@ -73,12 +73,12 @@ func (s *cloneState) cloneValue(value Value) Value {
 		return value
 	case Bytes:
 		return Bytes{Value: append([]byte(nil), value.Value...)}
-	case List:
+	case *List:
 		elements := make([]Value, len(value.Elements))
 		for i, element := range value.Elements {
 			elements[i] = s.cloneValue(element)
 		}
-		return List{Elements: elements}
+		return &List{Elements: elements}
 	case Dict:
 		entries := make(map[string]DictEntry, len(value.Entries))
 		for key, entry := range value.Entries {

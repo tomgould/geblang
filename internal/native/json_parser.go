@@ -139,7 +139,7 @@ func (p *jsonParser) parseArray() (runtime.Value, error) {
 	p.skipWhitespace()
 	if p.pos < len(p.src) && p.src[p.pos] == ']' {
 		p.pos++
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	}
 	for {
 		p.skipWhitespace()
@@ -158,7 +158,7 @@ func (p *jsonParser) parseArray() (runtime.Value, error) {
 			continue
 		case ']':
 			p.pos++
-			return runtime.List{Elements: elements}, nil
+			return &runtime.List{Elements: elements}, nil
 		default:
 			return nil, fmt.Errorf("expected ',' or ']' in array")
 		}

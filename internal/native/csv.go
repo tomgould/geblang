@@ -24,9 +24,9 @@ func registerCSV(r *Registry) {
 			for j, cell := range row {
 				cells[j] = runtime.String{Value: cell}
 			}
-			elements[i] = runtime.List{Elements: cells}
+			elements[i] = &runtime.List{Elements: cells}
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	})
 	r.Register("csv", "parseDict", func(args []runtime.Value) (runtime.Value, error) {
 		text, opts, err := csvParseArgs(args, "csv.parseDict")
@@ -38,7 +38,7 @@ func registerCSV(r *Registry) {
 			return nil, err
 		}
 		if len(rows) == 0 {
-			return runtime.List{Elements: nil}, nil
+			return &runtime.List{Elements: nil}, nil
 		}
 		headers := rows[0]
 		elements := make([]runtime.Value, 0, len(rows)-1)
@@ -54,7 +54,7 @@ func registerCSV(r *Registry) {
 			}
 			elements = append(elements, runtime.Dict{Entries: entries})
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	})
 	r.Register("csv", "stringify", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) < 1 || len(args) > 2 {
@@ -64,7 +64,7 @@ func registerCSV(r *Registry) {
 		if err != nil {
 			return nil, err
 		}
-		list, ok := args[0].(runtime.List)
+		list, ok := args[0].(*runtime.List)
 		if !ok {
 			return nil, fmt.Errorf("csv.stringify expects a list of rows")
 		}
@@ -74,7 +74,7 @@ func registerCSV(r *Registry) {
 			w.Comma = opts.delimiter
 		}
 		for _, row := range list.Elements {
-			rowList, ok := row.(runtime.List)
+			rowList, ok := row.(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("csv.stringify rows must be lists")
 			}

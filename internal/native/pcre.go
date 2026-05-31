@@ -150,7 +150,7 @@ func pcreMatchToDict(m *regexp2.Match) runtime.Dict {
 
 	entries := map[string]runtime.DictEntry{
 		DictKey(textKey):   {Key: textKey, Value: runtime.String{Value: m.String()}},
-		DictKey(groupsKey): {Key: groupsKey, Value: runtime.List{Elements: groupsElems}},
+		DictKey(groupsKey): {Key: groupsKey, Value: &runtime.List{Elements: groupsElems}},
 		DictKey(namedKey):  {Key: namedKey, Value: runtime.Dict{Entries: namedEntries}},
 	}
 	return runtime.Dict{Entries: entries}
@@ -293,7 +293,7 @@ func registerPCRE(r *Registry) {
 				return nil, fmt.Errorf("pcre.findAll: %v", err)
 			}
 		}
-		return runtime.List{Elements: out}, nil
+		return &runtime.List{Elements: out}, nil
 	})
 
 	r.Register("pcre", "match", func(args []runtime.Value) (runtime.Value, error) {
@@ -336,7 +336,7 @@ func registerPCRE(r *Registry) {
 				return nil, fmt.Errorf("pcre.matchAll: %v", err)
 			}
 		}
-		return runtime.List{Elements: out}, nil
+		return &runtime.List{Elements: out}, nil
 	})
 
 	r.Register("pcre", "replace", func(args []runtime.Value) (runtime.Value, error) {
@@ -385,7 +385,7 @@ func registerPCRE(r *Registry) {
 		for i, p := range parts {
 			elements[i] = runtime.String{Value: p}
 		}
-		return runtime.List{Elements: elements}, nil
+		return &runtime.List{Elements: elements}, nil
 	})
 
 	r.Register("pcre", "quote", func(args []runtime.Value) (runtime.Value, error) {

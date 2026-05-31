@@ -1,0 +1,155 @@
+/**
+ * @title In-place list mutation (1.5.2)
+ * @summary list.append(v), list.extend(other), list.clear() and
+ * dict.clear() mutate the receiver in place and participate in
+ * reference semantics. Frozen receivers raise ImmutableError, and
+ * typed receivers reject element-type violations at runtime.
+ */
+import test;
+import freeze;
+
+class ListInPlaceMethodsTest extends test.Test {
+
+    @test
+    func appendMutatesReceiver(): void {
+        let xs = [1, 2];
+        let result = xs.append(3);
+        this.assertNull(result);
+        this.assertEquals(3, xs.length());
+        this.assertEquals(3, xs[2]);
+    }
+
+    @test
+    func appendIsVisibleThroughAliases(): void {
+        let xs = [1, 2];
+        let ys = xs;
+        xs.append(3);
+        this.assertEquals(3, ys.length());
+        this.assertEquals(3, ys[2]);
+    }
+
+    @test
+    func appendThroughManyAliasesShareGrowth(): void {
+        let a = [1];
+        let b = a;
+        let c = b;
+        a.append(2);
+        b.append(3);
+        c.append(4);
+        this.assertEquals(4, a.length());
+        this.assertEquals(4, b.length());
+        this.assertEquals(4, c.length());
+    }
+
+    @test
+    func extendAppendsEveryElement(): void {
+        let xs = [1, 2];
+        xs.extend([3, 4, 5]);
+        this.assertEquals(5, xs.length());
+        this.assertEquals(5, xs[4]);
+    }
+
+    @test
+    func extendWithEmptyListIsNoOp(): void {
+        let xs = [1, 2];
+        xs.extend([]);
+        this.assertEquals(2, xs.length());
+    }
+
+    @test
+    func clearEmptiesListInPlace(): void {
+        let xs = [1, 2, 3];
+        xs.clear();
+        this.assertEquals(0, xs.length());
+    }
+
+    @test
+    func clearIsVisibleThroughAliases(): void {
+        let xs = [1, 2, 3];
+        let ys = xs;
+        xs.clear();
+        this.assertEquals(0, ys.length());
+    }
+
+    @test
+    func dictClearEmptiesInPlace(): void {
+        let d = {"a": 1, "b": 2};
+        d.clear();
+        this.assertEquals(0, d.length());
+    }
+
+    @test
+    func appendOnFrozenListThrows(): void {
+        let xs = freeze.shallow([1, 2]);
+        this.assertThrows(func(): void { xs.append(3); });
+    }
+
+    @test
+    func extendOnFrozenListThrows(): void {
+        let xs = freeze.shallow([1, 2]);
+        this.assertThrows(func(): void { xs.extend([3]); });
+    }
+
+    @test
+    func clearOnFrozenListThrows(): void {
+        let xs = freeze.shallow([1, 2]);
+        this.assertThrows(func(): void { xs.clear(); });
+    }
+
+    @test
+    func clearOnFrozenDictThrows(): void {
+        let d = freeze.shallow({"a": 1});
+        this.assertThrows(func(): void { d.clear(); });
+    }
+
+    @test
+    func typedListRejectsWrongElementThroughAny(): void {
+        list<int> xs = [1, 2];
+        let helper = func(any container, any item): bool {
+            try {
+                (container as list<int>).append(item);
+                return false;
+            } catch (TypeError e) {
+                return true;
+            }
+        };
+        this.assertTrue(helper(xs, "oops"));
+        # Original list unchanged.
+        this.assertEquals(2, xs.length());
+    }
+
+    @test
+    func typedListExtendRejectsWrongElement(): void {
+        list<int> xs = [1, 2];
+        let helper = func(any container, any items): bool {
+            try {
+                (container as list<int>).extend(items as list<any>);
+                return false;
+            } catch (TypeError e) {
+                return true;
+            }
+        };
+        this.assertTrue(helper(xs, [3, "oops"]));
+        this.assertEquals(2, xs.length());
+    }
+
+    @test
+    func extendRejectsNonListArgument(): void {
+        let xs = [1, 2];
+        this.assertThrows(func(): void { xs.extend(99 as any); });
+    }
+
+    @test
+    func appendAcrossManyCallsIsAmortisedConstant(): void {
+        # Smoke-test: a thousand appends still finishes quickly and
+        # produces the expected length. Real performance is verified
+        # via benchmarks; this only checks correctness.
+        let xs = [];
+        for (i in 0..<1000) {
+            xs.append(i);
+        }
+        this.assertEquals(1000, xs.length());
+        this.assertEquals(0, xs[0]);
+        this.assertEquals(999, xs[999]);
+    }
+}

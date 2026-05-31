@@ -201,7 +201,7 @@ func TestExtMarshalExactNumbers(t *testing.T) {
 
 func TestExtMarshalList(t *testing.T) {
 	var slots [][]byte
-	list := runtime.List{Elements: []runtime.Value{
+	list := &runtime.List{Elements: []runtime.Value{
 		runtime.Int{Value: big.NewInt(1)},
 		runtime.String{Value: "two"},
 	}}

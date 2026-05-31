@@ -20,7 +20,7 @@ import (
 //
 // Result dict keys: flag names with their parsed values, "_" for positional
 // args (list of strings), and "error" (null or an error message string).
-func ParseArgv(argv runtime.List, schema runtime.Dict) runtime.Dict {
+func ParseArgv(argv *runtime.List, schema runtime.Dict) runtime.Dict {
 	longToName := map[string]string{}
 	shortToName := map[string]string{}
 	typeOf := map[string]string{}
@@ -193,7 +193,7 @@ func ParseArgv(argv runtime.List, schema runtime.Dict) runtime.Dict {
 		entries[DictKey(kv)] = runtime.DictEntry{Key: kv, Value: v}
 	}
 	posKey := runtime.String{Value: "_"}
-	entries[DictKey(posKey)] = runtime.DictEntry{Key: posKey, Value: runtime.List{Elements: positional}}
+	entries[DictKey(posKey)] = runtime.DictEntry{Key: posKey, Value: &runtime.List{Elements: positional}}
 	errKey := runtime.String{Value: "error"}
 	var errVal runtime.Value
 	if parseErr != "" {

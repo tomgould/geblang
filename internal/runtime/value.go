@@ -343,7 +343,7 @@ func inspectInsideContainer(v Value, depth int) string {
 	switch x := v.(type) {
 	case String:
 		return jsonQuoteString(x.Value)
-	case List:
+	case *List:
 		parts := make([]string, 0, len(x.Elements))
 		for _, el := range x.Elements {
 			parts = append(parts, inspectInsideContainer(el, depth+1))
