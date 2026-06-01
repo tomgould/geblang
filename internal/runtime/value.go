@@ -253,6 +253,14 @@ func NewDict() Dict {
 	return Dict{Entries: map[string]DictEntry{}, Order: &order}
 }
 
+// NewDictHint preallocates the Entries map and Order slice with a
+// capacity hint, saving 1-3 grow cycles on dicts that fill quickly
+// (parsed JSON objects, builder patterns).
+func NewDictHint(n int) Dict {
+	order := make([]string, 0, n)
+	return Dict{Entries: make(map[string]DictEntry, n), Order: &order}
+}
+
 func (v Dict) PutEntry(key string, entry DictEntry) {
 	if v.Entries == nil {
 		return

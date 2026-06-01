@@ -1,0 +1,71 @@
+/**
+ * @title Small-int interface cache safety (1.5.4)
+ * @summary The JSON parser returns cached runtime.Value wrappers for
+ * small ints to skip per-call boxing. The cache is read-only and
+ * values compare by content, so parsed ints must behave identically
+ * to literal ints in every position they're used.
+ */
+import test;
+import json;
+
+class JsonIntCacheTest extends test.Test {
+
+    @test
+    func parsedIntEqualsLiteral(): void {
+        let d = json.parse("{\"n\": 5}");
+        this.assertEquals(5, d["n"]);
+        this.assertTrue(d["n"] == 5);
+    }
+
+    @test
+    func parsedIntInDictKey(): void {
+        let d = {1: "one", 2: "two"};
+        let parsed = json.parse("[1, 2]");
+        this.assertEquals("one", d[parsed[0]]);
+        this.assertEquals("two", d[parsed[1]]);
+    }
+
+    @test
+    func parsedIntInListContains(): void {
+        let xs = [3, 4, 5];
+        let parsed = json.parse("4");
+        this.assertTrue(xs.contains(parsed));
+    }
+
+    @test
+    func parsedIntArithmetic(): void {
+        let parsed = json.parse("10");
+        let total = parsed + 5;
+        this.assertEquals(15, total);
+        this.assertEquals(50, parsed * 5);
+        this.assertEquals(2, parsed // 5);
+    }
+
+    @test
+    func parsedIntInBoundaryValues(): void {
+        let lo = json.parse("-128");
+        let hi = json.parse("1023");
+        this.assertEquals(-128, lo);
+        this.assertEquals(1023, hi);
+    }
+
+    @test
+    func parsedIntOutOfCacheRangeWorks(): void {
+        let beyond = json.parse("1024");
+        this.assertEquals(1024, beyond);
+        let below = json.parse("-129");
+        this.assertEquals(-129, below);
+        let big = json.parse("9999999");
+        this.assertEquals(9999999, big);
+    }
+
+    @test
+    func parsedIntRoundtripsThroughStringify(): void {
+        let d = {"a": 1, "b": -50, "c": 9999};
+        let text = json.stringify(d);
+        let back = json.parse(text);
+        this.assertEquals(d["a"], back["a"]);
+        this.assertEquals(d["b"], back["b"]);
+        this.assertEquals(d["c"], back["c"]);
+    }
+}

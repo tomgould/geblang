@@ -1170,6 +1170,36 @@ func (vm *VM) Run() (err error) {
 				return err
 			}
 			ip = nextIP
+		case OpJumpIfModNotZero, OpJumpIfModZero:
+			if len(instruction.Operands) != 3 {
+				return vm.runtimeError(instruction, "mod-jump instruction has invalid operands")
+			}
+			slot := int(instruction.Operands[1])
+			idx := vm.currentFrameBP + slot
+			if idx < 0 || idx >= len(vm.localsStack) {
+				return vm.runtimeError(instruction, "local slot out of range")
+			}
+			lv := vm.localsStack[idx]
+			if lv.Kind != runtime.VMKindSmallInt {
+				return vm.runtimeError(instruction, "mod-jump fast path requires int local")
+			}
+			ri := instruction.Operands[2]
+			if ri == 0 {
+				return vm.runtimeError(instruction, "integer division by zero")
+			}
+			v := lv.I64 % ri
+			if v != 0 && (lv.I64 < 0) != (ri < 0) {
+				v += ri
+			}
+			isZero := v == 0
+			jump := isZero
+			if instruction.Op == OpJumpIfModNotZero {
+				jump = !isZero
+			}
+			if jump {
+				ip = int(instruction.Operands[0]) - 1
+			}
+			continue
 		case OpAddLocalIntLocal, OpSubLocalIntLocal, OpAddLocalIntConst, OpSubLocalIntConst,
 			OpAddLocalIntGlobal, OpSubLocalIntGlobal,
 			OpAddGlobalIntGlobal, OpSubGlobalIntGlobal, OpAddGlobalIntConst, OpSubGlobalIntConst,

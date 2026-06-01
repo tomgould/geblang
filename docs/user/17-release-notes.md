@@ -1,5 +1,66 @@
 # Release Notes
 
+## 1.5.4
+
+### Bytecode VM: fused mod-zero branch
+
+`if (local % const_int == 0)` and `if (local % const_int != 0)` now
+compile to a single `OpJumpIfModNotZero` / `OpJumpIfModZero`
+superinstruction on the VM. The opcode reads the int local
+directly, computes the modulo against the constant divisor, and
+branches in one dispatch, replacing the previous five-opcode
+GetLocal+Const+ModInt+Const+JumpIfX sequence. The fast path
+preserves Geblang's modulo semantics (negative-operand
+correction, zero-divisor error). On the `numeric_loop` benchmark
+this drops VM time by ~23% (95ms -> 73ms median).
+
+### json.stringify: skip the sort when keys are already ordered
+
+`json.stringify(dict)` now iterates the dict's insertion-order
+record (`Dict.Order`) when valid and tracks whether successive
+keys are non-decreasing. When the dict's keys are already in
+alphabetical order (the common case for parsed JSON being
+re-stringified), the encoder skips the per-dict sort entirely.
+Output ordering is unchanged: dicts built in non-alphabetical
+insertion order still produce alphabetical output via the
+fallback sort path.
+
+### json.parse: pre-sized Dict allocation
+
+The parser now allocates each Dict with a capacity hint, avoiding
+1-3 map and slice grow cycles per dict. Combined with the
+stringify fast path the `json_roundtrip` benchmark drops by ~12%
+(599ms -> 526ms median).
+
+### JSON encoder: zero-alloc direct dict encode + int formatting
+
+`json.stringify` now writes dict entries directly while iterating
+the dict's insertion-order record on the alphabetical fast path,
+skipping the pooled `pairs` scratch slice and the sort entirely.
+Integer formatting also uses `strconv.AppendInt` against a stack
+scratch buffer rather than `strconv.FormatInt`, eliminating the
+per-int string allocation and the corresponding GC pressure.
+
+### JSON parser: cached small-int interface wrappers
+
+The parser now returns pre-boxed `runtime.Value` wrappers for
+integers in `[-128, 1024)` from a process-wide cache, skipping
+the per-call interface allocation that Go performs when wrapping
+a struct-typed `SmallInt`. Cached values share identity but
+compare and behave identically to freshly boxed ints. Combined
+with the encoder changes, `json_roundtrip` drops by a further
+~8% (526ms -> 498ms median).
+
+### Node.js added to the benchmark suite
+
+`benchmarks/run.sh` now compares Geblang against Node.js alongside
+CPython and PHP. Each of the nine benchmark workloads has a
+`benchmarks/node/<case>.js` variant matching the existing
+Python/PHP semantics. Host mode picks up `node` from PATH; Docker
+mode pulls `node:22-alpine` by default, overridable via
+`BENCH_NODE_IMAGE`. When a runtime is missing on the host the
+corresponding rows are reported as `skipped`.
+
 ## 1.5.3
 
 ### New copy-and-return list methods

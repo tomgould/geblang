@@ -369,11 +369,13 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 		}
 		return nil
 	case runtime.SmallInt:
-		buf.WriteString(strconv.FormatInt(v.Value, 10))
+		var scratch [20]byte
+		buf.Write(strconv.AppendInt(scratch[:0], v.Value, 10))
 		return nil
 	case runtime.Int:
 		if v.Value.IsInt64() {
-			buf.WriteString(strconv.FormatInt(v.Value.Int64(), 10))
+			var scratch [20]byte
+			buf.Write(strconv.AppendInt(scratch[:0], v.Value.Int64(), 10))
 			return nil
 		}
 		// Bigints larger than int64 are encoded as strings to round-trip
@@ -414,15 +416,53 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 		return nil
 	case runtime.Dict:
 		buf.WriteByte('{')
-		// Sort entries so output is deterministic. Borrow a
-		// pre-allocated jsonDictPairs slice from the pool so the
-		// per-dict allocation cost (800x records x 200 iterations
-		// on the bench) goes through reuse rather than mallocgc.
 		n := len(v.Entries)
 		if n == 0 {
 			buf.WriteByte('}')
 			return nil
 		}
+		// Direct-encode fast path: when Order matches Entries and the
+		// keys are already non-decreasing (always true for parsed JSON
+		// that came from a prior alphabetical stringify), skip the
+		// scratch pairs slice + pool + sort entirely.
+		if v.Order != nil && len(*v.Order) == n {
+			sorted := true
+			var prev string
+			for i, dkey := range *v.Order {
+				entry, ok := v.Entries[dkey]
+				if !ok {
+					sorted = false
+					break
+				}
+				keyStr, isStr := entry.Key.(runtime.String)
+				if !isStr {
+					return fmt.Errorf("json.stringify only supports dicts with string keys")
+				}
+				if i > 0 && prev > keyStr.Value {
+					sorted = false
+					break
+				}
+				prev = keyStr.Value
+			}
+			if sorted {
+				for i, dkey := range *v.Order {
+					entry := v.Entries[dkey]
+					if i > 0 {
+						buf.WriteByte(',')
+					}
+					if err := encodeJSONString(buf, entry.Key.(runtime.String).Value); err != nil {
+						return err
+					}
+					buf.WriteByte(':')
+					if err := encodeJSONValueInto(buf, entry.Value); err != nil {
+						return err
+					}
+				}
+				buf.WriteByte('}')
+				return nil
+			}
+		}
+		// Fallback: collect into the pooled scratch slice and sort.
 		pairsPtr := jsonDictPairsPool.Get().(*jsonDictPairs)
 		pairs := *pairsPtr
 		pairs = pairs[:0]

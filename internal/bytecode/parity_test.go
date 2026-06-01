@@ -5398,6 +5398,43 @@ io.println([1, 2, 3].remove(99));
 `, "[1, 2, 3]\n")
 }
 
+func TestParityJumpIfModZero(t *testing.T) {
+	runParity(t, `import io;
+int total = 0;
+for (int i = 0; i < 12; i++) {
+    if (i % 3 == 0) { total = total + i; }
+    else            { total = total - 1; }
+}
+io.println(total);
+`, "10\n")
+
+	runParity(t, `import io;
+int n = 0;
+for (int i = 0; i < 10; i++) {
+    if (i % 2 != 0) { n = n + 1; }
+}
+io.println(n);
+`, "5\n")
+
+	// 0 == i % d reversed form takes the same fused opcode.
+	runParity(t, `import io;
+int n = 0;
+for (int i = 0; i < 9; i++) {
+    if (0 == i % 4) { n = n + 1; }
+}
+io.println(n);
+`, "3\n")
+
+	// Negative dividend exercises the modulo-correction branch.
+	runParity(t, `import io;
+int n = 0;
+for (int i = -6; i <= 0; i++) {
+    if (i % 3 == 0) { n = n + 1; }
+}
+io.println(n);
+`, "3\n")
+}
+
 func TestParityDictSpreadIgnoresExtras(t *testing.T) {
 	runParity(t, `import io;
 func greet(string name, int age, bool active = true): string {

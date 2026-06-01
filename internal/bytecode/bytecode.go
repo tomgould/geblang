@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(61)
+	Version = uint16(62)
 )
 
 type Op byte
@@ -147,6 +147,14 @@ const (
 	OpJumpIfNotGreaterEqualInt
 	OpJumpIfNotEqualInt
 	OpJumpIfEqualInt
+	// Fused `if (local % const_divisor == 0)` / `!= 0` superinstructions.
+	// Operands are [target, localSlot, divisor]. The op reads the local
+	// directly, computes the modulo against the divisor constant, and
+	// jumps to target when the named condition holds (skip body). Saves
+	// 4 dispatches per iteration vs the GetLocal/Const/Mod/Const/JumpIfX
+	// sequence on the bench numeric_loop hot path.
+	OpJumpIfModNotZero
+	OpJumpIfModZero
 	// Phase 12: fused local/global int self-update arithmetic opcodes. Each
 	// stores back into the destination slot and pushes the result onto the
 	// stack (matching OpSetLocal / OpAppendLocalList semantics so the

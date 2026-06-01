@@ -4994,6 +4994,10 @@ func (c *Compiler) emitJump(op Op, line int, column int) int {
 // patch position. Otherwise emits the unfused [cond; OpJumpIfFalse] pair.
 func (c *Compiler) compileConditionAndJumpIfFalse(cond ast.Expression, line, column int) (int, error) {
 	if infix, ok := cond.(*ast.InfixExpression); ok {
+		if slot, divisor, op, ok := c.tryFuseModZeroBranch(infix); ok {
+			c.emitAt(op, line, column, -1, slot, divisor)
+			return len(c.chunk.Instructions) - 1, nil
+		}
 		fusedOp, fused := fusedCompareJumpOpFor(infix.Operator)
 		if fused && c.staticIntExpr(infix.Left) && c.staticIntExpr(infix.Right) {
 			if err := c.compileExpression(infix.Left); err != nil {
@@ -5009,6 +5013,57 @@ func (c *Compiler) compileConditionAndJumpIfFalse(cond ast.Expression, line, col
 		return 0, err
 	}
 	return c.emitJump(OpJumpIfFalse, line, column), nil
+}
+
+// tryFuseModZeroBranch matches `<local> % <const_int> == 0` (and !=, and the
+// reversed `0 == <local>%<const>` form). On a match returns the local slot,
+// divisor, and the matching fused opcode (NotZero opcode for `==`, Zero
+// opcode for `!=`, because both jump when the body should be skipped).
+func (c *Compiler) tryFuseModZeroBranch(infix *ast.InfixExpression) (int64, int64, Op, bool) {
+	if infix.Operator != "==" && infix.Operator != "!=" {
+		return 0, 0, 0, false
+	}
+	modExpr, zero := infix.Left, infix.Right
+	if !isIntZeroLiteral(zero) {
+		modExpr, zero = infix.Right, infix.Left
+		if !isIntZeroLiteral(zero) {
+			return 0, 0, 0, false
+		}
+	}
+	mod, ok := modExpr.(*ast.InfixExpression)
+	if !ok || mod.Operator != "%" {
+		return 0, 0, 0, false
+	}
+	ident, ok := mod.Left.(*ast.Identifier)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	b, found := c.resolveName(ident.Value)
+	if !found || b.kind != "local" || b.typ != "int" {
+		return 0, 0, 0, false
+	}
+	divLit, ok := mod.Right.(*ast.IntegerLiteral)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	divisor, err := strconv.ParseInt(divLit.Value, 10, 64)
+	if err != nil || divisor == 0 {
+		return 0, 0, 0, false
+	}
+	op := OpJumpIfModNotZero
+	if infix.Operator == "!=" {
+		op = OpJumpIfModZero
+	}
+	return b.slot, divisor, op, true
+}
+
+func isIntZeroLiteral(e ast.Expression) bool {
+	lit, ok := e.(*ast.IntegerLiteral)
+	if !ok {
+		return false
+	}
+	v, err := strconv.ParseInt(lit.Value, 10, 64)
+	return err == nil && v == 0
 }
 
 // fusedCompareJumpOpFor maps an infix comparison operator to the corresponding

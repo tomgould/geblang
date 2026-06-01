@@ -1,0 +1,47 @@
+/**
+ * @title json.stringify key ordering (1.5.5)
+ * @summary The encoder uses Dict.Order when valid and skips the
+ * alphabetical sort when keys are already non-decreasing. Output
+ * for non-alphabetical inputs is still alphabetical (sort fires
+ * on the fallback path).
+ */
+import test;
+import json;
+
+class JsonStringifyOrderTest extends test.Test {
+
+    @test
+    func alphabeticalPreserved(): void {
+        let d = {"alpha": 1, "beta": 2};
+        this.assertEquals("{\"alpha\":1,\"beta\":2}", json.stringify(d));
+    }
+
+    @test
+    func nonAlphabeticalSorts(): void {
+        let d = {"zeta": 1, "alpha": 2};
+        this.assertEquals("{\"alpha\":2,\"zeta\":1}", json.stringify(d));
+    }
+
+    @test
+    func parseStringifyRoundtripSorted(): void {
+        let text = "{\"a\":1,\"b\":2,\"c\":3}";
+        this.assertEquals(text, json.stringify(json.parse(text)));
+    }
+
+    @test
+    func parseStringifyUnsortedInputBecomesSorted(): void {
+        let unsorted = "{\"c\":3,\"a\":1,\"b\":2}";
+        this.assertEquals("{\"a\":1,\"b\":2,\"c\":3}", json.stringify(json.parse(unsorted)));
+    }
+
+    @test
+    func nestedDict(): void {
+        let d = {"outer": {"x": 1, "y": 2}};
+        this.assertEquals("{\"outer\":{\"x\":1,\"y\":2}}", json.stringify(d));
+    }
+
+    @test
+    func emptyDict(): void {
+        this.assertEquals("{}", json.stringify({}));
+    }
+}

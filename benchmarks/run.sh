@@ -2,13 +2,12 @@
 #
 # benchmarks/run.sh -- Geblang performance benchmark harness.
 #
-# Runs three small workloads (numeric_loop, recursive_fib, list_pipeline)
-# against the geblang VM, CPython, and PHP. Prints median / min / max
-# milliseconds across N repeats.
+# Runs the bench workloads against the geblang VM, CPython, PHP, and Node.
+# Prints median / min / max milliseconds across N repeats.
 #
 # Usage:
-#   benchmarks/run.sh                  # host-installed python/php
-#   benchmarks/run.sh --docker         # python/php in official containers
+#   benchmarks/run.sh                  # host-installed python/php/node
+#   benchmarks/run.sh --docker         # python/php/node in official containers
 #   benchmarks/run.sh --repeats 7
 #   benchmarks/run.sh --case numeric_loop
 #   benchmarks/run.sh --csv
@@ -17,6 +16,7 @@
 #   GEBLANG_BIN         path to the geblang binary (default: build/geblang-bench).
 #   BENCH_PYTHON_IMAGE  python image tag used by --docker (default: python:3.13-alpine).
 #   BENCH_PHP_IMAGE     php image tag used by --docker (default: php:8.4-cli-alpine).
+#   BENCH_NODE_IMAGE    node image tag used by --docker (default: node:22-alpine).
 #   GOCACHE             passed to `go build` when geblang needs to be built.
 #   GOTOOLCHAIN         passed to `go build` (default: auto so the right Go is fetched if missing).
 #
@@ -120,6 +120,14 @@ set_cmd_host() {
             # shellcheck disable=SC2206
             local extra=($args); CMD+=("${extra[@]}")
             ;;
+        node)
+            local node
+            node="$(command -v node || true)"
+            if [ -z "$node" ]; then return 1; fi
+            CMD=("$node" "$ROOT/benchmarks/node/$case_name.js")
+            # shellcheck disable=SC2206
+            local extra=($args); CMD+=("${extra[@]}")
+            ;;
         *)
             return 1 ;;
     esac
@@ -145,6 +153,13 @@ set_cmd_docker() {
             if ! command -v docker >/dev/null 2>&1; then return 1; fi
             local image="${BENCH_PHP_IMAGE:-php:8.4-cli-alpine}"
             CMD=(docker run --rm -v "$ROOT:/work:ro" -w /work "$image" php "/work/benchmarks/php/$case_name.php")
+            # shellcheck disable=SC2206
+            local extra=($args); CMD+=("${extra[@]}")
+            ;;
+        node)
+            if ! command -v docker >/dev/null 2>&1; then return 1; fi
+            local image="${BENCH_NODE_IMAGE:-node:22-alpine}"
+            CMD=(docker run --rm -v "$ROOT:/work:ro" -w /work "$image" node "/work/benchmarks/node/$case_name.js")
             # shellcheck disable=SC2206
             local extra=($args); CMD+=("${extra[@]}")
             ;;
@@ -192,7 +207,7 @@ prepull_docker_images() {
         echo "--docker requested but docker not on PATH" >&2
         exit 2
     fi
-    local images=("${BENCH_PYTHON_IMAGE:-python:3.13-alpine}" "${BENCH_PHP_IMAGE:-php:8.4-cli-alpine}")
+    local images=("${BENCH_PYTHON_IMAGE:-python:3.13-alpine}" "${BENCH_PHP_IMAGE:-php:8.4-cli-alpine}" "${BENCH_NODE_IMAGE:-node:22-alpine}")
     local img
     for img in "${images[@]}"; do
         if ! docker image inspect "$img" >/dev/null 2>&1; then
@@ -224,7 +239,7 @@ stats() {
 
 # ---- Main loop. ----
 
-LANGS=(geblang python php)
+LANGS=(geblang python php node)
 RESULTS=()        # tab-separated rows: case<TAB>lang<TAB>median<TAB>min<TAB>max<TAB>output
 OUTPUTS_KEY=()    # case-name lookup keys
 OUTPUTS_VAL=()    # the canonical output observed for each case

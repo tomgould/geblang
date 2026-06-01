@@ -10,6 +10,22 @@ import (
 	"geblang/internal/runtime"
 )
 
+// smallIntInterfaceCache holds pre-boxed runtime.Value wrappers for
+// small ints. Each SmallInt -> runtime.Value conversion is a heap
+// allocation; returning a cached interface skips the alloc.
+const (
+	smallIntCacheMin = -128
+	smallIntCacheMax = 1024
+)
+
+var smallIntInterfaceCache [smallIntCacheMax - smallIntCacheMin]runtime.Value
+
+func init() {
+	for i := range smallIntInterfaceCache {
+		smallIntInterfaceCache[i] = runtime.SmallInt{Value: int64(i + smallIntCacheMin)}
+	}
+}
+
 // parseJSONDirect walks the input bytes once and emits runtime.Value
 // without the json.Decoder + any -> runtime.Value double pass that
 // ParseJSONText previously paid for. Numeric semantics mirror the
@@ -77,7 +93,7 @@ func (p *jsonParser) parseValue() (runtime.Value, error) {
 
 func (p *jsonParser) parseObject() (runtime.Value, error) {
 	p.pos++ // skip {
-	d := runtime.NewDict()
+	d := runtime.NewDictHint(8)
 	p.skipWhitespace()
 	if p.pos < len(p.src) && p.src[p.pos] == '}' {
 		p.pos++
@@ -347,6 +363,9 @@ func (p *jsonParser) parseNumber() (runtime.Value, error) {
 	// literal int values.
 	if n := p.pos - start; n <= 18 {
 		if v, err := strconv.ParseInt(text, 10, 64); err == nil {
+			if v >= smallIntCacheMin && v < smallIntCacheMax {
+				return smallIntInterfaceCache[v-smallIntCacheMin], nil
+			}
 			return runtime.SmallInt{Value: v}, nil
 		}
 	}

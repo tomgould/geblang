@@ -1,0 +1,57 @@
+/**
+ * @title Fused mod-branch opcodes (1.5.5)
+ * @summary `if (local % const == 0) ...` (and != 0) compiles to a
+ * single OpJumpIfModZero / OpJumpIfModNotZero superinstruction on
+ * the VM. This test guards the fused path; parity with the
+ * evaluator is asserted in internal/bytecode/parity_test.go.
+ */
+import test;
+
+class ModBranchTest extends test.Test {
+
+    @test
+    func divisorThree(): void {
+        int total = 0;
+        for (int i = 0; i < 10; i++) {
+            if (i % 3 == 0) { total = total + i; }
+            else            { total = total - 1; }
+        }
+        this.assertEquals(12, total);
+    }
+
+    @test
+    func notZeroBranchTaken(): void {
+        int evens = 0;
+        for (int i = 0; i < 10; i++) {
+            if (i % 2 != 0) { evens = evens + 1; }
+        }
+        this.assertEquals(5, evens);
+    }
+
+    @test
+    func zeroOnRightWorks(): void {
+        int hits = 0;
+        for (int i = 0; i < 5; i++) {
+            if (i % 2 == 0) { hits = hits + 1; }
+        }
+        this.assertEquals(3, hits);
+    }
+
+    @test
+    func zeroOnLeftWorks(): void {
+        int hits = 0;
+        for (int i = 0; i < 5; i++) {
+            if (0 == i % 2) { hits = hits + 1; }
+        }
+        this.assertEquals(3, hits);
+    }
+
+    @test
+    func negativeOperandModulo(): void {
+        int hits = 0;
+        for (int i = -6; i <= 0; i++) {
+            if (i % 3 == 0) { hits = hits + 1; }
+        }
+        this.assertEquals(3, hits);
+    }
+}
