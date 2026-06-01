@@ -1,0 +1,49 @@
+/**
+ * @title Dict spread tolerates extra keys (1.5.3)
+ * @summary `foo(...dict)` drops dict keys that do not name a
+ * parameter of `foo`. Explicit `foo(typo: 9)` still errors, and a
+ * missing required parameter still errors.
+ */
+import test;
+
+func greet(string name, int age, bool active = true): string {
+    return name + "/" + (age as string) + "/" + (active as string);
+}
+
+class SpreadExtrasTest extends test.Test {
+
+    @test
+    func extrasAreSilentlyIgnored(): void {
+        let d = {"name": "bob", "age": 43, "extra": 9.9, "active": false};
+        this.assertEquals("bob/43/false", greet(...d));
+    }
+
+    @test
+    func extraWithoutOverride(): void {
+        let d = {"name": "alice", "age": 30, "ignored": 1};
+        this.assertEquals("alice/30/true", greet(...d));
+    }
+
+    @test
+    func requiredKeysAreEnough(): void {
+        let d = {"name": "carol", "age": 25};
+        this.assertEquals("carol/25/true", greet(...d));
+    }
+
+    @test
+    func missingRequiredStillErrors(): void {
+        let d = {"name": "dan", "extra": 1};
+        this.assertThrows(func(): void { greet(...d); });
+    }
+
+    @test
+    func explicitTypoStillErrors(): void {
+        this.assertThrows(func(): void { greet(typo: 9, name: "eve", age: 22); });
+    }
+
+    @test
+    func mixingPositionalAndSpread(): void {
+        let d = {"age": 60, "active": false, "junk": "x"};
+        this.assertEquals("frank/60/false", greet("frank", ...d));
+    }
+}

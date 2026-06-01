@@ -24294,6 +24294,8 @@ func (e *Evaluator) evalCallArguments(call *ast.CallExpression, env *runtime.Env
 type evaluatedCallArg struct {
 	name  string
 	value runtime.Value
+	// fromSpread: binder silently drops unknown names; explicit named args don't.
+	fromSpread bool
 }
 
 func (e *Evaluator) evalDetailedCallArguments(call *ast.CallExpression, env *runtime.Environment) ([]evaluatedCallArg, error) {
@@ -24345,7 +24347,7 @@ func dictSpreadCallArguments(dict runtime.Dict) ([]evaluatedCallArg, error) {
 	sort.Slice(named, func(i, j int) bool { return named[i].name < named[j].name })
 	args := make([]evaluatedCallArg, 0, len(named))
 	for _, arg := range named {
-		args = append(args, evaluatedCallArg{name: arg.name, value: arg.value})
+		args = append(args, evaluatedCallArg{name: arg.name, value: arg.value, fromSpread: true})
 	}
 	return args, nil
 }
@@ -24362,16 +24364,36 @@ func (e *Evaluator) applyOverloadedFunction(label string, overloads []runtime.Fu
 	}
 	var matches []runtime.Function
 	var matchedArgs [][]runtime.Value
+	var matchedDropped []int
 	for _, fn := range overloads {
-		args, ok := bindEvaluatedFunctionCallArguments(fn, provided)
+		args, dropped, ok := bindEvaluatedFunctionCallArgumentsDetail(fn, provided)
 		if !ok || !functionArgumentsMatch(fn, args) || !functionReturnMatchesExpected(fn, expected) {
 			continue
 		}
 		matches = append(matches, fn)
 		matchedArgs = append(matchedArgs, args)
+		matchedDropped = append(matchedDropped, dropped)
 	}
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("no matching overload for %s", label)
+	}
+	if len(matches) > 1 {
+		minDropped := matchedDropped[0]
+		for _, d := range matchedDropped[1:] {
+			if d < minDropped {
+				minDropped = d
+			}
+		}
+		kept := matches[:0]
+		keptArgs := matchedArgs[:0]
+		for i, fn := range matches {
+			if matchedDropped[i] == minDropped {
+				kept = append(kept, fn)
+				keptArgs = append(keptArgs, matchedArgs[i])
+			}
+		}
+		matches = kept
+		matchedArgs = keptArgs
 	}
 	if len(matches) > 1 {
 		return nil, fmt.Errorf("ambiguous overload for %s", label)
@@ -24521,19 +24543,43 @@ func functionAcceptsPositionalArgs(fn runtime.Function, count int) bool {
 }
 
 func bindEvaluatedFunctionCallArguments(fn runtime.Function, provided []evaluatedCallArg) ([]runtime.Value, bool) {
+	args, _, ok := bindEvaluatedFunctionCallArgumentsDetail(fn, provided)
+	return args, ok
+}
+
+// bindEvaluatedFunctionCallArgumentsDetail also reports how many fromSpread
+// args were silently dropped. Overload resolution prefers the overload
+// that drops fewest so spread + overload disambiguates predictably.
+func bindEvaluatedFunctionCallArgumentsDetail(fn runtime.Function, provided []evaluatedCallArg) ([]runtime.Value, int, bool) {
 	if fn.Native != nil && len(fn.Parameters) == 0 {
 		args := make([]runtime.Value, 0, len(provided))
 		for _, arg := range provided {
 			if arg.name != "" {
-				return nil, false
+				return nil, 0, false
 			}
 			args = append(args, arg.value)
 		}
-		return args, true
+		return args, 0, true
 	}
+	paramNames := map[string]bool{}
+	for _, p := range fn.Parameters {
+		if p.Name != nil {
+			paramNames[p.Name.Value] = true
+		}
+	}
+	dropped := 0
+	filtered := make([]evaluatedCallArg, 0, len(provided))
+	for _, arg := range provided {
+		if arg.fromSpread && arg.name != "" && !paramNames[arg.name] {
+			dropped++
+			continue
+		}
+		filtered = append(filtered, arg)
+	}
+	provided = filtered
 	isVariadic := len(fn.Parameters) > 0 && fn.Parameters[len(fn.Parameters)-1].Variadic
 	if !isVariadic && len(provided) > len(fn.Parameters) {
-		return nil, false
+		return nil, 0, false
 	}
 	argsLen := len(fn.Parameters)
 	if isVariadic && len(provided) > argsLen {
@@ -24547,7 +24593,7 @@ func bindEvaluatedFunctionCallArguments(fn runtime.Function, provided []evaluate
 		index := -1
 		if arg.name == "" {
 			if seenNamed || (!isVariadic && positional >= len(fn.Parameters)) {
-				return nil, false
+				return nil, 0, false
 			}
 			index = positional
 			positional++
@@ -24560,11 +24606,11 @@ func bindEvaluatedFunctionCallArguments(fn runtime.Function, provided []evaluate
 				}
 			}
 			if index == -1 {
-				return nil, false
+				return nil, 0, false
 			}
 		}
 		if index < len(filled) && filled[index] {
-			return nil, false
+			return nil, 0, false
 		}
 		args[index] = arg.value
 		if index < len(filled) {
@@ -24576,10 +24622,10 @@ func bindEvaluatedFunctionCallArguments(fn runtime.Function, provided []evaluate
 			continue
 		}
 		if !filled[i] && param.Default == nil {
-			return nil, false
+			return nil, 0, false
 		}
 	}
-	return args, true
+	return args, dropped, true
 }
 
 func functionArgumentsMatch(fn runtime.Function, args []runtime.Value) bool {

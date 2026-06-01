@@ -27,18 +27,47 @@ Default parameters must be trailing:
 ```gb
 func connect(string host, int port = 80, bool tls = true): void {}
 
-connect("example.com", tls: false);
+connect("example.com");                       # uses both defaults
+connect("example.com", 443);                  # overrides port
+connect("example.com", 443, false);           # overrides both
 ```
 
-Named arguments are useful when a function has several optional settings. They
-also pair with dictionary spread for option objects:
+Any parameter can be passed by name. The name matches the parameter
+identifier in the function declaration:
 
 ```gb
-let opts = {"port": 443, "tls": true};
-connect("example.com", ...opts);
+connect(host: "example.com", port: 443, tls: false);
+connect(host: "example.com", tls: false);     # default port kept
+```
+
+Positional and named arguments can be mixed, but every positional
+argument must precede the first named one:
+
+```gb
+connect("example.com", tls: false);           # ok - positional then named
+connect(host: "example.com", 443);            # error - positional after named
+```
+
+Unknown names raise an error so typos surface immediately:
+
+```gb
+connect("example.com", tsl: false);           # error - no parameter "tsl"
+```
+
+Named arguments also feed overload resolution. When overloads share
+an arity, naming an argument can pick the intended one:
+
+```gb
+func area(decimal w, decimal h): decimal { return w * h; }
+func area(decimal radius): decimal       { return 3.14159 * radius * radius; }
+
+area(radius: 5.0);                            # picks the one-arg overload
 ```
 
 ## Variadic Parameters And Spread
+
+A variadic parameter collects trailing arguments into a list inside
+the function:
 
 ```gb
 func sum(int ...values): int {
@@ -49,19 +78,72 @@ func sum(int ...values): int {
     return total;
 }
 
-let nums = [1, 2, 3];
-sum(...nums);
+sum(1, 2, 3);                                 # 6
+sum();                                        # 0
 ```
 
-A string-keyed dictionary can be spread into named arguments:
+At the call site, `...` (spread) does the inverse: it expands a
+collection into arguments. Spread dispatches on the runtime type
+of its operand.
+
+### List spread to positional arguments
+
+A list spread fills positional slots in order:
 
 ```gb
-let opts = {"port": 8080, "tls": false};
-connect("example.com", ...opts);
+let nums = [1, 2, 3];
+sum(...nums);                                 # 6
+
+connect(...["example.com", 443, false]);      # host, port, tls
 ```
 
-Variadic parameters are collected into a list inside the function. Spread does
-the inverse at the call site.
+A list spread can follow positional arguments:
+
+```gb
+let tail = [443, false];
+connect("example.com", ...tail);
+```
+
+### Dict spread to named arguments
+
+A string-keyed dict spread maps each entry's key to the parameter
+of the same name:
+
+```gb
+let opts = {"port": 443, "tls": false};
+connect("example.com", ...opts);              # host="example.com", port=443, tls=false
+```
+
+Keys that do not name a parameter of the target function are
+silently ignored, so options dicts can carry more entries than the
+target consumes:
+
+```gb
+let opts = {"port": 443, "tls": false, "loggedAt": 1717000000};
+connect("example.com", ...opts);              # loggedAt is dropped
+```
+
+A required parameter that the dict does not cover still errors:
+
+```gb
+let opts = {"port": 443};
+connect(...opts);                             # error - missing host
+```
+
+A spread and an explicit named argument that target the same
+parameter raise a "passed more than once" error. Build the dict
+the way you want or override on the dict, not at the call site:
+
+```gb
+let opts = {"port": 443, "tls": true};
+connect("example.com", ...opts, tls: false);  # error - tls passed twice
+connect("example.com", ...opts.merge({"tls": false}));   # ok
+```
+
+When dict spread is involved in overload resolution and multiple
+overloads can bind, the runtime prefers the overload that drops the
+fewest spread keys. Two overloads tied on that score are still
+reported as ambiguous.
 
 ## Function Overloading
 

@@ -56,6 +56,20 @@ already declared in the session. `del x;` (and any other identifier
 reference) on a later prompt resolves to the binding from an earlier
 prompt instead of failing with "unknown identifier".
 
+### Dict spread tolerates extra keys
+
+`foo(...dict)` now silently drops dict keys that do not name a
+parameter of `foo`, so options-dict patterns can carry more entries
+than the target function consumes. Required parameters that the
+dict does not cover still error; explicit `foo(typo: 9)` still
+errors so typos are caught. Overload resolution prefers the
+overload that drops the fewest spread keys when more than one binds.
+
+The named-arguments and spread reference in
+`docs/user/05-functions-callables.md` was rewritten to cover
+positional/named mixing, ordering rules, dict spread semantics,
+and overload interaction.
+
 ## 1.5.2
 
 ### Lists are reference-typed; in-place growth methods landed

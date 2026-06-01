@@ -5398,6 +5398,32 @@ io.println([1, 2, 3].remove(99));
 `, "[1, 2, 3]\n")
 }
 
+func TestParityDictSpreadIgnoresExtras(t *testing.T) {
+	runParity(t, `import io;
+func greet(string name, int age, bool active = true): string {
+    return name + "/" + (age as string) + "/" + (active as string);
+}
+let d = {"name": "bob", "age": 43, "extra": 9.9, "active": false};
+io.println(greet(...d));
+`, "bob/43/false\n")
+
+	runParity(t, `import io;
+func greet(string name, int age, bool active = true): string {
+    return name + "/" + (age as string) + "/" + (active as string);
+}
+let d = {"name": "alice", "age": 30, "ignored": 1};
+io.println(greet(...d));
+`, "alice/30/true\n")
+
+	runParity(t, `import io;
+func greet(string name, int age, bool active = true): string {
+    return name + "/" + (age as string) + "/" + (active as string);
+}
+let d = {"age": 60, "active": false, "junk": "x"};
+io.println(greet("frank", ...d));
+`, "frank/60/false\n")
+}
+
 func TestParityDictAliases(t *testing.T) {
 	// entries is an alias of items.
 	runParity(t, `import io;

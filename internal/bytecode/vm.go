@@ -2206,7 +2206,7 @@ func (vm *VM) Run() (err error) {
 			if !ok {
 				return vm.runtimeError(instruction, "spread argument must be a list or dict")
 			}
-			args, names, err := spreadDictNamedArguments(spreadDict, staticArgs)
+			args, names, err := spreadDictNamedArguments(spreadDict, staticArgs, vm.chunk.Functions[funcIndex].ParamNames)
 			if err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
@@ -6589,7 +6589,11 @@ func (vm *VM) orderRuntimeArguments(instruction Instruction, function FunctionIn
 	return ordered, nil
 }
 
-func spreadDictNamedArguments(dict runtime.Dict, positional []runtime.Value) ([]runtime.Value, []string, error) {
+func spreadDictNamedArguments(dict runtime.Dict, positional []runtime.Value, paramNames []string) ([]runtime.Value, []string, error) {
+	known := map[string]bool{}
+	for _, name := range paramNames {
+		known[strings.ToLower(name)] = true
+	}
 	type namedArg struct {
 		name  string
 		value runtime.Value
@@ -6599,6 +6603,9 @@ func spreadDictNamedArguments(dict runtime.Dict, positional []runtime.Value) ([]
 		key, ok := entry.Key.(runtime.String)
 		if !ok {
 			return nil, nil, fmt.Errorf("spread dict argument keys must be strings")
+		}
+		if len(known) > 0 && !known[strings.ToLower(key.Value)] {
+			continue
 		}
 		named = append(named, namedArg{name: key.Value, value: entry.Value})
 	}
