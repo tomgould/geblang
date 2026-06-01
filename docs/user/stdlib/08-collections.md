@@ -138,6 +138,10 @@ io.println("hello"[1:4]); # ell
 | `prepend(value)` | `list<T>` | New list with `value` at the front |
 | `unshift(value)` | `list<T>` | Alias for `prepend` |
 | `insert(index, value)` | `list<T>` | New list with `value` inserted before `index` |
+| `removeAt(index)` | `list<T>` | New list with the element at `index` removed |
+| `remove(value)` | `list<T>` | New list with the first occurrence of `value` removed. Returns an equivalent list if `value` is absent |
+| `reverse()` | `list<T>` | New list with elements in reverse order |
+| `reversed()` | `list<T>` | Alias for `reverse` |
 
 ```gb
 import io;
@@ -177,8 +181,10 @@ io.println(words);          # []
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `reversed()` | `list<T>` | New list with elements in reverse order |
-| `sorted([comparator])` | `list<T>` | New list sorted in ascending order |
+| `reverse()` | `list<T>` | New list with elements in reverse order |
+| `reversed()` | `list<T>` | Alias for `reverse` |
+| `sort([comparator])` | `list<T>` | New list sorted in ascending order |
+| `sorted([comparator])` | `list<T>` | Alias for `sort` |
 | `concat(other)` | `list<T>` | New list with `other` appended |
 | `join(sep)` | `string` | Elements joined into a string with separator `sep` |
 | `flatten()` | `list<any>` | Recursively flatten nested lists |
@@ -188,7 +194,7 @@ io.println(words);          # []
 import io;
 
 list<int> a = [3, 1, 4, 1, 5, 9, 2, 6];
-io.println(a.reversed());       # [6, 2, 9, 5, 1, 4, 1, 3]
+io.println(a.reverse());        # [6, 2, 9, 5, 1, 4, 1, 3]
 io.println(a.sorted());         # [1, 1, 2, 3, 4, 5, 6, 9]
 io.println(a.unique());         # [3, 1, 4, 5, 9, 2, 6]
 
@@ -203,6 +209,37 @@ io.println(b.concat(c));        # [1, 2, 3, 4, 5, 6]
 let nested = [[1, 2], [3, [4, 5]]];
 io.println(nested.flatten());   # [1, 2, 3, 4, 5]
 ```
+
+`sort` and `sorted` accept an optional comparator `func(a, b): bool` that
+returns `true` when `a` should sort before `b`. Without a comparator, the
+natural order is used (numeric ascending, lexicographic for strings).
+
+```gb
+import io;
+
+list<int> nums = [3, 1, 4, 1, 5];
+
+# Descending: comparator that says "a comes before b when a is larger".
+let desc = nums.sorted(func(int a, int b): bool { return a > b; });
+io.println(desc);                 # [5, 4, 3, 1, 1]
+
+# Equivalent: sort ascending, then reverse.
+io.println(nums.sorted().reverse());  # [5, 4, 3, 1, 1]
+
+# Sort by a key.
+list<dict<string, any>> users = [
+    {"name": "Grace", "age": 85},
+    {"name": "Ada", "age": 36}
+];
+let byAge = users.sorted(func(dict<string, any> a, dict<string, any> b): bool {
+    return (a["age"] as int) < (b["age"] as int);
+});
+io.println(byAge[0]["name"]);     # Ada
+```
+
+For key-driven sorting prefer `sortBy(fn)` (see Keyed Functional Helpers
+below): it computes each key once per element rather than on every
+comparison.
 
 ### Functional Operations
 
@@ -332,6 +369,7 @@ Dictionaries are mutable, key-value stores.  Keys must be primitive values
 | `keys()` | `list<K>` | All keys as a list |
 | `values()` | `list<V>` | All values as a list |
 | `items()` | `list<list<any>>` | All entries as `[key, value]` pairs |
+| `entries()` | `list<list<any>>` | Alias for `items` |
 
 ```gb
 import io;
@@ -351,12 +389,14 @@ io.println(d.items());       # [[a, 1], [b, 2], [c, 3]]
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `set(key, value)` | `null` | Insert or update an entry |
+| `insert(key, value)` | `null` | Alias for `set` |
 | `get(key)` | `V\|null` | Retrieve value by key, or `null` if absent |
 | `delete(key)` | `null` | Remove an entry in place; no-op if key is absent |
+| `remove(key)` | `null` | Alias for `delete` |
 | `clear()` | `null` | Empty the dict in place |
 
-All four mutate the receiver; aliases of the same dict see the change. On
-a frozen dict every mutation raises `ImmutableError`.
+All mutators write to the receiver in place; aliases of the same dict see
+the change. On a frozen dict every mutation raises `ImmutableError`.
 
 ```gb
 import io;

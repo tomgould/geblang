@@ -7081,23 +7081,25 @@ func dirValue(value runtime.Value) []string {
 			names = append(names, name)
 		}
 	case runtime.Dict:
-		for _, entry := range value.Entries {
-			names = append(names, entry.Key.Inspect())
-		}
+		names = primitiveMethodNamesFor("dict")
+	case runtime.Set:
+		names = primitiveMethodNamesFor("set")
 	case *runtime.List:
-		names = primitiveMethods("list")
+		names = primitiveMethodNamesFor("list")
 	case runtime.String:
-		names = primitiveMethods("string")
+		names = primitiveMethodNamesFor("string")
 	case runtime.Bytes:
-		names = primitiveMethods("bytes")
-	case runtime.Int:
-		names = primitiveMethods("int")
+		names = primitiveMethodNamesFor("bytes")
+	case runtime.Range:
+		names = primitiveMethodNamesFor("range")
+	case runtime.SmallInt, runtime.Int:
+		names = []string{"abs", "isNegative", "isPositive", "isZero", "toString"}
 	case runtime.Decimal:
-		names = primitiveMethods("decimal")
+		names = []string{"abs", "isNegative", "isPositive", "isZero", "toString"}
 	case runtime.Float:
-		names = primitiveMethods("float")
+		names = []string{"abs", "isNegative", "isPositive", "isZero", "toString"}
 	case runtime.Bool:
-		names = primitiveMethods("bool")
+		names = []string{"not", "toString"}
 	case runtime.NativeObject:
 		names = nativeObjectMethods(value.Kind)
 	case runtime.Function, runtime.OverloadedFunction:
@@ -7107,29 +7109,6 @@ func dirValue(value runtime.Value) []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-func primitiveMethods(typeName string) []string {
-	switch typeName {
-	case "string":
-		return []string{"contains", "endsWith", "format", "get", "indexOf", "isEmpty", "length", "lower", "replace", "split", "startsWith", "toString", "trim", "upper"}
-	case "bytes":
-		return []string{"contains", "get", "isEmpty", "length", "slice", "toBase64", "toBase64Url", "toHex", "toString"}
-	case "dict":
-		return []string{"contains", "get", "hasKey", "isEmpty", "keys", "length", "set"}
-	case "set":
-		return []string{"add", "contains", "difference", "intersection", "isEmpty", "length", "remove", "toList", "union"}
-	case "list":
-		return []string{"get", "isEmpty", "length", "set"}
-	case "int", "decimal", "float":
-		return []string{"abs", "isNegative", "isPositive", "isZero", "toString"}
-	case "bool":
-		return []string{"not", "toString"}
-	case "range":
-		return []string{"contains", "first", "isEmpty", "last", "length", "toList"}
-	default:
-		return nil
-	}
 }
 
 func nativeObjectMethods(kind string) []string {
@@ -12546,7 +12525,7 @@ func primitiveMethodNamesFor(typeName string) []string {
 	case "list":
 		return []string{"append", "clear", "contains", "extend", "filter", "first", "indexOf", "insert", "isEmpty", "join", "last", "length", "map", "pop", "prepend", "push", "remove", "reverse", "set", "slice", "sort", "toList", "unshift"}
 	case "dict":
-		return []string{"clear", "contains", "entries", "get", "insert", "isEmpty", "keys", "length", "remove", "set", "values"}
+		return []string{"clear", "contains", "delete", "entries", "get", "hasKey", "insert", "isEmpty", "items", "keys", "length", "merge", "remove", "set", "values"}
 	case "set":
 		return []string{"add", "contains", "difference", "intersection", "isEmpty", "length", "remove", "toList", "union"}
 	case "string":
@@ -21507,9 +21486,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				values = append(values, value.Entries[k].Value)
 			}
 			return &runtime.List{Elements: values}, nil
-		case "items":
+		case "items", "entries":
 			if len(args) != 0 {
-				return nil, fmt.Errorf("dict.items expects no arguments")
+				return nil, fmt.Errorf("dict.%s expects no arguments", name)
 			}
 			ordered := value.OrderedKeys()
 			items := make([]runtime.Value, 0, len(ordered))
@@ -21527,9 +21506,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return runtime.Null{}, nil
 			}
 			return entry.Value, nil
-		case "set":
+		case "set", "insert":
 			if len(args) != 2 {
-				return nil, fmt.Errorf("dict.set expects two arguments")
+				return nil, fmt.Errorf("dict.%s expects two arguments", name)
 			}
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen dict"}}
@@ -21552,9 +21531,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			_, ok := value.Entries[dictKey(args[0])]
 			return runtime.Bool{Value: ok}, nil
-		case "delete":
+		case "delete", "remove":
 			if len(args) != 1 {
-				return nil, fmt.Errorf("dict.delete expects one argument")
+				return nil, fmt.Errorf("dict.%s expects one argument", name)
 			}
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen dict"}}
@@ -21963,15 +21942,6 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				parts[i] = el.Inspect()
 			}
 			return runtime.String{Value: strings.Join(parts, sep.Value)}, nil
-		case "reversed":
-			if len(args) != 0 {
-				return nil, fmt.Errorf("list.reversed expects no arguments")
-			}
-			newElements := make([]runtime.Value, len(value.Elements))
-			for i, el := range value.Elements {
-				newElements[len(value.Elements)-1-i] = el
-			}
-			return &runtime.List{Elements: newElements}, nil
 		case "first":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.first expects no arguments")
@@ -22237,6 +22207,42 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, sortErr
 			}
 			return &runtime.List{Elements: newElements}, nil
+		case "reverse", "reversed":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("list.%s expects no arguments", name)
+			}
+			newElements := make([]runtime.Value, len(value.Elements))
+			for i, el := range value.Elements {
+				newElements[len(value.Elements)-1-i] = el
+			}
+			return &runtime.List{Elements: newElements, ElementTypes: value.ElementTypes}, nil
+		case "prepend", "unshift":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("list.%s expects one argument", name)
+			}
+			newElements := make([]runtime.Value, len(value.Elements)+1)
+			newElements[0] = args[0]
+			copy(newElements[1:], value.Elements)
+			return &runtime.List{Elements: newElements, ElementTypes: value.ElementTypes}, nil
+		case "remove":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("list.remove expects one argument")
+			}
+			for i, el := range value.Elements {
+				eq, err := e.valuesEqual(el, args[0])
+				if err != nil {
+					return nil, err
+				}
+				if eq {
+					newElements := make([]runtime.Value, len(value.Elements)-1)
+					copy(newElements, value.Elements[:i])
+					copy(newElements[i:], value.Elements[i+1:])
+					return &runtime.List{Elements: newElements, ElementTypes: value.ElementTypes}, nil
+				}
+			}
+			newElements := make([]runtime.Value, len(value.Elements))
+			copy(newElements, value.Elements)
+			return &runtime.List{Elements: newElements, ElementTypes: value.ElementTypes}, nil
 		case "flatten":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.flatten expects no arguments")

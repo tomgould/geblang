@@ -1,0 +1,86 @@
+/**
+ * @title Copy-and-return list methods (1.5.3)
+ * @summary list.reverse(), list.prepend(v), list.unshift(v) and
+ * list.remove(v) return a new list without mutating the receiver,
+ * matching the sort / sorted family.
+ */
+import test;
+
+class ListCopyMethodsTest extends test.Test {
+
+    @test
+    func reverseReturnsNewList(): void {
+        let xs = [1, 2, 3];
+        let ys = xs.reverse();
+        this.assertEquals(3, ys[0]);
+        this.assertEquals(2, ys[1]);
+        this.assertEquals(1, ys[2]);
+        this.assertEquals(1, xs[0]);
+        this.assertEquals(3, xs[2]);
+    }
+
+    @test
+    func reversedAliasMatches(): void {
+        let xs = [1, 2, 3];
+        this.assertEquals(xs.reverse(), xs.reversed());
+    }
+
+    @test
+    func reverseOnEmpty(): void {
+        let xs = [] as list<int>;
+        let ys = xs.reverse();
+        this.assertEquals(0, ys.length());
+    }
+
+    @test
+    func reverseSingle(): void {
+        let xs = [42];
+        this.assertEquals([42], xs.reverse());
+    }
+
+    @test
+    func reverseChainsAfterSorted(): void {
+        let xs = [3, 1, 4, 1, 5];
+        let desc = xs.sorted().reverse();
+        this.assertEquals([5, 4, 3, 1, 1], desc);
+    }
+
+    @test
+    func prependReturnsNewList(): void {
+        let xs = [2, 3];
+        let ys = xs.prepend(1);
+        this.assertEquals([1, 2, 3], ys);
+        this.assertEquals([2, 3], xs);
+    }
+
+    @test
+    func unshiftIsAliasOfPrepend(): void {
+        let xs = [2, 3];
+        this.assertEquals(xs.prepend(1), xs.unshift(1));
+    }
+
+    @test
+    func prependOnEmpty(): void {
+        let xs = [] as list<int>;
+        this.assertEquals([7], xs.prepend(7));
+    }
+
+    @test
+    func removeFirstOccurrence(): void {
+        let xs = [3, 1, 4, 1, 5];
+        this.assertEquals([3, 4, 1, 5], xs.remove(1));
+        this.assertEquals([3, 1, 4, 1, 5], xs);
+    }
+
+    @test
+    func removeMissingReturnsEquivalent(): void {
+        let xs = [1, 2, 3];
+        this.assertEquals([1, 2, 3], xs.remove(99));
+    }
+
+    @test
+    func removeFromEmpty(): void {
+        let xs = [] as list<int>;
+        this.assertEquals(0, xs.remove(1).length());
+    }
+}

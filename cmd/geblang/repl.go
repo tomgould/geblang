@@ -801,7 +801,7 @@ func handleREPLCommand(command string, session *evaluator.Session, history []str
 }
 
 func evalREPLSource(source string, session *evaluator.Session, out io.Writer, errOut io.Writer) {
-	program, ok := parseAnalyzeREPLSource(source, errOut)
+	program, ok := parseAnalyzeREPLSource(source, errOut, session)
 	if !ok {
 		return
 	}
@@ -1077,7 +1077,7 @@ func replInsertSemicolons(source string) string {
 	return out.String()
 }
 
-func parseAnalyzeREPLSource(source string, errOut io.Writer) (*ast.Program, bool) {
+func parseAnalyzeREPLSource(source string, errOut io.Writer, session *evaluator.Session) (*ast.Program, bool) {
 	source = replInsertSemicolons(source)
 	p := parser.New(lexer.New(source))
 	program := p.ParseProgram()
@@ -1087,7 +1087,13 @@ func parseAnalyzeREPLSource(source string, errOut io.Writer) (*ast.Program, bool
 		}
 		return nil, false
 	}
-	if diagnostics := semantic.New().Analyze(program); len(diagnostics) > 0 {
+	analyzer := semantic.New()
+	if session != nil {
+		for name, typeName := range session.TypeBindings() {
+			analyzer.Declare(name, typeName)
+		}
+	}
+	if diagnostics := analyzer.Analyze(program); len(diagnostics) > 0 {
 		for _, diagnostic := range diagnostics {
 			fmt.Fprintln(errOut, diagnostic.Message)
 		}

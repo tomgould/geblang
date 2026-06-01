@@ -5352,6 +5352,74 @@ io.println(r);
 	runErrorParity(t, `let xs = [1, 2]; xs.extend(99);`, "list.extend expects a list argument")
 }
 
+func TestParityListCopyMethods(t *testing.T) {
+	// reverse returns a new list; original unchanged.
+	runParity(t, `import io;
+let xs = [1, 2, 3];
+io.println(xs.reverse());
+io.println(xs);
+`, "[3, 2, 1]\n[1, 2, 3]\n")
+
+	// reversed is an alias of reverse.
+	runParity(t, `import io;
+io.println([1, 2, 3].reversed());
+`, "[3, 2, 1]\n")
+
+	// reverse on empty.
+	runParity(t, `import io; io.println(([] as list<int>).reverse());`, "[]\n")
+
+	// reverse chains after sorted.
+	runParity(t, `import io;
+io.println([3, 1, 4, 1, 5].sorted().reverse());
+`, "[5, 4, 3, 1, 1]\n")
+
+	// prepend returns a new list with value at the front.
+	runParity(t, `import io;
+let xs = [2, 3];
+io.println(xs.prepend(1));
+io.println(xs);
+`, "[1, 2, 3]\n[2, 3]\n")
+
+	// unshift is an alias of prepend.
+	runParity(t, `import io;
+io.println([2, 3].unshift(1));
+`, "[1, 2, 3]\n")
+
+	// remove drops the first matching element.
+	runParity(t, `import io;
+let xs = [3, 1, 4, 1, 5];
+io.println(xs.remove(1));
+io.println(xs);
+`, "[3, 4, 1, 5]\n[3, 1, 4, 1, 5]\n")
+
+	// remove with no match returns an equivalent list.
+	runParity(t, `import io;
+io.println([1, 2, 3].remove(99));
+`, "[1, 2, 3]\n")
+}
+
+func TestParityDictAliases(t *testing.T) {
+	// entries is an alias of items.
+	runParity(t, `import io;
+io.println({"a": 1, "b": 2}.entries());
+`, "[[\"a\", 1], [\"b\", 2]]\n")
+
+	// insert is an alias of set; both mutate in place and return null.
+	runParity(t, `import io;
+let d = {"a": 1};
+let r = d.insert("b", 2);
+io.println(r);
+io.println(d);
+`, "null\n{\"a\": 1, \"b\": 2}\n")
+
+	// remove is an alias of delete on dicts.
+	runParity(t, `import io;
+let d = {"a": 1, "b": 2};
+d.remove("a");
+io.println(d);
+`, "{\"b\": 2}\n")
+}
+
 func TestParityFreeze(t *testing.T) {
 	// freeze.shallow prevents list index mutation.
 	runErrorParity(t, `import freeze; let x = freeze.shallow([1,2,3]); x[0] = 99;`, "ImmutableError")

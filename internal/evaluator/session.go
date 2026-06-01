@@ -151,6 +151,23 @@ func (s *Session) Names() []string {
 	return s.env.Names()
 }
 
+// TypeBindings returns each session-scope binding paired with its
+// declared (or inferred) type name. The REPL uses this to re-seed a
+// fresh analyzer with prior-prompt bindings so identifier references
+// in the new prompt resolve. Names without a recorded type fall back
+// to "any".
+func (s *Session) TypeBindings() map[string]string {
+	out := map[string]string{}
+	for _, name := range s.env.Names() {
+		t, ok := s.env.GetTypeBinding(name)
+		if !ok || t == "" {
+			t = "any"
+		}
+		out[name] = t
+	}
+	return out
+}
+
 func (s *Session) Imports() []string {
 	names := make([]string, 0, len(s.evaluator.importNames))
 	for alias, canonical := range s.evaluator.importNames {

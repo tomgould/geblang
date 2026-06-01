@@ -671,3 +671,90 @@ Container<Sub> c = Container();
 		t.Fatalf("expected no diagnostics, got: %v", diagnostics)
 	}
 }
+
+// TestAnalyzerRejectsUnknownLowercaseTypeName guards the "aaa bbb;"
+// typo case. Two bare identifiers parse as a typed declaration with
+// the first as the type. Lower-case unknown type names error out.
+func TestAnalyzerRejectsUnknownLowercaseTypeName(t *testing.T) {
+	diagnostics := analyzeInput(t, "aaa bbb;\n")
+	if len(diagnostics) == 0 {
+		t.Fatalf("expected unknown-type diagnostic, got none")
+	}
+	found := false
+	for _, d := range diagnostics {
+		if strings.Contains(d.Message, "unknown type \"aaa\"") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected unknown-type diagnostic, got: %v", diagnostics)
+	}
+}
+
+func TestAnalyzerAcceptsBuiltinTypeNames(t *testing.T) {
+	input := `string a = "x";
+int b = 1;
+decimal c = 1.0;
+bool d = true;
+bytes e = "x".bytes();
+list<int> f = [];
+dict<string, int> g = {};
+set<int> h = [] as set;
+?int i = null;
+any j = "x";
+`
+	diagnostics := analyzeInput(t, input)
+	for _, d := range diagnostics {
+		if strings.Contains(d.Message, "unknown type") {
+			t.Fatalf("unexpected unknown-type diagnostic: %v", d)
+		}
+	}
+}
+
+func TestAnalyzerAcceptsDeclaredClassAsType(t *testing.T) {
+	input := `class Foo { func Foo() {} }
+Foo f = Foo();
+`
+	diagnostics := analyzeInput(t, input)
+	for _, d := range diagnostics {
+		if strings.Contains(d.Message, "unknown type") {
+			t.Fatalf("unexpected unknown-type diagnostic: %v", d)
+		}
+	}
+}
+
+// TestAnalyzerAcceptsGenericParamAsType guards against false positives
+// on type parameter references inside generic class/function bodies.
+// `T` is a single uppercase identifier and the lower-case check skips
+// it.
+func TestAnalyzerAcceptsGenericParamAsType(t *testing.T) {
+	input := `func first<T>(list<T> xs): T {
+    return xs.get(0);
+}
+`
+	diagnostics := analyzeInput(t, input)
+	for _, d := range diagnostics {
+		if strings.Contains(d.Message, "unknown type") {
+			t.Fatalf("unexpected unknown-type diagnostic on generic param: %v", d)
+		}
+	}
+}
+
+// TestAnalyzerDeclareInjectsSessionBinding verifies that
+// `analyzer.Declare(name, typeName)` makes a binding visible to
+// subsequent analysis - this is the REPL session-rebind hook.
+func TestAnalyzerDeclareInjectsSessionBinding(t *testing.T) {
+	p := parser.New(lexer.New(`del t;`))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	a := semantic.New()
+	a.Declare("t", "list")
+	diagnostics := a.Analyze(program)
+	for _, d := range diagnostics {
+		if strings.Contains(d.Message, "unknown identifier") {
+			t.Fatalf("expected pre-declared binding to be visible, got: %v", d)
+		}
+	}
+}

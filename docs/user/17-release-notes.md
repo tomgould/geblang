@@ -1,5 +1,61 @@
 # Release Notes
 
+## 1.5.3
+
+### New copy-and-return list methods
+
+- `list.reverse()` returns a new list with elements in reverse order.
+  `list.reversed()` is the alias.
+- `list.prepend(value)` returns a new list with `value` at the front.
+  `list.unshift(value)` is the alias.
+- `list.remove(value)` returns a new list with the first occurrence of
+  `value` removed; returns an equivalent list if `value` is absent.
+
+All three follow the existing copy-and-return convention used by
+`push`, `pop`, `sort`, `sorted` and friends: a new list is allocated
+and the receiver is unchanged.
+
+### Dict alias methods
+
+- `dict.entries()` is an alias for `dict.items()`.
+- `dict.insert(key, value)` is an alias for `dict.set(key, value)`.
+- `dict.remove(key)` is an alias for `dict.delete(key)`.
+
+### `dir()` introspection fixes
+
+- `dir(setValue)` now returns the set's methods instead of an empty
+  list.
+- `dir(dictValue)` now returns the dict's methods instead of the dict's
+  keys. The previous behaviour conflated data with surface.
+- `dir(listValue)` now returns the full list-method surface, not the
+  stale four-entry subset.
+- `dir(rangeValue)`, `dir(stringValue)`, and `dir(bytesValue)` now use
+  the canonical primitive-method tables, picking up methods added in
+  previous releases.
+
+### Collections documentation
+
+The collections reference (`docs/user/stdlib/08-collections.md`) gains
+explicit coverage of the comparator shape for `sort`/`sorted`, the
+canonical reverse-sort idiom, and tables for the new list and dict
+aliases.
+
+### Semantic check rejects unknown lower-case type names
+
+A typed declaration whose type name is fully lower-case and is neither
+a built-in (`string`, `int`, ...) nor a declared alias, class, or
+interface now errors at semantic-analysis time. This catches the
+common typo `aaa bbb;` where two bare identifiers parse as a typed
+declaration with `aaa` as the type. Generic type parameters (`T`,
+`U`, ...) and `PascalCase` user types are unaffected.
+
+### REPL `del` and identifier lookup see prior-prompt bindings
+
+The REPL now seeds each prompt's semantic analyzer with the names
+already declared in the session. `del x;` (and any other identifier
+reference) on a later prompt resolves to the binding from an earlier
+prompt instead of failing with "unknown identifier".
+
 ## 1.5.2
 
 ### Lists are reference-typed; in-place growth methods landed

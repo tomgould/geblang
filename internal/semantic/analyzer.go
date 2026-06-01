@@ -554,6 +554,7 @@ func (a *Analyzer) analyzeDeclaration(stmt *ast.DeclarationStatement) {
 	var declared typeInfo
 	if stmt.Type != nil {
 		declared = a.typeInfoFromRef(stmt.Type)
+		a.checkTypeRefName(stmt.Type, stmt.Name.Value)
 	} else if stmt.Value != nil {
 		declared = a.expressionTypeName(stmt.Value)
 	}
@@ -569,6 +570,86 @@ func (a *Analyzer) analyzeDeclaration(stmt *ast.DeclarationStatement) {
 	a.validateCallExpression(stmt.Value, declared)
 	a.validateContainerLiteral(declared, stmt.Value, stmt.Name.Value)
 	a.checkAssignable(stmt.Type, stmt.Value, fmt.Sprintf("cannot assign %s to %s %s", a.expressionTypeName(stmt.Value).display(), stmt.Type.String(), stmt.Name.Value))
+}
+
+// builtinTypeNames are the lower-case type names the language treats
+// as primitives. Lower-case type refs that aren't in this set, an
+// alias, a class, or an interface are flagged as unknown by
+// checkTypeRefName. The set is intentionally permissive (includes
+// pseudo-types like `iterable` and `callable`) so that legitimate
+// stdlib signatures parse without complaint.
+var builtinTypeNames = map[string]struct{}{
+	"string": {}, "int": {}, "float": {}, "decimal": {}, "bool": {},
+	"bytes": {}, "list": {}, "dict": {}, "set": {}, "range": {},
+	"void": {}, "any": {}, "null": {},
+	"callable": {}, "func": {}, "function": {},
+	"iterable": {}, "generator": {},
+}
+
+func (a *Analyzer) isKnownTypeName(name string) bool {
+	if name == "" {
+		return true
+	}
+	if _, ok := builtinTypeNames[strings.ToLower(name)]; ok {
+		return true
+	}
+	if _, ok := a.aliases[strings.ToLower(name)]; ok {
+		return true
+	}
+	if _, ok := a.classes[name]; ok {
+		return true
+	}
+	if _, ok := a.interfaces[name]; ok {
+		return true
+	}
+	if _, ok := a.lookup(name); ok {
+		return true
+	}
+	return false
+}
+
+// checkTypeRefName flags a typed declaration whose type name is all
+// lower-case and not recognised. The lower-case scope deliberately
+// ignores PascalCase and single-uppercase identifiers so generic type
+// parameters (`T`, `U`) and yet-to-be-declared class names don't
+// false-positive. The diagnostic targets the common typo case where
+// two bare identifiers (`aaa bbb;`) parse as a typed declaration with
+// an unknown type.
+func (a *Analyzer) checkTypeRefName(ref *ast.TypeRef, declName string) {
+	if ref == nil || ref.Operator != "" || ref.ListAlias {
+		return
+	}
+	name := ref.Name
+	if name == "" || !isAllLowerCase(name) {
+		return
+	}
+	if a.isKnownTypeName(name) {
+		return
+	}
+	a.errorAt(ref.Token, "unknown type %q in declaration of %s", name, declName)
+}
+
+func isAllLowerCase(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r >= 'A' && r <= 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
+// Declare exposes the analyzer's binding-registration so REPL sessions
+// can re-seed bindings from prior prompts before analyzing a new one.
+// typeName is wrapped in a minimal typeInfo; nullable and generic
+// arguments are not preserved across prompt boundaries.
+func (a *Analyzer) Declare(name, typeName string) {
+	if name == "" {
+		return
+	}
+	a.declare(name, typeInfo{name: typeName, known: true})
 }
 
 // validateContainerLiteral validates that the elements of a list/dict/set

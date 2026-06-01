@@ -7567,7 +7567,7 @@ func vmPrimitiveMethodNamesFor(typeName string) []string {
 	case "list":
 		return []string{"append", "clear", "contains", "extend", "filter", "first", "indexOf", "insert", "isEmpty", "join", "last", "length", "map", "pop", "prepend", "push", "remove", "reverse", "set", "slice", "sort", "toList", "unshift"}
 	case "dict":
-		return []string{"clear", "contains", "entries", "get", "insert", "isEmpty", "keys", "length", "remove", "set", "values"}
+		return []string{"clear", "contains", "delete", "entries", "get", "hasKey", "insert", "isEmpty", "items", "keys", "length", "merge", "remove", "set", "values"}
 	case "set":
 		return []string{"add", "contains", "difference", "intersection", "isEmpty", "length", "remove", "toList", "union"}
 	case "string":
@@ -8950,6 +8950,38 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			return nil, true, sortErr
 		}
 		return &runtime.List{Elements: newElements}, true, nil
+	case "reverse", "reversed":
+		if len(args) != 0 {
+			return nil, true, fmt.Errorf("list.%s expects no arguments", name)
+		}
+		newElements := make([]runtime.Value, len(list.Elements))
+		for i, el := range list.Elements {
+			newElements[len(list.Elements)-1-i] = el
+		}
+		return &runtime.List{Elements: newElements, ElementTypes: list.ElementTypes}, true, nil
+	case "prepend", "unshift":
+		if len(args) != 1 {
+			return nil, true, fmt.Errorf("list.%s expects one argument", name)
+		}
+		newElements := make([]runtime.Value, len(list.Elements)+1)
+		newElements[0] = args[0]
+		copy(newElements[1:], list.Elements)
+		return &runtime.List{Elements: newElements, ElementTypes: list.ElementTypes}, true, nil
+	case "remove":
+		if len(args) != 1 {
+			return nil, true, fmt.Errorf("list.remove expects one argument")
+		}
+		for i, el := range list.Elements {
+			if valuesEqual(el, args[0]) {
+				newElements := make([]runtime.Value, len(list.Elements)-1)
+				copy(newElements, list.Elements[:i])
+				copy(newElements[i:], list.Elements[i+1:])
+				return &runtime.List{Elements: newElements, ElementTypes: list.ElementTypes}, true, nil
+			}
+		}
+		newElements := make([]runtime.Value, len(list.Elements))
+		copy(newElements, list.Elements)
+		return &runtime.List{Elements: newElements, ElementTypes: list.ElementTypes}, true, nil
 	case "flatten":
 		if len(args) != 0 {
 			return nil, true, fmt.Errorf("list.flatten expects no arguments")
@@ -13670,6 +13702,41 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value.DelEntry(native.DictKey(args[0]))
 		return runtime.Null{}, nil
+	case "insert":
+		if dict, ok := receiver.(runtime.Dict); ok {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("dict.insert expects two arguments")
+			}
+			if dict.Frozen {
+				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen dict"}
+			}
+			dict.PutEntry(native.DictKey(args[0]), runtime.DictEntry{Key: args[0], Value: args[1]})
+			return runtime.Null{}, nil
+		}
+		if list, ok := receiver.(*runtime.List); ok {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("list.insert expects two arguments (index, value)")
+			}
+			i, err := indexInt(args[0])
+			if err != nil {
+				return nil, fmt.Errorf("list.insert: %v", err)
+			}
+			if i < 0 {
+				i = len(list.Elements) + i
+			}
+			if i < 0 {
+				i = 0
+			}
+			if i > len(list.Elements) {
+				i = len(list.Elements)
+			}
+			newElements := make([]runtime.Value, len(list.Elements)+1)
+			copy(newElements, list.Elements[:i])
+			newElements[i] = args[1]
+			copy(newElements[i+1:], list.Elements[i:])
+			return &runtime.List{Elements: newElements, ElementTypes: list.ElementTypes}, nil
+		}
+		return nil, fmt.Errorf("%s has no method insert", receiver.TypeName())
 	case "add":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("set.add expects one argument")
@@ -13683,15 +13750,22 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		return runtime.Set{Elements: elements}, nil
 	case "remove":
 		if len(args) != 1 {
-			return nil, fmt.Errorf("set.remove expects one argument")
+			return nil, fmt.Errorf("remove expects one argument")
 		}
-		value, ok := receiver.(runtime.Set)
-		if !ok {
+		switch v := receiver.(type) {
+		case runtime.Set:
+			elements := cloneSetEntries(v.Elements)
+			delete(elements, native.DictKey(args[0]))
+			return runtime.Set{Elements: elements}, nil
+		case runtime.Dict:
+			if v.Frozen {
+				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen dict"}
+			}
+			v.DelEntry(native.DictKey(args[0]))
+			return runtime.Null{}, nil
+		default:
 			return nil, fmt.Errorf("%s has no method remove", receiver.TypeName())
 		}
-		elements := cloneSetEntries(value.Elements)
-		delete(elements, native.DictKey(args[0]))
-		return runtime.Set{Elements: elements}, nil
 	case "tolist":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("toList expects no arguments")
@@ -13806,13 +13880,13 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			values = append(values, value.Entries[k].Value)
 		}
 		return &runtime.List{Elements: values}, nil
-	case "items":
+	case "items", "entries":
 		if len(args) != 0 {
-			return nil, fmt.Errorf("dict.items expects no arguments")
+			return nil, fmt.Errorf("dict.%s expects no arguments", name)
 		}
 		value, ok := receiver.(runtime.Dict)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method items", receiver.TypeName())
+			return nil, fmt.Errorf("%s has no method %s", receiver.TypeName(), name)
 		}
 		ordered := value.OrderedKeys()
 		items := make([]runtime.Value, 0, len(ordered))
@@ -13956,32 +14030,6 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		newElements := make([]runtime.Value, len(list.Elements)-1)
 		copy(newElements, list.Elements)
 		return &runtime.List{Elements: newElements}, nil
-	case "insert":
-		if len(args) != 2 {
-			return nil, fmt.Errorf("list.insert expects two arguments (index, value)")
-		}
-		list, ok := receiver.(*runtime.List)
-		if !ok {
-			return nil, fmt.Errorf("%s has no method insert", receiver.TypeName())
-		}
-		i, err := indexInt(args[0])
-		if err != nil {
-			return nil, fmt.Errorf("list.insert: %v", err)
-		}
-		if i < 0 {
-			i = len(list.Elements) + i
-		}
-		if i < 0 {
-			i = 0
-		}
-		if i > len(list.Elements) {
-			i = len(list.Elements)
-		}
-		newElements := make([]runtime.Value, len(list.Elements)+1)
-		copy(newElements, list.Elements[:i])
-		newElements[i] = args[1]
-		copy(newElements[i+1:], list.Elements[i:])
-		return &runtime.List{Elements: newElements}, nil
 	case "removeat":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("list.removeAt expects one argument")
@@ -14037,19 +14085,6 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			parts[i] = el.Inspect()
 		}
 		return runtime.String{Value: strings.Join(parts, sep.Value)}, nil
-	case "reversed":
-		list, ok := receiver.(*runtime.List)
-		if !ok {
-			return nil, fmt.Errorf("%s has no method reversed", receiver.TypeName())
-		}
-		if len(args) != 0 {
-			return nil, fmt.Errorf("list.reversed expects no arguments")
-		}
-		newElements := make([]runtime.Value, len(list.Elements))
-		for i, el := range list.Elements {
-			newElements[len(list.Elements)-1-i] = el
-		}
-		return &runtime.List{Elements: newElements}, nil
 	case "merge":
 		dict, ok := receiver.(runtime.Dict)
 		if !ok {

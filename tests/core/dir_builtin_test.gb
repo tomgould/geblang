@@ -1,0 +1,63 @@
+/**
+ * @title dir() introspection on primitive values (1.5.3)
+ * @summary dir(value) returns the sorted list of methods callable on
+ * value for every primitive collection type, mirroring the canonical
+ * primitive-method catalog. dir(dict) lists methods (not keys).
+ */
+import test;
+
+class DirBuiltinTest extends test.Test {
+
+    @test
+    func setReturnsMethods(): void {
+        set<int> s = [1, 2, 3] as set;
+        let methods = dir(s);
+        this.assertContains(methods, "add");
+        this.assertContains(methods, "contains");
+        this.assertContains(methods, "union");
+        this.assertContains(methods, "intersection");
+    }
+
+    @test
+    func listIncludesAllNewMethods(): void {
+        let methods = dir([1, 2, 3]);
+        this.assertContains(methods, "append");
+        this.assertContains(methods, "extend");
+        this.assertContains(methods, "clear");
+        this.assertContains(methods, "push");
+        this.assertContains(methods, "pop");
+        this.assertContains(methods, "reverse");
+        this.assertContains(methods, "prepend");
+        this.assertContains(methods, "unshift");
+        this.assertContains(methods, "remove");
+        this.assertContains(methods, "sort");
+    }
+
+    @test
+    func dictReturnsMethodsNotKeys(): void {
+        let d = {"alpha": 1, "beta": 2};
+        let methods = dir(d);
+        this.assertContains(methods, "keys");
+        this.assertContains(methods, "values");
+        this.assertContains(methods, "delete");
+        this.assertContains(methods, "merge");
+        this.assertNotContains(methods, "alpha");
+        this.assertNotContains(methods, "beta");
+    }
+
+    @test
+    func stringReturnsMethods(): void {
+        let methods = dir("hello");
+        this.assertContains(methods, "upper");
+        this.assertContains(methods, "lower");
+        this.assertContains(methods, "split");
+        this.assertContains(methods, "substring");
+    }
+
+    @test
+    func intReturnsMethods(): void {
+        let methods = dir(42);
+        this.assertContains(methods, "abs");
+        this.assertContains(methods, "toString");
+    }
+}
