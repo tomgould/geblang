@@ -268,3 +268,191 @@ func FloatUnaryMath(args []runtime.Value, fn func(float64) float64, label string
 	}
 	return runtime.Float{Value: fn(value)}, nil
 }
+
+// RoundMode selects the rounding direction for the value-keeping numeric
+// rounding helpers (DecimalQuantize / FloatRound).
+type RoundMode int
+
+const (
+	RoundHalfAwayZero RoundMode = iota // 2.5 -> 3, -2.5 -> -3
+	RoundFloor                         // toward -inf
+	RoundCeil                          // toward +inf
+	RoundTrunc                         // toward zero
+)
+
+// roundBigRatToInt rounds num/den (den > 0) to an integer per mode.
+func roundBigRatToInt(num, den *big.Int, mode RoundMode) *big.Int {
+	q := new(big.Int)
+	r := new(big.Int)
+	q.QuoRem(num, den, r) // q truncates toward zero; r carries num's sign
+	if r.Sign() == 0 {
+		return q
+	}
+	switch mode {
+	case RoundFloor:
+		if num.Sign() < 0 {
+			return q.Sub(q, big.NewInt(1))
+		}
+	case RoundCeil:
+		if num.Sign() > 0 {
+			return q.Add(q, big.NewInt(1))
+		}
+	case RoundHalfAwayZero:
+		twiceR := new(big.Int).Lsh(new(big.Int).Abs(r), 1)
+		if twiceR.Cmp(den) >= 0 {
+			if num.Sign() < 0 {
+				return q.Sub(q, big.NewInt(1))
+			}
+			return q.Add(q, big.NewInt(1))
+		}
+	}
+	return q
+}
+
+// DecimalQuantize rounds an exact decimal to places fractional digits.
+func DecimalQuantize(d runtime.Decimal, places int, mode RoundMode) runtime.Decimal {
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(places)), nil)
+	num := new(big.Int).Mul(d.Value.Num(), scale)
+	q := roundBigRatToInt(num, d.Value.Denom(), mode)
+	return runtime.Decimal{Value: new(big.Rat).SetFrac(q, scale)}
+}
+
+// FloatRound rounds a float to places fractional digits. NaN/Inf pass through.
+func FloatRound(f float64, places int, mode RoundMode) float64 {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return f
+	}
+	scale := math.Pow(10, float64(places))
+	scaled := f * scale
+	var rounded float64
+	switch mode {
+	case RoundFloor:
+		rounded = math.Floor(scaled)
+	case RoundCeil:
+		rounded = math.Ceil(scaled)
+	case RoundTrunc:
+		rounded = math.Trunc(scaled)
+	default:
+		rounded = math.Round(scaled)
+	}
+	return rounded / scale
+}
+
+func RoundPlacesArg(args []runtime.Value, label string) (int, error) {
+	if len(args) == 0 {
+		return 0, nil
+	}
+	if len(args) > 1 {
+		return 0, fmt.Errorf("%s expects optional places", label)
+	}
+	n, ok := AsInt64(args[0])
+	if !ok {
+		return 0, fmt.Errorf("%s places must be int", label)
+	}
+	if n < 0 || n > 10000 {
+		return 0, fmt.Errorf("%s places must be between 0 and 10000", label)
+	}
+	return int(n), nil
+}
+
+// NumericRoundMethod backs the value-keeping round/floor/ceil/truncate
+// methods on decimal and float (shared by both backends for parity).
+func NumericRoundMethod(receiver runtime.Value, args []runtime.Value, mode RoundMode, label string) (runtime.Value, error) {
+	places, err := RoundPlacesArg(args, label)
+	if err != nil {
+		return nil, err
+	}
+	switch v := receiver.(type) {
+	case runtime.Decimal:
+		return DecimalQuantize(v, places, mode), nil
+	case runtime.Float:
+		return runtime.Float{Value: FloatRound(v.Value, places, mode)}, nil
+	}
+	return nil, fmt.Errorf("%s has no method %s", receiver.TypeName(), label)
+}
+
+// NumericSign returns -1, 0, or 1 as a SmallInt.
+func NumericSign(v runtime.Value) (runtime.Value, error) {
+	var s int
+	switch v := v.(type) {
+	case runtime.SmallInt:
+		switch {
+		case v.Value > 0:
+			s = 1
+		case v.Value < 0:
+			s = -1
+		}
+	case runtime.Int:
+		s = v.Value.Sign()
+	case runtime.Decimal:
+		s = v.Value.Sign()
+	case runtime.Float:
+		switch {
+		case v.Value > 0:
+			s = 1
+		case v.Value < 0:
+			s = -1
+		}
+	default:
+		return nil, fmt.Errorf("%s has no method sign", v.TypeName())
+	}
+	return runtime.SmallInt{Value: int64(s)}, nil
+}
+
+// NumericClamp constrains v to [lo, hi], returning the result in v's type.
+// Bounds promote to v's type the same way arithmetic does (int into
+// decimal/float); float and decimal do not mix.
+func NumericClamp(v, lo, hi runtime.Value) (runtime.Value, error) {
+	loC, err := coerceToReceiver(v, lo)
+	if err != nil {
+		return nil, err
+	}
+	hiC, err := coerceToReceiver(v, hi)
+	if err != nil {
+		return nil, err
+	}
+	if order, err := NumericCompare(loC, hiC); err != nil {
+		return nil, err
+	} else if order > 0 {
+		return nil, fmt.Errorf("clamp expects lo <= hi")
+	}
+	if below, err := NumericCompare(v, loC); err != nil {
+		return nil, err
+	} else if below < 0 {
+		return loC, nil
+	}
+	if above, err := NumericCompare(v, hiC); err != nil {
+		return nil, err
+	} else if above > 0 {
+		return hiC, nil
+	}
+	return v, nil
+}
+
+func coerceToReceiver(v, bound runtime.Value) (runtime.Value, error) {
+	switch v.(type) {
+	case runtime.Float:
+		f, err := FloatLike(bound)
+		if err != nil {
+			return nil, fmt.Errorf("clamp bound not compatible with float")
+		}
+		return runtime.Float{Value: f}, nil
+	case runtime.Decimal:
+		switch b := bound.(type) {
+		case runtime.SmallInt:
+			return SmallIntToDecimal(b), nil
+		case runtime.Int:
+			return IntToDecimal(b), nil
+		case runtime.Decimal:
+			return b, nil
+		}
+		return nil, fmt.Errorf("clamp bound not compatible with decimal")
+	case runtime.SmallInt, runtime.Int:
+		switch bound.(type) {
+		case runtime.SmallInt, runtime.Int:
+			return bound, nil
+		}
+		return nil, fmt.Errorf("clamp bound not compatible with int")
+	}
+	return nil, fmt.Errorf("%s has no method clamp", v.TypeName())
+}

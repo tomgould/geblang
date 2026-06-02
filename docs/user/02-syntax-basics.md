@@ -269,11 +269,19 @@ io.println(math.round(2.5 as decimal));   # 3
 io.println(math.ceil(2.1 as decimal));    # 3
 ```
 
-To keep the result as a `decimal`, round to a scale and cast back:
+To keep the result as a `decimal`, use the value-keeping methods. Each
+takes an optional number of decimal places (default 0) and returns the
+same numeric type. `round` rounds half away from zero:
 
 ```gb
-decimal rounded = (2.567).toString(2) as decimal;   # 2.57
+io.println((2.567).round(2));      # 2.57
+io.println((2.5).round());         # 3
+io.println((2.9).floor());         # 2
+io.println((2.1).ceil());          # 3
+io.println((2.999).truncate(2));   # 2.99
 ```
+
+These work on `float` too (`(3.14159f).round(2)` -> `3.14f`).
 
 #### Mixed arithmetic
 
@@ -306,6 +314,19 @@ string  s = d as string;  # "3.7500000000"
 # Convert from string or int
 decimal fromStr = "12.50" as decimal;
 decimal fromInt = 7 as decimal;
+```
+
+`as type` is the idiomatic cast. The equivalent conversion methods
+(`toInt`, `toDecimal`, `toFloat`, `toString`, `toBool`) are an
+alternative that allows chaining and, for `toDecimal`, finer control: it
+takes an optional precision and rounds to that many decimal places in a
+single step.
+
+```gb
+import math;
+
+decimal pi4 = math.pi().toDecimal(4);   # 3.1416 (rounded, as a decimal)
+decimal exact = (7).toDecimal();         # 7 (no rounding)
 ```
 
 Casting a fractional decimal to `int` truncates toward zero. If exact integer

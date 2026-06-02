@@ -163,6 +163,21 @@ The `.type` selector is a shorthand for `typeof` - `expr.type` is equivalent to
 `typeof(expr)`. Primitive type names (`string`, `int`, `bool`, `decimal`, etc.)
 and class names can be used directly as type values in comparisons.
 
+### Conversion methods
+
+`value as type` is the idiomatic cast. Primitives also carry conversion
+methods (`toInt`, `toDecimal`, `toFloat`, `toString`, `toBool`) that do
+the same thing but chain cleanly and, in two cases, offer finer control:
+
+- `toDecimal(places)` rounds to a precision while converting, returning a
+  `decimal` (`math.pi().toDecimal(4)` -> `3.1416`). With no argument it
+  is a plain cast.
+- `toInt(base)` on a string parses in the given base.
+
+The value-keeping rounding methods (`round`, `floor`, `ceil`,
+`truncate`) and the `sign` / `clamp` helpers also live on the numeric
+types; see the syntax-basics chapter for examples.
+
 ### Generic type parameters and built-in collections
 
 `typeof([1, 2, 3])` returns `list` (not `list<int>`); the base type

@@ -13104,10 +13104,21 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 				return native.StringParseBase(text.Value, base, "string.toInt")
 			}
 		}
+		target, _ := primitiveConversionTarget(name)
+		if target == "decimal" && len(args) >= 1 {
+			places, err := native.RoundPlacesArg(args, "toDecimal")
+			if err != nil {
+				return nil, err
+			}
+			d, err := castValue(receiver, "decimal")
+			if err != nil {
+				return nil, err
+			}
+			return native.DecimalQuantize(d.(runtime.Decimal), places, native.RoundHalfAwayZero), nil
+		}
 		if len(args) != 0 {
 			return nil, fmt.Errorf("%s.%s expects no arguments", receiver.TypeName(), name)
 		}
-		target, _ := primitiveConversionTarget(name)
 		return castValue(receiver, target)
 	case "length":
 		if len(args) != 0 {
@@ -14213,6 +14224,37 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			return nil, fmt.Errorf("%s has no method isInf", receiver.TypeName())
 		}
 		return runtime.Bool{Value: math.IsInf(value.Value, 0)}, nil
+	case "round":
+		return native.NumericRoundMethod(receiver, args, native.RoundHalfAwayZero, receiver.TypeName()+".round")
+	case "floor":
+		return native.NumericRoundMethod(receiver, args, native.RoundFloor, receiver.TypeName()+".floor")
+	case "ceil":
+		return native.NumericRoundMethod(receiver, args, native.RoundCeil, receiver.TypeName()+".ceil")
+	case "truncate":
+		return native.NumericRoundMethod(receiver, args, native.RoundTrunc, receiver.TypeName()+".truncate")
+	case "sign":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("%s.sign expects no arguments", receiver.TypeName())
+		}
+		return native.NumericSign(receiver)
+	case "clamp":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("%s.clamp expects two arguments", receiver.TypeName())
+		}
+		return native.NumericClamp(receiver, args[0], args[1])
+	case "iseven", "isodd":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("int.%s expects no arguments", name)
+		}
+		bi, ok := native.IntValueToBigInt(receiver)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method %s", receiver.TypeName(), name)
+		}
+		even := bi.Bit(0) == 0
+		if strings.ToLower(name) == "isodd" {
+			return runtime.Bool{Value: !even}, nil
+		}
+		return runtime.Bool{Value: even}, nil
 	case "not":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("bool.not expects no arguments")

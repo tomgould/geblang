@@ -216,6 +216,42 @@ For plain unpredictable randomness (session IDs, OTPs, salts),
 keep using `secrets.*`. `secureRandom` is for the narrower case
 where the audit trail matters.
 
+### Numeric precision methods
+
+`decimal` and `float` gain value-keeping rounding methods that return
+the same type, unlike `math.floor/round/ceil` which return `int`. Each
+takes an optional number of decimal places (default 0); `round` rounds
+half away from zero.
+
+```gb
+io.println((2.567).round(2));      # 2.57
+io.println((2.5).round());         # 3
+io.println((2.9).floor());         # 2
+io.println((2.999).truncate(2));   # 2.99
+io.println((3.14159f).round(2));   # 3.14
+```
+
+`toDecimal` now accepts an optional precision, converting and rounding
+to that many places in one step:
+
+```gb
+decimal pi4 = math.pi().toDecimal(4);   # 3.1416
+```
+
+New numeric helpers: `sign()` returns -1, 0, or 1; `clamp(lo, hi)`
+constrains a number to a range and returns the receiver's type; `isEven()`
+and `isOdd()` test parity of an `int`.
+
+```gb
+io.println((-7).sign());        # -1
+io.println((12).clamp(0, 10));  # 10
+io.println((4).isEven());       # true
+```
+
+The conversion methods (`toInt`, `toDecimal`, `toFloat`, `toBool`) work
+on every primitive; `value as type` remains the idiomatic cast, with the
+methods offering chaining and finer control.
+
 ## 1.5.4
 
 ### Bytecode VM: fused mod-zero branch

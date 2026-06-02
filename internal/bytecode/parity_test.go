@@ -484,6 +484,34 @@ io.println("true".toBool());
 `, "2.0000000000\n3.0000000000\n2\n1.500\n1.5\n5.00\n43\n2.5\ntrue\n")
 }
 
+func TestParityNumericMethods(t *testing.T) {
+	// Value-keeping rounding (returns same type), toDecimal(places),
+	// and the sign/clamp/isEven/isOdd helpers across both backends.
+	runParity(t, `import io;
+io.println((2.567).round(2));
+io.println((2.5).round());
+io.println((-2.5).round());
+io.println((2.9).floor());
+io.println((2.1).ceil());
+io.println((2.99).truncate(1));
+io.println((3.14159f).round(2));
+io.println((2.9f).floor());
+io.println((7).toDecimal(2));
+io.println((3.14159f).toDecimal(3));
+io.println("12.3456".toDecimal(2));
+io.println((-7).sign());
+io.println((0).sign());
+io.println((4.2).sign());
+io.println((12).clamp(0, 10));
+io.println((-3).clamp(0, 10));
+io.println((5).clamp(0, 10));
+io.println((19.99).clamp(0, 5));
+io.println((4).isEven());
+io.println((7).isOdd());
+io.println((-4).isEven());
+`, "2.5700000000\n3.0000000000\n-3.0000000000\n2.0000000000\n3.0000000000\n2.9000000000\n3.14\n2\n7.0000000000\n3.1420000000\n12.3500000000\n-1\n0\n1\n10\n0\n5\n5.0000000000\ntrue\ntrue\ntrue\n")
+}
+
 func TestParityTestingAssertions(t *testing.T) {
 	runParity(t, `import io;
 import test;

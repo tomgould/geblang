@@ -32,6 +32,13 @@ io.println(math.ceil(price));   # 2
 io.println(math.round(price));  # 1
 ```
 
+These functions return `int` (dropping all fractional precision). When you
+want to round to a number of decimal places and keep the value's type, use
+the `round`, `floor`, `ceil`, and `truncate` methods on `decimal` and
+`float` instead; each takes an optional precision and returns the same type
+(`(2.567).round(2)` -> `2.57`). The `sign` and `clamp` helpers are also
+numeric methods. See the syntax-basics chapter for details.
+
 `math.abs(n)` returns the absolute value, preserving the type of the argument:
 
 ```gb

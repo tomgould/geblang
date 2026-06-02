@@ -7353,11 +7353,11 @@ func dirValue(value runtime.Value) []string {
 	case runtime.Range:
 		names = primitiveMethodNamesFor("range")
 	case runtime.SmallInt, runtime.Int:
-		names = []string{"abs", "isNegative", "isPositive", "isZero", "toString"}
+		names = []string{"abs", "clamp", "isEven", "isNegative", "isOdd", "isPositive", "isZero", "sign", "toString"}
 	case runtime.Decimal:
-		names = []string{"abs", "isNegative", "isPositive", "isZero", "toString"}
+		names = []string{"abs", "ceil", "clamp", "floor", "isNegative", "isPositive", "isZero", "round", "sign", "toString", "truncate"}
 	case runtime.Float:
-		names = []string{"abs", "isNegative", "isPositive", "isZero", "toString"}
+		names = []string{"abs", "ceil", "clamp", "floor", "isNegative", "isPositive", "isZero", "round", "sign", "toString", "truncate"}
 	case runtime.Bool:
 		names = []string{"not", "toString"}
 	case runtime.NativeObject:
@@ -21738,6 +21738,17 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return native.StringParseBase(text.Value, base, "string.toInt")
 			}
 		}
+		if target == "decimal" && len(args) >= 1 {
+			places, err := native.RoundPlacesArg(args, "toDecimal")
+			if err != nil {
+				return nil, err
+			}
+			d, err := castValue(receiver, "decimal")
+			if err != nil {
+				return nil, err
+			}
+			return native.DecimalQuantize(d.(runtime.Decimal), places, native.RoundHalfAwayZero), nil
+		}
 		if len(args) != 0 {
 			return nil, fmt.Errorf("%s.%s expects no arguments", receiver.TypeName(), name)
 		}
@@ -23685,6 +23696,26 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, err
 			}
 			return runtime.String{Value: s}, nil
+		case "sign":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("int.sign expects no arguments")
+			}
+			return native.NumericSign(value)
+		case "clamp":
+			if len(args) != 2 {
+				return nil, fmt.Errorf("int.clamp expects two arguments")
+			}
+			return native.NumericClamp(value, args[0], args[1])
+		case "isEven":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("int.isEven expects no arguments")
+			}
+			return runtime.Bool{Value: value.Value.Bit(0) == 0}, nil
+		case "isOdd":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("int.isOdd expects no arguments")
+			}
+			return runtime.Bool{Value: value.Value.Bit(0) == 1}, nil
 		}
 	case runtime.Decimal:
 		switch name {
@@ -23730,6 +23761,24 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, err
 			}
 			return runtime.String{Value: value.Value.FloatString(scale)}, nil
+		case "round":
+			return native.NumericRoundMethod(value, args, native.RoundHalfAwayZero, "decimal.round")
+		case "floor":
+			return native.NumericRoundMethod(value, args, native.RoundFloor, "decimal.floor")
+		case "ceil":
+			return native.NumericRoundMethod(value, args, native.RoundCeil, "decimal.ceil")
+		case "truncate":
+			return native.NumericRoundMethod(value, args, native.RoundTrunc, "decimal.truncate")
+		case "sign":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("decimal.sign expects no arguments")
+			}
+			return native.NumericSign(value)
+		case "clamp":
+			if len(args) != 2 {
+				return nil, fmt.Errorf("decimal.clamp expects two arguments")
+			}
+			return native.NumericClamp(value, args[0], args[1])
 		}
 	case runtime.Range:
 		switch name {
@@ -23837,6 +23886,24 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, fmt.Errorf("float.toString expects no arguments")
 			}
 			return runtime.String{Value: value.Inspect()}, nil
+		case "round":
+			return native.NumericRoundMethod(value, args, native.RoundHalfAwayZero, "float.round")
+		case "floor":
+			return native.NumericRoundMethod(value, args, native.RoundFloor, "float.floor")
+		case "ceil":
+			return native.NumericRoundMethod(value, args, native.RoundCeil, "float.ceil")
+		case "truncate":
+			return native.NumericRoundMethod(value, args, native.RoundTrunc, "float.truncate")
+		case "sign":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("float.sign expects no arguments")
+			}
+			return native.NumericSign(value)
+		case "clamp":
+			if len(args) != 2 {
+				return nil, fmt.Errorf("float.clamp expects two arguments")
+			}
+			return native.NumericClamp(value, args[0], args[1])
 		}
 	}
 	return nil, fmt.Errorf("unknown method %s.%s", receiver.TypeName(), name)

@@ -1,0 +1,71 @@
+/**
+ * @title Numeric precision methods (1.6.0)
+ * @summary Value-keeping round/floor/ceil/truncate on decimal and
+ * float, toDecimal(places) for precision-controlled conversion, and
+ * the sign / clamp / isEven / isOdd helpers. Unlike math.round/floor/
+ * ceil (which return int), these methods return the receiver's type.
+ */
+import test;
+import math;
+
+class NumericMethodsTest extends test.Test {
+    @test
+    func decimalRoundKeepsType(): void {
+        decimal d = 2.567;
+        this.assertEquals(2.57 as decimal, d.round(2));
+        this.assertEquals(3 as decimal, d.round());
+    }
+
+    @test
+    func roundHalfAwayFromZero(): void {
+        this.assertEquals(3 as decimal, (2.5 as decimal).round());
+        this.assertEquals(-3 as decimal, (-2.5 as decimal).round());
+    }
+
+    @test
+    func floorCeilTruncateOnDecimal(): void {
+        this.assertEquals(2 as decimal, (2.9 as decimal).floor());
+        this.assertEquals(3 as decimal, (2.1 as decimal).ceil());
+        this.assertEquals(2.9 as decimal, (2.99 as decimal).truncate(1));
+        this.assertEquals(-3 as decimal, (-2.1 as decimal).floor());
+    }
+
+    @test
+    func roundOnFloat(): void {
+        this.assertEquals(3.14f, (3.14159f).round(2));
+        this.assertEquals(2.0f, (2.9f).floor());
+    }
+
+    @test
+    func toDecimalWithPrecision(): void {
+        /* The REPL gap: float -> decimal at a chosen precision in one
+         * step, returning a decimal value. */
+        this.assertEquals(3.1416 as decimal, math.pi().toDecimal(4));
+        this.assertEquals(7 as decimal, (7).toDecimal(2));
+        this.assertEquals(12.35 as decimal, "12.3456".toDecimal(2));
+    }
+
+    @test
+    func signReturnsInt(): void {
+        this.assertEquals(-1, (-7).sign());
+        this.assertEquals(0, (0).sign());
+        this.assertEquals(1, (4.2 as decimal).sign());
+        this.assertEquals(-1, (-0.5f).sign());
+    }
+
+    @test
+    func clampConstrainsAndKeepsType(): void {
+        this.assertEquals(10, (12).clamp(0, 10));
+        this.assertEquals(0, (-3).clamp(0, 10));
+        this.assertEquals(5, (5).clamp(0, 10));
+        this.assertEquals(5 as decimal, (19.99 as decimal).clamp(0, 5));
+    }
+
+    @test
+    func evenOddOnInt(): void {
+        this.assertTrue((4).isEven());
+        this.assertTrue((7).isOdd());
+        this.assertTrue((-4).isEven());
+        this.assertFalse((3).isEven());
+    }
+}
