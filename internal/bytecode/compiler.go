@@ -2253,6 +2253,9 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		return fmt.Errorf("spread expression is only valid inside a list literal or function call")
 
 	case *ast.DictLiteral:
+		if dictHasSpread(expr.Entries) {
+			return c.compileExpression(desugarDictLiteralWithSpread(expr))
+		}
 		for _, entry := range expr.Entries {
 			if err := c.compileExpression(entry.Key); err != nil {
 				return err
@@ -2264,6 +2267,9 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		c.emitAt(OpBuildDict, expr.Token.Line, expr.Token.Column, int64(len(expr.Entries)))
 		return nil
 	case *ast.SetLiteral:
+		if setHasSpread(expr.Elements) {
+			return c.compileExpression(desugarSetLiteralWithSpread(expr))
+		}
 		for _, element := range expr.Elements {
 			if err := c.compileExpression(element); err != nil {
 				return err

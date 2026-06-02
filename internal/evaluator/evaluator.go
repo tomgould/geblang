@@ -2122,6 +2122,21 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 	case *ast.DictLiteral:
 		d := runtime.NewDict()
 		for _, entry := range expr.Entries {
+			if entry.Spread {
+				src, err := e.evalExpression(entry.Value, env)
+				if err != nil {
+					return nil, err
+				}
+				srcDict, ok := src.(runtime.Dict)
+				if !ok {
+					return nil, fmt.Errorf("dict literal spread source must be dict, got %s", src.TypeName())
+				}
+				for _, k := range srcDict.OrderedKeys() {
+					srcEntry := srcDict.Entries[k]
+					d.PutEntry(k, runtime.DictEntry{Key: srcEntry.Key, Value: srcEntry.Value})
+				}
+				continue
+			}
 			key, err := e.evalExpression(entry.Key, env)
 			if err != nil {
 				return nil, err
@@ -2136,6 +2151,25 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 	case *ast.SetLiteral:
 		elements := map[string]runtime.SetEntry{}
 		for _, element := range expr.Elements {
+			if spread, ok := element.(*ast.SpreadExpression); ok {
+				src, err := e.evalExpression(spread.Value, env)
+				if err != nil {
+					return nil, err
+				}
+				switch s := src.(type) {
+				case runtime.Set:
+					for k, entry := range s.Elements {
+						elements[k] = entry
+					}
+				case *runtime.List:
+					for _, v := range s.Elements {
+						elements[dictKey(v)] = runtime.SetEntry{Value: v}
+					}
+				default:
+					return nil, fmt.Errorf("set literal spread source must be set or list, got %s", src.TypeName())
+				}
+				continue
+			}
 			value, err := e.evalExpression(element, env)
 			if err != nil {
 				return nil, err

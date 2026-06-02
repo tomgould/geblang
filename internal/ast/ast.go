@@ -833,8 +833,9 @@ func (e *ListLiteral) String() string {
 }
 
 type DictEntry struct {
-	Key   Expression
-	Value Expression
+	Key    Expression
+	Value  Expression
+	Spread bool
 }
 
 type DictLiteral struct {

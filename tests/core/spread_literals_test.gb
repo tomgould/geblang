@@ -1,0 +1,99 @@
+/**
+ * @title Spread in list / dict / set literals (1.6.0)
+ * @summary `[a, ...xs, b]` expands the list source in place.
+ * `{...d, k: v}` merges the dict source then applies subsequent
+ * entries (last-write-wins on key collision). `{...s, x}` builds a
+ * set by union and dedupe; sources can be set or list.
+ */
+import test;
+
+class SpreadLiteralsTest extends test.Test {
+
+    @test
+    func listSpread(): void {
+        let xs = [1, 2, 3];
+        this.assertEquals([0, 1, 2, 3, 4], [0, ...xs, 4]);
+    }
+
+    @test
+    func listMultipleSpread(): void {
+        let xs = [1, 2];
+        let ys = [3, 4];
+        this.assertEquals([0, 1, 2, 3, 4, 5], [0, ...xs, ...ys, 5]);
+    }
+
+    @test
+    func dictSpreadCopy(): void {
+        let d = {"a": 1, "b": 2};
+        let copy = {...d};
+        this.assertEquals(2, copy.length());
+        this.assertEquals(1, copy["a"]);
+        this.assertEquals(2, copy["b"]);
+    }
+
+    @test
+    func dictSpreadWithExtra(): void {
+        let d = {"a": 1, "b": 2};
+        let m = {...d, "c": 3};
+        this.assertEquals(3, m.length());
+        this.assertEquals(3, m["c"]);
+    }
+
+    @test
+    func dictExplicitBeforeAndAfterSpread(): void {
+        let d = {"a": 1, "b": 2};
+        let m = {"x": 0, ...d, "y": 4};
+        this.assertEquals(4, m.length());
+        this.assertEquals(0, m["x"]);
+        this.assertEquals(4, m["y"]);
+    }
+
+    @test
+    func dictLastWriteWins(): void {
+        let d = {"a": 1, "b": 2};
+        let m = {...d, "b": 99};
+        this.assertEquals(99, m["b"]);
+    }
+
+    @test
+    func dictMergeMultipleSpreads(): void {
+        let a = {"x": 1, "y": 2};
+        let b = {"y": 99, "z": 3};
+        let m = {...a, ...b};
+        this.assertEquals(3, m.length());
+        this.assertEquals(1, m["x"]);
+        this.assertEquals(99, m["y"]);
+        this.assertEquals(3, m["z"]);
+    }
+
+    @test
+    func setSpreadFromSet(): void {
+        let s1 = {1, 2, 3};
+        let s2 = {0, ...s1, 4};
+        this.assertEquals(5, s2.length());
+        this.assertTrue(s2.contains(0));
+        this.assertTrue(s2.contains(2));
+        this.assertTrue(s2.contains(4));
+    }
+
+    @test
+    func setSpreadFromList(): void {
+        let xs = [10, 20, 30];
+        let s = {0, ...xs};
+        this.assertEquals(4, s.length());
+        this.assertTrue(s.contains(10));
+    }
+
+    @test
+    func setSpreadDeduplicates(): void {
+        let xs = [1, 1, 2, 2, 3];
+        let s = {...xs, 3, 4};
+        this.assertEquals(4, s.length());
+    }
+
+    @test
+    func dictSpreadRejectsNonDict(): void {
+        let xs = [1, 2, 3];
+        this.assertThrows(func(): void { let bad = {"a": 1, ...xs}; });
+    }
+}

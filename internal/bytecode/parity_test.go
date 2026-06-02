@@ -5398,6 +5398,66 @@ io.println([1, 2, 3].remove(99));
 `, "[1, 2, 3]\n")
 }
 
+func TestParityLiteralSpread(t *testing.T) {
+	// List literal spread (already worked before L3; regression guard).
+	runParity(t, `import io;
+let xs = [1, 2, 3];
+io.println([0, ...xs, 4]);
+`, "[0, 1, 2, 3, 4]\n")
+
+	// Dict literal spread - probe via content (length + key lookups) to
+	// sidestep a pre-existing parity bug in dict iteration order display.
+	runParity(t, `import io;
+let d1 = {"a": 1, "b": 2};
+let d2 = {"x": 0, ...d1, "y": 4};
+io.println(d2.length());
+io.println(d2["x"]);
+io.println(d2["a"]);
+io.println(d2["b"]);
+io.println(d2["y"]);
+`, "4\n0\n1\n2\n4\n")
+
+	// Last-write-wins on key collision.
+	runParity(t, `import io;
+let d1 = {"a": 1, "b": 2};
+let d3 = {...d1, "b": 99};
+io.println(d3.length());
+io.println(d3["a"]);
+io.println(d3["b"]);
+`, "2\n1\n99\n")
+
+	// Multiple spread sources, later wins.
+	runParity(t, `import io;
+let a = {"x": 1, "y": 2};
+let b = {"y": 99, "z": 3};
+let m = {...a, ...b};
+io.println(m.length());
+io.println(m["x"]);
+io.println(m["y"]);
+io.println(m["z"]);
+`, "3\n1\n99\n3\n")
+
+	// Set literal spread.
+	runParity(t, `import io;
+let s1 = {1, 2, 3};
+let s2 = {0, ...s1, 4};
+io.println(s2.length());
+io.println(s2.contains(0));
+io.println(s2.contains(2));
+io.println(s2.contains(4));
+`, "5\ntrue\ntrue\ntrue\n")
+
+	// Set spread from list source.
+	runParity(t, `import io;
+let xs = [10, 20];
+let s = {...xs, 30};
+io.println(s.length());
+io.println(s.contains(10));
+io.println(s.contains(30));
+`, "3\ntrue\ntrue\n")
+
+}
+
 func TestParityPipeOperator(t *testing.T) {
 	runParity(t, `import io;
 func double(int x): int { return x * 2; }

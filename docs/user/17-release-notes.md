@@ -36,6 +36,23 @@ identifier (`x |> f` -> `f(x)`), or a selector (`x |> mod.fn(a)` ->
 `mod.fn(x, a)`). The operator is left-associative and binds at very
 low precedence so each side absorbs full expressions.
 
+### Spread in list / dict / set literals
+
+`...source` is now a valid entry inside a list, dict, or set literal,
+splicing the source's elements into the new collection.
+
+```gb
+[0, ...xs, 4]                       # list spread
+{...defaults, "port": 443}          # dict spread - last-write-wins on key collision
+{0, ...someSet, 4}                  # set spread - sources can be set or list
+{...a, ...b}                        # all-spread literals default to dict merge
+```
+
+List spread requires a list source; dict spread requires a dict source;
+set spread accepts a set or a list. A literal whose entries are all
+spreads is treated as a dict by default; force a set form by including
+at least one bare element.
+
 ## 1.5.4
 
 ### Bytecode VM: fused mod-zero branch

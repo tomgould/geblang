@@ -1539,6 +1539,27 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 		return lit
 	}
 	p.nextToken()
+	// Leading spread `{...src, ...}` always means dict or set spread; we
+	// don't yet know which until we see further entries (`...src, k: v`
+	// is dict; `...src, x` is set). Parse the spread expression and a
+	// trailing token to decide.
+	if p.curTokenIs(token.Ellipsis) {
+		spreadTok := p.curToken
+		p.nextToken()
+		spreadValue := p.parseExpression(lowest)
+		spreadExpr := &ast.SpreadExpression{Token: spreadTok, Value: spreadValue}
+		// Look at what comes after the spread. If the next non-comma
+		// entry starts with `...` again or is a bare expression, we
+		// can't decide here. Defer the set-vs-dict choice until we see
+		// a `: ` (dict) or a comma-then-non-colon (set).
+		if p.peekTokenIs(token.RBrace) {
+			lit := &ast.DictLiteral{Token: openToken, Entries: []ast.DictEntry{{Value: spreadValue, Spread: true}}}
+			p.nextToken()
+			_ = spreadExpr
+			return lit
+		}
+		return p.continueDictOrSetAfterSpread(openToken, spreadValue)
+	}
 	first := p.parseExpression(lowest)
 	if !p.peekTokenIs(token.Colon) {
 		if p.peekTokenIs(token.For) {
@@ -1547,17 +1568,7 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 			p.expectPeek(token.RBrace)
 			return comp
 		}
-		lit := &ast.SetLiteral{Token: openToken, Elements: []ast.Expression{first}}
-		for p.peekTokenIs(token.Comma) {
-			p.nextToken()
-			if p.peekTokenIs(token.RBrace) {
-				break
-			}
-			p.nextToken()
-			lit.Elements = append(lit.Elements, p.parseExpression(lowest))
-		}
-		p.expectPeek(token.RBrace)
-		return lit
+		return p.continueSetLiteral(openToken, first)
 	}
 	p.expectPeek(token.Colon)
 	p.nextToken()
@@ -1568,13 +1579,113 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 		p.expectPeek(token.RBrace)
 		return comp
 	}
-	lit := &ast.DictLiteral{Token: openToken, Entries: []ast.DictEntry{{Key: first, Value: firstValue}}}
+	return p.continueDictLiteral(openToken, []ast.DictEntry{{Key: first, Value: firstValue}})
+}
+
+// continueDictOrSetAfterSpread handles the case where the first entry of a
+// brace literal was `...src`. The literal is a dict if any subsequent entry
+// is `key: value` OR if every entry is a spread (all-spreads defaults to
+// dict merge - the most common pattern). It's a set if at least one entry
+// is a bare element (without `:`).
+func (p *Parser) continueDictOrSetAfterSpread(openToken token.Token, firstSpread ast.Expression) ast.Expression {
+	entries := []parseSpreadBuffer{{spread: firstSpread}}
 	for p.peekTokenIs(token.Comma) {
 		p.nextToken()
 		if p.peekTokenIs(token.RBrace) {
 			break
 		}
 		p.nextToken()
+		if p.curTokenIs(token.Ellipsis) {
+			p.nextToken()
+			entries = append(entries, parseSpreadBuffer{spread: p.parseExpression(lowest)})
+			continue
+		}
+		expr := p.parseExpression(lowest)
+		if p.peekTokenIs(token.Colon) {
+			p.expectPeek(token.Colon)
+			p.nextToken()
+			value := p.parseExpression(lowest)
+			dictEntries := make([]ast.DictEntry, 0, len(entries)+1)
+			for _, buf := range entries {
+				if buf.spread != nil {
+					dictEntries = append(dictEntries, ast.DictEntry{Value: buf.spread, Spread: true})
+				} else {
+					dictEntries = append(dictEntries, ast.DictEntry{Key: buf.bare})
+				}
+			}
+			dictEntries = append(dictEntries, ast.DictEntry{Key: expr, Value: value})
+			return p.continueDictLiteral(openToken, dictEntries)
+		}
+		entries = append(entries, parseSpreadBuffer{bare: expr})
+	}
+	allSpreads := true
+	for _, buf := range entries {
+		if buf.spread == nil {
+			allSpreads = false
+			break
+		}
+	}
+	p.expectPeek(token.RBrace)
+	if allSpreads {
+		dictEntries := make([]ast.DictEntry, 0, len(entries))
+		for _, buf := range entries {
+			dictEntries = append(dictEntries, ast.DictEntry{Value: buf.spread, Spread: true})
+		}
+		return &ast.DictLiteral{Token: openToken, Entries: dictEntries}
+	}
+	elements := make([]ast.Expression, 0, len(entries))
+	for _, buf := range entries {
+		if buf.spread != nil {
+			elements = append(elements, &ast.SpreadExpression{Token: openToken, Value: buf.spread})
+		} else {
+			elements = append(elements, buf.bare)
+		}
+	}
+	return &ast.SetLiteral{Token: openToken, Elements: elements}
+}
+
+type parseSpreadBuffer struct {
+	spread ast.Expression
+	bare   ast.Expression
+}
+
+// continueSetLiteral consumes set literal entries after the first element.
+// Accepts `...src` spreads in subsequent positions.
+func (p *Parser) continueSetLiteral(openToken token.Token, first ast.Expression) ast.Expression {
+	lit := &ast.SetLiteral{Token: openToken, Elements: []ast.Expression{first}}
+	for p.peekTokenIs(token.Comma) {
+		p.nextToken()
+		if p.peekTokenIs(token.RBrace) {
+			break
+		}
+		p.nextToken()
+		if p.curTokenIs(token.Ellipsis) {
+			spreadTok := p.curToken
+			p.nextToken()
+			lit.Elements = append(lit.Elements, &ast.SpreadExpression{Token: spreadTok, Value: p.parseExpression(lowest)})
+			continue
+		}
+		lit.Elements = append(lit.Elements, p.parseExpression(lowest))
+	}
+	p.expectPeek(token.RBrace)
+	return lit
+}
+
+// continueDictLiteral consumes dict literal entries after the first key:value
+// pair has been parsed. Accepts `...src` spread entries between regular ones.
+func (p *Parser) continueDictLiteral(openToken token.Token, head []ast.DictEntry) ast.Expression {
+	lit := &ast.DictLiteral{Token: openToken, Entries: head}
+	for p.peekTokenIs(token.Comma) {
+		p.nextToken()
+		if p.peekTokenIs(token.RBrace) {
+			break
+		}
+		p.nextToken()
+		if p.curTokenIs(token.Ellipsis) {
+			p.nextToken()
+			lit.Entries = append(lit.Entries, ast.DictEntry{Value: p.parseExpression(lowest), Spread: true})
+			continue
+		}
 		key := p.parseExpression(lowest)
 		p.expectPeek(token.Colon)
 		p.nextToken()

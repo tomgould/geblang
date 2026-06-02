@@ -323,6 +323,36 @@ scores.delete("ada");
 Use `collections.map`, `collections.filter`, and related helpers when you want
 to return a transformed collection rather than update the original.
 
+### Spread in collection literals
+
+A list, dict, or set literal can include `...source` entries that splice
+the source collection's elements into the new collection. The pattern
+mirrors how `...args` works at function call sites.
+
+```gb
+let xs = [1, 2, 3];
+io.println([0, ...xs, 4]);                 # [0, 1, 2, 3, 4]
+
+let defaults = {"port": 80, "tls": false};
+let opts     = {...defaults, "port": 443}; # {"port": 443, "tls": false}
+
+let extra = {"x": 0, ...defaults};         # {"x": 0, "port": 80, "tls": false}
+
+let small = {1, 2, 3};
+let big   = {0, ...small, 4};              # set{0, 1, 2, 3, 4}
+```
+
+Rules:
+
+- **List spread** requires a list source. The source's elements are inserted in
+  order at the spread position.
+- **Dict spread** requires a dict source. Subsequent entries (and later spreads)
+  overwrite earlier values on key collision - last write wins.
+- **Set spread** accepts a set or a list source; duplicates collapse naturally.
+- A literal whose entries are all spreads (`{...a}`, `{...a, ...b}`) is treated
+  as a dict by default. To force a set, include at least one bare element:
+  `{x, ...s}`.
+
 ## Operators
 
 Arithmetic, comparison, equality, boolean, bitwise, null coalescing, optional

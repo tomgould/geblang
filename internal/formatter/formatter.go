@@ -538,6 +538,10 @@ func (f *fmtr) expr(e ast.Expression) string {
 	case *ast.DictLiteral:
 		parts := make([]string, 0, len(e.Entries))
 		for _, entry := range e.Entries {
+			if entry.Spread {
+				parts = append(parts, "..."+f.expr(entry.Value))
+				continue
+			}
 			parts = append(parts, f.expr(entry.Key)+": "+f.expr(entry.Value))
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
