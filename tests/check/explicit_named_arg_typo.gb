@@ -1,0 +1,12 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an explicit unknown named argument.
+ * Unlike dict-spread (`greet(...d)`), which silently ignores extra
+ * keys, an explicit `name:` that matches no parameter is a static
+ * error - caught at compile/check time, not deferred to runtime.
+ */
+func greet(string name, int age, bool active = true): string {
+    return name + "/" + (age as string) + "/" + (active as string);
+}
+
+greet(typo: 9, name: "eve", age: 22);

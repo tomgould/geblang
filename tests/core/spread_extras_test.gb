@@ -1,8 +1,9 @@
 /**
  * @title Dict spread tolerates extra keys (1.5.3)
  * @summary `foo(...dict)` drops dict keys that do not name a
- * parameter of `foo`. Explicit `foo(typo: 9)` still errors, and a
- * missing required parameter still errors.
+ * parameter of `foo`, and a missing required parameter still errors.
+ * The contrasting case - an explicit `foo(typo: 9)` - is a static
+ * error and is covered by tests/check/explicit_named_arg_typo.gb.
  */
 import test;
 
@@ -34,11 +35,6 @@ class SpreadExtrasTest extends test.Test {
     func missingRequiredStillErrors(): void {
         let d = {"name": "dan", "extra": 1};
         this.assertThrows(func(): void { greet(...d); });
-    }
-
-    @test
-    func explicitTypoStillErrors(): void {
-        this.assertThrows(func(): void { greet(typo: 9, name: "eve", age: 22); });
     }
 
     @test
