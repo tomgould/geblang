@@ -1458,6 +1458,7 @@ var stdlibCatalog = map[string]moduleDoc{
 		"now":          fn([]string{}, "int", "Wall-clock timestamp in milliseconds since Unix epoch."),
 		"elapsed":      fn([]string{"int start"}, "int", "Milliseconds elapsed since start (from time.now)."),
 		"sleep":        fn([]string{"int milliseconds"}, "void", "Blocks the calling goroutine."),
+		"monotonic":    fn([]string{}, "int", "Monotonic milliseconds since process start; never decreases. Use for durations, timeouts, and TTLs (time.now/time.unix can jump backwards)."),
 		"unix":         fn([]string{}, "int", "Whole seconds since Unix epoch (PHP time() / int(Python time.time()))."),
 		"unixMilli":    fn([]string{}, "int", "Milliseconds since Unix epoch (alias for time.now)."),
 		"unixMicro":    fn([]string{}, "int", "Microseconds since Unix epoch."),

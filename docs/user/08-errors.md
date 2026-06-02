@@ -144,6 +144,41 @@ and `class`.
 | `ParseError` | Parsing failures |
 | `MatchError` | Non-exhaustive match |
 | `AssertionError` | Failed `assert(...)` (1.6.0) |
+| `FatalError` | Unrecoverable fault; never caught (1.7.0) |
+
+## Catchable Errors vs FatalError (1.7.0)
+
+Errors come in two tiers:
+
+- **Catchable `Error`** (and every class above it - `RuntimeError`,
+  `IOError`, `ValueError`, `TypeError`, `AssertionError`, plus your own
+  error classes). This includes *implicit* runtime faults: division by
+  zero, index out of range, key-not-found, conversion failures like
+  `"abc".toInt()`, and null access. They are caught by `try`/`catch`
+  identically on the evaluator (`geblang test`) and the bytecode VM
+  (`geblang run` / `geblang build`).
+
+```gb
+try {
+    let n = userInput.toInt();   # may fault on bad input
+} catch (Error e) {
+    io.println("not a number: ${e.message}");
+}
+```
+
+- **`FatalError`** is its own tier - it is *not* an `Error`
+  (`x instanceof Error` is false) and **no `try`/`catch` intercepts it,
+  not even `catch (any e)`**. It always unwinds to the top and
+  terminates the program. It is reserved for unrecoverable conditions:
+  raise one with `throw FatalError("message")` when continuing would be
+  meaningless. Stack-overflow (exceeding the maximum call depth) is also
+  a `FatalError`.
+
+```gb
+if (configMissing) {
+    throw FatalError("config not found; cannot start");
+}
+```
 
 ## The `assert` Builtin (1.6.0)
 
@@ -276,11 +311,13 @@ For dictionary-oriented code, `errors.frames(e)` is shorthand for
 
 ## Runtime Failures
 
-Most evaluator runtime failures, such as invalid operations, unknown fields,
+Most runtime failures, such as invalid operations, unknown fields,
 bad argument types, and division by zero, are raised as catchable
-`RuntimeError` exceptions. Parse, semantic, startup, and host-level internal
-failures are reported directly because the script has not reached a recoverable
-runtime point.
+`RuntimeError` exceptions - identically on the evaluator and the bytecode
+VM (1.7.0). Parse, semantic, and startup failures are reported directly
+because the script has not reached a recoverable runtime point;
+stack-overflow and other unrecoverable conditions surface as
+`FatalError`, which `try`/`catch` never intercepts.
 
 ## Stack Traces
 

@@ -6101,7 +6101,7 @@ func (e *Evaluator) evalTryStatement(stmt *ast.TryStatement, env *runtime.Enviro
 	if err != nil {
 		return signal{}, err
 	}
-	if sig.kind == "throw" && sig.thrown != nil {
+	if sig.kind == "throw" && sig.thrown != nil && !sig.thrown.IsFatal() {
 		handled := false
 		for _, clause := range stmt.Catches {
 			if !e.catchMatches(clause, *sig.thrown) {
@@ -6291,7 +6291,8 @@ func (e *Evaluator) errorParent(class string) string {
 
 func (e *Evaluator) errorTypeMatches(class string, target string) bool {
 	if target == "" || target == "Error" {
-		return true
+		// FatalError is its own tier, not an Error.
+		return class != "FatalError"
 	}
 	for current := class; current != ""; current = e.errorParent(current) {
 		if current == target {
@@ -7870,6 +7871,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"now":          e.registryBuiltin("time", "now"),
 			"elapsed":      e.registryBuiltin("time", "elapsed"),
 			"sleep":        e.registryBuiltin("time", "sleep"),
+			"monotonic":    e.registryBuiltin("time", "monotonic"),
 			"unix":         e.registryBuiltin("time", "unix"),
 			"unixMilli":    e.registryBuiltin("time", "unixMilli"),
 			"unixMicro":    e.registryBuiltin("time", "unixMicro"),
@@ -21693,7 +21695,7 @@ func valueToTOML(value runtime.Value) (any, error) {
 
 func isBuiltinErrorClass(name string) bool {
 	switch name {
-	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError":
+	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError", "FatalError":
 		return true
 	default:
 		return false
@@ -25715,7 +25717,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 		maxDepth = DefaultMaxCallDepth
 	}
 	if e.callDepth >= maxDepth {
-		return nil, fmt.Errorf("maximum call depth exceeded (%d)", maxDepth)
+		return nil, thrownError{value: e.withTrace(runtime.Error{Class: "FatalError", Message: fmt.Sprintf("maximum call depth exceeded (%d)", maxDepth), Fatal: true})}
 	}
 	e.callDepth++
 	defer func() {

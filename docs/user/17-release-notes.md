@@ -2,6 +2,32 @@
 
 ## 1.7.0
 
+### Runtime faults are catchable on both backends
+
+Implicit runtime faults - division by zero, index out of range,
+key-not-found, conversion failures like `"abc".toInt()`, and null access
+- are now catchable with `try`/`catch` identically on the tree-walking
+evaluator and the bytecode VM. Previously the bytecode VM (used by
+`geblang run` / `geblang build`) let these escape `try`/`catch` and
+terminate the program, while the evaluator caught them, so the same code
+behaved differently between `geblang test` and a built binary.
+
+### FatalError tier
+
+A new `FatalError` class sits outside the `Error` hierarchy and is never
+intercepted by `try`/`catch` - not even `catch (any e)`. It always
+unwinds to the top and terminates. Raise one with
+`throw FatalError("message")` for unrecoverable conditions. Exceeding the
+maximum call depth (stack overflow) now surfaces as a `FatalError` on
+both backends.
+
+### time.monotonic
+
+`time.monotonic()` returns monotonic milliseconds since process start
+and never decreases. Use it for durations, timeouts, and TTLs:
+`time.now()` / `time.unix()` read the wall clock, which can jump
+backwards on clock correction.
+
 ### Shell completion
 
 `geblang completion bash` prints a bash completion script. Enable it

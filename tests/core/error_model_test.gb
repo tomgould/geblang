@@ -1,0 +1,60 @@
+/**
+ * @title Error model: catchable runtime faults vs FatalError
+ * @summary Implicit runtime faults (division by zero, index out of
+ * range, conversion failure) are catchable RuntimeError on both
+ * backends. FatalError is a distinct, non-Error class that no
+ * try/catch intercepts (the uncatchable behaviour is proven by the
+ * Go parity test TestParityFatalErrorUncatchable, since catching it
+ * in-language is impossible by design).
+ */
+import test;
+
+class ErrorModelTest extends test.Test {
+    @test
+    func divisionByZeroIsCatchable(): void {
+        this.assertThrowsOf(func(): void { let x = 1 / 0; }, "RuntimeError");
+    }
+
+    @test
+    func indexOutOfRangeIsCatchable(): void {
+        this.assertThrowsOf(func(): void {
+            let xs = [1, 2];
+            let y = xs[9];
+        }, "RuntimeError");
+    }
+
+    @test
+    func conversionFailureIsCatchable(): void {
+        this.assertThrowsOf(func(): void {
+            let n = "abc".toInt();
+        }, "RuntimeError");
+    }
+
+    @test
+    func runtimeFaultCarriesAMessage(): void {
+        try {
+            let x = 1 / 0;
+        } catch (Error e) {
+            this.assertTrue(e.message.contains("division by zero"));
+            return;
+        }
+        this.fail("expected a catchable fault");
+    }
+
+    @test
+    func fatalErrorIsADistinctClass(): void {
+        let e = FatalError("boom");
+        this.assertEquals("FatalError", e.class);
+        this.assertEquals("boom", e.message);
+        /* FatalError is not under Error, so it is not an Error. */
+        this.assertFalse(e instanceof Error);
+    }
+
+    @test
+    func builtinErrorsAreInstanceOfError(): void {
+        this.assertTrue(RuntimeError("x") instanceof Error);
+        this.assertTrue(ValueError("x") instanceof Error);
+        this.assertTrue(RuntimeError("x") instanceof RuntimeError);
+        this.assertFalse(RuntimeError("x") instanceof ValueError);
+    }
+}

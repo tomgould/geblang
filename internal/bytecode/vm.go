@@ -318,6 +318,16 @@ type vmThrownError struct {
 
 func (e vmThrownError) Error() string { return "uncaught " + e.err.Inspect() }
 
+// vmFatalError marks a fault that try/catch must never intercept (VM
+// bytecode corruption, stack overflow). Run() routes ordinary runtime
+// faults to the active handler but lets a vmFatalError terminate.
+type vmFatalError struct {
+	err error
+}
+
+func (e vmFatalError) Error() string { return e.err.Error() }
+func (e vmFatalError) Unwrap() error { return e.err }
+
 type vmTypeSpec struct {
 	raw       string
 	base      string
@@ -768,6 +778,30 @@ func (vm *VM) Run() (err error) {
 	// a stable register-resident pointer instead of dereferencing
 	// vm.chunk.Instructions through the VM struct on every fetch.
 	instructions := vm.chunk.Instructions
+	// A runtime fault returned by the dispatch loop is routed to the
+	// nearest active try/catch (parity with the evaluator); fatal and
+	// unhandled faults terminate. On a catch, the loop re-enters at the
+	// handler IP via runEntryIP.
+	for {
+		loopErr := vm.dispatchLoop(instructions, inlineExitDepth)
+		if loopErr == nil {
+			return nil
+		}
+		resumeIP, fatal, routeErr := vm.routeRuntimeFault(loopErr)
+		if routeErr != nil {
+			return routeErr
+		}
+		if fatal {
+			return loopErr
+		}
+		vm.runEntryIP = resumeIP
+	}
+}
+
+// dispatchLoop runs bytecode from runEntryIP to completion or to the
+// first returned fault. Run() wraps it so a fault can be routed to a
+// try/catch instead of terminating the VM.
+func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) error {
 	for ip := vm.runEntryIP; ip < len(instructions); ip++ {
 		instruction := instructions[ip]
 		switch instruction.Op {
@@ -907,7 +941,7 @@ func (vm *VM) Run() (err error) {
 		case OpAddStringConst:
 			n := len(vm.stack)
 			if n < 1 {
-				return vm.runtimeError(instruction, "stack underflow")
+				return vm.fatalError(instruction, "stack underflow")
 			}
 			constIdx := instruction.Operands[0]
 			if constIdx < 0 || int(constIdx) >= len(vm.chunk.Constants) {
@@ -934,7 +968,7 @@ func (vm *VM) Run() (err error) {
 		case OpAddString:
 			n := len(vm.stack)
 			if n < 2 {
-				return vm.runtimeError(instruction, "stack underflow")
+				return vm.fatalError(instruction, "stack underflow")
 			}
 			leftVM := vm.stack[n-2]
 			rightVM := vm.stack[n-1]
@@ -962,7 +996,7 @@ func (vm *VM) Run() (err error) {
 		case OpAddInt, OpSubInt, OpMulInt, OpModInt:
 			n := len(vm.stack)
 			if n < 2 {
-				return vm.runtimeError(instruction, "stack underflow")
+				return vm.fatalError(instruction, "stack underflow")
 			}
 			leftVM := vm.stack[n-2]
 			rightVM := vm.stack[n-1]
@@ -1034,7 +1068,7 @@ func (vm *VM) Run() (err error) {
 		case OpLessInt, OpGreaterInt, OpLessEqualInt, OpGreaterEqualInt, OpEqualInt:
 			n := len(vm.stack)
 			if n < 2 {
-				return vm.runtimeError(instruction, "stack underflow")
+				return vm.fatalError(instruction, "stack underflow")
 			}
 			leftVM := vm.stack[n-2]
 			rightVM := vm.stack[n-1]
@@ -1137,7 +1171,7 @@ func (vm *VM) Run() (err error) {
 			OpJumpIfNotGreaterEqualInt, OpJumpIfNotEqualInt, OpJumpIfEqualInt:
 			n := len(vm.stack)
 			if n < 2 {
-				return vm.runtimeError(instruction, "stack underflow")
+				return vm.fatalError(instruction, "stack underflow")
 			}
 			lvm := vm.stack[n-2]
 			rvm := vm.stack[n-1]
@@ -1172,7 +1206,7 @@ func (vm *VM) Run() (err error) {
 			ip = nextIP
 		case OpJumpIfModNotZero, OpJumpIfModZero:
 			if len(instruction.Operands) != 3 {
-				return vm.runtimeError(instruction, "mod-jump instruction has invalid operands")
+				return vm.fatalError(instruction, "mod-jump instruction has invalid operands")
 			}
 			slot := int(instruction.Operands[1])
 			idx := vm.currentFrameBP + slot
@@ -1508,7 +1542,7 @@ func (vm *VM) Run() (err error) {
 			vm.push(runtime.ShallowFreeze(value))
 		case OpMatchListShape:
 			if len(instruction.Operands) != 1 {
-				return vm.runtimeError(instruction, "match-list-shape instruction has invalid operands")
+				return vm.fatalError(instruction, "match-list-shape instruction has invalid operands")
 			}
 			expected := instruction.Operands[0]
 			vmv, err := vm.popVM()
@@ -1663,7 +1697,7 @@ func (vm *VM) Run() (err error) {
 			}
 		case OpDefineClass:
 			if len(instruction.Operands) != 1 {
-				return vm.runtimeError(instruction, "define class instruction has invalid operands")
+				return vm.fatalError(instruction, "define class instruction has invalid operands")
 			}
 			classIndex := instruction.Operands[0]
 			if classIndex >= 0 && int(classIndex) < len(vm.chunk.Classes) {
@@ -1755,7 +1789,7 @@ func (vm *VM) Run() (err error) {
 			vm.push(runtime.String{Value: out})
 		case OpMakeClosure:
 			if len(instruction.Operands) < 2 {
-				return vm.runtimeError(instruction, "make closure instruction has invalid operands")
+				return vm.fatalError(instruction, "make closure instruction has invalid operands")
 			}
 			funcIndex := instruction.Operands[0]
 			upvalueCount := instruction.Operands[1]
@@ -1814,7 +1848,7 @@ func (vm *VM) Run() (err error) {
 			}
 		case OpPushExceptionHandler:
 			if len(instruction.Operands) != 1 {
-				return vm.runtimeError(instruction, "exception handler instruction has invalid operands")
+				return vm.fatalError(instruction, "exception handler instruction has invalid operands")
 			}
 			snap, snapBase := vm.snapshotCurrentFrameLocals()
 			vm.exceptionHandlers = append(vm.exceptionHandlers, exceptionHandler{
@@ -1856,7 +1890,7 @@ func (vm *VM) Run() (err error) {
 			return vm.runtimeError(instruction, "%s", message)
 		case OpMatchError:
 			if len(instruction.Operands) != 1 || int(instruction.Operands[0]) >= len(vm.chunk.Constants) {
-				return vm.runtimeError(instruction, "match error instruction has invalid operands")
+				return vm.fatalError(instruction, "match error instruction has invalid operands")
 			}
 			hint, ok := vm.chunk.Constants[instruction.Operands[0]].(runtime.String)
 			if !ok {
@@ -1888,7 +1922,7 @@ func (vm *VM) Run() (err error) {
 			vm.addDefer(deferredAction{kind: deferKindPrintln, value: value})
 		case OpDeferNativeCall:
 			if len(instruction.Operands) != 2 {
-				return vm.runtimeError(instruction, "defer native call instruction has invalid operands")
+				return vm.fatalError(instruction, "defer native call instruction has invalid operands")
 			}
 			nameIndex := instruction.Operands[0]
 			argc := instruction.Operands[1]
@@ -1910,7 +1944,7 @@ func (vm *VM) Run() (err error) {
 			vm.addDefer(deferredAction{kind: deferKindNative, name: nameConst.Value, args: args})
 		case OpDeferFuncCall:
 			if len(instruction.Operands) != 2 {
-				return vm.runtimeError(instruction, "defer func call instruction has invalid operands")
+				return vm.fatalError(instruction, "defer func call instruction has invalid operands")
 			}
 			funcIdx := instruction.Operands[0]
 			argc := instruction.Operands[1]
@@ -1928,7 +1962,7 @@ func (vm *VM) Run() (err error) {
 			vm.addDefer(deferredAction{kind: deferKindFunc, funcIdx: funcIdx, args: args})
 		case OpDeferMethodCall:
 			if len(instruction.Operands) != 2 {
-				return vm.runtimeError(instruction, "defer method call instruction has invalid operands")
+				return vm.fatalError(instruction, "defer method call instruction has invalid operands")
 			}
 			nameIndex := instruction.Operands[0]
 			argc := instruction.Operands[1]
@@ -1954,7 +1988,7 @@ func (vm *VM) Run() (err error) {
 			vm.addDefer(deferredAction{kind: deferKindMethod, name: nameConst.Value, receiver: receiver, args: args})
 		case OpDeferCallableCall:
 			if len(instruction.Operands) != 1 {
-				return vm.runtimeError(instruction, "defer callable call instruction has invalid operands")
+				return vm.fatalError(instruction, "defer callable call instruction has invalid operands")
 			}
 			argc := instruction.Operands[0]
 			args := make([]runtime.Value, argc)
@@ -1972,7 +2006,7 @@ func (vm *VM) Run() (err error) {
 			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args})
 		case OpDeferNativeCallNamed:
 			if len(instruction.Operands) < 2 {
-				return vm.runtimeError(instruction, "defer named native call has invalid operands")
+				return vm.fatalError(instruction, "defer named native call has invalid operands")
 			}
 			nameIndex := instruction.Operands[0]
 			argc := int(instruction.Operands[1])
@@ -1998,7 +2032,7 @@ func (vm *VM) Run() (err error) {
 			vm.addDefer(deferredAction{kind: deferKindNative, name: nameConst.Value, args: args, names: names})
 		case OpDeferMethodCallNamed:
 			if len(instruction.Operands) < 2 {
-				return vm.runtimeError(instruction, "defer named method call has invalid operands")
+				return vm.fatalError(instruction, "defer named method call has invalid operands")
 			}
 			nameIndex := instruction.Operands[0]
 			argc := int(instruction.Operands[1])
@@ -2028,7 +2062,7 @@ func (vm *VM) Run() (err error) {
 			vm.addDefer(deferredAction{kind: deferKindMethod, name: nameConst.Value, receiver: receiver, args: args, names: names})
 		case OpDeferCallableCallNamed:
 			if len(instruction.Operands) < 1 {
-				return vm.runtimeError(instruction, "defer named callable call has invalid operands")
+				return vm.fatalError(instruction, "defer named callable call has invalid operands")
 			}
 			argc := int(instruction.Operands[0])
 			if len(instruction.Operands) != 1+argc {
@@ -2099,7 +2133,7 @@ func (vm *VM) Run() (err error) {
 			}
 		case OpDup:
 			if len(vm.stack) == 0 {
-				return vm.runtimeError(instruction, "stack underflow")
+				return vm.fatalError(instruction, "stack underflow")
 			}
 			vm.pushVM(vm.stack[len(vm.stack)-1])
 		case OpReturn:
@@ -2244,7 +2278,7 @@ func (vm *VM) Run() (err error) {
 			}
 		case OpCallSpread:
 			if len(instruction.Operands) != 2 {
-				return vm.runtimeError(instruction, "call-spread instruction has invalid operands")
+				return vm.fatalError(instruction, "call-spread instruction has invalid operands")
 			}
 			funcIndex := instruction.Operands[0]
 			staticArgCount := int(instruction.Operands[1])
@@ -2292,7 +2326,7 @@ func (vm *VM) Run() (err error) {
 			ip = nextIP
 		case OpListConcat:
 			if len(instruction.Operands) != 1 {
-				return vm.runtimeError(instruction, "list-concat instruction has invalid operands")
+				return vm.fatalError(instruction, "list-concat instruction has invalid operands")
 			}
 			n := int(instruction.Operands[0])
 			segments := make([]*runtime.List, n)
@@ -2399,7 +2433,7 @@ func (vm *VM) Run() (err error) {
 				vm.pendingTypeBindings[paramName.Value] = typeName.Value
 			}
 		default:
-			return vm.runtimeError(instruction, "unknown opcode %d", instruction.Op)
+			return vm.fatalError(instruction, "unknown opcode %d", instruction.Op)
 		}
 	}
 	return nil
@@ -2915,7 +2949,7 @@ func (vm *VM) identical(instruction Instruction) error {
 
 func (vm *VM) makeError(instruction Instruction) error {
 	if len(instruction.Operands) != 2 {
-		return vm.runtimeError(instruction, "make error instruction has invalid operands")
+		return vm.fatalError(instruction, "make error instruction has invalid operands")
 	}
 	class, err := vm.constantStringAt(instruction, instruction.Operands[0], "error class must be string")
 	if err != nil {
@@ -2943,7 +2977,7 @@ func (vm *VM) makeError(instruction Instruction) error {
 
 func (vm *VM) importFrom(instruction Instruction) error {
 	if len(instruction.Operands) < 3 {
-		return vm.runtimeError(instruction, "import-from instruction has invalid operands")
+		return vm.fatalError(instruction, "import-from instruction has invalid operands")
 	}
 	canonical, err := vm.constantStringAt(instruction, instruction.Operands[0], "module name must be string")
 	if err != nil {
@@ -3024,7 +3058,7 @@ func (vm *VM) wrapStatefulNativeImport(canonical, name string) (runtime.Value, e
 
 func (vm *VM) importModule(instruction Instruction) error {
 	if len(instruction.Operands) != 3 {
-		return vm.runtimeError(instruction, "import module instruction has invalid operands")
+		return vm.fatalError(instruction, "import module instruction has invalid operands")
 	}
 	if vm.moduleLoader == nil {
 		return vm.runtimeError(instruction, "bytecode module loader is not configured")
@@ -3062,6 +3096,68 @@ func (vm *VM) throwRecoverableError(instruction Instruction, ip int, err error) 
 	errValue := vm.withErrorStackTrace(runtime.NewRecoverableError(err), instruction.Line)
 	vm.pendingThrow = &errValue
 	return vm.jumpToExceptionHandler(instruction, ip)
+}
+
+// fatalError wraps a fault as non-catchable so Run() lets it terminate
+// the VM rather than routing it to a try/catch. Used for bytecode
+// corruption and other conditions where continuing is meaningless.
+func (vm *VM) fatalError(instruction Instruction, format string, args ...any) error {
+	return vmFatalError{err: vm.runtimeError(instruction, format, args...)}
+}
+
+// routeRuntimeFault decides the fate of an error the dispatch loop
+// returned. A fatal fault or one with no active handler terminates
+// (fatal=true). Otherwise the fault is converted to a catchable
+// runtime.Error, installed as the pending throw, and control unwinds to
+// the nearest handler; the returned IP is where dispatch resumes. This
+// is what makes implicit runtime faults (division by zero, bad index,
+// conversion failures) catchable on the VM, matching the evaluator.
+func (vm *VM) routeRuntimeFault(loopErr error) (resumeIP int, fatal bool, routeErr error) {
+	value, isFatal := vm.faultToRuntimeError(loopErr)
+	if isFatal || len(vm.exceptionHandlers) == 0 {
+		return 0, true, nil
+	}
+	vm.pendingThrow = &value
+	nextIP, err := vm.jumpToExceptionHandler(Instruction{}, 0)
+	if err != nil {
+		return 0, false, err
+	}
+	return nextIP + 1, false, nil
+}
+
+// faultToRuntimeError converts a dispatch-loop error into a catchable
+// runtime.Error, reporting whether it is fatal (non-catchable).
+func (vm *VM) faultToRuntimeError(loopErr error) (runtime.Error, bool) {
+	var thrown vmThrownError
+	if errors.As(loopErr, &thrown) {
+		return thrown.err, thrown.err.IsFatal()
+	}
+	var fatalErr vmFatalError
+	if errors.As(loopErr, &fatalErr) {
+		return runtime.Error{}, true
+	}
+	msg := cleanRuntimeFaultMessage(loopErr.Error())
+	return runtime.Error{Class: "RuntimeError", Message: msg, Parents: []string{"RuntimeError", "Error"}}, false
+}
+
+// cleanRuntimeFaultMessage strips the "bytecode runtime error at L:C: "
+// prefix and the trailing stack trace from a VM error string so a
+// caught fault's message matches what the evaluator surfaces.
+func cleanRuntimeFaultMessage(s string) string {
+	if idx := strings.Index(s, "\n"); idx >= 0 {
+		s = s[:idx]
+	}
+	const atPrefix = "bytecode runtime error at "
+	const plainPrefix = "bytecode runtime error: "
+	if strings.HasPrefix(s, atPrefix) {
+		if c := strings.Index(s, ": "); c >= 0 {
+			return s[c+2:]
+		}
+	}
+	if strings.HasPrefix(s, plainPrefix) {
+		return s[len(plainPrefix):]
+	}
+	return s
 }
 
 func (vm *VM) withErrorStackTrace(err runtime.Error, line int) runtime.Error {
@@ -3124,7 +3220,7 @@ func (vm *VM) jumpToExceptionHandler(instruction Instruction, ip int) (int, erro
 
 func (vm *VM) catchException(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 3 {
-		return 0, vm.runtimeError(instruction, "catch instruction has invalid operands")
+		return 0, vm.fatalError(instruction, "catch instruction has invalid operands")
 	}
 	if vm.pendingThrow == nil {
 		return ip, nil
@@ -3132,6 +3228,11 @@ func (vm *VM) catchException(instruction Instruction, ip int) (int, error) {
 	nextIP := int(instruction.Operands[0])
 	typeIndex := instruction.Operands[1]
 	slot := instruction.Operands[2]
+	// Fatal errors are never caught, not even by catch(any); skip this
+	// clause so the pending throw propagates to the top.
+	if vm.pendingThrow.IsFatal() {
+		return nextIP - 1, nil
+	}
 	if typeIndex >= 0 {
 		target, err := vm.constantStringAt(instruction, typeIndex, "catch type must be string")
 		if err != nil {
@@ -3290,7 +3391,7 @@ func (vm *VM) compareJumpIntFallback(instruction Instruction, ip int) (int, erro
 // the result back, and pushes it onto the stack.
 func (vm *VM) intSelfArith(instruction Instruction) error {
 	if len(instruction.Operands) != 2 {
-		return vm.runtimeError(instruction, "int self-arith has invalid operands")
+		return vm.fatalError(instruction, "int self-arith has invalid operands")
 	}
 	dst := instruction.Operands[0]
 	rhsOperand := instruction.Operands[1]
@@ -3400,7 +3501,7 @@ func intToBigInt(v runtime.Value) (*big.Int, bool) {
 
 func (vm *VM) updateIntSlot(instruction Instruction) error {
 	if len(instruction.Operands) != 1 {
-		return vm.runtimeError(instruction, "integer slot update has invalid operands")
+		return vm.fatalError(instruction, "integer slot update has invalid operands")
 	}
 	slot := instruction.Operands[0]
 	var old runtime.VMValue
@@ -3470,7 +3571,7 @@ func updatedIntValue(instruction Instruction, old runtime.Value) (runtime.Value,
 
 func (vm *VM) appendListSlot(instruction Instruction) error {
 	if len(instruction.Operands) != 1 {
-		return vm.runtimeError(instruction, "list append slot update has invalid operands")
+		return vm.fatalError(instruction, "list append slot update has invalid operands")
 	}
 	value, err := vm.pop()
 	if err != nil {
@@ -4284,7 +4385,7 @@ func (vm *VM) instanceIteratorHooks(instance *runtime.Instance) (hasIter, hasNex
 
 func (vm *VM) iterNext(instruction Instruction) (bool, error) {
 	if len(instruction.Operands) != 3 {
-		return false, vm.runtimeError(instruction, "iterator instruction has invalid operands")
+		return false, vm.fatalError(instruction, "iterator instruction has invalid operands")
 	}
 	iterSlot := instruction.Operands[1]
 	valueSlot := instruction.Operands[2]
@@ -4448,7 +4549,7 @@ func (vm *VM) withExit(instruction Instruction) error {
 // the slot to Null{}.
 func (vm *VM) execDel(instruction Instruction) error {
 	if len(instruction.Operands) != 2 {
-		return vm.runtimeError(instruction, "del instruction has invalid operands")
+		return vm.fatalError(instruction, "del instruction has invalid operands")
 	}
 	slot := instruction.Operands[0]
 	kind := instruction.Operands[1]
@@ -4496,7 +4597,7 @@ func (vm *VM) execDel(instruction Instruction) error {
 
 func (vm *VM) iterClose(instruction Instruction) error {
 	if len(instruction.Operands) != 1 {
-		return vm.runtimeError(instruction, "iterator close instruction has invalid operands")
+		return vm.fatalError(instruction, "iterator close instruction has invalid operands")
 	}
 	value, err := vm.getLocal(instruction.Operands[0])
 	if err != nil {
@@ -4514,7 +4615,7 @@ func (vm *VM) iterClose(instruction Instruction) error {
 // at operand[0]. Leaves the value on the stack. Throws a runtime error on mismatch.
 func (vm *VM) typeAssert(instruction Instruction) error {
 	if len(instruction.Operands) != 1 {
-		return vm.runtimeError(instruction, "type assert instruction has invalid operands")
+		return vm.fatalError(instruction, "type assert instruction has invalid operands")
 	}
 	constIdx := instruction.Operands[0]
 	if constIdx < 0 || int(constIdx) >= len(vm.chunk.Constants) {
@@ -4706,7 +4807,7 @@ func rangeContains(current *big.Int, end *big.Int, step *big.Int, exclusive bool
 
 func (vm *VM) unpackList(instruction Instruction) error {
 	if len(instruction.Operands) < 2 {
-		return vm.runtimeError(instruction, "unpack instruction has invalid operands")
+		return vm.fatalError(instruction, "unpack instruction has invalid operands")
 	}
 	value, err := vm.getLocal(instruction.Operands[0])
 	if err != nil {
@@ -4837,7 +4938,7 @@ func (vm *VM) popExitCode(instruction Instruction) (int, error) {
 // in the caller MUST be empty - the compiler enforces this.
 func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	if len(instruction.Operands) != 2 {
-		return 0, vm.runtimeError(instruction, "tail call instruction has invalid operands")
+		return 0, vm.fatalError(instruction, "tail call instruction has invalid operands")
 	}
 	index := instruction.Operands[0]
 	argc := instruction.Operands[1]
@@ -4854,7 +4955,7 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	}
 	n := len(vm.stack)
 	if int(argc) > n {
-		return 0, vm.runtimeError(instruction, "stack underflow")
+		return 0, vm.fatalError(instruction, "stack underflow")
 	}
 	stackArgs := vm.stack[n-int(argc) : n]
 	if function.requiresParamValidation {
@@ -4918,7 +5019,7 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 
 func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 2 {
-		return 0, vm.runtimeError(instruction, "call instruction has invalid operands")
+		return 0, vm.fatalError(instruction, "call instruction has invalid operands")
 	}
 	index := instruction.Operands[0]
 	argc := instruction.Operands[1]
@@ -4929,7 +5030,7 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 	if !vm.requiresCallSitePolymorphism {
 		n := len(vm.stack)
 		if int(argc) > n {
-			return 0, vm.runtimeError(instruction, "stack underflow")
+			return 0, vm.fatalError(instruction, "stack underflow")
 		}
 		stackArgs := vm.stack[n-int(argc) : n]
 		vm.stack = vm.stack[:n-int(argc)]
@@ -4941,7 +5042,7 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 			if !function.IsGenerator || vm.generatorExecution {
 				n := len(vm.stack)
 				if int(argc) > n {
-					return 0, vm.runtimeError(instruction, "stack underflow")
+					return 0, vm.fatalError(instruction, "stack underflow")
 				}
 				stackArgs := vm.stack[n-int(argc) : n]
 				vm.stack = vm.stack[:n-int(argc)]
@@ -5184,7 +5285,7 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 		maxDepth = DefaultMaxCallDepth
 	}
 	if len(vm.frames) >= maxDepth {
-		return 0, vm.runtimeError(instruction, "maximum call depth exceeded (%d)", maxDepth)
+		return 0, vm.fatalError(instruction, "maximum call depth exceeded (%d)", maxDepth)
 	}
 	argc := len(stackArgs)
 	paramCount := len(function.ParamSlots)
@@ -5460,7 +5561,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 		maxDepth = DefaultMaxCallDepth
 	}
 	if len(vm.frames) >= maxDepth {
-		return 0, vm.runtimeError(instruction, "maximum call depth exceeded (%d)", maxDepth)
+		return 0, vm.fatalError(instruction, "maximum call depth exceeded (%d)", maxDepth)
 	}
 	argc := len(provided)
 	if function.Variadic && len(function.ParamSlots) > 0 {
@@ -5680,7 +5781,7 @@ func (vm *VM) startClosureFunction(instruction Instruction, ip int, closure runt
 
 func (vm *VM) nativeCall(instruction Instruction) error {
 	if len(instruction.Operands) != 2 {
-		return vm.runtimeError(instruction, "native call instruction has invalid operands")
+		return vm.fatalError(instruction, "native call instruction has invalid operands")
 	}
 	nameIndex := instruction.Operands[0]
 	argc := instruction.Operands[1]
@@ -5738,7 +5839,7 @@ func (vm *VM) nativeCall(instruction Instruction) error {
 
 func (vm *VM) nativeCallNamed(instruction Instruction) error {
 	if len(instruction.Operands) < 2 {
-		return vm.runtimeError(instruction, "named native call instruction has invalid operands")
+		return vm.fatalError(instruction, "named native call instruction has invalid operands")
 	}
 	nameIndex := instruction.Operands[0]
 	argc := instruction.Operands[1]
@@ -5778,7 +5879,7 @@ func (vm *VM) nativeCallNamed(instruction Instruction) error {
 
 func (vm *VM) constructClass(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 2 {
-		return 0, vm.runtimeError(instruction, "construct class instruction has invalid operands")
+		return 0, vm.fatalError(instruction, "construct class instruction has invalid operands")
 	}
 	classIndex := instruction.Operands[0]
 	argc := int(instruction.Operands[1])
@@ -6333,7 +6434,7 @@ func (vm *VM) applyFieldDecorators(instruction Instruction, classInfo ClassInfo,
 
 func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 2 {
-		return 0, vm.runtimeError(instruction, "parent constructor instruction has invalid operands")
+		return 0, vm.fatalError(instruction, "parent constructor instruction has invalid operands")
 	}
 	classIndex := instruction.Operands[0]
 	argc := int(instruction.Operands[1])
@@ -6397,7 +6498,7 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 
 func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 3 {
-		return 0, vm.runtimeError(instruction, "parent method instruction has invalid operands")
+		return 0, vm.fatalError(instruction, "parent method instruction has invalid operands")
 	}
 	classIndex := instruction.Operands[0]
 	nameIndex := instruction.Operands[1]
@@ -6496,7 +6597,7 @@ func (vm *VM) parentClassInfo(instruction Instruction, classIndex int64) (ClassI
 
 func (vm *VM) getStaticValue(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 2 {
-		return 0, vm.runtimeError(instruction, "static value instruction has invalid operands")
+		return 0, vm.fatalError(instruction, "static value instruction has invalid operands")
 	}
 	classIndex := instruction.Operands[0]
 	nameIndex := instruction.Operands[1]
@@ -6527,7 +6628,7 @@ func (vm *VM) getStaticValue(instruction Instruction, ip int) (int, error) {
 
 func (vm *VM) setStaticValue(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 2 {
-		return 0, vm.runtimeError(instruction, "static assignment instruction has invalid operands")
+		return 0, vm.fatalError(instruction, "static assignment instruction has invalid operands")
 	}
 	classIndex := instruction.Operands[0]
 	nameIndex := instruction.Operands[1]
@@ -6570,7 +6671,7 @@ func (vm *VM) setStaticValue(instruction Instruction, ip int) (int, error) {
 
 func (vm *VM) callStaticMethod(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 3 {
-		return 0, vm.runtimeError(instruction, "static method instruction has invalid operands")
+		return 0, vm.fatalError(instruction, "static method instruction has invalid operands")
 	}
 	classIndex := instruction.Operands[0]
 	nameIndex := instruction.Operands[1]
@@ -11218,7 +11319,7 @@ func (vm *VM) runtimeValueMatchesTypeSpec(value runtime.Value, spec vmTypeSpec) 
 
 func (vm *VM) methodCallSpread(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 2 {
-		return 0, vm.runtimeError(instruction, "method-call-spread instruction has invalid operands")
+		return 0, vm.fatalError(instruction, "method-call-spread instruction has invalid operands")
 	}
 	staticArgCount := int(instruction.Operands[1])
 	spreadVal, err := vm.pop()
@@ -11254,7 +11355,7 @@ func (vm *VM) methodCallSpread(instruction Instruction, ip int) (int, error) {
 // when the compiler proved the receiver's class statically.
 func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 2 {
-		return 0, vm.runtimeError(instruction, "resolved method call has invalid operands")
+		return 0, vm.fatalError(instruction, "resolved method call has invalid operands")
 	}
 	functionIndex := instruction.Operands[0]
 	argc := int(instruction.Operands[1])
@@ -11263,7 +11364,7 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 	}
 	n := len(vm.stack)
 	if argc+1 > n {
-		return 0, vm.runtimeError(instruction, "stack underflow")
+		return 0, vm.fatalError(instruction, "stack underflow")
 	}
 	base := n - argc - 1
 	function := &vm.chunk.Functions[functionIndex]
@@ -11315,7 +11416,7 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 
 func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 2 {
-		return 0, vm.runtimeError(instruction, "method call instruction has invalid operands")
+		return 0, vm.fatalError(instruction, "method call instruction has invalid operands")
 	}
 	nameIndex := instruction.Operands[0]
 	argc := int(instruction.Operands[1])
@@ -11777,7 +11878,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 
 func (vm *VM) methodCallNamed(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) < 2 {
-		return 0, vm.runtimeError(instruction, "named method call instruction has invalid operands")
+		return 0, vm.fatalError(instruction, "named method call instruction has invalid operands")
 	}
 	nameIndex := instruction.Operands[0]
 	argc := int(instruction.Operands[1])
@@ -12308,15 +12409,11 @@ func (vm *VM) runtimeClassForParent(classInfo ClassInfo) *runtime.Class {
 // when the error class was defined in another module than the chunk
 // currently executing. Match is case-insensitive.
 func (vm *VM) errorClassMatches(errValue runtime.Error, target string) bool {
-	if strings.EqualFold(errValue.Class, target) {
-		return true
-	}
-	for _, ancestor := range errValue.Parents {
-		if strings.EqualFold(ancestor, target) {
-			return true
-		}
-	}
-	return false
+	// Delegate to the value-aware matcher so `instanceof Error` resolves
+	// the universal Error supertype and the built-in error parent chain
+	// (which VM-constructed built-in errors don't carry in Parents),
+	// matching the evaluator. FatalError is excluded from Error there.
+	return vm.errorValueMatches(errValue, target)
 }
 
 // reflectFieldsResult returns the per-field metadata list shape that
@@ -14956,7 +15053,8 @@ func (vm *VM) errorTypeMatches(class string, target string) bool {
 func (vm *VM) errorValueMatches(err runtime.Error, target string) bool {
 	target = stripModulePrefix(target)
 	if target == "" || target == "Error" {
-		return true
+		// FatalError is its own tier, not an Error.
+		return !err.IsFatal()
 	}
 	if strings.EqualFold(stripModulePrefix(err.Class), target) {
 		return true

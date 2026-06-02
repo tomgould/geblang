@@ -56,6 +56,11 @@ import (
 	yamllib "gopkg.in/yaml.v3"
 )
 
+// monoClockStart anchors time.monotonic() to process start so it reports
+// a monotonic (never-decreasing) millisecond counter via the monotonic
+// reading embedded in time.Since.
+var monoClockStart = time.Now()
+
 // builtinFunctionsOnce ensures the read-only functions map of the
 // builtin registry is constructed exactly once per process. Per-VM
 // NewBuiltinRegistry calls then share the same map and only pay for
@@ -1989,6 +1994,16 @@ func registerTime(r *Registry) {
 			return nil, fmt.Errorf("time.unix expects no arguments")
 		}
 		return runtime.NewInt64(time.Now().Unix()), nil
+	})
+	r.Register("time", "monotonic", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("time.monotonic expects no arguments")
+		}
+		// Monotonic milliseconds since process start. Unlike time.now /
+		// time.unix (wall clock, which can jump backwards on NTP / VM
+		// clock correction), this never decreases, so it is the correct
+		// source for measuring durations, timeouts, and TTLs.
+		return runtime.NewInt64(time.Since(monoClockStart).Milliseconds()), nil
 	})
 	r.Register("time", "unixMilli", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {

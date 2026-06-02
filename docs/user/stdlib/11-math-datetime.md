@@ -574,7 +574,8 @@ a block, throttle a loop, or pause execution synchronously. Reach for
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `time.now()` | `int` | Milliseconds since the Unix epoch. Two `now()` values can be subtracted to get an elapsed duration in ms. |
+| `time.now()` | `int` | Wall-clock milliseconds since the Unix epoch. Good for timestamps; can jump backwards on clock correction, so do not use it to measure durations. |
+| `time.monotonic()` | `int` | Monotonic milliseconds since process start; never decreases (1.7.0). The correct source for measuring durations, timeouts, and TTLs - immune to wall-clock jumps. |
 | `time.elapsed(start)` | `int` | Convenience for `time.now() - start`. Returns milliseconds elapsed since the `start` value (also in ms). |
 | `time.sleep(ms)` | `null` | Pauses the current thread for `ms` milliseconds. Use `async.sleep` instead inside async tasks where you want cooperative scheduling. |
 

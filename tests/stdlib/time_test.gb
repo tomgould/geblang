@@ -95,4 +95,16 @@ class TimeTest extends test.Test {
         let elapsed = time.elapsedFloat(start);
         this.assertTrue(elapsed > 0.0.toFloat());
     }
+
+    @test
+    func monotonicNeverDecreases(): void {
+        /* Unlike time.now / time.unix (wall clock, which can step
+           backwards), time.monotonic only advances - the correct
+           source for durations and TTLs. */
+        let a = time.monotonic();
+        time.sleep(10);
+        let b = time.monotonic();
+        this.assertTrue(b >= a);
+        this.assertTrue(b - a >= 10);
+    }
 }

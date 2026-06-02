@@ -192,12 +192,15 @@ export class LruCache<K, V> {
 
     func _computeExpiry(): any {
         if (this._ttlSeconds <= 0) { return null; }
-        return time.unix() + this._ttlSeconds;
+        /* Monotonic milliseconds: TTL must not be corrupted by wall-
+         * clock jumps (NTP / VM clock correction), which made expiry
+         * non-deterministic when this used time.unix(). */
+        return time.monotonic() + this._ttlSeconds * 1000;
     }
 
     func _isExpired(any entry): bool {
         if (entry.expiresAt == null) { return false; }
-        return time.unix() >= entry.expiresAt;
+        return time.monotonic() >= entry.expiresAt;
     }
 
     func _moveToHead(any entry): void {

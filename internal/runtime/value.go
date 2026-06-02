@@ -931,9 +931,19 @@ type Error struct {
 	// / catch on error-derived classes can walk past the chunk
 	// boundary without re-looking up the source module's class table.
 	Parents []string
+	// Fatal marks an error that no try/catch may intercept (not even
+	// catch(any)); it always unwinds to the top. Used for FatalError,
+	// VM corruption, and stack-overflow conditions.
+	Fatal bool
 }
 
 func (v Error) TypeName() string { return v.Class }
+
+// IsFatal reports whether the error must bypass every try/catch (even
+// catch(any)) and unwind to the top. True for the FatalError class and
+// for errors explicitly flagged Fatal (VM corruption, stack overflow).
+func (v Error) IsFatal() bool { return v.Fatal || v.Class == "FatalError" }
+
 func (v Error) Inspect() string {
 	if v.Message == "" {
 		return v.Class
