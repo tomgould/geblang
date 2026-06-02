@@ -1901,7 +1901,7 @@ func (c *Compiler) compileMatchCaseCondition(valueSlot int64, matchCase ast.Matc
 		c.emitConstant(runtime.String{Value: typeName}, line, col)
 		c.emitAt(OpInstanceOf, line, col)
 	case matchCase.Type != nil:
-		c.emitConstant(runtime.String{Value: matchCase.Type.Name}, line, col)
+		c.emitConstant(runtime.String{Value: matchCase.Type.String()}, line, col)
 		c.emitAt(OpInstanceOf, line, col)
 	case matchCase.ListPattern != nil:
 		c.emitAt(OpMatchListShape, line, col, int64(len(matchCase.ListPattern.Bindings)))
@@ -1913,7 +1913,31 @@ func (c *Compiler) compileMatchCaseCondition(valueSlot int64, matchCase ast.Matc
 	default:
 		return nil, fmt.Errorf("match case has no pattern")
 	}
-	nextJumps := []int{c.emitJump(OpJumpIfFalse, line, col)}
+	var nextJumps []int
+	bodyJumps := []int{}
+	if len(matchCase.Alternates) > 0 {
+		primaryFail := c.emitJump(OpJumpIfFalse, line, col)
+		bodyJumps = append(bodyJumps, c.emitJump(OpJump, line, col))
+		c.patchJump(primaryFail)
+		for i, alt := range matchCase.Alternates {
+			c.emitAt(OpGetLocal, line, col, valueSlot)
+			if err := c.emitOrAlternateCheck(alt, line, col); err != nil {
+				return nil, err
+			}
+			if i == len(matchCase.Alternates)-1 {
+				nextJumps = append(nextJumps, c.emitJump(OpJumpIfFalse, line, col))
+			} else {
+				altFail := c.emitJump(OpJumpIfFalse, line, col)
+				bodyJumps = append(bodyJumps, c.emitJump(OpJump, line, col))
+				c.patchJump(altFail)
+			}
+		}
+		for _, jp := range bodyJumps {
+			c.patchJump(jp)
+		}
+	} else {
+		nextJumps = []int{c.emitJump(OpJumpIfFalse, line, col)}
+	}
 	if matchCase.EnumVariant != nil {
 		for i, param := range matchCase.EnumVariant.Params {
 			if param.Name != nil {
@@ -1963,6 +1987,31 @@ func (c *Compiler) compileMatchCaseCondition(valueSlot int64, matchCase ast.Matc
 		nextJumps = append(nextJumps, jp)
 	}
 	return nextJumps, nil
+}
+
+// emitOrAlternateCheck emits the type-or-equality check for a single
+// or-pattern alternate. The value to test is already on the stack.
+// Bare-type alternates (e.g. `int`, stored as an Identifier) emit
+// OpInstanceOf; everything else evaluates the expression and emits OpEqual.
+func (c *Compiler) emitOrAlternateCheck(alt ast.Expression, line, col int) error {
+	if ident, ok := alt.(*ast.Identifier); ok && isOrAlternateBuiltinType(ident.Value) {
+		c.emitConstant(runtime.String{Value: ident.Value}, line, col)
+		c.emitAt(OpInstanceOf, line, col)
+		return nil
+	}
+	if err := c.compileExpression(alt); err != nil {
+		return err
+	}
+	c.emitAt(OpEqual, line, col)
+	return nil
+}
+
+func isOrAlternateBuiltinType(name string) bool {
+	switch name {
+	case "string", "int", "float", "decimal", "bool", "bytes", "list", "dict", "set", "range", "null":
+		return true
+	}
+	return false
 }
 
 func (c *Compiler) patchLoopContinues(loop loopContext, target int) {

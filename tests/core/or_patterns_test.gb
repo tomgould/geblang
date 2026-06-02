@@ -1,0 +1,85 @@
+/**
+ * @title Or-patterns in match (1.6.0)
+ * @summary `case A | B | C =>` matches when ANY alternate matches.
+ * Alternates are bindless: literals, bare types, and enum variants
+ * without payload. A guard applies to the whole or-pattern.
+ */
+import test;
+
+enum Color { Red, Green, Blue }
+
+func category(int x): string {
+    return match (x) {
+        case 1 | 2 | 3 => "small";
+        case 10 | 20 | 30 => "round";
+        default => "other";
+    };
+}
+
+func numeric(any v): string {
+    return match (v) {
+        case int | float | decimal => "num";
+        case string | bytes => "text";
+        default => "other";
+    };
+}
+
+func warmColor(Color c): bool {
+    return match (c) {
+        case Color.Red | Color.Blue => true;
+        case Color.Green => false;
+    };
+}
+
+func gated(int x): string {
+    return match (x) {
+        case 1 | 2 | 3 if (x > 1) => "pass";
+        case 1 | 2 | 3 => "fail";
+        default => "n/a";
+    };
+}
+
+class OrPatternsTest extends test.Test {
+
+    @test
+    func literalAlternates(): void {
+        this.assertEquals("small", category(1));
+        this.assertEquals("small", category(2));
+        this.assertEquals("small", category(3));
+        this.assertEquals("round", category(10));
+        this.assertEquals("round", category(30));
+        this.assertEquals("other", category(99));
+    }
+
+    @test
+    func typeAlternates(): void {
+        this.assertEquals("num", numeric(5));
+        this.assertEquals("num", numeric(3.14));
+        this.assertEquals("text", numeric("hi"));
+        this.assertEquals("other", numeric(true));
+    }
+
+    @test
+    func enumAlternates(): void {
+        this.assertTrue(warmColor(Color.Red));
+        this.assertTrue(warmColor(Color.Blue));
+        this.assertFalse(warmColor(Color.Green));
+    }
+
+    @test
+    func guardOnOrPattern(): void {
+        this.assertEquals("fail", gated(1));
+        this.assertEquals("pass", gated(2));
+        this.assertEquals("pass", gated(3));
+        this.assertEquals("n/a", gated(99));
+    }
+
+    @test
+    func chainedAlternateLiterals(): void {
+        let r = match (4) {
+            case 1 | 2 | 3 | 4 | 5 => "1..5";
+            default => "other";
+        };
+        this.assertEquals("1..5", r);
+    }
+}

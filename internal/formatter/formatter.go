@@ -477,6 +477,9 @@ func (f *fmtr) fmtMatchCase(c ast.MatchCase) {
 	} else {
 		pat = f.matchPattern(c.Pattern)
 	}
+	for _, alt := range c.Alternates {
+		pat += " | " + f.expr(alt)
+	}
 	if c.Guard != nil {
 		pat += " if " + f.expr(c.Guard)
 	}

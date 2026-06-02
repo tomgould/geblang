@@ -296,6 +296,39 @@ match (status) {
 }
 ```
 
+### Or-patterns
+
+A `case` can list alternates separated by `|`; the case matches when
+any one of them does. Alternates are bindless - they cover literals,
+bare types (or unions), and enum variants without payload.
+
+```gb
+match (x) {
+    case 1 | 2 | 3 => io.println("small");
+    case Color.Red | Color.Blue => io.println("warm-ish");
+}
+
+func numeric(any v): string {
+    return match (v) {
+        case int | float | decimal => "numeric";
+        case string | bytes        => "text";
+        default                    => "other";
+    };
+}
+```
+
+Bare-type forms use Geblang's existing union-type syntax
+(`int | float`), so they tolerate generic arguments and nullable
+markers - `case ?string | bytes` is valid. Literal and enum
+alternates use `|` directly between the patterns.
+
+Guards apply to the whole or-pattern: `case A | B if (cond) => ...`
+means "match A or B, then check cond".
+
+Bindings inside an or-pattern are not supported in 1.6.0; use
+separate cases when a branch needs to bind a value, or a single
+typed case with an internal `if/else`.
+
 ### Guard clauses
 
 A `when` guard filters a case with an additional boolean condition:

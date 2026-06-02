@@ -1802,7 +1802,29 @@ func (p *Parser) parseMatchExpression() *ast.MatchExpression {
 					c.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 				}
 			} else {
-				c.Pattern = p.parseExpression(lowest)
+				c.Pattern = p.parseExpression(bitOr)
+			}
+			if p.peekTokenIs(token.BitOr) {
+				if c.Name != nil {
+					p.errorf(p.peekToken, "or-pattern alternates cannot introduce bindings")
+				}
+				if c.ListPattern != nil || c.EnumVariant != nil {
+					p.errorf(p.peekToken, "or-pattern alternates are only allowed for literal, bare-type, and enum-no-payload patterns")
+				}
+				for p.peekTokenIs(token.BitOr) {
+					p.nextToken()
+					p.nextToken()
+					if p.isTypePattern() {
+						typeTok := p.curToken
+						typeRef := p.parseTypeRefFromCurrent()
+						if p.peekTokenIs(token.Ident) {
+							p.errorf(p.peekToken, "or-pattern alternates cannot introduce bindings")
+						}
+						c.Alternates = append(c.Alternates, &ast.Identifier{Token: typeTok, Value: typeRef.Name})
+					} else {
+						c.Alternates = append(c.Alternates, p.parseExpression(bitOr))
+					}
+				}
 			}
 			if p.peekTokenIs(token.If) {
 				p.nextToken()

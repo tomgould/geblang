@@ -5398,6 +5398,66 @@ io.println([1, 2, 3].remove(99));
 `, "[1, 2, 3]\n")
 }
 
+func TestParityOrPatterns(t *testing.T) {
+	// Literal alternation.
+	runParity(t, `import io;
+func describe(int x): string {
+    return match (x) {
+        case 1 | 2 | 3 => "low";
+        case 10 | 20 | 30 => "med";
+        default => "other";
+    };
+}
+io.println(describe(1));
+io.println(describe(2));
+io.println(describe(20));
+io.println(describe(50));
+`, "low\nlow\nmed\nother\n")
+
+	// Bare-type alternation (union type form is parsed as Type).
+	runParity(t, `import io;
+func anyNumeric(any v): string {
+    return match (v) {
+        case int | float | decimal => "numeric";
+        case string => "text";
+        default => "other";
+    };
+}
+io.println(anyNumeric(5));
+io.println(anyNumeric(3.14));
+io.println(anyNumeric("hi"));
+io.println(anyNumeric(true));
+`, "numeric\nnumeric\ntext\nother\n")
+
+	// Enum-no-payload alternation.
+	runParity(t, `import io;
+enum Color { Red, Green, Blue }
+func warm(Color c): bool {
+    return match (c) {
+        case Color.Red | Color.Blue => true;
+        case Color.Green => false;
+    };
+}
+io.println(warm(Color.Red));
+io.println(warm(Color.Blue));
+io.println(warm(Color.Green));
+`, "true\ntrue\nfalse\n")
+
+	// Guard applies to the whole or-pattern.
+	runParity(t, `import io;
+func withGuard(int x): string {
+    return match (x) {
+        case 1 | 2 | 3 if (x > 1) => "pass";
+        case 1 | 2 | 3 => "fail";
+        default => "other";
+    };
+}
+io.println(withGuard(1));
+io.println(withGuard(2));
+io.println(withGuard(99));
+`, "fail\npass\nother\n")
+}
+
 func TestParityLiteralSpread(t *testing.T) {
 	// List literal spread (already worked before L3; regression guard).
 	runParity(t, `import io;

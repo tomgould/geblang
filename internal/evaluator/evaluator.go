@@ -2483,7 +2483,7 @@ func (e *Evaluator) matchCase(value runtime.Value, c ast.MatchCase, env *runtime
 			}
 		}
 	case c.Type != nil:
-		matched = valueMatchesType(value, c.Type.Name)
+		matched = valueMatchesType(value, c.Type.String())
 		if matched && c.Name != nil {
 			if err := caseEnv.Define(c.Name.Value, value, false); err != nil {
 				return nil, false, err
@@ -2523,6 +2523,18 @@ func (e *Evaluator) matchCase(value runtime.Value, c ast.MatchCase, env *runtime
 		}
 		matched = equal.(runtime.Bool).Value
 	}
+	if !matched && len(c.Alternates) > 0 {
+		for _, alt := range c.Alternates {
+			altMatched, err := e.matchOrAlternate(value, alt, env)
+			if err != nil {
+				return nil, false, err
+			}
+			if altMatched {
+				matched = true
+				break
+			}
+		}
+	}
 	if !matched {
 		return nil, false, nil
 	}
@@ -2536,6 +2548,36 @@ func (e *Evaluator) matchCase(value runtime.Value, c ast.MatchCase, env *runtime
 		}
 	}
 	return caseEnv, true, nil
+}
+
+// matchOrAlternate tests a single or-pattern alternate against a value.
+// Bare type names (e.g. `int`, stored as an Identifier) test the value's
+// type; everything else is evaluated and compared via `==`. Alternates
+// never bind, so no env mutation happens here.
+func (e *Evaluator) matchOrAlternate(value runtime.Value, alt ast.Expression, env *runtime.Environment) (bool, error) {
+	if ident, ok := alt.(*ast.Identifier); ok && isBuiltinTypeNameForMatch(ident.Value) {
+		return e.valueMatchesType(value, ident.Value), nil
+	}
+	patternVal, err := e.evalExpression(alt, env)
+	if err != nil {
+		return false, err
+	}
+	eq, err := e.evalInfix("==", value, patternVal)
+	if err != nil {
+		return false, err
+	}
+	if b, ok := eq.(runtime.Bool); ok {
+		return b.Value, nil
+	}
+	return false, nil
+}
+
+func isBuiltinTypeNameForMatch(name string) bool {
+	switch name {
+	case "string", "int", "float", "decimal", "bool", "bytes", "list", "dict", "set", "range", "null":
+		return true
+	}
+	return false
 }
 
 // valueMatchesType (method form) is the evaluator-aware variant of the

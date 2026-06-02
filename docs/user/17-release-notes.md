@@ -53,6 +53,29 @@ set spread accepts a set or a list. A literal whose entries are all
 spreads is treated as a dict by default; force a set form by including
 at least one bare element.
 
+### Or-patterns in `match`
+
+`case A | B | C => ...` matches when any alternate matches. Alternates
+are bindless and cover three pattern kinds: literals (`case 1 | 2`),
+bare types using Geblang's existing union-type syntax (`case int |
+float`), and enum variants without payload (`case Color.Red | Color.Blue`).
+
+```gb
+match (v) {
+    case int | float | decimal => "numeric";
+    case 1 | 2 | 3             => "low";
+    case Color.Red | Color.Blue => "warm";
+    default                     => "other";
+}
+```
+
+Guards apply to the whole or-pattern. Bindings inside alternates are
+not supported in this release.
+
+This change also fixes a pre-existing bug where union-typed
+`case T | U =>` patterns matched only the first arm; the dispatcher
+now consults the full type string on both backends.
+
 ## 1.5.4
 
 ### Bytecode VM: fused mod-zero branch

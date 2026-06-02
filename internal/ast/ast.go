@@ -585,6 +585,12 @@ type MatchCase struct {
 	Default     bool
 	EnumVariant *EnumVariantPattern
 	ListPattern *ListPatternMatch
+	// Alternates carries additional or-pattern alternates. The case
+	// matches if Pattern OR any Alternate matches; Guard then applies
+	// to the whole disjunction. Restricted to bindless patterns:
+	// literals, enum variants without payload, and bare types. Empty
+	// when the case has no `|` alternation.
+	Alternates []Expression
 }
 
 // ListPatternMatch describes a list-shape match pattern such as

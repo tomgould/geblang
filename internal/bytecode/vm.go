@@ -10218,6 +10218,25 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 			}
 		}
 	}
+	if arms, ok := vmSplitTopLevelUnion(target); ok {
+		for _, arm := range arms {
+			vm.push(value)
+			vm.push(runtime.String{Value: arm})
+			if err := vm.instanceOf(instruction); err != nil {
+				return err
+			}
+			result, perr := vm.pop()
+			if perr != nil {
+				return vm.runtimeError(instruction, "%s", perr.Error())
+			}
+			if b, ok := result.(runtime.Bool); ok && b.Value {
+				vm.push(runtime.Bool{Value: true})
+				return nil
+			}
+		}
+		vm.push(runtime.Bool{Value: false})
+		return nil
+	}
 	if ev, ok := value.(runtime.EnumVariant); ok {
 		if dotIdx := strings.Index(target, "."); dotIdx >= 0 {
 			enumName := target[:dotIdx]
