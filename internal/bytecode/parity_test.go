@@ -512,6 +512,25 @@ io.println((-4).isEven());
 `, "2.5700000000\n3.0000000000\n-3.0000000000\n2.0000000000\n3.0000000000\n2.9000000000\n3.14\n2\n7.0000000000\n3.1420000000\n12.3500000000\n-1\n0\n1\n10\n0\n5\n5.0000000000\ntrue\ntrue\ntrue\n")
 }
 
+func TestParityDirBuiltin(t *testing.T) {
+	// dir(value) returns the sorted method-name list for a value; both
+	// backends must produce identical output.
+	runParity(t, `import io;
+io.println("${dir([1, 2, 3])}");
+io.println("${dir({"a": 1})}");
+io.println("${dir([1, 2] as set)}");
+io.println("${dir(42)}");
+io.println("${dir(3.5)}");
+io.println("${dir("x")}");
+`, `["append", "clear", "contains", "extend", "filter", "first", "indexOf", "insert", "isEmpty", "join", "last", "length", "map", "pop", "prepend", "push", "remove", "reverse", "set", "slice", "sort", "toList", "unshift"]
+["clear", "contains", "delete", "entries", "get", "hasKey", "insert", "isEmpty", "items", "keys", "length", "merge", "remove", "set", "values"]
+["add", "contains", "difference", "intersection", "isEmpty", "length", "remove", "toList", "union"]
+["abs", "clamp", "isEven", "isNegative", "isOdd", "isPositive", "isZero", "sign", "toString"]
+["abs", "ceil", "clamp", "floor", "isNegative", "isPositive", "isZero", "round", "sign", "toString", "truncate"]
+["chars", "codeAt", "contains", "endsWith", "format", "indexOf", "isEmpty", "length", "lower", "padLeft", "padRight", "replace", "split", "startsWith", "substring", "toBool", "toDecimal", "toFloat", "toInt", "trim", "trimLeft", "trimRight", "upper"]
+`)
+}
+
 func TestParityTestingAssertions(t *testing.T) {
 	runParity(t, `import io;
 import test;

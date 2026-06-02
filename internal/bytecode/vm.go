@@ -1562,6 +1562,12 @@ func (vm *VM) Run() (err error) {
 					vm.push(runtime.Type{Name: value.TypeName()})
 				}
 			}
+		case OpDir:
+			vmv, err := vm.popVM()
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
+			vm.push(vmDirValue(vmv.ToValue()))
 		case OpInstanceOf:
 			if err := vm.instanceOf(instruction); err != nil {
 				return err
@@ -7611,6 +7617,85 @@ func vmPrimitiveTypeMetadata(value runtime.Value) (runtime.ClassMetadata, bool) 
 		return runtime.ClassMetadata{Name: "range", Methods: vmPrimitiveMethodNamesFor("range")}, true
 	}
 	return runtime.ClassMetadata{}, false
+}
+
+// vmDirValue mirrors the evaluator's dirValue: the sorted method names
+// callable on a value. The numeric/bool lists and the collection lists
+// (via vmPrimitiveMethodNamesFor) are kept identical to the evaluator so
+// dir(value) produces byte-identical output on both backends.
+func vmDirValue(value runtime.Value) runtime.Value {
+	var names []string
+	switch v := value.(type) {
+	case *runtime.Module:
+		for name := range v.Exports {
+			names = append(names, name)
+		}
+	case *runtime.Class:
+		seen := map[string]bool{}
+		for class := v; class != nil; class = class.Parent {
+			for _, field := range class.Fields {
+				seen[field.Name] = true
+			}
+			for name := range class.Methods {
+				seen[name] = true
+			}
+			for name := range class.StaticMethods {
+				seen[name] = true
+			}
+			for name := range class.StaticValues {
+				seen[name] = true
+			}
+		}
+		for name := range seen {
+			names = append(names, name)
+		}
+	case *runtime.Instance:
+		seen := map[string]bool{}
+		for name := range v.Fields {
+			seen[name] = true
+		}
+		for class := v.Class; class != nil; class = class.Parent {
+			for _, field := range class.Fields {
+				seen[field.Name] = true
+			}
+			for name := range class.Methods {
+				seen[name] = true
+			}
+		}
+		for name := range seen {
+			names = append(names, name)
+		}
+	case runtime.Dict:
+		names = vmPrimitiveMethodNamesFor("dict")
+	case runtime.Set:
+		names = vmPrimitiveMethodNamesFor("set")
+	case *runtime.List:
+		names = vmPrimitiveMethodNamesFor("list")
+	case runtime.String:
+		names = vmPrimitiveMethodNamesFor("string")
+	case runtime.Bytes:
+		names = vmPrimitiveMethodNamesFor("bytes")
+	case runtime.Range:
+		names = vmPrimitiveMethodNamesFor("range")
+	case runtime.SmallInt, runtime.Int:
+		names = []string{"abs", "clamp", "isEven", "isNegative", "isOdd", "isPositive", "isZero", "sign", "toString"}
+	case runtime.Decimal:
+		names = []string{"abs", "ceil", "clamp", "floor", "isNegative", "isPositive", "isZero", "round", "sign", "toString", "truncate"}
+	case runtime.Float:
+		names = []string{"abs", "ceil", "clamp", "floor", "isNegative", "isPositive", "isZero", "round", "sign", "toString", "truncate"}
+	case runtime.Bool:
+		names = []string{"not", "toString"}
+	case runtime.Function, runtime.OverloadedFunction:
+		names = []string{"call"}
+	default:
+		names = []string{}
+	}
+	sort.Strings(names)
+	elements := make([]runtime.Value, 0, len(names))
+	for _, name := range names {
+		elements = append(elements, runtime.String{Value: name})
+	}
+	return &runtime.List{Elements: elements}
 }
 
 func vmPrimitiveMethodNamesFor(typeName string) []string {

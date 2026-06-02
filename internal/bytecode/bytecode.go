@@ -271,6 +271,10 @@ const (
 	// the top of the stack. Pops (value, spec-string), pushes the
 	// formatted string. Emitted for `${expr:spec}` interpolations.
 	OpFormatSpec
+	// OpDir pops a value and pushes the sorted list of method names
+	// callable on it (the dir(value) builtin). The no-argument and
+	// module-introspection forms of dir are evaluator/REPL-only.
+	OpDir
 )
 
 type Instruction struct {

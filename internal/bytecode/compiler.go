@@ -2711,6 +2711,16 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				c.emitAt(OpCallParentConstructor, expr.Token.Line, expr.Token.Column, c.classStack[len(c.classStack)-1], int64(len(orderedArgs)))
 				return nil
 			}
+			if strings.EqualFold(ident.Value, "dir") {
+				if len(expr.Arguments) != 1 || expr.Arguments[0].Name != nil {
+					return fmt.Errorf("dir(value) expects one positional argument; dir() scope introspection is evaluator/REPL-only")
+				}
+				if err := c.compileExpression(expr.Arguments[0].Value); err != nil {
+					return err
+				}
+				c.emitAt(OpDir, expr.Token.Line, expr.Token.Column)
+				return nil
+			}
 			if strings.EqualFold(ident.Value, "typeof") {
 				if len(expr.Arguments) != 1 || expr.Arguments[0].Name != nil {
 					return fmt.Errorf("typeof expects exactly one positional argument")
