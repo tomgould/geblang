@@ -12,12 +12,16 @@ DOCKER_CONTAINER ?= geblang-build-artifacts
 VSCODE_IMAGE ?= geblang-vscode-artifacts
 VSCODE_CONTAINER ?= geblang-vscode-build-artifacts
 
-# Full local build: run all tests, install the binary, regenerate
-# the docs site, build + install the VS Code extension, then run the
-# benchmark suite. Each step is a separate sub-make invocation so a
-# failure aborts the chain.
+# Full local build: run all tests, static-check the .gb corpus, install
+# the binary, regenerate the docs site, build + install the VS Code
+# extension, then run the benchmark suite. Each step is a separate
+# sub-make invocation so a failure aborts the chain. check-lang runs
+# right after the tests as a build gate: a stale catalog, a drifted
+# native surface, or a regressed `geblang check` fails the build before
+# the expensive install/docs/vscode/bench steps.
 all:
 	$(MAKE) test
+	$(MAKE) check-lang
 	$(MAKE) install
 	$(MAKE) docs
 	$(MAKE) vscode-build
