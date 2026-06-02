@@ -1485,12 +1485,32 @@ func (p *Parser) parseOptionalSliceStep(rng *ast.RangeExpression) {
 }
 
 func (p *Parser) parseListLiteral() ast.Expression {
-	lit := &ast.ListLiteral{Token: p.curToken}
+	openToken := p.curToken
 	if p.peekTokenIs(token.RBracket) {
 		p.nextToken()
-		return lit
+		return &ast.ListLiteral{Token: openToken}
 	}
-	for {
+	p.nextToken()
+	var first ast.Expression
+	if p.curTokenIs(token.Ellipsis) {
+		spreadTok := p.curToken
+		p.nextToken()
+		first = &ast.SpreadExpression{Token: spreadTok, Value: p.parseExpression(lowest)}
+	} else {
+		first = p.parseExpression(lowest)
+	}
+	if p.peekTokenIs(token.For) {
+		comp := &ast.ListComprehension{Token: openToken, Body: first}
+		comp.Clauses = p.parseComprehensionTail()
+		p.expectPeek(token.RBracket)
+		return comp
+	}
+	lit := &ast.ListLiteral{Token: openToken, Elements: []ast.Expression{first}}
+	for p.peekTokenIs(token.Comma) {
+		p.nextToken()
+		if p.peekTokenIs(token.RBracket) {
+			break
+		}
 		p.nextToken()
 		if p.curTokenIs(token.Ellipsis) {
 			spreadTok := p.curToken
@@ -1498,15 +1518,6 @@ func (p *Parser) parseListLiteral() ast.Expression {
 			lit.Elements = append(lit.Elements, &ast.SpreadExpression{Token: spreadTok, Value: p.parseExpression(lowest)})
 		} else {
 			lit.Elements = append(lit.Elements, p.parseExpression(lowest))
-		}
-		if !p.peekTokenIs(token.Comma) {
-			break
-		}
-		p.nextToken()
-		/* Trailing comma: `[a, b, c,]` is legal and the dangling
-		 * `,` simply terminates the list. */
-		if p.peekTokenIs(token.RBracket) {
-			break
 		}
 	}
 	p.expectPeek(token.RBracket)
@@ -1523,6 +1534,12 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 	p.nextToken()
 	first := p.parseExpression(lowest)
 	if !p.peekTokenIs(token.Colon) {
+		if p.peekTokenIs(token.For) {
+			comp := &ast.SetComprehension{Token: openToken, Body: first}
+			comp.Clauses = p.parseComprehensionTail()
+			p.expectPeek(token.RBrace)
+			return comp
+		}
 		lit := &ast.SetLiteral{Token: openToken, Elements: []ast.Expression{first}}
 		for p.peekTokenIs(token.Comma) {
 			p.nextToken()
@@ -1535,25 +1552,93 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 		p.expectPeek(token.RBrace)
 		return lit
 	}
-	lit := &ast.DictLiteral{Token: openToken}
-	for {
-		key := first
-		p.expectPeek(token.Colon)
-		p.nextToken()
-		value := p.parseExpression(lowest)
-		lit.Entries = append(lit.Entries, ast.DictEntry{Key: key, Value: value})
-		if !p.peekTokenIs(token.Comma) {
-			break
-		}
+	p.expectPeek(token.Colon)
+	p.nextToken()
+	firstValue := p.parseExpression(lowest)
+	if p.peekTokenIs(token.For) {
+		comp := &ast.DictComprehension{Token: openToken, KeyBody: first, ValueBody: firstValue}
+		comp.Clauses = p.parseComprehensionTail()
+		p.expectPeek(token.RBrace)
+		return comp
+	}
+	lit := &ast.DictLiteral{Token: openToken, Entries: []ast.DictEntry{{Key: first, Value: firstValue}}}
+	for p.peekTokenIs(token.Comma) {
 		p.nextToken()
 		if p.peekTokenIs(token.RBrace) {
 			break
 		}
 		p.nextToken()
-		first = p.parseExpression(lowest)
+		key := p.parseExpression(lowest)
+		p.expectPeek(token.Colon)
+		p.nextToken()
+		value := p.parseExpression(lowest)
+		lit.Entries = append(lit.Entries, ast.DictEntry{Key: key, Value: value})
 	}
 	p.expectPeek(token.RBrace)
 	return lit
+}
+
+// parseComprehensionTail parses a sequence of `for ... in ...` and `if ...`
+// clauses inside a comprehension. cur token must be the last token of the
+// body expression; on return it sits on the last token of the final clause
+// so the caller can consume the closing bracket/brace with expectPeek.
+func (p *Parser) parseComprehensionTail() []ast.ComprehensionClause {
+	var clauses []ast.ComprehensionClause
+	for p.peekTokenIs(token.For) || p.peekTokenIs(token.If) {
+		if p.peekTokenIs(token.For) {
+			p.nextToken()
+			clauses = append(clauses, p.parseComprehensionFor())
+		} else {
+			p.nextToken()
+			clauses = append(clauses, p.parseComprehensionIf())
+		}
+	}
+	return clauses
+}
+
+// parseComprehensionFor parses a `for [type] name [, name]* in iterable`
+// clause. cur token is `for` on entry; on return it sits on the last token
+// of the iterable expression.
+func (p *Parser) parseComprehensionFor() *ast.ComprehensionFor {
+	clause := &ast.ComprehensionFor{Token: p.curToken}
+	p.nextToken()
+	if p.curTokenIs(token.Ident) && p.peekTokenIs(token.Comma) {
+		clause.VarNames = []*ast.Identifier{{Token: p.curToken, Value: p.curToken.Literal}}
+		for p.peekTokenIs(token.Comma) {
+			p.nextToken()
+			if !p.expectPeek(token.Ident) {
+				return clause
+			}
+			clause.VarNames = append(clause.VarNames, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+		}
+		if !p.expectPeek(token.In) {
+			return clause
+		}
+	} else if p.curTokenIs(token.Ident) && p.peekTokenIs(token.In) {
+		clause.VarName = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		p.expectPeek(token.In)
+	} else {
+		clause.VarType = p.parseTypeRefFromCurrent()
+		if !p.expectPeek(token.Ident) {
+			return clause
+		}
+		clause.VarName = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		if !p.expectPeek(token.In) {
+			return clause
+		}
+	}
+	p.nextToken()
+	clause.Iterable = p.parseExpression(lowest)
+	return clause
+}
+
+// parseComprehensionIf parses an `if cond` clause. cur token is `if`
+// on entry; on return it sits on the last token of the condition.
+func (p *Parser) parseComprehensionIf() *ast.ComprehensionIf {
+	clause := &ast.ComprehensionIf{Token: p.curToken}
+	p.nextToken()
+	clause.Filter = p.parseExpression(lowest)
+	return clause
 }
 
 func (p *Parser) parseFunctionLiteral(async bool) ast.Expression {

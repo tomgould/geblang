@@ -148,8 +148,7 @@ scale. The key differences are:
 | Distribution | `venv`, `pip`, runtime required | `geblang build` embeds interpreter, stdlib, and source into one binary |
 | Indentation sensitivity | Required (syntax-level) | Braces (no whitespace sensitivity) |
 
-Python features that Geblang omits include comprehensions as
-a distinct syntax (use `list.map`/`list.filter`), multiple inheritance, `*args`
+Python features that Geblang omits include multiple inheritance, `*args`
 and `**kwargs` on every function by default (but there is spread support).
 
 ## Quick Example

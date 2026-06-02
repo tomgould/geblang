@@ -2309,6 +2309,49 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		return awaitValue(value)
 	case *ast.MatchExpression:
 		return e.evalMatchExpression(expr, env)
+	case *ast.ListComprehension:
+		acc := []runtime.Value{}
+		if err := e.walkComprehensionClauses(expr.Clauses, 0, env, func(itEnv *runtime.Environment) error {
+			v, err := e.evalExpression(expr.Body, itEnv)
+			if err != nil {
+				return err
+			}
+			acc = append(acc, v)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		return &runtime.List{Elements: acc}, nil
+	case *ast.SetComprehension:
+		elements := map[string]runtime.SetEntry{}
+		if err := e.walkComprehensionClauses(expr.Clauses, 0, env, func(itEnv *runtime.Environment) error {
+			v, err := e.evalExpression(expr.Body, itEnv)
+			if err != nil {
+				return err
+			}
+			elements[dictKey(v)] = runtime.SetEntry{Value: v}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		return runtime.Set{Elements: elements}, nil
+	case *ast.DictComprehension:
+		out := runtime.NewDict()
+		if err := e.walkComprehensionClauses(expr.Clauses, 0, env, func(itEnv *runtime.Environment) error {
+			key, err := e.evalExpression(expr.KeyBody, itEnv)
+			if err != nil {
+				return err
+			}
+			val, err := e.evalExpression(expr.ValueBody, itEnv)
+			if err != nil {
+				return err
+			}
+			out.PutEntry(dictKey(key), runtime.DictEntry{Key: key, Value: val})
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		return out, nil
 	case *ast.TernaryExpression:
 		b, err := e.evalBoolCondition(expr.Condition, env)
 		if err != nil {
@@ -6374,6 +6417,127 @@ func (e *Evaluator) evalForInIteration(stmt *ast.ForStatement, loopEnv *runtime.
 		}
 	}
 	return e.evalBlock(stmt.Body, loopEnv)
+}
+
+func (e *Evaluator) walkComprehensionClauses(clauses []ast.ComprehensionClause, idx int, env *runtime.Environment, body func(*runtime.Environment) error) error {
+	if idx >= len(clauses) {
+		return body(env)
+	}
+	switch c := clauses[idx].(type) {
+	case *ast.ComprehensionIf:
+		v, err := e.evalExpression(c.Filter, env)
+		if err != nil {
+			return err
+		}
+		if !isTruthy(v) {
+			return nil
+		}
+		return e.walkComprehensionClauses(clauses, idx+1, env, body)
+	case *ast.ComprehensionFor:
+		return e.iterateComprehensionFor(c, env, func(itEnv *runtime.Environment) error {
+			return e.walkComprehensionClauses(clauses, idx+1, itEnv, body)
+		})
+	}
+	return fmt.Errorf("unknown comprehension clause %T", clauses[idx])
+}
+
+func (e *Evaluator) iterateComprehensionFor(c *ast.ComprehensionFor, env *runtime.Environment, body func(*runtime.Environment) error) error {
+	iterable, err := e.evalExpression(c.Iterable, env)
+	if err != nil {
+		return err
+	}
+	names := c.VarNames
+	if len(names) == 0 && c.VarName != nil {
+		names = []*ast.Identifier{c.VarName}
+	}
+	if len(names) == 0 {
+		return fmt.Errorf("comprehension `for` has no loop variable")
+	}
+	step := func(value runtime.Value) error {
+		itEnv := runtime.NewEnclosedEnvironment(env)
+		if len(names) == 1 {
+			if err := itEnv.Define(names[0].Value, value, false); err != nil {
+				return err
+			}
+		} else {
+			list, ok := value.(*runtime.List)
+			if !ok || len(list.Elements) != len(names) {
+				return fmt.Errorf("cannot destructure %s into %d comprehension variables", value.TypeName(), len(names))
+			}
+			for i, name := range names {
+				if err := itEnv.Define(name.Value, list.Elements[i], false); err != nil {
+					return err
+				}
+			}
+		}
+		return body(itEnv)
+	}
+	switch it := iterable.(type) {
+	case *runtime.List:
+		for _, el := range it.Elements {
+			if err := step(el); err != nil {
+				return err
+			}
+		}
+		return nil
+	case runtime.Set:
+		ordered := orderedSetValues(it)
+		for _, v := range ordered {
+			if err := step(v); err != nil {
+				return err
+			}
+		}
+		return nil
+	case runtime.Range:
+		current := new(big.Int).Set(it.Start)
+		step := new(big.Int).Set(it.Step)
+		fn := func() error {
+			for {
+				cmp := current.Cmp(it.End)
+				if step.Sign() > 0 {
+					if it.Exclusive && cmp >= 0 {
+						return nil
+					}
+					if !it.Exclusive && cmp > 0 {
+						return nil
+					}
+				} else {
+					if it.Exclusive && cmp <= 0 {
+						return nil
+					}
+					if !it.Exclusive && cmp < 0 {
+						return nil
+					}
+				}
+				if err := body(envWithSingleBinding(env, names[0].Value, runtime.Int{Value: new(big.Int).Set(current)})); err != nil {
+					return err
+				}
+				current.Add(current, step)
+			}
+		}
+		return fn()
+	case *runtime.Generator:
+		defer it.Close()
+		for {
+			v, ok, err := it.Next()
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return nil
+			}
+			if err := step(v); err != nil {
+				return err
+			}
+		}
+	}
+	return fmt.Errorf("comprehension cannot iterate over %s", iterable.TypeName())
+}
+
+func envWithSingleBinding(parent *runtime.Environment, name string, value runtime.Value) *runtime.Environment {
+	itEnv := runtime.NewEnclosedEnvironment(parent)
+	_ = itEnv.Define(name, value, false)
+	return itEnv
 }
 
 func (e *Evaluator) evalDestructuringStatement(stmt *ast.DestructuringStatement, env *runtime.Environment) (signal, error) {

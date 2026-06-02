@@ -861,6 +861,66 @@ func (e *SetLiteral) String() string {
 	return "{" + strings.Join(parts, ", ") + "}"
 }
 
+// ComprehensionClause is implemented by ComprehensionFor and
+// ComprehensionIf so the list of clauses can mix the two forms.
+type ComprehensionClause interface {
+	comprehensionClause()
+}
+
+// ComprehensionFor is a `for [type] name [, name] in iterable` clause
+// in a comprehension. Mirrors the for-in form of ForStatement.
+type ComprehensionFor struct {
+	Token    token.Token
+	VarType  *TypeRef
+	VarName  *Identifier
+	VarNames []*Identifier
+	Iterable Expression
+}
+
+func (*ComprehensionFor) comprehensionClause() {}
+
+// ComprehensionIf is an `if cond` filter inside a comprehension.
+// Multiple `if` clauses chain as logical AND.
+type ComprehensionIf struct {
+	Token  token.Token
+	Filter Expression
+}
+
+func (*ComprehensionIf) comprehensionClause() {}
+
+type ListComprehension struct {
+	Token   token.Token
+	Body    Expression
+	Clauses []ComprehensionClause
+}
+
+func (*ListComprehension) expressionNode()        {}
+func (e *ListComprehension) TokenLiteral() string { return e.Token.Literal }
+func (e *ListComprehension) String() string       { return "[" + e.Body.String() + " for ...]" }
+
+type SetComprehension struct {
+	Token   token.Token
+	Body    Expression
+	Clauses []ComprehensionClause
+}
+
+func (*SetComprehension) expressionNode()        {}
+func (e *SetComprehension) TokenLiteral() string { return e.Token.Literal }
+func (e *SetComprehension) String() string       { return "{" + e.Body.String() + " for ...}" }
+
+type DictComprehension struct {
+	Token     token.Token
+	KeyBody   Expression
+	ValueBody Expression
+	Clauses   []ComprehensionClause
+}
+
+func (*DictComprehension) expressionNode()        {}
+func (e *DictComprehension) TokenLiteral() string { return e.Token.Literal }
+func (e *DictComprehension) String() string {
+	return "{" + e.KeyBody.String() + ": " + e.ValueBody.String() + " for ...}"
+}
+
 type RangeExpression struct {
 	Token     token.Token
 	Start     Expression

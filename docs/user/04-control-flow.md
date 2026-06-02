@@ -150,6 +150,85 @@ if (person.hasKey("name")) {
 }
 ```
 
+## Comprehensions
+
+Comprehensions build a list, set, or dict from an iterable in one
+expression instead of an explicit loop + accumulator. The general shape:
+
+```
+[ body for binder in iterable (if cond)* ]
+{ body for binder in iterable (if cond)* }
+{ key: value for binder in iterable (if cond)* }
+```
+
+A list comprehension uses `[...]`, a set comprehension uses `{body}`,
+and a dict comprehension uses `{key: value}` - the parser picks the
+form from the brackets and the presence of `:`.
+
+```gb
+let squares  = [x * x for x in [1, 2, 3, 4]];        # [1, 4, 9, 16]
+let evens    = [x for x in [1, 2, 3, 4] if x % 2 == 0];  # [2, 4]
+let uniqLens = {s.length() for s in ["a", "bb", "a"]};   # set{1, 2}
+let byScore  = {p.name: p.score for p in players};
+```
+
+### Filters
+
+A comprehension can carry zero or more `if` filters after the `for`. They
+chain as logical `AND` - the body fires only when every filter passes.
+
+```gb
+let primes = [x for x in range(2, 20) if x > 1 if x % 2 != 0 if x % 3 != 0];
+```
+
+### Nested iteration
+
+A comprehension can carry more than one `for` clause. Successive clauses
+nest, with the rightmost varying fastest, matching the equivalent loop.
+
+```gb
+let products = [x * y for x in [1, 2, 3] for y in [10, 20]];
+# [10, 20, 20, 40, 30, 60]
+```
+
+Filters can sit between for-clauses; each filter applies at its position in
+the iteration nesting.
+
+```gb
+[x * y for x in xs if x > 0 for y in ys if y > 0]
+```
+
+### Typed binders and destructuring
+
+The `for` binder accepts the same forms as the corresponding `for-in`
+loop: an untyped identifier, a typed identifier, or a comma-separated
+binder list that destructures a two-element value.
+
+```gb
+[x * 2 for int x in [1, 2, 3]]
+[k + "=" + (v as string) for k, v in {"a": 1, "b": 2}.items()]
+```
+
+### Result types
+
+A list comprehension produces `list<T>`, a set comprehension produces
+`set<T>`, and a dict comprehension produces `dict<K, V>`. Element types
+are inferred from the body expression and the binder.
+
+### What comprehensions iterate over
+
+The same iterables the `for-in` loop accepts: `list`, `range`,
+generator-returning calls, classes that implement the iterator protocol,
+and 1.0.6-era `streams`. To iterate dict entries, call `.items()` to get
+`list<list<any>>` and destructure into two binders, or `.keys()` for a
+plain key iteration. To iterate string characters, call `.chars()`.
+
+### Generator comprehensions
+
+The lazy `(expr for x in xs)` form is not supported in 1.6.0; build a
+list with `[...]` and call `.lazy*` higher-order helpers on it, or use a
+`generator` function for lazy production.
+
 ## Match
 
 `match` dispatches on a value, comparing it against a sequence of `case`

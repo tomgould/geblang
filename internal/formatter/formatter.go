@@ -547,6 +547,12 @@ func (f *fmtr) expr(e ast.Expression) string {
 			parts = append(parts, f.expr(el))
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
+	case *ast.ListComprehension:
+		return "[" + f.expr(e.Body) + f.fmtComprehensionClauses(e.Clauses) + "]"
+	case *ast.SetComprehension:
+		return "{" + f.expr(e.Body) + f.fmtComprehensionClauses(e.Clauses) + "}"
+	case *ast.DictComprehension:
+		return "{" + f.expr(e.KeyBody) + ": " + f.expr(e.ValueBody) + f.fmtComprehensionClauses(e.Clauses) + "}"
 	case *ast.PrefixExpression:
 		return e.Operator + f.expr(e.Right)
 	case *ast.PostfixExpression:
@@ -697,6 +703,32 @@ func (f *fmtr) params(params []ast.Parameter) string {
 		parts = append(parts, p.String())
 	}
 	return strings.Join(parts, ", ")
+}
+
+func (f *fmtr) fmtComprehensionClauses(clauses []ast.ComprehensionClause) string {
+	var sb strings.Builder
+	for _, clause := range clauses {
+		switch c := clause.(type) {
+		case *ast.ComprehensionFor:
+			sb.WriteString(" for ")
+			if c.VarType != nil {
+				sb.WriteString(c.VarType.String() + " ")
+			}
+			if len(c.VarNames) > 0 {
+				names := make([]string, 0, len(c.VarNames))
+				for _, n := range c.VarNames {
+					names = append(names, n.Value)
+				}
+				sb.WriteString(strings.Join(names, ", "))
+			} else if c.VarName != nil {
+				sb.WriteString(c.VarName.Value)
+			}
+			sb.WriteString(" in " + f.expr(c.Iterable))
+		case *ast.ComprehensionIf:
+			sb.WriteString(" if " + f.expr(c.Filter))
+		}
+	}
+	return sb.String()
 }
 
 func (f *fmtr) typeParams(tps []*ast.TypeParam) string {

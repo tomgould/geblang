@@ -5398,6 +5398,53 @@ io.println([1, 2, 3].remove(99));
 `, "[1, 2, 3]\n")
 }
 
+func TestParityComprehensions(t *testing.T) {
+	runParity(t, `import io;
+io.println([x * 2 for x in [1, 2, 3, 4, 5]]);
+`, "[2, 4, 6, 8, 10]\n")
+
+	runParity(t, `import io;
+io.println([x for x in [1, 2, 3, 4, 5] if x % 2 == 0]);
+`, "[2, 4]\n")
+
+	runParity(t, `import io;
+io.println([x for x in [1, 2, 3, 4, 5] if x > 1 if x < 5]);
+`, "[2, 3, 4]\n")
+
+	runParity(t, `import io;
+io.println([x * y for x in [1, 2, 3] for y in [10, 20, 30]]);
+`, "[10, 20, 30, 20, 40, 60, 30, 60, 90]\n")
+
+	runParity(t, `import io;
+io.println({x * x for x in [1, 2, 3, 2, 1]});
+`, "set{1, 4, 9}\n")
+
+	runParity(t, `import io;
+io.println({x: x * x for x in [1, 2, 3]});
+`, "{1: 1, 2: 4, 3: 9}\n")
+
+	runParity(t, `import io;
+io.println([x * 2 for int x in [1, 2, 3]]);
+`, "[2, 4, 6]\n")
+
+	runParity(t, `import io;
+let mul = 100;
+io.println([x * mul for x in [1, 2, 3]]);
+`, "[100, 200, 300]\n")
+
+	runParity(t, `import io;
+io.println([x * y for x in [1, 2, 3] if x > 1 for y in [10, 20] if y > 10]);
+`, "[40, 60]\n")
+
+	runParity(t, `import io;
+io.println([[y for y in range(0, x)] for x in range(0, 4)]);
+`, "[[0], [0, 1], [0, 1, 2], [0, 1, 2, 3], [0, 1, 2, 3, 4]]\n")
+
+	runParity(t, `import io;
+io.println([x for x in []]);
+`, "[]\n")
+}
+
 func TestParityJumpIfModZero(t *testing.T) {
 	runParity(t, `import io;
 int total = 0;

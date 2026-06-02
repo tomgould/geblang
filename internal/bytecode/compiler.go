@@ -2271,6 +2271,12 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		}
 		c.emitAt(OpBuildSet, expr.Token.Line, expr.Token.Column, int64(len(expr.Elements)))
 		return nil
+	case *ast.ListComprehension:
+		return c.compileExpression(desugarListComprehension(expr))
+	case *ast.SetComprehension:
+		return c.compileExpression(desugarSetComprehension(expr))
+	case *ast.DictComprehension:
+		return c.compileExpression(desugarDictComprehension(expr))
 	case *ast.RangeExpression:
 		if expr.Start == nil {
 			c.emitConstant(runtime.Null{}, expr.Token.Line, expr.Token.Column)

@@ -1,0 +1,100 @@
+/**
+ * @title Comprehensions (1.6.0)
+ * @summary List, set, and dict comprehensions:
+ *   [expr for x in iter (if cond)*]
+ *   {expr for x in iter (if cond)*}
+ *   {key: val for x in iter (if cond)*}
+ * Multiple for clauses nest; multiple if filters chain as AND.
+ */
+import test;
+
+class ComprehensionsTest extends test.Test {
+
+    @test
+    func listBasic(): void {
+        this.assertEquals([2, 4, 6, 8, 10], [x * 2 for x in [1, 2, 3, 4, 5]]);
+    }
+
+    @test
+    func listWithFilter(): void {
+        this.assertEquals([2, 4], [x for x in [1, 2, 3, 4, 5] if x % 2 == 0]);
+    }
+
+    @test
+    func listChainedFilters(): void {
+        this.assertEquals([2, 3, 4], [x for x in [1, 2, 3, 4, 5] if x > 1 if x < 5]);
+    }
+
+    @test
+    func listNestedFor(): void {
+        this.assertEquals([10, 20, 30, 20, 40, 60, 30, 60, 90],
+            [x * y for x in [1, 2, 3] for y in [10, 20, 30]]);
+    }
+
+    @test
+    func listInterleavedForIf(): void {
+        this.assertEquals([40, 60],
+            [x * y for x in [1, 2, 3] if x > 1 for y in [10, 20] if y > 10]);
+    }
+
+    @test
+    func listTypedBinder(): void {
+        this.assertEquals([2, 4, 6], [x * 2 for int x in [1, 2, 3]]);
+    }
+
+    @test
+    func listClosureCapture(): void {
+        let mul = 7;
+        this.assertEquals([7, 14, 21], [x * mul for x in [1, 2, 3]]);
+    }
+
+    @test
+    func listEmpty(): void {
+        this.assertEquals([] as list<int>, [x for x in [] as list<int>]);
+    }
+
+    @test
+    func setDedups(): void {
+        let s = {x * x for x in [1, 2, 3, 2, 1]};
+        this.assertEquals(3, s.length());
+        this.assertTrue(s.contains(1));
+        this.assertTrue(s.contains(4));
+        this.assertTrue(s.contains(9));
+    }
+
+    @test
+    func dictKeyValue(): void {
+        let d = {x: x * x for x in [1, 2, 3]};
+        this.assertEquals(1, d[1]);
+        this.assertEquals(4, d[2]);
+        this.assertEquals(9, d[3]);
+    }
+
+    @test
+    func dictWithFilter(): void {
+        let d = {x: x * 10 for x in [1, 2, 3, 4] if x % 2 == 0};
+        this.assertEquals(2, d.length());
+        this.assertEquals(20, d[2]);
+        this.assertEquals(40, d[4]);
+    }
+
+    @test
+    func nestedComprehension(): void {
+        let result = [[y for y in range(0, x)] for x in range(1, 4)];
+        this.assertEquals(4, result.length());
+        this.assertEquals([0, 1], result[0]);
+        this.assertEquals([0, 1, 2], result[1]);
+        this.assertEquals([0, 1, 2, 3], result[2]);
+        this.assertEquals([0, 1, 2, 3, 4], result[3]);
+    }
+
+    @test
+    func twoVarDestructureFromDictItems(): void {
+        let d = {"a": 1, "b": 2, "c": 3};
+        let pairs = [k + ":" + (v as string) for k, v in d.items()];
+        this.assertEquals(3, pairs.length());
+        this.assertContains(pairs, "a:1");
+        this.assertContains(pairs, "b:2");
+        this.assertContains(pairs, "c:3");
+    }
+}

@@ -1,5 +1,26 @@
 # Release Notes
 
+## 1.6.0
+
+### List, set, and dict comprehensions
+
+New Python-style comprehension syntax for building a list, set, or dict
+from an iterable in one expression. Multiple `for` clauses nest;
+multiple `if` filters chain as logical AND.
+
+```gb
+let evens   = [x for x in xs if x % 2 == 0];
+let squares = {x * x for x in xs};
+let byId    = {u.id: u for u in users};
+let pairs   = [a + ":" + b for a in xs for b in ys if a != b];
+```
+
+The binder accepts the same forms as the `for-in` loop: untyped,
+typed (`for int x in xs`), or destructuring (`for k, v in d.items()`).
+
+The lazy generator-comprehension form `(expr for x in xs)` is not
+included in this release.
+
 ## 1.5.4
 
 ### Bytecode VM: fused mod-zero branch
