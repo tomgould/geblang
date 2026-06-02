@@ -5439,6 +5439,65 @@ io.println(v2 == r2);
 `, "true\ntrue\n")
 }
 
+// Regression: the VM's foreign-class method dispatch was wrapping
+// the native trampoline's error via runtimeError, which stripped the
+// vmThrownError chain and prevented a try/catch in the calling module
+// from catching exceptions thrown inside a stdlib class method.
+func TestParityCatchAcrossStdlibBoundary(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import option;
+let o = option.Option(false, 0);
+try {
+    o.unwrap();
+} catch (ValueError e) {
+    io.println("caught: " + e.message);
+}
+io.println("done");
+`, "caught: Option.unwrap called on None\ndone\n")
+}
+
+func TestParityPriorityQueue(t *testing.T) {
+	// Natural-order min-heap drains in ascending order.
+	runParityWithStdlib(t, `import io;
+import priorityq;
+let q = priorityq.PriorityQueue<int>();
+q.push(3); q.push(1); q.push(4); q.push(1); q.push(5); q.push(9); q.push(2); q.push(6);
+io.println(q.length());
+io.println(q.peek());
+while (!q.isEmpty()) {
+    io.println(q.pop());
+}
+`, "8\n1\n1\n1\n2\n3\n4\n5\n6\n9\n")
+
+	// Custom comparator reverses the order.
+	runParityWithStdlib(t, `import io;
+import priorityq;
+let q = priorityq.PriorityQueue<int>(func(int a, int b): int { return b - a; });
+q.push(2); q.push(7); q.push(1); q.push(5);
+io.println(q.pop());
+io.println(q.pop());
+io.println(q.pop());
+io.println(q.pop());
+`, "7\n5\n2\n1\n")
+
+	// pushPop, drain, clear, empty errors.
+	runParityWithStdlib(t, `import io;
+import priorityq;
+let q = priorityq.PriorityQueue<int>();
+q.push(5); q.push(10); q.push(1);
+io.println(q.pushPop(0));
+io.println(q.pushPop(7));
+io.println(q.drain());
+io.println(q.isEmpty());
+
+q.push(3); q.push(2);
+q.clear();
+io.println(q.length());
+
+try { q.pop(); } catch (ValueError e) { io.println("empty"); }
+`, "0\n1\n[5, 7, 10]\ntrue\n0\nempty\n")
+}
+
 func TestParityAssert(t *testing.T) {
 	// Truthy assert is a no-op; falsy assert throws AssertionError.
 	runParity(t, `import io;

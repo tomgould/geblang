@@ -1,0 +1,39 @@
+/**
+ * @title try/catch across stdlib module boundary
+ * @summary Regression: exceptions thrown from inside a class method
+ * defined in an imported stdlib module must be catchable in the
+ * calling module's try/catch (VM-mode regression; evaluator was
+ * already correct).
+ */
+import test;
+import option;
+
+class CatchAcrossModuleTest extends test.Test {
+
+    @test
+    func optionUnwrapOnNoneIsCatchable(): void {
+        let o = option.Option(false, 0);
+        let caught = false;
+        let msg = "";
+        try {
+            o.unwrap();
+        } catch (ValueError e) {
+            caught = true;
+            msg = e.message;
+        }
+        this.assertTrue(caught);
+        this.assertTrue(msg.contains("None"));
+    }
+
+    @test
+    func catchAsGenericErrorAlsoWorks(): void {
+        let o = option.Option(false, 0);
+        let caughtClass = "";
+        try {
+            o.unwrap();
+        } catch (Error e) {
+            caughtClass = e.class;
+        }
+        this.assertEquals("ValueError", caughtClass);
+    }
+}

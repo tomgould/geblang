@@ -116,6 +116,26 @@ the existing `math.pi()` / `math.e()` shape:
 | `math.maxFloat()` / `math.minFloat()` | float64 limits |
 | `math.epsilon()` | smallest float `eps` such that `1 + eps != 1` |
 
+### Bug fix: try/catch across stdlib module boundary (VM)
+
+Fixed a VM-mode regression where exceptions thrown from inside a
+class method defined in an imported stdlib module were not caught
+by a `try / catch` in the calling module. The dispatcher's
+foreign-class native-trampoline branch was wrapping the inner
+error with `runtimeError`, which collapsed the typed-throw chain
+to a plain string before the calling VM could propagate it to its
+exception-handler stack. The evaluator path was always correct;
+behaviour is now consistent across both backends.
+
+```gb
+import option;
+try {
+    option.Option(false, 0).unwrap();
+} catch (ValueError e) {
+    # now catchable on the VM, as on the evaluator
+}
+```
+
 ### `assert` builtin
 
 New top-level `assert(cond)` / `assert(cond, message)` builtin and a
@@ -139,6 +159,30 @@ arguments are lost). `geblang test` always runs assertions.
 The LSP catalog also surfaces signatures and hover docs for
 `assert`, `typeof`, `range`, `dump`, and `dir`, which until now
 were callable but invisible to the IDE.
+
+### `priorityq.PriorityQueue<T>`
+
+New stdlib priority queue (binary min-heap). Without a comparator,
+elements are ordered by Geblang's `<` operator (works for `int`,
+`float`, `decimal`, `string`); a `func(T, T): int` comparator
+covers custom types or reverse order.
+
+```gb
+import priorityq;
+
+let q = priorityq.PriorityQueue<int>();
+q.push(3); q.push(1); q.push(2);
+q.pop();   # 1
+
+let byPriority = priorityq.PriorityQueue<Job>(
+    func(Job a, Job b): int { return a.priority - b.priority; }
+);
+```
+
+Operations: `push`, `pop`, `peek`, `length`, `isEmpty`,
+`pushPop` (atomic push-then-pop, useful for top-K), `drain`
+(returns the remaining elements as a sorted list), and `clear`.
+`pop()` and `peek()` throw `ValueError` on an empty queue.
 
 ### Provably-fair RNG (`secureRandom`)
 

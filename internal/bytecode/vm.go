@@ -11272,7 +11272,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if nativeMethods := instance.Class.Methods[strings.ToLower(nameValue.Value)]; len(nativeMethods) > 0 && nativeMethods[0].Native != nil {
 				result, err := nativeMethods[0].Native(instance, args)
 				if err != nil {
-					return 0, vm.runtimeError(instruction, "%s", err.Error())
+					return vm.propagateModuleError(instruction, ip, err)
 				}
 				vm.push(result)
 				return ip, nil

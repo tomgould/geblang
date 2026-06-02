@@ -1,0 +1,153 @@
+module priorityq;
+
+## A binary min-heap-backed priority queue. Smallest-by-order
+## element is always at the head; `pop()` and `peek()` return it.
+##
+## Without a comparator, elements are ordered by Geblang's `<`
+## operator (works for `int`, `float`, `decimal`, `string`).
+## Pass a comparator `func(T, T): int` (returns < 0 / 0 / > 0)
+## for custom types or reverse order.
+##
+## ```gb
+## let q = PriorityQueue<int>();
+## q.push(3);
+## q.push(1);
+## q.push(2);
+## io.println(q.pop());     # 1
+##
+## let byPriority = PriorityQueue<Job>(func(Job a, Job b): int {
+##     return a.priority - b.priority;
+## });
+## ```
+export class PriorityQueue<T> {
+    list<T> _heap;
+    int _size;
+    any compare;
+
+    func PriorityQueue(any compare = null) {
+        this._heap = ([] as list<T>);
+        this._size = 0;
+        this.compare = compare;
+    }
+
+    ## Inserts `value` and re-heapifies. O(log n).
+    func push(T value): void {
+        if (this._size < this._heap.length()) {
+            this._heap[this._size] = value;
+        } else {
+            this._heap.append(value);
+        }
+        this._size = this._size + 1;
+        this._siftUp(this._size - 1);
+    }
+
+    ## Removes and returns the smallest-by-order element. Throws
+    ## ValueError on an empty queue. O(log n).
+    func pop(): T {
+        if (this._size == 0) {
+            throw ValueError("PriorityQueue.pop on empty queue");
+        }
+        let head = this._heap[0];
+        this._size = this._size - 1;
+        if (this._size > 0) {
+            this._heap[0] = this._heap[this._size];
+            this._siftDown(0);
+        }
+        return head;
+    }
+
+    ## Returns the smallest-by-order element without removing it.
+    ## Throws ValueError on an empty queue. O(1).
+    func peek(): T {
+        if (this._size == 0) {
+            throw ValueError("PriorityQueue.peek on empty queue");
+        }
+        return this._heap[0];
+    }
+
+    ## Number of elements currently in the queue.
+    func length(): int {
+        return this._size;
+    }
+
+    ## True when the queue holds no elements.
+    func isEmpty(): bool {
+        return this._size == 0;
+    }
+
+    ## Single-pass push-then-pop. Cheaper than calling `push`
+    ## then `pop` separately when the inserted value would
+    ## immediately become the new head. O(log n).
+    func pushPop(T value): T {
+        if (this._size == 0 || this._cmp(value, this._heap[0]) <= 0) {
+            return value;
+        }
+        let head = this._heap[0];
+        this._heap[0] = value;
+        this._siftDown(0);
+        return head;
+    }
+
+    ## Pops every element in priority order and returns them as
+    ## a sorted list, leaving the queue empty.
+    func drain(): list<T> {
+        let out = ([] as list<T>);
+        while (this._size > 0) {
+            out.append(this.pop());
+        }
+        return out;
+    }
+
+    ## Discards all elements without yielding them. O(1).
+    func clear(): void {
+        this._size = 0;
+    }
+
+    func _cmp(T a, T b): int {
+        if (this.compare == null) {
+            if (a < b) { return -1; }
+            if (a > b) { return  1; }
+            return 0;
+        }
+        let cb = this.compare;
+        return cb(a, b);
+    }
+
+    func _siftUp(int idx): void {
+        let i = idx;
+        while (i > 0) {
+            let p = (i - 1) // 2;
+            if (this._cmp(this._heap[i], this._heap[p]) >= 0) {
+                break;
+            }
+            this._swap(i, p);
+            i = p;
+        }
+    }
+
+    func _siftDown(int idx): void {
+        let i = idx;
+        while (true) {
+            let left = 2 * i + 1;
+            let right = 2 * i + 2;
+            let smallest = i;
+            if (left < this._size && this._cmp(this._heap[left], this._heap[smallest]) < 0) {
+                smallest = left;
+            }
+            if (right < this._size && this._cmp(this._heap[right], this._heap[smallest]) < 0) {
+                smallest = right;
+            }
+            if (smallest == i) {
+                break;
+            }
+            this._swap(i, smallest);
+            i = smallest;
+        }
+    }
+
+    func _swap(int i, int j): void {
+        let tmp = this._heap[i];
+        this._heap[i] = this._heap[j];
+        this._heap[j] = tmp;
+    }
+}

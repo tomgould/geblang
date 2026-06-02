@@ -972,6 +972,20 @@ var stdlibCatalog = map[string]moduleDoc{
 			"seed":     fn([]string{"int seed"}, "void", "Re-seeds this generator."),
 		},
 	}},
+	"priorityq": {classes: map[string]string{
+		"PriorityQueue": "Binary min-heap-backed priority queue (1.6.0). Without a comparator, elements are ordered by Geblang's `<` operator (works for int, float, decimal, string). Pass a `func(T, T): int` comparator (< 0 / 0 / > 0) for custom types or reverse order.",
+	}, classMethods: map[string]map[string]functionDoc{
+		"PriorityQueue": {
+			"push":     fn([]string{"T value"}, "void", "Inserts value. O(log n)."),
+			"pop":      fn([]string{}, "T", "Removes and returns the smallest-by-order element. Throws ValueError on empty. O(log n)."),
+			"peek":     fn([]string{}, "T", "Returns the smallest element without removing it. Throws ValueError on empty. O(1)."),
+			"length":   fn([]string{}, "int", "Number of elements currently in the queue."),
+			"isEmpty":  fn([]string{}, "bool", "True when the queue holds no elements."),
+			"pushPop":  fn([]string{"T value"}, "T", "Single-pass push-then-pop. Cheaper than separate push + pop. O(log n)."),
+			"drain":    fn([]string{}, "list<T>", "Pops every element in priority order and returns them as a sorted list, leaving the queue empty."),
+			"clear":    fn([]string{}, "void", "Discards all elements without yielding them. O(1)."),
+		},
+	}},
 	"secureRandom": {functions: map[string]functionDoc{
 		"openSession":      fn([]string{"dict opts = {}"}, "SecureRandomSession", "Opens a provably-fair session with a fresh 32-byte seed. opts may set clientSeed (defaults to empty)."),
 		"fromSeed":         fn([]string{"string seedHex", "string clientSeed = \"\""}, "SecureRandomSession", "Opens a session with a caller-supplied 64-char hex seed (useful for tests/replay)."),

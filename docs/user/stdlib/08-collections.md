@@ -640,3 +640,85 @@ for (let int i = 0; i < users.length(); i++) {
     io.println("${i}: ${users[i]["name"]}");
 }
 ```
+
+## `priorityq.PriorityQueue<T>` (1.6.0)
+
+A binary min-heap-backed priority queue. The smallest-by-order
+element is always at the head; `pop()` and `peek()` return it.
+
+```gb
+import priorityq;
+
+let q = priorityq.PriorityQueue<int>();
+q.push(3); q.push(1); q.push(2);
+io.println(q.pop());   # 1
+io.println(q.pop());   # 2
+io.println(q.pop());   # 3
+```
+
+Without a comparator, elements are ordered by Geblang's `<`
+operator (works for `int`, `float`, `decimal`, `string`). For
+custom types or reverse order, pass a comparator
+`func(T, T): int` that returns `< 0`, `0`, or `> 0`:
+
+```gb
+let highestFirst = priorityq.PriorityQueue<int>(
+    func(int a, int b): int { return b - a; }
+);
+highestFirst.push(1); highestFirst.push(7); highestFirst.push(3);
+io.println(highestFirst.pop());   # 7
+
+class Job {
+    string name;
+    int priority;
+    func Job(string name, int priority) {
+        this.name = name;
+        this.priority = priority;
+    }
+}
+
+let byPriority = priorityq.PriorityQueue<Job>(
+    func(Job a, Job b): int { return a.priority - b.priority; }
+);
+```
+
+### Operations
+
+| Method | Returns | Complexity | Description |
+|--------|---------|------------|-------------|
+| `push(value)` | `void` | O(log n) | Inserts value and re-heapifies. |
+| `pop()` | `T` | O(log n) | Removes and returns the smallest element. Throws `ValueError` on empty. |
+| `peek()` | `T` | O(1) | Returns the smallest element without removing it. Throws `ValueError` on empty. |
+| `length()` | `int` | O(1) | Number of elements currently in the queue. |
+| `isEmpty()` | `bool` | O(1) | True when the queue holds no elements. |
+| `pushPop(value)` | `T` | O(log n) | Single-pass push-then-pop. Cheaper than separate calls when the inserted value would immediately become the new head; common in top-K and merge-K patterns. |
+| `drain()` | `list<T>` | O(n log n) | Pops every element in priority order and returns them as a sorted list, leaving the queue empty. |
+| `clear()` | `void` | O(1) | Discards every element without yielding them. |
+
+### Common patterns
+
+**Top-K largest values**: keep a min-heap of size K. For each
+incoming value, `pushPop` it; when the queue size exceeds K, the
+result is the new minimum being displaced. Total cost
+O(n log K) instead of O(n log n).
+
+```gb
+import priorityq;
+import io;
+
+func topK<T>(list<T> values, int k): list<T> {
+    let q = priorityq.PriorityQueue<T>();
+    for (var v in values) {
+        if (q.length() < k) {
+            q.push(v);
+        } else if (v > q.peek()) {
+            q.pushPop(v);
+        }
+    }
+    return q.drain();
+}
+
+io.println(topK([5, 2, 9, 1, 7, 3, 8, 4, 6], 3));   # [7, 8, 9]
+```
+
+**Heap-sort** is a one-liner: push everything, then `drain()`.

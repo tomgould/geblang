@@ -1,0 +1,126 @@
+/**
+ * @title priorityq.PriorityQueue (1.6.0)
+ * @summary Binary min-heap-backed priority queue. Default natural
+ * ordering; optional comparator for custom types.
+ */
+import test;
+import priorityq;
+
+class PriorityQueueTest extends test.Test {
+
+    @test
+    func naturalOrderMinHeap(): void {
+        let q = priorityq.PriorityQueue<int>();
+        let xs = [3, 1, 4, 1, 5, 9, 2, 6];
+        for (int v in xs) { q.push(v); }
+        let out = q.drain();
+        this.assertEquals(8, out.length());
+        this.assertEquals(1, out[0]);
+        this.assertEquals(1, out[1]);
+        this.assertEquals(2, out[2]);
+        this.assertEquals(9, out[7]);
+    }
+
+    @test
+    func peekIsNonDestructive(): void {
+        let q = priorityq.PriorityQueue<int>();
+        q.push(5); q.push(2); q.push(8);
+        this.assertEquals(2, q.peek());
+        this.assertEquals(3, q.length());
+        this.assertEquals(2, q.peek());
+    }
+
+    @test
+    func emptyPopThrows(): void {
+        let q = priorityq.PriorityQueue<int>();
+        this.assertTrue(q.isEmpty());
+        let threw = false;
+        try { q.pop(); } catch (ValueError e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func emptyPeekThrows(): void {
+        let q = priorityq.PriorityQueue<int>();
+        let threw = false;
+        try { q.peek(); } catch (ValueError e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func customComparatorReverses(): void {
+        let q = priorityq.PriorityQueue<int>(func(int a, int b): int { return b - a; });
+        for (int v in [1, 7, 3, 9, 2]) { q.push(v); }
+        let out = q.drain();
+        this.assertEquals(9, out[0]);
+        this.assertEquals(7, out[1]);
+        this.assertEquals(3, out[2]);
+        this.assertEquals(2, out[3]);
+        this.assertEquals(1, out[4]);
+    }
+
+    @test
+    func pushPopWhenNewValueIsSmaller(): void {
+        let q = priorityq.PriorityQueue<int>();
+        q.push(5); q.push(10);
+        # 1 < current head 5, returned directly without insertion
+        this.assertEquals(1, q.pushPop(1));
+        this.assertEquals(2, q.length());
+        this.assertEquals(5, q.peek());
+    }
+
+    @test
+    func pushPopDisplacesHead(): void {
+        let q = priorityq.PriorityQueue<int>();
+        q.push(5); q.push(10);
+        # 7 > head 5; 5 is returned, 7 takes its place
+        this.assertEquals(5, q.pushPop(7));
+        this.assertEquals(2, q.length());
+        this.assertEquals(7, q.peek());
+    }
+
+    @test
+    func clearEmptiesQueueInO1(): void {
+        let q = priorityq.PriorityQueue<int>();
+        for (int v in [1, 2, 3, 4, 5]) { q.push(v); }
+        this.assertEquals(5, q.length());
+        q.clear();
+        this.assertEquals(0, q.length());
+        this.assertTrue(q.isEmpty());
+        # Reusable after clear.
+        q.push(42);
+        this.assertEquals(42, q.peek());
+    }
+
+    @test
+    func drainReturnsSortedList(): void {
+        let q = priorityq.PriorityQueue<int>();
+        for (int v in [4, 1, 3, 2]) { q.push(v); }
+        let sorted = q.drain();
+        this.assertEquals(0, q.length());
+        this.assertEquals([1, 2, 3, 4], sorted);
+    }
+
+    @test
+    func stringsUseNaturalOrder(): void {
+        let q = priorityq.PriorityQueue<string>();
+        for (var s in ["banana", "apple", "cherry"]) { q.push(s); }
+        this.assertEquals("apple", q.pop());
+        this.assertEquals("banana", q.pop());
+        this.assertEquals("cherry", q.pop());
+    }
+
+    @test
+    func largeHeapPreservesOrdering(): void {
+        let q = priorityq.PriorityQueue<int>();
+        let values = [50, 12, 87, 3, 99, 41, 28, 65, 7, 33, 71, 19, 56, 84, 1, 47];
+        for (int v in values) { q.push(v); }
+
+        let prev = -1;
+        while (!q.isEmpty()) {
+            let v = q.pop();
+            this.assertTrue(v >= prev);
+            prev = v;
+        }
+    }
+}
