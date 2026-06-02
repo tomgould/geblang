@@ -57,7 +57,15 @@ type jsonParser struct {
 	// "s"+key allocation on every entry. Bounded so pathological
 	// inputs with thousands of unique keys don't grow the cache
 	// unboundedly.
-	keyCache map[string]string
+	keyCache map[string]jsonKeyEntry
+}
+
+// jsonKeyEntry interns both the dict map-key and the boxed runtime.Value
+// key for a JSON object key, so repeated keys skip the interface-boxing
+// alloc (not just the "s"+key alloc) on every entry.
+type jsonKeyEntry struct {
+	mapKey string
+	keyVal runtime.Value
 }
 
 // jsonKeyCacheLimit caps the per-parse key intern table. The cache
@@ -118,18 +126,17 @@ func (p *jsonParser) parseObject() (runtime.Value, error) {
 		if err != nil {
 			return nil, err
 		}
-		keyValue := runtime.String{Value: key}
-		mapKey, cached := p.keyCache[key]
+		entry, cached := p.keyCache[key]
 		if !cached {
-			mapKey = "s" + key
+			entry = jsonKeyEntry{mapKey: "s" + key, keyVal: runtime.String{Value: key}}
 			if p.keyCache == nil {
-				p.keyCache = make(map[string]string, 16)
+				p.keyCache = make(map[string]jsonKeyEntry, 16)
 			}
 			if len(p.keyCache) < jsonKeyCacheLimit {
-				p.keyCache[key] = mapKey
+				p.keyCache[key] = entry
 			}
 		}
-		d.PutEntry(mapKey, runtime.DictEntry{Key: keyValue, Value: value})
+		d.PutEntry(entry.mapKey, runtime.DictEntry{Key: entry.keyVal, Value: value})
 		p.skipWhitespace()
 		if p.pos >= len(p.src) {
 			return nil, fmt.Errorf("unexpected end of object")
