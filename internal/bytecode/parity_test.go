@@ -5517,6 +5517,65 @@ io.println(v2 == r2);
 `, "true\ntrue\n")
 }
 
+func TestParityAsyncSync(t *testing.T) {
+	// Mutex tryLock semantics + atomics arithmetic round-trip.
+	runParityWithStdlib(t, `import io;
+import async.sync as sync;
+import async.atomic as atomic;
+
+let m = sync.Mutex();
+m.lock();
+io.println(m.tryLock());
+m.unlock();
+io.println(m.tryLock());
+m.unlock();
+
+let c = atomic.AtomicInt(0);
+io.println(c.load());
+io.println(c.add(5));
+io.println(c.add(-2));
+io.println(c.compareAndSwap(3, 42));
+io.println(c.compareAndSwap(99, 0));
+io.println(c.load());
+`, "false\ntrue\n0\n5\n3\ntrue\nfalse\n42\n")
+
+	// Semaphore acquire/tryAcquire/release.
+	runParityWithStdlib(t, `import io;
+import async.sync as sync;
+let s = sync.Semaphore(2);
+io.println(s.tryAcquire());
+io.println(s.tryAcquire());
+io.println(s.tryAcquire());
+s.release();
+io.println(s.tryAcquire());
+`, "true\ntrue\nfalse\ntrue\n")
+
+	// RWMutex: multiple read locks + a write lock.
+	runParityWithStdlib(t, `import io;
+import async.sync as sync;
+let rw = sync.RWMutex();
+io.println(rw.tryRLock());
+io.println(rw.tryRLock());
+io.println(rw.tryLock());
+rw.rUnlock();
+rw.rUnlock();
+io.println(rw.tryLock());
+rw.unlock();
+`, "true\ntrue\nfalse\ntrue\n")
+
+	// AtomicBool basics.
+	runParityWithStdlib(t, `import io;
+import async.atomic as atomic;
+let f = atomic.AtomicBool();
+io.println(f.load());
+f.store(true);
+io.println(f.load());
+io.println(f.compareAndSwap(true, false));
+io.println(f.compareAndSwap(true, false));
+io.println(f.load());
+`, "false\ntrue\ntrue\nfalse\nfalse\n")
+}
+
 func TestParityCron(t *testing.T) {
 	// Parse + field values, then validate + special.
 	runParity(t, `import io;

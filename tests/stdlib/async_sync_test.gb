@@ -1,0 +1,144 @@
+/**
+ * @title async.sync + async.atomic (1.6.0)
+ * @summary Synchronisation primitives backed by Go's sync /
+ * sync/atomic packages: Mutex, RWMutex, Semaphore, WaitGroup,
+ * AtomicInt, AtomicBool. Lock / acquire / wait operations block
+ * the calling goroutine; tasks spawned via `async.run` are real
+ * goroutines so these primitives coordinate across them.
+ */
+import test;
+import async;
+import async.sync as sync;
+import async.atomic as atomic;
+
+class AsyncSyncTest extends test.Test {
+
+    @test
+    func mutexTryLockReflectsState(): void {
+        let m = sync.Mutex();
+        this.assertTrue(m.tryLock());
+        this.assertFalse(m.tryLock());
+        m.unlock();
+        this.assertTrue(m.tryLock());
+        m.unlock();
+    }
+
+    @test
+    func rwmutexReadersCoexistWritersExclude(): void {
+        let rw = sync.RWMutex();
+        this.assertTrue(rw.tryRLock());
+        this.assertTrue(rw.tryRLock());
+        this.assertFalse(rw.tryLock());
+        rw.rUnlock();
+        rw.rUnlock();
+        this.assertTrue(rw.tryLock());
+        this.assertFalse(rw.tryRLock());
+        rw.unlock();
+    }
+
+    @test
+    func semaphoreBoundsConcurrency(): void {
+        let s = sync.Semaphore(3);
+        this.assertTrue(s.tryAcquire());
+        this.assertTrue(s.tryAcquire());
+        this.assertTrue(s.tryAcquire());
+        this.assertFalse(s.tryAcquire());
+        s.release();
+        this.assertTrue(s.tryAcquire());
+    }
+
+    @test
+    func semaphoreRejectsNonPositivePermits(): void {
+        let threw = false;
+        try { sync.Semaphore(0); } catch (Error e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func semaphoreOverReleaseThrows(): void {
+        let s = sync.Semaphore(1);
+        let threw = false;
+        try { s.release(); } catch (Error e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func waitGroupWaitsForAllTasks(): void {
+        let wg = sync.WaitGroup();
+        let total = atomic.AtomicInt(0);
+        for (let int i = 0; i < 20; i++) {
+            wg.add(1);
+            async.run(func(): void {
+                total.add(1);
+                wg.done();
+            });
+        }
+        wg.wait();
+        this.assertEquals(20, total.load());
+    }
+
+    @test
+    func atomicIntArithmetic(): void {
+        let c = atomic.AtomicInt(10);
+        this.assertEquals(10, c.load());
+        this.assertEquals(15, c.add(5));
+        this.assertEquals(13, c.add(-2));
+        c.store(0);
+        this.assertEquals(0, c.load());
+    }
+
+    @test
+    func atomicIntCompareAndSwap(): void {
+        let c = atomic.AtomicInt(42);
+        this.assertTrue(c.compareAndSwap(42, 100));
+        this.assertEquals(100, c.load());
+        this.assertFalse(c.compareAndSwap(42, 0));
+        this.assertEquals(100, c.load());
+    }
+
+    @test
+    func atomicBoolCompareAndSwap(): void {
+        let f = atomic.AtomicBool();
+        this.assertFalse(f.load());
+        this.assertTrue(f.compareAndSwap(false, true));
+        this.assertTrue(f.load());
+        this.assertFalse(f.compareAndSwap(false, false));
+        this.assertTrue(f.load());
+    }
+
+    @test
+    func atomicIntSurvivesConcurrentIncrements(): void {
+        /* 50 tasks each add 1; final value must be exactly 50 */
+        let c = atomic.AtomicInt(0);
+        let wg = sync.WaitGroup();
+        for (let int i = 0; i < 50; i++) {
+            wg.add(1);
+            async.run(func(): void {
+                c.add(1);
+                wg.done();
+            });
+        }
+        wg.wait();
+        this.assertEquals(50, c.load());
+    }
+
+    @test
+    func mutexSerialisesContendedWrites(): void {
+        /* without the lock the final count could be < 100; with it = 100 */
+        let m = sync.Mutex();
+        let count = atomic.AtomicInt(0);
+        let wg = sync.WaitGroup();
+        for (let int i = 0; i < 100; i++) {
+            wg.add(1);
+            async.run(func(): void {
+                m.lock();
+                let curr = count.load();
+                count.store(curr + 1);
+                m.unlock();
+                wg.done();
+            });
+        }
+        wg.wait();
+        this.assertEquals(100, count.load());
+    }
+}

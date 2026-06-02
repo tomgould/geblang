@@ -1,0 +1,72 @@
+module async.atomic;
+
+import asyncatomic as native;
+
+/**
+ * Lock-free atomic int64 cell. Operations are sequentially
+ * consistent.
+ *
+ * ```gb
+ * let counter = AtomicInt(0);
+ * counter.add(1);
+ * counter.compareAndSwap(1, 42);
+ * io.println(counter.load());   # 42
+ * ```
+ */
+export class AtomicInt {
+    any _h;
+
+    func AtomicInt(int initial = 0) {
+        this._h = native.intNew(initial);
+    }
+
+    ## Returns the current value.
+    func load(): int {
+        return native.intLoad(this._h);
+    }
+
+    ## Replaces the current value.
+    func store(int value): void {
+        native.intStore(this._h, value);
+    }
+
+    /**
+     * Atomically adds `delta` and returns the new value. `delta`
+     * may be negative for subtraction.
+     */
+    func add(int delta): int {
+        return native.intAdd(this._h, delta);
+    }
+
+    /**
+     * Atomically sets the value to `next` if and only if the
+     * current value is `old`. Returns `true` on success.
+     */
+    func compareAndSwap(int old, int next): bool {
+        return native.intCompareAndSwap(this._h, old, next);
+    }
+}
+
+/**
+ * Lock-free atomic bool cell. Useful for one-shot flags
+ * (closed, cancelled, initialised).
+ */
+export class AtomicBool {
+    any _h;
+
+    func AtomicBool(bool initial = false) {
+        this._h = native.boolNew(initial);
+    }
+
+    func load(): bool {
+        return native.boolLoad(this._h);
+    }
+
+    func store(bool value): void {
+        native.boolStore(this._h, value);
+    }
+
+    func compareAndSwap(bool old, bool next): bool {
+        return native.boolCompareAndSwap(this._h, old, next);
+    }
+}

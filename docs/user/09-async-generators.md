@@ -330,3 +330,92 @@ Generators and async solve different problems. Generators avoid building a full
 collection before iteration. Async tasks allow other work to continue while a
 result is pending. For a large remote dataset, an API should usually combine
 both ideas: fetch or read chunks asynchronously, then yield records lazily.
+
+## Synchronisation Primitives (1.6.0)
+
+Tasks spawned via `async.run` execute as real goroutines, so when
+multiple tasks coordinate over shared state the standard
+synchronisation primitives apply. They live in two sub-modules
+that wrap Go's `sync` and `sync/atomic` packages.
+
+### `async.sync`: locks, semaphores, wait groups
+
+```gb
+import async.sync as sync;
+
+let m = sync.Mutex();
+m.lock();
+try {
+    # protected section
+} finally {
+    m.unlock();
+}
+```
+
+| Class | Methods | Description |
+|-------|---------|-------------|
+| `Mutex` | `lock`, `unlock`, `tryLock` | Mutual-exclusion lock. `tryLock()` returns `false` instead of blocking when the lock is held. |
+| `RWMutex` | `lock`, `unlock`, `tryLock`, `rLock`, `rUnlock`, `tryRLock` | Reader-writer lock. Many readers may coexist; writers are exclusive. |
+| `Semaphore` | `acquire`, `release`, `tryAcquire` | Counted concurrency guard. Constructor: `Semaphore(permits)`; permits must be at least 1. |
+| `WaitGroup` | `add(delta)`, `done`, `wait` | Counter for "this many tasks are running"; `wait()` blocks until the counter hits zero. |
+
+### `async.atomic`: lock-free cells
+
+```gb
+import async.atomic as atomic;
+
+let counter = atomic.AtomicInt(0);
+counter.add(1);
+if (counter.compareAndSwap(1, 42)) {
+    /* succeeded */
+}
+```
+
+| Class | Methods | Description |
+|-------|---------|-------------|
+| `AtomicInt` | `load`, `store(v)`, `add(delta)`, `compareAndSwap(old, new)` | Sequentially consistent int64. `add` returns the new value; `delta` may be negative. |
+| `AtomicBool` | `load`, `store(v)`, `compareAndSwap(old, new)` | Sequentially consistent bool. Common for one-shot flags. |
+
+### Typical patterns
+
+**Counting completed tasks**:
+
+```gb
+import async;
+import async.sync as sync;
+
+let wg = sync.WaitGroup();
+for (let int i = 0; i < n; i++) {
+    wg.add(1);
+    async.run(func(): void {
+        try { doWork(i); } finally { wg.done(); }
+    });
+}
+wg.wait();
+```
+
+**Bounded concurrency**:
+
+```gb
+import async;
+import async.sync as sync;
+
+let throttle = sync.Semaphore(10);   # at most 10 in flight
+for (var url in urls) {
+    async.run(func(): void {
+        throttle.acquire();
+        try { fetch(url); } finally { throttle.release(); }
+    });
+}
+```
+
+**Lock-free counter**:
+
+```gb
+import async.atomic as atomic;
+let hits = atomic.AtomicInt(0);
+// in many tasks:
+hits.add(1);
+// later:
+io.println(hits.load());
+```

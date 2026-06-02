@@ -106,6 +106,8 @@ func registerAllBuiltins(r *Registry) {
 	registerMsgpack(r)
 	registerUnicode(r)
 	registerCron(r)
+	registerAsyncSync(r)
+	registerAsyncAtomic(r)
 	registerTime(r)
 	registerBytes(r)
 	registerString(r)

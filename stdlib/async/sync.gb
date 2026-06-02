@@ -1,0 +1,166 @@
+module async.sync;
+
+import asyncsync as native;
+
+/**
+ * Mutual-exclusion lock. Blocks the current goroutine until the
+ * lock is acquired. Re-entrancy is NOT supported - a goroutine
+ * that calls `lock()` twice without an intervening `unlock()`
+ * deadlocks (matches Go's `sync.Mutex`).
+ *
+ * ```gb
+ * let m = Mutex();
+ * m.lock();
+ * try {
+ *     # protected section
+ * } finally {
+ *     m.unlock();
+ * }
+ * ```
+ */
+export class Mutex {
+    any _h;
+
+    func Mutex() {
+        this._h = native.mutexNew();
+    }
+
+    ## Acquires the lock. Blocks if another holder is present.
+    func lock(): void {
+        native.mutexLock(this._h);
+    }
+
+    ## Releases the lock. Calling unlock on an unlocked Mutex throws.
+    func unlock(): void {
+        native.mutexUnlock(this._h);
+    }
+
+    /**
+     * Acquires the lock if available without blocking. Returns
+     * `true` on success, `false` if the lock is held elsewhere.
+     */
+    func tryLock(): bool {
+        return native.mutexTryLock(this._h);
+    }
+}
+
+/**
+ * Reader / writer lock. Many readers may hold the lock
+ * simultaneously; writers are exclusive. Acquiring a write lock
+ * blocks until all readers have released.
+ *
+ * ```gb
+ * let rw = RWMutex();
+ * rw.rLock();
+ * try { # shared read
+ * } finally { rw.rUnlock(); }
+ *
+ * rw.lock();
+ * try { # exclusive write
+ * } finally { rw.unlock(); }
+ * ```
+ */
+export class RWMutex {
+    any _h;
+
+    func RWMutex() {
+        this._h = native.rwmutexNew();
+    }
+
+    ## Acquires the write lock. Blocks until all readers release.
+    func lock(): void {
+        native.rwmutexLock(this._h);
+    }
+
+    func unlock(): void {
+        native.rwmutexUnlock(this._h);
+    }
+
+    func tryLock(): bool {
+        return native.rwmutexTryLock(this._h);
+    }
+
+    ## Acquires a shared read lock.
+    func rLock(): void {
+        native.rwmutexRLock(this._h);
+    }
+
+    func rUnlock(): void {
+        native.rwmutexRUnlock(this._h);
+    }
+
+    func tryRLock(): bool {
+        return native.rwmutexTryRLock(this._h);
+    }
+}
+
+/**
+ * Counted semaphore. `Semaphore(n)` lets up to `n` holders
+ * acquire simultaneously; further acquirers block. Initial
+ * permit count must be at least 1.
+ */
+export class Semaphore {
+    any _h;
+
+    func Semaphore(int permits) {
+        this._h = native.semaphoreNew(permits);
+    }
+
+    ## Blocks until a permit is available, then takes it.
+    func acquire(): void {
+        native.semaphoreAcquire(this._h);
+    }
+
+    ## Returns a permit. Throws if released more than acquired.
+    func release(): void {
+        native.semaphoreRelease(this._h);
+    }
+
+    /**
+     * Tries to take a permit without blocking. Returns `true`
+     * on success, `false` if none are currently available.
+     */
+    func tryAcquire(): bool {
+        return native.semaphoreTryAcquire(this._h);
+    }
+}
+
+/**
+ * Wait group: a counter you increment with `add(n)` for each
+ * task started, `done()` when a task finishes, and `wait()`
+ * blocks until the counter reaches zero.
+ *
+ * ```gb
+ * let wg = WaitGroup();
+ * for (var i = 0; i < 10; i++) {
+ *     wg.add(1);
+ *     async.run(func(): void {
+ *         try { # work
+ *         } finally { wg.done(); }
+ *     });
+ * }
+ * wg.wait();
+ * ```
+ */
+export class WaitGroup {
+    any _h;
+
+    func WaitGroup() {
+        this._h = native.waitgroupNew();
+    }
+
+    ## Increments the counter by `delta` (typically before a task starts).
+    func add(int delta): void {
+        native.waitgroupAdd(this._h, delta);
+    }
+
+    ## Decrements the counter by one (typically when a task finishes).
+    func done(): void {
+        native.waitgroupDone(this._h);
+    }
+
+    ## Blocks until the counter reaches zero.
+    func wait(): void {
+        native.waitgroupWait(this._h);
+    }
+}

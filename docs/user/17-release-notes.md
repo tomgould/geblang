@@ -223,6 +223,40 @@ The LSP catalog also surfaces signatures and hover docs for
 `assert`, `typeof`, `range`, `dump`, and `dir`, which until now
 were callable but invisible to the IDE.
 
+### Synchronisation primitives (`async.sync`, `async.atomic`)
+
+Two new sub-modules under `async` add the canonical concurrency
+building blocks. `async.run` already spawns real goroutines, so
+these primitives coordinate across them.
+
+```gb
+import async;
+import async.sync as sync;
+import async.atomic as atomic;
+
+let counter = atomic.AtomicInt(0);
+let wg = sync.WaitGroup();
+for (let int i = 0; i < 100; i++) {
+    wg.add(1);
+    async.run(func(): void {
+        counter.add(1);
+        wg.done();
+    });
+}
+wg.wait();
+io.println(counter.load());   # 100
+```
+
+`async.sync` exposes `Mutex`, `RWMutex`, `Semaphore`, and
+`WaitGroup`. Each constructor returns an instance whose methods
+delegate to Go's `sync` package; `Mutex.tryLock`,
+`RWMutex.tryLock` / `tryRLock`, and `Semaphore.tryAcquire`
+provide non-blocking variants.
+
+`async.atomic` exposes lock-free `AtomicInt` (int64) and
+`AtomicBool`. Operations are sequentially consistent;
+`compareAndSwap(old, new)` returns whether the swap happened.
+
 ### Cron expression parser (`cron`)
 
 New native `cron` module: parses standard 5-field cron specs
