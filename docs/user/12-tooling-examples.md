@@ -124,6 +124,34 @@ module-layout validation. JSON output includes `severity`, `rule`, `file`,
 `line`, `column`, and `message` fields so tools can route errors and warnings
 separately.
 
+### What an error means versus a warning
+
+`geblang check` follows one contract so its result lines up with the rest of
+the toolchain:
+
+- An **error** is code both execution backends reject. Anything `geblang
+  check` reports as an error also fails `geblang test`, `geblang run`, and
+  `geblang build`. Fix errors before running anything.
+- A **warning** is advisory and never changes whether code runs. By default a
+  warning does not affect the exit code; pass `--strict` to make warnings exit
+  non-zero in CI.
+
+One warning rule bridges the two execution backends. Geblang runs on a tree-
+walking evaluator (`geblang test`) and a bytecode VM (`geblang run`, `geblang
+build`). When a construct runs on the evaluator but the bytecode VM cannot
+build it yet, `geblang check` reports a `vm-unsupported` warning instead of an
+error:
+
+```sh
+$ geblang check app.gb
+app.gb: warning[vm-unsupported]: bytecode compiler does not support <construct> yet
+```
+
+The code is valid and runs under the evaluator, so this is not an error; the
+warning tells you `geblang run` / `geblang build` need `--disable-vm` for that
+file until the VM gains support. This keeps `geblang check` in agreement with
+`geblang test` while still surfacing what would block a release build.
+
 ## Introspection Builtins
 
 Two builtins help inspect values at runtime, on both execution backends:

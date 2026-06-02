@@ -1,6 +1,7 @@
 package check
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -390,4 +391,32 @@ func hasDiag(diags []Diagnostic, rule, contains string) bool {
 		}
 	}
 	return false
+}
+
+func TestCompileDiagnosticClassifiesVMGapsAsWarnings(t *testing.T) {
+	gap := errors.New("bytecode compiler does not support some.thing yet")
+	d, ok := compileDiagnostic("f.gb", gap)
+	if !ok {
+		t.Fatal("expected a diagnostic for a non-nil error")
+	}
+	if d.Severity != SeverityWarning || d.Rule != "vm-unsupported" {
+		t.Fatalf("VM capability gap should be a vm-unsupported warning, got %s[%s]", d.Severity, d.Rule)
+	}
+}
+
+func TestCompileDiagnosticClassifiesGenuineErrorsAsErrors(t *testing.T) {
+	bad := errors.New("unknown bytecode name notAThing")
+	d, ok := compileDiagnostic("f.gb", bad)
+	if !ok {
+		t.Fatal("expected a diagnostic for a non-nil error")
+	}
+	if d.Severity != SeverityError || d.Rule != "type" {
+		t.Fatalf("genuine static error should be error[type], got %s[%s]", d.Severity, d.Rule)
+	}
+}
+
+func TestCompileDiagnosticIgnoresNil(t *testing.T) {
+	if _, ok := compileDiagnostic("f.gb", nil); ok {
+		t.Fatal("nil error must not produce a diagnostic")
+	}
 }

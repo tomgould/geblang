@@ -68,7 +68,7 @@
       "patterns": [
         {
           "name": "keyword.control.geblang",
-          "match": "\\b(if|else|while|for|return|break|continue|match|case|try|catch|finally|throw|yield|await|in|by|as|instanceof|with|del)\\b"
+          "match": "\\b(if|else|elseif|while|for|return|break|continue|match|case|default|try|catch|finally|defer|throw|yield|await|in|by|as|instanceof|with|del|parent)\\b"
         },
         {
           "name": "keyword.declaration.geblang",
@@ -76,7 +76,11 @@
         },
         {
           "name": "constant.language.geblang",
-          "match": "\\b(true|false|null|this|super)\\b"
+          "match": "\\b(true|false|null|this)\\b"
+        },
+        {
+          "name": "keyword.operator.word.geblang",
+          "match": "\\b(is|not|xor)\\b"
         }
       ]
     },

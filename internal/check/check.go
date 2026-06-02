@@ -127,13 +127,10 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 			Message:  sd.Message,
 		})
 	}
-	if _, compileErr := bytecode.Compile(program, []byte(source), file); compileErr != nil && !bytecode.IsParityError(compileErr) {
-		diags = append(diags, Diagnostic{
-			File:     file,
-			Severity: SeverityError,
-			Rule:     "type",
-			Message:  compileErr.Error(),
-		})
+	if _, compileErr := bytecode.Compile(program, []byte(source), file); compileErr != nil {
+		if d, ok := compileDiagnostic(file, compileErr); ok {
+			diags = append(diags, d)
+		}
 	}
 	if opts.Resolver != nil {
 		diags = append(diags, checkImports(file, program, opts)...)
@@ -145,6 +142,32 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 		diags = append(diags, lintProgram(file, program)...)
 	}
 	return program, diags
+}
+
+// compileDiagnostic maps a bytecode compile error onto the static-
+// analysis contract. A VM capability gap (IsParityError) is valid code
+// the tree-walking evaluator runs but the bytecode VM cannot build yet,
+// so it surfaces as a vm-unsupported warning rather than vanishing;
+// every other compile error is a genuine static error both backends
+// must reject. Returns false only for a nil error.
+func compileDiagnostic(file string, compileErr error) (Diagnostic, bool) {
+	if compileErr == nil {
+		return Diagnostic{}, false
+	}
+	if bytecode.IsParityError(compileErr) {
+		return Diagnostic{
+			File:     file,
+			Severity: SeverityWarning,
+			Rule:     "vm-unsupported",
+			Message:  compileErr.Error(),
+		}, true
+	}
+	return Diagnostic{
+		File:     file,
+		Severity: SeverityError,
+		Rule:     "type",
+		Message:  compileErr.Error(),
+	}, true
 }
 
 // parseParserError splits "line:col: message" into its parts. Parser

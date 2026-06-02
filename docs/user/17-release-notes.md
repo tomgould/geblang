@@ -2,6 +2,15 @@
 
 ## 1.6.0
 
+### geblang check: clearer error-versus-warning contract
+
+`geblang check` now follows one contract: an error is code both execution
+backends reject, and a warning is advisory and never changes whether code
+runs. Code that the tree-walking evaluator runs but the bytecode VM cannot
+build yet is reported as a `vm-unsupported` warning instead of an error, so
+`geblang check` agrees with `geblang test` while still flagging what would
+need `--disable-vm` for `geblang run` / `geblang build`.
+
 ### profiler available on the evaluator
 
 The `profiler` module (`snapshot`, `delta`, `memory`, `cpu`, `peak`) now
