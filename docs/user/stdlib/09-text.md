@@ -400,6 +400,43 @@ io.println(blocks[2]["items"][0]["checked"]);  // true
 
 ---
 
+## Unicode normalisation: `unicode` (1.6.0)
+
+The `unicode` module exposes the four Unicode normalisation
+forms via `unicode.normalize(s, form)`. `form` is the canonical
+SPDX-style name: `"NFC"`, `"NFD"`, `"NFKC"`, or `"NFKD"`.
+
+```gb
+import unicode;
+
+let nfd = "é";                 // e + U+0301 combining acute (2 code points)
+let nfc = unicode.normalize(nfd, "NFC");
+io.println(nfc.length());          // 1 - now a single code point
+io.println(unicode.normalize("ﬁ", "NFKC"));   // "fi" - ligature decomposed
+```
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `unicode.normalize(s, form)` | `string` | A copy of `s` normalised under `form`. Throws on an unknown form. |
+| `unicode.isNormalized(s, form)` | `bool` | True when `s` is already in `form`. Cheap; does not allocate a normalised copy. |
+
+### When to use which form
+
+| Form | Effect | Typical use |
+|------|--------|-------------|
+| **NFC** | Canonical composition. Combining marks fold into precomposed code points where one exists. | Storage, display, equality comparison of "the same character" inputs. The Web's standard. |
+| **NFD** | Canonical decomposition. Precomposed characters split into base + combining marks. | Sorting that respects diacritics, accent-insensitive search after stripping marks. |
+| **NFKC** | Compatibility composition. Compatibility equivalents (ligatures, full-width, superscripts) fold to their base form, then canonical composition is applied. | Search across visually-similar characters; input sanitisation. |
+| **NFKD** | Compatibility decomposition. Same compatibility folding as NFKC but no recomposition. | The fully decomposed canonical form; rarely needed directly. |
+
+Normalising untrusted input before storing or comparing is good
+defensive practice: it stops bypass attacks that rely on visually
+identical but byte-different strings (`"admin"` vs `"admın"`
+with a Turkish dotless i, for example - NFKC won't collapse
+that, but normalising at least makes equality reliable).
+
+---
+
 ## Templates: `template`
 
 Import `template`:

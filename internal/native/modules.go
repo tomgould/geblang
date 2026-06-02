@@ -8,7 +8,7 @@ package native
 var NativeModuleNames = map[string]struct{}{
 	"amqp": {}, "archive": {}, "args": {}, "async": {}, "binary": {},
 	"bytes": {}, "cli": {}, "cli.widgets": {}, "collections": {},
-	"compress": {}, "crypt": {}, "csv": {}, "datetime": {}, "db": {},
+	"compress": {}, "cron": {}, "crypt": {}, "csv": {}, "datetime": {}, "db": {},
 	"dotenv": {}, "encoding": {}, "errors": {}, "ext": {}, "ffinative": {},
 	"freeze": {}, "http": {}, "io": {}, "json": {}, "kafka": {}, "log": {},
 	"markdown": {}, "math": {}, "metrics": {}, "msgpack": {}, "net": {}, "path": {},
@@ -17,7 +17,7 @@ var NativeModuleNames = map[string]struct{}{
 	"secrets": {}, "secureRandom": {}, "serde": {}, "smtp": {}, "sockets": {},
 	"ssh": {}, "sshnative": {}, "strbuilder": {},
 	"streams": {}, "string": {}, "strings": {}, "sys": {}, "template": {},
-	"test": {}, "time": {}, "toml": {}, "trace": {}, "url": {},
+	"test": {}, "time": {}, "toml": {}, "trace": {}, "unicode": {}, "url": {},
 	"uuid": {}, "watch": {}, "web": {}, "websocket": {}, "xml": {},
 	"yaml": {},
 }

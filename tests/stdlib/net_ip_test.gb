@@ -1,0 +1,143 @@
+/**
+ * @title net IP / CIDR utilities (1.6.0)
+ * @summary `net.parseIp / parseCidr / cidrContains / cidrRange /
+ * isIpv4 / isIpv6 / ipToBytes / ipFromBytes`. Backed by Go's
+ * `net/netip`.
+ */
+import test;
+import net;
+import bytes;
+
+class NetIPTest extends test.Test {
+
+    @test
+    func parseIpv4Address(): void {
+        let ip = net.parseIp("10.0.0.1");
+        this.assertEquals(4, ip["version"]);
+        this.assertEquals("10.0.0.1", ip["address"]);
+        this.assertEquals(4, ip["bytes"].length());
+    }
+
+    @test
+    func parseIpv6Address(): void {
+        let ip = net.parseIp("2001:db8::1");
+        this.assertEquals(6, ip["version"]);
+        this.assertEquals("2001:db8::1", ip["address"]);
+        this.assertEquals(16, ip["bytes"].length());
+    }
+
+    @test
+    func parseIpRejectsGarbage(): void {
+        let threw = false;
+        try { net.parseIp("not-an-ip"); } catch (Error e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func parseCidrV4(): void {
+        let c = net.parseCidr("192.168.1.0/24");
+        this.assertEquals("192.168.1.0", c["network"]);
+        this.assertEquals(24, c["prefixLen"]);
+        this.assertEquals(4, c["version"]);
+        this.assertEquals("192.168.1.0", c["first"]);
+        this.assertEquals("192.168.1.255", c["last"]);
+        this.assertEquals(256, c["count"]);
+    }
+
+    @test
+    func parseCidrV6CountOverflowsInt64(): void {
+        let c = net.parseCidr("2001:db8::/32");
+        this.assertEquals(6, c["version"]);
+        this.assertEquals("2001:db8::", c["first"]);
+        /* 2^96 addresses; lifts to bigint */
+        this.assertTrue((c["count"] as string).length() > 10);
+    }
+
+    @test
+    func parseCidrUsesMaskedNetwork(): void {
+        /* 10.5.5.5/8 is in the 10.0.0.0/8 network */
+        let c = net.parseCidr("10.5.5.5/8");
+        this.assertEquals("10.0.0.0", c["network"]);
+        this.assertEquals("10.0.0.0", c["first"]);
+        this.assertEquals("10.255.255.255", c["last"]);
+    }
+
+    @test
+    func parseCidrRejectsGarbage(): void {
+        let threw = false;
+        try { net.parseCidr("nope"); } catch (Error e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func cidrContainsHits(): void {
+        this.assertTrue(net.cidrContains("10.0.0.0/8", "10.5.5.5"));
+        this.assertTrue(net.cidrContains("192.168.0.0/16", "192.168.42.1"));
+        this.assertTrue(net.cidrContains("2001:db8::/32", "2001:db8::dead:beef"));
+    }
+
+    @test
+    func cidrContainsMisses(): void {
+        this.assertFalse(net.cidrContains("10.0.0.0/8", "11.0.0.0"));
+        this.assertFalse(net.cidrContains("192.168.0.0/16", "10.0.0.1"));
+        this.assertFalse(net.cidrContains("2001:db8::/32", "2001:db9::1"));
+    }
+
+    @test
+    func cidrRangeEndpointsAndCount(): void {
+        let r = net.cidrRange("172.16.0.0/12");
+        this.assertEquals("172.16.0.0", r["first"]);
+        this.assertEquals("172.31.255.255", r["last"]);
+        this.assertEquals(1048576, r["count"]);
+    }
+
+    @test
+    func cidrRangeSingleHost(): void {
+        let r = net.cidrRange("10.0.0.5/32");
+        this.assertEquals("10.0.0.5", r["first"]);
+        this.assertEquals("10.0.0.5", r["last"]);
+        this.assertEquals(1, r["count"]);
+    }
+
+    @test
+    func isIpv4(): void {
+        this.assertTrue(net.isIpv4("192.168.1.1"));
+        this.assertTrue(net.isIpv4("0.0.0.0"));
+        this.assertFalse(net.isIpv4("::1"));
+        this.assertFalse(net.isIpv4("not-an-ip"));
+        this.assertFalse(net.isIpv4(""));
+    }
+
+    @test
+    func isIpv6(): void {
+        this.assertTrue(net.isIpv6("::1"));
+        this.assertTrue(net.isIpv6("2001:db8::1"));
+        this.assertFalse(net.isIpv6("192.168.1.1"));
+        this.assertFalse(net.isIpv6("not-an-ip"));
+    }
+
+    @test
+    func ipBytesRoundTrip(): void {
+        for (var s in ["10.0.0.1", "192.168.42.255", "0.0.0.0", "255.255.255.255"]) {
+            let b = net.ipToBytes(s);
+            this.assertEquals(4, b.length());
+            this.assertEquals(s, net.ipFromBytes(b));
+        }
+        let b6 = net.ipToBytes("2001:db8::1");
+        this.assertEquals(16, b6.length());
+        this.assertEquals("2001:db8::1", net.ipFromBytes(b6));
+    }
+
+    @test
+    func ipv4BytesAreNetworkOrder(): void {
+        let b = net.ipToBytes("192.168.1.1");
+        this.assertEquals("c0a80101", bytes.toHex(b));
+    }
+
+    @test
+    func ipFromBytesRejectsWrongLength(): void {
+        let threw = false;
+        try { net.ipFromBytes(bytes.fromHex("aabbcc")); } catch (Error e) { threw = true; }
+        this.assertTrue(threw);
+    }
+}

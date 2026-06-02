@@ -1,0 +1,139 @@
+/**
+ * @title cron expression parser (1.6.0)
+ * @summary Standard 5-field cron parser with named months / days
+ * and `@hourly / @daily / @weekly / @monthly / @yearly` shortcuts.
+ * Hand-rolled (no Go dependency).
+ */
+import test;
+import cron;
+
+class CronTest extends test.Test {
+
+    @test
+    func parseSimpleSpec(): void {
+        let p = cron.parse("0 9 * * 1-5");
+        this.assertEquals([0], p["minute"]);
+        this.assertEquals([9], p["hour"]);
+        this.assertEquals([1, 2, 3, 4, 5], p["dayOfWeek"]);
+        this.assertEquals(null, p["special"]);
+    }
+
+    @test
+    func parseStarExpands(): void {
+        let p = cron.parse("* * * * *");
+        this.assertEquals(60, p["minute"].length());
+        this.assertEquals(24, p["hour"].length());
+        this.assertEquals(12, p["month"].length());
+    }
+
+    @test
+    func parseStepExpression(): void {
+        let p = cron.parse("*/15 * * * *");
+        this.assertEquals([0, 15, 30, 45], p["minute"]);
+    }
+
+    @test
+    func parseRangeWithStep(): void {
+        let p = cron.parse("0 8-18/2 * * *");
+        this.assertEquals([8, 10, 12, 14, 16, 18], p["hour"]);
+    }
+
+    @test
+    func parseList(): void {
+        let p = cron.parse("0 0,12 * * *");
+        this.assertEquals([0, 12], p["hour"]);
+    }
+
+    @test
+    func namedMonthsAndDays(): void {
+        let p = cron.parse("0 0 * jan,mar mon,wed,fri");
+        this.assertEquals([1, 3], p["month"]);
+        this.assertEquals([1, 3, 5], p["dayOfWeek"]);
+    }
+
+    @test
+    func dayOfWeek7BecomesSunday(): void {
+        let p = cron.parse("0 0 * * 7");
+        this.assertEquals([0], p["dayOfWeek"]);
+    }
+
+    @test
+    func atDailyShortcut(): void {
+        let p = cron.parse("@daily");
+        this.assertEquals("@daily", p["special"]);
+        this.assertEquals([0], p["minute"]);
+        this.assertEquals([0], p["hour"]);
+        this.assertEquals(12, p["month"].length());
+    }
+
+    @test
+    func atYearlyAndAtAnnuallyAreEquivalent(): void {
+        let y = cron.parse("@yearly");
+        let a = cron.parse("@annually");
+        this.assertEquals(y["minute"], a["minute"]);
+        this.assertEquals(y["hour"], a["hour"]);
+        this.assertEquals(y["month"], a["month"]);
+    }
+
+    @test
+    func atRebootRejected(): void {
+        let threw = false;
+        try { cron.parse("@reboot"); } catch (Error e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func malformedSpecThrows(): void {
+        for (var s in ["", "not a cron", "* * * *", "0 25 * * *", "0 * 0 * *", "0 * * 13 *", "*/0 * * * *"]) {
+            let threw = false;
+            try { cron.parse(s); } catch (Error e) { threw = true; }
+            this.assertTrue(threw);
+        }
+    }
+
+    @test
+    func isValidMatchesParse(): void {
+        this.assertTrue(cron.isValid("0 9 * * 1-5"));
+        this.assertTrue(cron.isValid("@hourly"));
+        this.assertFalse(cron.isValid("nope"));
+        this.assertFalse(cron.isValid(""));
+    }
+
+    @test
+    func nextAfterBasic(): void {
+        /* 2025-02-01T00:00:00Z is a Sunday; next 9am on Mon is 2025-02-03T09:00:00Z */
+        let next = cron.nextAfter("0 9 * * 1-5", 1738368000);
+        this.assertEquals(1738573200, next);
+    }
+
+    @test
+    func nextAfterAdvancesPastBase(): void {
+        /* Hourly: from epoch 0, next is 3600 */
+        this.assertEquals(3600, cron.nextAfter("0 * * * *", 0));
+        /* From 3600, next is 7200 (strictly after) */
+        this.assertEquals(7200, cron.nextAfter("0 * * * *", 3600));
+    }
+
+    @test
+    func nextNListsFirings(): void {
+        let f = cron.nextN("0 * * * *", 0, 5);
+        this.assertEquals(5, f.length());
+        this.assertEquals([3600, 7200, 10800, 14400, 18000], f);
+    }
+
+    @test
+    func dayOfMonthAndDayOfWeekOrTogether(): void {
+        /* Vixie: "1st of month OR Monday" - whichever fires first */
+        /* 2025-02-01 is a Sunday; the OR fires on the 1st (DOM) since DOW is Mon. */
+        let next = cron.nextAfter("0 0 1 * 1", 1738367999);
+        this.assertEquals(1738368000, next);
+    }
+
+    @test
+    func nextAfterStrictlyAfterBase(): void {
+        /* Even if base already matches, nextAfter returns the NEXT one. */
+        let base = 1738573200;  /* 2025-02-03T09:00:00Z (a Monday) */
+        let next = cron.nextAfter("0 9 * * 1-5", base);
+        this.assertTrue(next > base);
+    }
+}

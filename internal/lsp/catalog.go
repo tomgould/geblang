@@ -819,6 +819,14 @@ var stdlibCatalog = map[string]moduleDoc{
 		"writeTo":       fn([]string{"Connection socket", "string addr", "bytes data"}, "int", "Sends a UDP datagram to an address."),
 		"setDeadline":   fn([]string{"Connection conn", "int ms"}, "void", "Sets a read/write deadline in milliseconds."),
 		"clearDeadline": fn([]string{"Connection conn"}, "void", "Clears a previously set deadline."),
+		"parseIp":       fn([]string{"string s"}, "dict<string, any>", "Parses an IPv4 or IPv6 address. Returns {version: 4|6, address: canonical string, bytes: 4 or 16 raw bytes}. Throws on malformed input (1.6.0)."),
+		"parseCidr":     fn([]string{"string s"}, "dict<string, any>", "Parses a CIDR. Returns {network, prefixLen, version, first, last, count}. The network field is the masked base address; count is the total host count (lifts to bigint for /n < 64). Throws on malformed input (1.6.0)."),
+		"cidrContains":  fn([]string{"string cidr", "string ip"}, "bool", "True if ip falls within cidr. Works for IPv4 and IPv6 (1.6.0)."),
+		"cidrRange":     fn([]string{"string cidr"}, "dict<string, any>", "Returns {first, last, count} for the CIDR's inclusive range (1.6.0)."),
+		"isIpv4":        fn([]string{"string s"}, "bool", "True when s parses as an IPv4 address. Never throws (1.6.0)."),
+		"isIpv6":        fn([]string{"string s"}, "bool", "True when s parses as a native IPv6 address. Never throws. Returns false for IPv4-mapped addresses (1.6.0)."),
+		"ipToBytes":     fn([]string{"string s"}, "bytes", "Returns the raw 4-byte (IPv4) or 16-byte (IPv6) representation. Throws on malformed input (1.6.0)."),
+		"ipFromBytes":   fn([]string{"bytes b"}, "string", "Decodes 4 or 16 bytes to an IP string. Throws on any other length (1.6.0)."),
 	}},
 	"re": {functions: map[string]functionDoc{
 		"test":     fn([]string{"string pattern", "string text"}, "bool", "Reports whether pattern matches text."),
@@ -1160,6 +1168,16 @@ var stdlibCatalog = map[string]moduleDoc{
 			"clear":     fn([]string{}, "void", "Discards every element. O(cap)."),
 			"toList":    fn([]string{}, "list<T>", "Returns a list snapshot in front-to-back order. O(n)."),
 		},
+	}},
+	"cron": {functions: map[string]functionDoc{
+		"parse":     fn([]string{"string spec"}, "dict<string, any>", "Parses a standard 5-field cron spec (minute hour day-of-month month day-of-week) or a `@hourly / @daily / @weekly / @monthly / @yearly / @annually / @midnight` shortcut. Returns {spec, special, minute, hour, dayOfMonth, month, dayOfWeek}; each field is a sorted list of valid integers. Throws on malformed input. `@reboot` is intentionally rejected (1.6.0)."),
+		"isValid":   fn([]string{"string spec"}, "bool", "Cheap parse check; returns false instead of throwing on malformed input (1.6.0)."),
+		"nextAfter": fn([]string{"string spec", "int unixSeconds"}, "int", "Returns the next firing time strictly after `unixSeconds`. Throws on malformed spec or if no firing falls within 5 years (1.6.0)."),
+		"nextN":     fn([]string{"string spec", "int unixSeconds", "int count"}, "list<int>", "Returns the next `count` firing times in ascending order (1.6.0)."),
+	}},
+	"unicode": {functions: map[string]functionDoc{
+		"normalize":    fn([]string{"string s", "string form"}, "string", "Returns s normalised under the given Unicode normalisation form. form is one of \"NFC\", \"NFD\", \"NFKC\", \"NFKD\". Throws on unknown form. Backed by golang.org/x/text/unicode/norm (1.6.0)."),
+		"isNormalized": fn([]string{"string s", "string form"}, "bool", "Reports whether s is already in the given normalisation form without allocating a normalised copy. Cheap (1.6.0)."),
 	}},
 	"msgpack": {functions: map[string]functionDoc{
 		"encode":    fn([]string{"any value"}, "bytes", "Serialises a Geblang value to MessagePack bytes. Decimal round-trips as a MessagePack string for portability; bytes round-trip as bin. Throws on unsupported types or int values outside int64 range (1.6.0)."),

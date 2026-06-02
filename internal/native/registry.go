@@ -153,6 +153,12 @@ var pureBuiltins = map[string]map[string]struct{}{
 	"msgpack": {
 		"encode": {}, "decode": {}, "tryDecode": {}, "validate": {},
 	},
+	"unicode": {
+		"normalize": {}, "isNormalized": {},
+	},
+	"cron": {
+		"parse": {}, "isValid": {}, "nextAfter": {}, "nextN": {},
+	},
 	"sys": {
 		"hostname": {}, "pid": {}, "platform": {}, "arch": {},
 		"tmpdir": {}, "homedir": {}, "username": {}, "environ": {},

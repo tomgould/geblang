@@ -782,3 +782,63 @@ prefix but differ in the random suffix.
 | `v3` | Legacy systems that require MD5-based namespace UUIDs |
 | `v1` | Interoperability with systems that require time-and-MAC UUIDs |
 | `ulid` | You want sortable, URL-safe, human-readable IDs without dashes |
+
+## Cron - schedule expressions (1.6.0)
+
+The `cron` module parses standard 5-field cron expressions and
+computes their next firing times. Hand-rolled, no Go dependency.
+
+```gb
+import cron;
+import time;
+
+if (cron.isValid(userSpec)) {
+    let next = cron.nextAfter(userSpec, time.unix());
+    io.println("next fires at " + (next as string));
+}
+```
+
+### Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `cron.parse(spec)` | `dict<string, any>` | `{spec, special, minute, hour, dayOfMonth, month, dayOfWeek}`. Each field is a sorted list of valid integers. `special` is the shortcut name (e.g. `"@daily"`) or `null`. Throws on malformed input. |
+| `cron.isValid(spec)` | `bool` | Cheap parse check; returns `false` instead of throwing. |
+| `cron.nextAfter(spec, t)` | `int` | The next firing time **strictly after** unix-seconds `t`. Throws if no firing falls within 5 years (a guard against pathological specs like Feb 30). |
+| `cron.nextN(spec, t, n)` | `list<int>` | The next `n` firing times in ascending order. |
+
+### Field syntax
+
+Standard Vixie cron form: `minute hour day-of-month month day-of-week`.
+
+| Field | Range | Names accepted |
+|-------|-------|----------------|
+| minute | 0-59 | - |
+| hour | 0-23 | - |
+| day-of-month | 1-31 | - |
+| month | 1-12 | `jan`-`dec` (case-insensitive) |
+| day-of-week | 0-6 (Sun-Sat) | `sun`-`sat` (case-insensitive); `7` is also Sunday |
+
+Each field accepts:
+
+- `*` for "every value"
+- A single integer or name
+- Comma-separated lists: `1,15,30`
+- Ranges: `8-18`
+- Step expressions: `*/15`, `0-30/5`, `5/3` (last form means "from 5 to max, step 3")
+
+Day-of-month and day-of-week use **OR** semantics when both are
+restricted: a date matches if **either** field matches (this is
+Vixie cron's behaviour; `0 0 1 * 1` fires on the 1st of every
+month and on every Monday).
+
+### Special strings
+
+| Spec | Equivalent |
+|------|------------|
+| `@hourly` | `0 * * * *` |
+| `@daily` (or `@midnight`) | `0 0 * * *` |
+| `@weekly` | `0 0 * * 0` |
+| `@monthly` | `0 0 1 * *` |
+| `@yearly` (or `@annually`) | `0 0 1 1 *` |
+| `@reboot` | **rejected** - it has no scheduled firing time |

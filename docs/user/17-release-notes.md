@@ -198,6 +198,73 @@ The LSP catalog also surfaces signatures and hover docs for
 `assert`, `typeof`, `range`, `dump`, and `dir`, which until now
 were callable but invisible to the IDE.
 
+### Cron expression parser (`cron`)
+
+New native `cron` module: parses standard 5-field cron specs
+(plus `@hourly / @daily / @weekly / @monthly / @yearly /
+@annually / @midnight` shortcuts) and computes their next
+firings. Hand-rolled, no Go dependency.
+
+```gb
+import cron;
+import time;
+
+if (cron.isValid(spec)) {
+    let next = cron.nextAfter(spec, time.unix());
+}
+
+let preview = cron.nextN("0 9 * * 1-5", time.unix(), 5);
+```
+
+Surface: `parse` (returns a normalised dict with field arrays),
+`isValid` (cheap bool), `nextAfter` (next firing strictly after a
+unix-seconds time), `nextN` (next N firings). Standard Vixie
+semantics: when both day-of-month and day-of-week are restricted,
+they are OR'd. `@reboot` is intentionally rejected (it has no
+scheduled firing). Field names (`jan-dec`, `sun-sat`) are accepted
+case-insensitively.
+
+### IP / CIDR utilities (`net`)
+
+The `net` module gains pure helpers for IP addresses and CIDR
+ranges. Useful for allow-lists, deny-lists, classification, and
+binary protocols. Backed by Go's `net/netip`.
+
+```gb
+import net;
+
+io.println(net.cidrContains("10.0.0.0/8", "10.5.5.5"));   # true
+let c = net.parseCidr("192.168.1.0/24");
+io.println(c["first"]);   # 192.168.1.0
+io.println(c["last"]);    # 192.168.1.255
+io.println(c["count"]);   # 256
+```
+
+Surface: `parseIp`, `parseCidr` (returning a dict with `network`,
+`prefixLen`, `version`, `first`, `last`, `count`), `cidrContains`,
+`cidrRange`, `isIpv4`, `isIpv6` (never throw), `ipToBytes`,
+`ipFromBytes`. IPv6 CIDR counts lift to bigint automatically.
+
+### Unicode normalisation (`unicode`)
+
+New native `unicode` module exposing the four Unicode
+normalisation forms via `unicode.normalize(s, form)` and a cheap
+`unicode.isNormalized(s, form)` check. `form` is the canonical
+`"NFC" / "NFD" / "NFKC" / "NFKD"`.
+
+```gb
+import unicode;
+
+let canonical = unicode.normalize(userInput, "NFC");
+if (!unicode.isNormalized(stored, "NFC")) {
+    log.warn("stored value is not NFC-normalised");
+}
+```
+
+Backed by `golang.org/x/text/unicode/norm`. NFC composes, NFD
+decomposes, NFKC / NFKD additionally fold compatibility
+equivalents (ligatures, full-width, superscripts).
+
 ### MessagePack codec (`msgpack`)
 
 New native `msgpack` module with `encode`, `decode`, `tryDecode`,

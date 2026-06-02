@@ -1,0 +1,85 @@
+/**
+ * @title unicode normalisation (1.6.0)
+ * @summary `unicode.normalize(s, form)` returns a copy of `s`
+ * normalised under one of the four Unicode normalisation forms
+ * (NFC / NFD / NFKC / NFKD). `unicode.isNormalized(s, form)`
+ * reports whether `s` is already in the given form without
+ * allocating a normalised copy.
+ */
+import test;
+import unicode;
+
+class UnicodeTest extends test.Test {
+
+    @test
+    func nfcCompactsCombiningSequence(): void {
+        let nfd = "é";    /* e + combining acute */
+        let nfc = unicode.normalize(nfd, "NFC");
+        this.assertEquals("é", nfc);
+        this.assertEquals(1, nfc.length());
+    }
+
+    @test
+    func nfdDecomposesPrecomposed(): void {
+        let nfc = "é";
+        let nfd = unicode.normalize(nfc, "NFD");
+        this.assertEquals("é", nfd);
+        this.assertEquals(2, nfd.length());
+    }
+
+    @test
+    func nfkcAppliesCompatibility(): void {
+        let lig = "ﬁ";         /* fi ligature */
+        this.assertEquals("fi", unicode.normalize(lig, "NFKC"));
+        this.assertEquals("fi", unicode.normalize(lig, "NFKD"));
+        this.assertEquals(lig, unicode.normalize(lig, "NFC"));
+    }
+
+    @test
+    func isNormalizedTrueForExactForm(): void {
+        this.assertTrue(unicode.isNormalized("é", "NFC"));
+        this.assertTrue(unicode.isNormalized("é", "NFD"));
+    }
+
+    @test
+    func isNormalizedFalseForOtherForm(): void {
+        this.assertFalse(unicode.isNormalized("é", "NFD"));
+        this.assertFalse(unicode.isNormalized("é", "NFC"));
+    }
+
+    @test
+    func asciiIsAlreadyAllForms(): void {
+        for (var form in ["NFC", "NFD", "NFKC", "NFKD"]) {
+            this.assertTrue(unicode.isNormalized("hello", form));
+            this.assertEquals("hello", unicode.normalize("hello", form));
+        }
+    }
+
+    @test
+    func unknownFormThrows(): void {
+        let threw = false;
+        try {
+            unicode.normalize("x", "NFXX");
+        } catch (Error e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func emptyStringRoundTrips(): void {
+        for (var form in ["NFC", "NFD", "NFKC", "NFKD"]) {
+            this.assertEquals("", unicode.normalize("", form));
+            this.assertTrue(unicode.isNormalized("", form));
+        }
+    }
+
+    @test
+    func mixedScriptText(): void {
+        let s = "café 中文 mañana";
+        for (var form in ["NFC", "NFD", "NFKC", "NFKD"]) {
+            let n = unicode.normalize(s, form);
+            this.assertTrue(unicode.isNormalized(n, form));
+        }
+    }
+}

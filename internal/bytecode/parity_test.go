@@ -5517,6 +5517,151 @@ io.println(v2 == r2);
 `, "true\ntrue\n")
 }
 
+func TestParityCron(t *testing.T) {
+	// Parse + field values, then validate + special.
+	runParity(t, `import io;
+import cron;
+let p = cron.parse("0 9 * * 1-5");
+io.println(p["minute"]);
+io.println(p["hour"]);
+io.println(p["dayOfWeek"]);
+io.println(p["special"]);
+io.println(cron.isValid("0 9 * * 1-5"));
+io.println(cron.isValid("nope"));
+io.println(cron.isValid("@daily"));
+let d = cron.parse("@daily");
+io.println(d["special"]);
+io.println(d["minute"]);
+io.println(d["hour"]);
+`, "[0]\n[9]\n[1, 2, 3, 4, 5]\nnull\ntrue\nfalse\ntrue\n@daily\n[0]\n[0]\n")
+
+	// nextAfter: 2025-02-01T00:00:00Z (Sunday) -> 2025-02-03T09:00:00Z.
+	runParity(t, `import io;
+import cron;
+io.println(cron.nextAfter("0 9 * * 1-5", 1738368000));
+`, "1738573200\n")
+
+	// nextN returns the next N occurrences.
+	runParity(t, `import io;
+import cron;
+let firings = cron.nextN("0 * * * *", 0, 3);
+io.println(firings);
+`, "[3600, 7200, 10800]\n")
+
+	// Named months and days work case-insensitively.
+	runParity(t, `import io;
+import cron;
+let p = cron.parse("0 0 * jan,jul mon");
+io.println(p["month"]);
+io.println(p["dayOfWeek"]);
+`, "[1, 7]\n[1]\n")
+
+	// Step expressions.
+	runParity(t, `import io;
+import cron;
+let p = cron.parse("*/15 0 * * *");
+io.println(p["minute"]);
+`, "[0, 15, 30, 45]\n")
+}
+
+func TestParityNetIP(t *testing.T) {
+	// parseIp + parseCidr core fields.
+	runParityStateful(t, `import io;
+import net;
+let ip = net.parseIp("10.0.0.1");
+io.println(ip["version"]);
+io.println(ip["address"]);
+
+let c = net.parseCidr("10.0.0.0/8");
+io.println(c["network"]);
+io.println(c["prefixLen"]);
+io.println(c["version"]);
+io.println(c["first"]);
+io.println(c["last"]);
+io.println(c["count"]);
+`, "4\n10.0.0.1\n10.0.0.0\n8\n4\n10.0.0.0\n10.255.255.255\n16777216\n")
+
+	// cidrContains positive + negative.
+	runParityStateful(t, `import io;
+import net;
+io.println(net.cidrContains("10.0.0.0/8", "10.5.5.5"));
+io.println(net.cidrContains("10.0.0.0/8", "11.0.0.0"));
+io.println(net.cidrContains("192.168.0.0/16", "192.168.42.1"));
+io.println(net.cidrContains("192.168.0.0/16", "10.0.0.1"));
+`, "true\nfalse\ntrue\nfalse\n")
+
+	// IPv6 CIDR + count overflows int64 -> Int.
+	runParityStateful(t, `import io;
+import net;
+let c = net.parseCidr("2001:db8::/32");
+io.println(c["version"]);
+io.println(c["first"]);
+io.println(c["count"]);
+`, "6\n2001:db8::\n79228162514264337593543950336\n")
+
+	// Classification helpers.
+	runParityStateful(t, `import io;
+import net;
+io.println(net.isIpv4("192.168.1.1"));
+io.println(net.isIpv4("::1"));
+io.println(net.isIpv4("not-an-ip"));
+io.println(net.isIpv6("::1"));
+io.println(net.isIpv6("192.168.1.1"));
+`, "true\nfalse\nfalse\ntrue\nfalse\n")
+
+	// Bytes round trip.
+	runParityStateful(t, `import io;
+import net;
+import bytes;
+let b = net.ipToBytes("192.168.1.1");
+io.println(b.length());
+io.println(bytes.toHex(b));
+io.println(net.ipFromBytes(b));
+`, "4\nc0a80101\n192.168.1.1\n")
+}
+
+func TestParityUnicode(t *testing.T) {
+	// Round-trip NFC <-> NFD on a single accented character.
+	// NFC e-acute = U+00E9 (1 code point); NFD = U+0065 + U+0301 (2).
+	runParity(t, `import io;
+import unicode;
+let nfc = "é";
+let nfd = "é";
+io.println(unicode.normalize(nfd, "NFC") == nfc);
+io.println(unicode.normalize(nfc, "NFD") == nfd);
+io.println(nfc.length());
+io.println(nfd.length());
+`, "true\ntrue\n1\n2\n")
+
+	// isNormalized reports both directions.
+	runParity(t, `import io;
+import unicode;
+io.println(unicode.isNormalized("é", "NFC"));
+io.println(unicode.isNormalized("é", "NFC"));
+io.println(unicode.isNormalized("é", "NFD"));
+io.println(unicode.isNormalized("é", "NFD"));
+`, "true\nfalse\nfalse\ntrue\n")
+
+	// Compatibility decomposition: ligature fi (U+FB01) -> "fi" under NFKC / NFKD.
+	runParity(t, `import io;
+import unicode;
+let lig = "ﬁ";
+io.println(unicode.normalize(lig, "NFKC"));
+io.println(unicode.normalize(lig, "NFKD"));
+io.println(unicode.normalize(lig, "NFC") == lig);
+`, "fi\nfi\ntrue\n")
+
+	// Unknown form name throws.
+	runParity(t, `import io;
+import unicode;
+try {
+    unicode.normalize("x", "BAD");
+} catch (Error e) {
+    io.println("caught");
+}
+`, "caught\n")
+}
+
 func TestParityMsgpack(t *testing.T) {
 	// Primitives encode to the spec-fixed byte sequences.
 	runParity(t, `import io;

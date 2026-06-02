@@ -244,6 +244,42 @@ Socket operations use the same error model as HTTP: connection failures,
 deadline failures, and bind conflicts throw `IOError` so applications can
 recover or report a clean message.
 
+### IP and CIDR utilities (1.6.0)
+
+`net` also exposes pure helpers for IP addresses and CIDR ranges,
+useful for allow-lists, deny-lists, network classification, and
+binary protocols. Backed by Go's `net/netip`.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `net.parseIp(s)` | `dict<string, any>` | `{version: 4\|6, address: canonical, bytes: 4 or 16}` for any valid IPv4 / IPv6 address. Throws on malformed input. |
+| `net.parseCidr(s)` | `dict<string, any>` | `{network, prefixLen, version, first, last, count}`. The network field is the masked base; count is the total host count and lifts to bigint for IPv6 ranges. Throws on malformed input. |
+| `net.cidrContains(cidr, ip)` | `bool` | True when `ip` falls within `cidr`. |
+| `net.cidrRange(cidr)` | `dict<string, any>` | `{first, last, count}` for the CIDR's inclusive range. |
+| `net.isIpv4(s)` | `bool` | True when `s` parses as IPv4. Never throws. |
+| `net.isIpv6(s)` | `bool` | True when `s` parses as a native IPv6 address. Never throws; returns false for IPv4-mapped addresses. |
+| `net.ipToBytes(s)` | `bytes` | Raw 4-byte (IPv4) or 16-byte (IPv6) representation. Throws on malformed input. |
+| `net.ipFromBytes(b)` | `string` | Decodes 4 or 16 bytes back to a canonical IP string. Throws on any other length. |
+
+```gb
+import net;
+
+let allow = ["10.0.0.0/8", "192.168.0.0/16", "127.0.0.1/32"];
+
+func isInternal(string ip): bool {
+    for (var cidr in allow) {
+        if (net.cidrContains(cidr, ip)) { return true; }
+    }
+    return false;
+}
+
+io.println(isInternal("10.5.5.5"));     # true
+io.println(isInternal("8.8.8.8"));      # false
+
+let c = net.parseCidr("2001:db8::/32");
+io.println(c["count"]);   # 79228162514264337593543950336
+```
+
 ## Static File Server
 
 `http.server` is an executable source module. Run it with `-m` to serve the

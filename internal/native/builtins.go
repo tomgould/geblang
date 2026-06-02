@@ -104,6 +104,8 @@ func registerAllBuiltins(r *Registry) {
 	registerRandom(r)
 	registerSecureRandom(r)
 	registerMsgpack(r)
+	registerUnicode(r)
+	registerCron(r)
 	registerTime(r)
 	registerBytes(r)
 	registerString(r)
