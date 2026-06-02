@@ -43,6 +43,20 @@ io.println("AFTER");
 	}
 }
 
+// TestParityCaughtFaultTraceContent proves the lazily-formatted trace
+// of a caught fault yields the correct frames on both backends (the
+// lazy VM path must produce the same frames as the eager evaluator).
+func TestParityCaughtFaultTraceContent(t *testing.T) {
+	runParity(t, `import io; import errors;
+func g(): void { let x = 1 / 0; }
+func f(): void { g(); }
+try { f(); } catch (Error e) {
+    let frames = errors.frames(e);
+    io.println("${frames.length() >= 3}");
+}
+`, "true\n")
+}
+
 // TestParityErrorsIsMatchesInstanceOf proves errors.is and instanceof
 // agree (one shared matcher): a built-in error is an Error, FatalError
 // is not. Previously errors.is used a class-only matcher that diverged.

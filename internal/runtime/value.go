@@ -935,9 +935,32 @@ type Error struct {
 	// catch(any)); it always unwinds to the top. Used for FatalError,
 	// VM corruption, and stack-overflow conditions.
 	Fatal bool
+	// TraceFn lazily formats the stack trace. The VM captures a cheap
+	// frame snapshot at throw time and defers the (O(frames)) string
+	// formatting until errors.stackTrace / display actually needs it, so
+	// a caught-and-discarded runtime fault pays no trace-formatting cost.
+	// When StackTrace is non-empty it takes precedence (eager path).
+	TraceFn func() string
 }
 
 func (v Error) TypeName() string { return v.Class }
+
+// ResolvedStackTrace returns the eager StackTrace string when set,
+// otherwise formats the lazy trace, otherwise empty.
+func (v Error) ResolvedStackTrace() string {
+	if v.StackTrace != "" {
+		return v.StackTrace
+	}
+	if v.TraceFn != nil {
+		return v.TraceFn()
+	}
+	return ""
+}
+
+// HasStackTrace reports whether any trace (eager or lazy) is available.
+func (v Error) HasStackTrace() bool {
+	return strings.TrimSpace(v.StackTrace) != "" || v.TraceFn != nil
+}
 
 // IsFatal reports whether the error must bypass every try/catch (even
 // catch(any)) and unwind to the top. True for the FatalError class and

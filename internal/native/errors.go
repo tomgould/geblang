@@ -95,7 +95,7 @@ func registerErrors(r *Registry) {
 		if !ok {
 			return nil, fmt.Errorf("errors.stackTrace: argument must be an error, got %s", args[0].TypeName())
 		}
-		return ParseErrorStackTrace(err.StackTrace), nil
+		return ParseErrorStackTrace(err.ResolvedStackTrace()), nil
 	})
 
 	r.Register("errors", "frames", func(args []runtime.Value) (runtime.Value, error) {
@@ -106,7 +106,7 @@ func registerErrors(r *Registry) {
 		if !ok {
 			return nil, fmt.Errorf("errors.frames: argument must be an error, got %s", args[0].TypeName())
 		}
-		return errorStackFrameList(ParseErrorStackTrace(err.StackTrace).Frames), nil
+		return errorStackFrameList(ParseErrorStackTrace(err.ResolvedStackTrace()).Frames), nil
 	})
 
 	r.Register("errors", "hasStackTrace", func(args []runtime.Value) (runtime.Value, error) {
@@ -117,7 +117,7 @@ func registerErrors(r *Registry) {
 		if !ok {
 			return nil, fmt.Errorf("errors.hasStackTrace: argument must be an error, got %s", args[0].TypeName())
 		}
-		return runtime.Bool{Value: strings.TrimSpace(err.StackTrace) != ""}, nil
+		return runtime.Bool{Value: err.HasStackTrace()}, nil
 	})
 }
 
@@ -207,17 +207,17 @@ func ErrorMethod(err runtime.Error, name string, args []runtime.Value) (runtime.
 		if len(args) != 0 {
 			return nil, fmt.Errorf("%s.stackTrace expects no arguments", err.Class)
 		}
-		return ParseErrorStackTrace(err.StackTrace), nil
+		return ParseErrorStackTrace(err.ResolvedStackTrace()), nil
 	case "frames":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("%s.frames expects no arguments", err.Class)
 		}
-		return errorStackFrameList(ParseErrorStackTrace(err.StackTrace).Frames), nil
+		return errorStackFrameList(ParseErrorStackTrace(err.ResolvedStackTrace()).Frames), nil
 	case "hasStackTrace":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("%s.hasStackTrace expects no arguments", err.Class)
 		}
-		return runtime.Bool{Value: strings.TrimSpace(err.StackTrace) != ""}, nil
+		return runtime.Bool{Value: err.HasStackTrace()}, nil
 	default:
 		return nil, fmt.Errorf("%s has no method %s", err.Class, name)
 	}

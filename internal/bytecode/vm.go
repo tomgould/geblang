@@ -3142,6 +3142,12 @@ func (vm *VM) faultToRuntimeError(loopErr error) (runtime.Error, bool) {
 	if errors.As(loopErr, &fatalErr) {
 		return runtime.Error{}, true
 	}
+	var rt *vmRuntimeError
+	if errors.As(loopErr, &rt) {
+		// Routed fault: keep the message but defer trace formatting so a
+		// caught-and-discarded fault never pays the O(frames) trace cost.
+		return runtime.Error{Class: "RuntimeError", Message: rt.message, Parents: []string{"RuntimeError", "Error"}, TraceFn: rt.lazyTrace()}, false
+	}
 	full := loopErr.Error()
 	msg := cleanRuntimeFaultMessage(full)
 	// Preserve the stack trace the dispatch error already carries so a
@@ -15818,14 +15824,30 @@ func ensureSlot(values *[]runtime.VMValue, slot int64, label string) error {
 	return nil
 }
 
-func (vm *VM) vmStackTrace(errorLine int) string {
-	if len(vm.frames) == 0 {
+// traceFrame is the cheap per-frame snapshot captured at throw time so
+// the (O(frames)) trace string can be formatted lazily.
+type traceFrame struct {
+	name     string
+	callLine int
+}
+
+func (vm *VM) snapshotTraceFrames() []traceFrame {
+	out := make([]traceFrame, len(vm.frames))
+	for i := range vm.frames {
+		out[i] = traceFrame{name: vm.frames[i].functionName, callLine: vm.frames[i].callLine}
+	}
+	return out
+}
+
+// formatTraceFrames renders a frame snapshot into the "\n  at ..." trace
+// string. Byte-identical to the previous vmStackTrace output.
+func formatTraceFrames(frames []traceFrame, errorLine int) string {
+	if len(frames) == 0 {
 		return ""
 	}
 	var sb strings.Builder
-	N := len(vm.frames)
-	// Innermost: the currently executing function
-	innerName := vm.frames[N-1].functionName
+	N := len(frames)
+	innerName := frames[N-1].name
 	if innerName == "" {
 		innerName = "<anonymous>"
 	}
@@ -15834,12 +15856,11 @@ func (vm *VM) vmStackTrace(errorLine int) string {
 	} else {
 		fmt.Fprintf(&sb, "\n  at %s", innerName)
 	}
-	// Walk from innermost outward, showing where each was called from
 	for i := N - 1; i >= 0; i-- {
-		line := vm.frames[i].callLine
+		line := frames[i].callLine
 		var callerName string
 		if i > 0 {
-			callerName = vm.frames[i-1].functionName
+			callerName = frames[i-1].name
 			if callerName == "" {
 				callerName = "<anonymous>"
 			}
@@ -15855,14 +15876,44 @@ func (vm *VM) vmStackTrace(errorLine int) string {
 	return sb.String()
 }
 
-func (vm *VM) runtimeError(instruction Instruction, format string, args ...any) error {
-	message := fmt.Sprintf(format, args...)
-	trace := vm.vmStackTrace(instruction.Line)
-	if instruction.Line > 0 {
-		base := fmt.Sprintf("bytecode runtime error at %d:%d: %s", instruction.Line, instruction.Column, message)
-		return fmt.Errorf("%s%s", base, trace)
+func (vm *VM) vmStackTrace(errorLine int) string {
+	return formatTraceFrames(vm.snapshotTraceFrames(), errorLine)
+}
+
+// vmRuntimeError is the error vm.runtimeError returns. It snapshots the
+// call frames cheaply at throw time but defers the expensive trace
+// formatting to Error() / lazyTrace(), so a runtime fault that is caught
+// and discarded never pays the O(frames) trace-string cost.
+type vmRuntimeError struct {
+	line, column int
+	message      string
+	frames       []traceFrame
+}
+
+func (e *vmRuntimeError) Error() string {
+	trace := formatTraceFrames(e.frames, e.line)
+	if e.line > 0 {
+		return fmt.Sprintf("bytecode runtime error at %d:%d: %s%s", e.line, e.column, e.message, trace)
 	}
-	return fmt.Errorf("bytecode runtime error: %s%s", message, trace)
+	return fmt.Sprintf("bytecode runtime error: %s%s", e.message, trace)
+}
+
+// lazyTrace returns a closure that formats the trace on demand (leading
+// newline stripped, matching the stored-StackTrace form).
+func (e *vmRuntimeError) lazyTrace() func() string {
+	frames, line := e.frames, e.line
+	return func() string {
+		return strings.TrimPrefix(formatTraceFrames(frames, line), "\n")
+	}
+}
+
+func (vm *VM) runtimeError(instruction Instruction, format string, args ...any) error {
+	return &vmRuntimeError{
+		line:    instruction.Line,
+		column:  instruction.Column,
+		message: fmt.Sprintf(format, args...),
+		frames:  vm.snapshotTraceFrames(),
+	}
 }
 
 // runtimeErrorWith wraps the formatted runtime-error message around a
