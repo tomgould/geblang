@@ -22,6 +22,20 @@ class StreamsIOTest extends test.Test {
     }
 
     @test
+    func directIoReadLineOverMemoryReadsEveryLine(): void {
+        /* Regression: io.readLine over io.memory once returned null
+           after the first line (a fresh bufio.Reader per call dropped
+           the buffered tail). The buffered reader is cached on the
+           handle, so successive reads advance. Last line has no
+           trailing newline; the read past EOF is null. */
+        let m = io.memory("x\ny\nz");
+        this.assertEquals("x", io.readLine(m));
+        this.assertEquals("y", io.readLine(m));
+        this.assertEquals("z", io.readLine(m));
+        this.assertNull(io.readLine(m));
+    }
+
+    @test
     func memoryForInIteratesLines(): void {
         let mem = streams.memory("one\ntwo\nthree\n");
         list<string> collected = [];

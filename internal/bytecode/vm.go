@@ -10595,7 +10595,7 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 		// error subclass even when the parent class was declared in
 		// another module.
 		stripped := stripModulePrefix(target)
-		vm.push(runtime.Bool{Value: vm.errorClassMatches(errValue, stripped)})
+		vm.push(runtime.Bool{Value: vm.errorValueMatches(errValue, stripped)})
 		return nil
 	}
 	// `instanceof list<int>` and friends: split off the generic args
@@ -10797,7 +10797,7 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 	// matches `e` whose class extends X declared in any module).
 	stripped := stripModulePrefix(target)
 	if errValue, ok := value.(runtime.Error); ok {
-		if vm.errorClassMatches(errValue, stripped) {
+		if vm.errorValueMatches(errValue, stripped) {
 			vm.push(value)
 			return ip, nil
 		}
@@ -12491,18 +12491,6 @@ func (vm *VM) runtimeClassForParent(classInfo ClassInfo) *runtime.Class {
 	}
 }
 
-// errorClassMatches walks an error class's parent chain so
-// `instanceof BadRequestError` / `instanceof HttpException` /
-// `instanceof RuntimeError` all match an error-derived value, even
-// when the error class was defined in another module than the chunk
-// currently executing. Match is case-insensitive.
-func (vm *VM) errorClassMatches(errValue runtime.Error, target string) bool {
-	// Delegate to the value-aware matcher so `instanceof Error` resolves
-	// the universal Error supertype and the built-in error parent chain
-	// (which VM-constructed built-in errors don't carry in Parents),
-	// matching the evaluator. FatalError is excluded from Error there.
-	return vm.errorValueMatches(errValue, target)
-}
 
 // reflectFieldsResult returns the per-field metadata list shape that
 // reflect.fields produces - {name, type, nullable, hasDefault} dicts.
@@ -12883,7 +12871,8 @@ func extractThrownErrorClass(err error) string {
 // hierarchies plus the built-in error chain for system classes.
 func (vm *VM) errorTypeMatchesClass(actual, target string) bool {
 	if target == "" || target == "Error" {
-		return true
+		// FatalError is its own tier, not an Error.
+		return actual != "FatalError"
 	}
 	if actual == target {
 		return true
@@ -15109,7 +15098,7 @@ func (vm *VM) errorsIs(args []runtime.Value) (runtime.Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("errors.is: second argument must be a string class name")
 	}
-	return runtime.Bool{Value: vm.errorTypeMatches(err.Class, target.Value)}, nil
+	return runtime.Bool{Value: vm.errorValueMatches(err, target.Value)}, nil
 }
 
 func (vm *VM) errorTypeMatches(class string, target string) bool {
@@ -15118,7 +15107,8 @@ func (vm *VM) errorTypeMatches(class string, target string) bool {
 	// the parent chain records.
 	target = stripModulePrefix(target)
 	if target == "" || target == "Error" {
-		return true
+		// FatalError is its own tier, not an Error.
+		return class != "FatalError"
 	}
 	seen := map[string]bool{}
 	for current := class; current != ""; current = vm.errorParent(current) {

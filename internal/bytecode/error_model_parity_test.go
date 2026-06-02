@@ -43,6 +43,18 @@ io.println("AFTER");
 	}
 }
 
+// TestParityErrorsIsMatchesInstanceOf proves errors.is and instanceof
+// agree (one shared matcher): a built-in error is an Error, FatalError
+// is not. Previously errors.is used a class-only matcher that diverged.
+func TestParityErrorsIsMatchesInstanceOf(t *testing.T) {
+	runParity(t, `import io; import errors;
+io.println("${errors.is(RuntimeError("x"), "Error")}");
+io.println("${RuntimeError("x") instanceof Error}");
+io.println("${errors.is(FatalError("x"), "Error")}");
+io.println("${FatalError("x") instanceof Error}");
+`, "true\ntrue\nfalse\nfalse\n")
+}
+
 // TestParityCaughtFaultHasStackTrace proves a caught runtime fault
 // carries a stack trace on both backends (the VM routing must not drop
 // the trace the dispatch error already holds).
