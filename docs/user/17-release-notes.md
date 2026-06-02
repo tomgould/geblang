@@ -1,5 +1,30 @@
 # Release Notes
 
+## 1.7.0
+
+### Shell completion
+
+`geblang completion bash` prints a bash completion script. Enable it
+for the current shell with `source <(geblang completion bash)`, or add
+that line to `~/.bashrc` to make it permanent. It completes subcommands
+at the first position (so `geblang li<tab>` becomes `geblang licenses`)
+and filenames afterwards.
+
+### Paged licenses output
+
+`geblang licenses` now pages its output through `$PAGER` (falling back
+to `less -R`, then `more`) when run in an interactive terminal. Output
+is written plain when piped or redirected, so `geblang licenses > file`
+and CI capture are unaffected. Pass `--no-pager` to force plain output
+on a terminal.
+
+### Exact decimal formatting in f-string specs
+
+Numeric format specs (`:f`, `:e`, `:g`, `:%`) on a `decimal` value now
+format from its exact value instead of routing through a binary `float`,
+so `${d:.Nf}` matches `d.toString(N)` with no binary-rounding artifacts.
+`float` values are unchanged.
+
 ## 1.6.0
 
 ### geblang check: clearer error-versus-warning contract

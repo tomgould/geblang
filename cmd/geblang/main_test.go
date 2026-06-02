@@ -141,7 +141,7 @@ func TestPrintHelpShowsTopLevelCommands(t *testing.T) {
 		"geblang cache stats",
 		"geblang help [topic]",
 		"Use `geblang help <topic>` or `geblang <command> --help`",
-		"Topics: repl, run, module, build, install, fmt, lsp, dap, test, check, init, doctor, doc, cache",
+		"Topics: repl, run, module, build, install, fmt, lsp, dap, test, check, init, doctor, doc, cache, completion",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("help output missing %q: %q", want, output)

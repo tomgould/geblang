@@ -206,10 +206,6 @@ func formatInteger(value runtime.Value, s formatSpec, base int, upperHex bool) (
 }
 
 func formatFloat(value runtime.Value, s formatSpec, verb byte) (string, error) {
-	f, ok := floatValue(value)
-	if !ok {
-		return "", fmt.Errorf("format type %q expects numeric, got %s", string(verb), value.TypeName())
-	}
 	precision := s.precision
 	if !s.hasPrec {
 		if verb == 'g' {
@@ -217,6 +213,24 @@ func formatFloat(value runtime.Value, s formatSpec, verb byte) (string, error) {
 		} else {
 			precision = 6
 		}
+	}
+	// A decimal is an exact big.Rat; format from it directly so the
+	// rendered value matches toString and is not corrupted by a float64
+	// round-trip.
+	if d, ok := value.(runtime.Decimal); ok {
+		body := formatDecimalExact(d.Value, verb, precision, s.hasPrec)
+		if s.comma && verb == 'f' {
+			body = addThousandsFloat(body, ',')
+		}
+		signByte := signPrefix(d.Value.Sign() < 0, s.sign)
+		if signByte != 0 {
+			return string(signByte) + body, nil
+		}
+		return body, nil
+	}
+	f, ok := floatValue(value)
+	if !ok {
+		return "", fmt.Errorf("format type %q expects numeric, got %s", string(verb), value.TypeName())
 	}
 	body := strconv.FormatFloat(absFloat(f), verb, precision, 64)
 	if s.comma && verb == 'f' {
@@ -229,16 +243,55 @@ func formatFloat(value runtime.Value, s formatSpec, verb byte) (string, error) {
 	return body, nil
 }
 
+// formatDecimalExact renders the absolute value of an exact decimal for
+// the f/e/g verbs without a float64 round-trip. precision follows
+// strconv semantics (digits after the point for f/e, significant digits
+// for g; -1 means shortest). The sign is applied by the caller.
+func formatDecimalExact(r *big.Rat, verb byte, precision int, hasPrec bool) string {
+	abs := new(big.Rat).Abs(r)
+	switch verb {
+	case 'e':
+		return ratToBigFloat(abs, precision+2).Text('e', precision)
+	case 'g':
+		if !hasPrec {
+			body := strings.TrimRight(abs.FloatString(50), "0")
+			return strings.TrimSuffix(body, ".")
+		}
+		return ratToBigFloat(abs, precision+2).Text('g', precision)
+	default: // 'f'
+		return abs.FloatString(precision)
+	}
+}
+
+// ratToBigFloat converts a rational to a big.Float with enough mantissa
+// bits to render `digits` decimal digits exactly.
+func ratToBigFloat(r *big.Rat, digits int) *big.Float {
+	if digits < 0 {
+		digits = 0
+	}
+	prec := uint(r.Num().BitLen()) + uint(digits)*4 + 64
+	return new(big.Float).SetPrec(prec).SetRat(r)
+}
+
 func formatPercent(value runtime.Value, s formatSpec) (string, error) {
+	precision := s.precision
+	if !s.hasPrec {
+		precision = 6
+	}
+	if d, ok := value.(runtime.Decimal); ok {
+		scaled := new(big.Rat).Mul(d.Value, big.NewRat(100, 1))
+		body := new(big.Rat).Abs(scaled).FloatString(precision) + "%"
+		signByte := signPrefix(scaled.Sign() < 0, s.sign)
+		if signByte != 0 {
+			return string(signByte) + body, nil
+		}
+		return body, nil
+	}
 	f, ok := floatValue(value)
 	if !ok {
 		return "", fmt.Errorf("format type %% expects numeric, got %s", value.TypeName())
 	}
 	scaled := f * 100
-	precision := s.precision
-	if !s.hasPrec {
-		precision = 6
-	}
 	body := strconv.FormatFloat(absFloat(scaled), 'f', precision, 64) + "%"
 	signByte := signPrefix(scaled < 0, s.sign)
 	if signByte != 0 {

@@ -98,4 +98,17 @@ class FormatSpecTest extends test.Test {
         this.assertEquals("5", "${true ? x : 0}");
         this.assertEquals("005", "${(true ? x : 0):03d}");
     }
+
+    @test
+    func decimalFormatsExactly(): void {
+        /* A decimal is formatted from its exact value, not a float64
+           round-trip, so :f matches toString with no binary noise. */
+        let d = 3.1415926536 as decimal;
+        this.assertEquals(d.toString(13), "${d:.13f}");
+        this.assertEquals("3.1415926536000", "${d:.13f}");
+        this.assertEquals("2.57", "${2.567 as decimal:.2f}");
+        this.assertEquals("-2.500", "${-2.5 as decimal:.3f}");
+        this.assertEquals("12.5%", "${0.125 as decimal:.1%}");
+        this.assertEquals("1,234.50", "${1234.5 as decimal:,.2f}");
+    }
 }

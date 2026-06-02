@@ -5948,6 +5948,20 @@ io.println("${(true ? x : 0):03d}");
 `, "5\n005\n")
 }
 
+func TestParityDecimalFormatSpec(t *testing.T) {
+	// A decimal formats from its exact value, not a float64 round-trip,
+	// so :f matches toString and shows no binary noise.
+	runParity(t, `import io;
+let d = (3.1415926536 as decimal);
+io.println("${d:.13f}");
+io.println(d.toString(13));
+io.println("${(2.567 as decimal):.2f}");
+io.println("${(-2.5 as decimal):.3f}");
+io.println("${(0.125 as decimal):.1%}");
+io.println("${(1234.5 as decimal):,.2f}");
+`, "3.1415926536000\n3.1415926536000\n2.57\n-2.500\n12.5%\n1,234.50\n")
+}
+
 func TestParityOrPatterns(t *testing.T) {
 	// Literal alternation.
 	runParity(t, `import io;

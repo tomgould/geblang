@@ -59,7 +59,17 @@ func main() {
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "licenses" {
-		fmt.Fprint(os.Stdout, licenseText)
+		noPager := false
+		for _, a := range os.Args[2:] {
+			if a == "--no-pager" {
+				noPager = true
+			}
+		}
+		writePaged(os.Stdout, licenseText, noPager)
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "completion" {
+		runCompletion(os.Args[2:])
 		return
 	}
 	if len(os.Args) > 2 && isHelpArg(os.Args[2]) {
@@ -289,11 +299,12 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  geblang doctor [--json]            inspect the local install for common setup issues")
 	fmt.Fprintln(writer, "  geblang cache clean                purge the bytecode cache")
 	fmt.Fprintln(writer, "  geblang cache stats [--json]       report bytecode cache size and entries")
+	fmt.Fprintln(writer, "  geblang completion bash            print a bash completion script (source <(geblang completion bash))")
 	fmt.Fprintln(writer)
 	fmt.Fprintln(writer, "Help:")
 	fmt.Fprintln(writer, "  geblang help [topic]               show detailed help for a command (topic == repl, run, build, ...)")
 	fmt.Fprintln(writer, "  geblang --version                  print the Geblang version and exit")
-	fmt.Fprintln(writer, "  geblang licenses                   print third-party attribution notices")
+	fmt.Fprintln(writer, "  geblang licenses [--no-pager]      print third-party attribution notices (paged on a terminal)")
 }
 
 func isHelpArg(arg string) bool {
@@ -307,7 +318,7 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Run geblang with no arguments to start the REPL.")
 		fmt.Fprintln(writer, "Use `geblang help <topic>` or `geblang <command> --help` for command details.")
-		fmt.Fprintln(writer, "Topics: repl, run, module, build, install, fmt, lsp, dap, test, check, init, doctor, doc, cache")
+		fmt.Fprintln(writer, "Topics: repl, run, module, build, install, fmt, lsp, dap, test, check, init, doctor, doc, cache, completion")
 		return true
 	case "repl":
 		fmt.Fprintln(writer, "usage: geblang repl [--disable-vm|--vm-strict|--trace-exec]")
@@ -443,6 +454,15 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "Examples:")
 		fmt.Fprintln(writer, "  geblang init --name acme.api")
 		fmt.Fprintln(writer, "  geblang init --name acme.api --source src")
+		return true
+	case "completion":
+		fmt.Fprintln(writer, "usage: geblang completion bash")
+		fmt.Fprintln(writer)
+		fmt.Fprintln(writer, "Prints a shell completion script. Enable it for the current shell:")
+		fmt.Fprintln(writer, "  source <(geblang completion bash)")
+		fmt.Fprintln(writer)
+		fmt.Fprintln(writer, "Or install it permanently by adding that line to ~/.bashrc.")
+		fmt.Fprintln(writer, "Completes subcommands at the first position and filenames after.")
 		return true
 	case "doctor":
 		fmt.Fprintln(writer, "usage: geblang doctor [--json]")

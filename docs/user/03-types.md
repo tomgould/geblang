@@ -2,28 +2,28 @@
 
 ## Primitive Types
 
-Core primitive types:
-
-- `int`
-- `decimal`
-- `float`
-- `bool`
-- `string`
-- `char`
-- `bytes`
-- `null`
-- `any`
+| Type | Description | Operations |
+|------|-------------|------------|
+| `int` | Arbitrary-precision signed integer (no overflow). | [Numeric methods](#numeric-methods) |
+| `decimal` | Exact base-10 number (arbitrary precision, no binary rounding). | [Numeric methods](#numeric-methods) |
+| `float` | 64-bit IEEE-754 binary floating point. | [Numeric methods](#numeric-methods) |
+| `bool` | `true` or `false`. | [Boolean methods](#boolean-methods) |
+| `string` | Immutable UTF-8 text. A single character is just a length-one string; there is no separate `char` type. | [String methods](stdlib/09-text.md) |
+| `bytes` | Immutable sequence of raw bytes. | [bytes instance methods](#bytes-instance-methods) |
+| `null` | The absence of a value. | - |
+| `any` | A dynamic value at typed boundaries (decoded JSON, request data). | - |
 
 Collection types:
 
-- `list<T>` or `T[]`
-- `dict<K, V>`
-- `set<T>`
+| Type | Description | Operations |
+|------|-------------|------------|
+| `list<T>` / `T[]` | Ordered, growable sequence. | [Collection methods](stdlib/08-collections.md) |
+| `dict<K, V>` | Insertion-ordered key/value map. | [Collection methods](stdlib/08-collections.md) |
+| `set<T>` | Unordered collection of unique values. | [Collection methods](stdlib/08-collections.md) |
 
-See [stdlib/08-collections](stdlib/08-collections.md) for the full
-list of methods on each (`length`, `push`, `pop`, `slice`, `map`,
-`filter`, `reduce`, `keys`, `values`, `items`, `add`, `union`,
-`difference`, etc.) along with examples.
+Every method list in this chapter is the set the engine actually
+recognises - the same source powers `dir(value)`, editor completion,
+and `geblang check`, so completion never lags the language.
 
 Runtime and framework types include `Type`, `Task<T>`, `generator<T>`,
 `iterable<T>`, classes, interfaces, and enums.
@@ -53,6 +53,78 @@ dict<string, int> scores = {"Ada": 10};
 Use `any` at dynamic boundaries such as decoded JSON, request dictionaries, and
 extension responses. Convert or validate it before passing values deeper into
 typed application code.
+
+## Numeric methods
+
+`int`, `decimal`, and `float` share a core set of numeric operations.
+The rounding family returns the *same* type (keeping a `decimal` a
+`decimal`), unlike `math.floor/ceil/round`, which return `int`. See
+[stdlib/11-math-datetime](stdlib/11-math-datetime.md) for the `math`
+module.
+
+Common to all three numeric types:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `abs()` | same type | Absolute value. |
+| `sign()` | `int` | `-1`, `0`, or `1` by sign. |
+| `clamp(lo, hi)` | same type | Constrain to the range `[lo, hi]`. |
+| `isPositive()` | `bool` | True if `> 0`. |
+| `isNegative()` | `bool` | True if `< 0`. |
+| `isZero()` | `bool` | True if `== 0`. |
+| `toString()` | `string` | Text form (see per-type notes below). |
+
+`int` also has:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `isEven()` | `bool` | True if divisible by 2. |
+| `isOdd()` | `bool` | True if not divisible by 2. |
+| `toString(base = 10)` | `string` | Format in base 2-36. |
+| `toDecimal(places = 0)` | `decimal` | Convert, optionally rounded. |
+| `toFloat()` | `float` | Convert to float. |
+
+`decimal` and `float` add the value-keeping rounding family (each takes
+an optional `places`, default 0, and rounds half away from zero for
+`round`):
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `round(places = 0)` | same type | Round to `places` digits. |
+| `floor(places = 0)` | same type | Round down to `places` digits. |
+| `ceil(places = 0)` | same type | Round up to `places` digits. |
+| `truncate(places = 0)` | same type | Round toward zero to `places` digits. |
+
+`float` additionally has `isNaN()` and `isInf()`. `decimal`
+additionally has `format(scale)` and `toString(scale = 10)` for
+fixed-scale rendering (a `decimal` is an exact value with no stored
+scale, so the default display is 10 places; pass a scale for more).
+
+A numeric literal like `2.9` is a `decimal`; floats are written with an
+`f` suffix (`2.9f`). Decimals display at 10 places by default (they
+store an exact value, not a scale), so use `toString(scale)` or a format
+spec to control the rendered precision:
+
+```gb
+import io;
+let r = (2.567 as decimal).round(2);
+io.println(r);                  # 2.5700000000  (rounded to 2 places; 10-place default display)
+io.println(r.toString(2));      # 2.57          (pick the display scale)
+io.println((2.9).floor());      # 2.0000000000  (2.9 is a decimal; floor keeps the type)
+io.println((-7).sign());        # -1
+io.println((12).clamp(0, 10));  # 10
+io.println((4).isEven());       # true
+io.println((255).toString(16)); # ff
+io.println((3.1415926536 as decimal).toString(13));  # 3.1415926536000
+```
+
+## Boolean methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `not()` | `bool` | Logical negation. |
+| `toString()` | `string` | `"true"` or `"false"`. |
+| `toInt()` | `int` | `true` -> 1, `false` -> 0. |
 
 ## Nullability
 
@@ -176,7 +248,7 @@ the same thing but chain cleanly and, in two cases, offer finer control:
 
 The value-keeping rounding methods (`round`, `floor`, `ceil`,
 `truncate`) and the `sign` / `clamp` helpers also live on the numeric
-types; see the syntax-basics chapter for examples.
+types; see [Numeric methods](#numeric-methods) above for the full list.
 
 ### Generic type parameters and built-in collections
 

@@ -228,6 +228,28 @@ geblang check --help
 geblang build --help
 ```
 
+## Shell Completion
+
+Enable bash tab-completion for subcommands:
+
+```sh
+source <(geblang completion bash)
+```
+
+Add that line to `~/.bashrc` to make it permanent. With completion
+enabled, `geblang li<tab>` completes to `geblang licenses`; the first
+argument completes against the subcommand list and later arguments
+complete filenames. Regenerate after upgrading so the command list
+stays current.
+
+## Third-Party Notices
+
+`geblang licenses` prints the assembled third-party attribution text.
+On an interactive terminal it pages the output through `$PAGER` (falling
+back to `less -R`, then `more`); when piped or redirected it writes
+plain text, so `geblang licenses > NOTICES.txt` works unchanged. Use
+`--no-pager` to force plain output on a terminal.
+
 ## Standalone Executables
 
 Use `geblang build` to package a Geblang application as a self-contained

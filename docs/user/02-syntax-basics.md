@@ -169,6 +169,16 @@ io.println("${label:.3}");      # Ada
 A bare `${expr}` without a `:` behaves as before - the value is
 converted using its default representation.
 
+Numeric specs (`f`, `e`, `g`, `%`) on a `decimal` format from the
+decimal's exact value rather than a binary `float` approximation, so
+`${d:.Nf}` matches `d.toString(N)`:
+
+```gb
+let d = 3.1415926536 as decimal;
+io.println("${d:.13f}");      # 3.1415926536000
+io.println(d.toString(13));   # 3.1415926536000  (identical)
+```
+
 When the expression itself contains a ternary `?:`, the format-spec
 `:` doesn't get confused: `${cond ? a : b}` keeps the inner `:` as
 part of the ternary. To attach a spec to a ternary result, parenthesise
