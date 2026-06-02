@@ -6,8 +6,8 @@ this repository. The broader module graph may include test-only or build-tool
 modules that are not linked into the distributed binaries.
 
 The dependency audit was checked against `go.mod`, `go.sum`,
-`docs/dependency-licenses.md`, `go list -m all`, `go list -deps ./...`, and
-license files in the Go module cache.
+`go list -m all`, `go list -deps ./...`, and license files in the Go
+module cache.
 
 ## MIT-Licensed Components
 
