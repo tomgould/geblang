@@ -1190,6 +1190,15 @@ var stdlibCatalog = map[string]moduleDoc{
 		"waitgroupDone":       fn([]string{"AsyncWaitGroup h"}, "void", "Internal."),
 		"waitgroupWait":       fn([]string{"AsyncWaitGroup h"}, "void", "Internal."),
 	}},
+	"async.channel": {functions: map[string]functionDoc{
+		"make":     fn([]string{"int buffer"}, "AsyncChannel", "Internal: returns a new Channel handle. Prefer `async.channel.Channel<T>(buffer)` (1.7.0)."),
+		"send":     fn([]string{"AsyncChannel h", "any value"}, "void", "Internal."),
+		"recv":     fn([]string{"AsyncChannel h"}, "any", "Internal."),
+		"tryRecv":  fn([]string{"AsyncChannel h"}, "any", "Internal."),
+		"trySend":  fn([]string{"AsyncChannel h", "any value"}, "bool", "Internal."),
+		"close":    fn([]string{"AsyncChannel h"}, "void", "Internal."),
+		"isClosed": fn([]string{"AsyncChannel h"}, "bool", "Internal."),
+	}},
 	"async.atomic": {functions: map[string]functionDoc{
 		"intNew":             fn([]string{"int initial"}, "AsyncAtomicInt", "Internal: returns a new AtomicInt handle. Prefer the `async.atomic.AtomicInt` class wrapper (1.6.0)."),
 		"intLoad":            fn([]string{"AsyncAtomicInt h"}, "int", "Internal."),

@@ -198,6 +198,9 @@ func (p *Parser) parseStatement() ast.Statement {
 	case token.Enum:
 		return p.parseEnumStatement()
 	}
+	if p.curTokenIs(token.Ident) && p.curToken.Literal == "select" && p.peekTokenIs(token.LBrace) {
+		return p.parseSelectStatement()
+	}
 
 	if p.looksLikeFromImport() {
 		return p.parseFromImportStatement()
@@ -1048,6 +1051,101 @@ func (p *Parser) parseTryStatement() ast.Statement {
 func (p *Parser) parseMatchStatement() ast.Statement {
 	expr := p.parseMatchExpression()
 	return &ast.MatchStatement{Token: expr.Token, Expr: expr.Expr, Cases: expr.Cases}
+}
+
+func (p *Parser) parseSelectStatement() ast.Statement {
+	stmt := &ast.SelectStatement{Token: p.curToken}
+	if !p.expectPeek(token.LBrace) {
+		return stmt
+	}
+	for {
+		p.nextToken()
+		if p.curTokenIs(token.RBrace) || p.curTokenIs(token.EOF) {
+			break
+		}
+		switch p.curToken.Type {
+		case token.Default:
+			if !p.expectPeek(token.Colon) {
+				return stmt
+			}
+			p.nextToken()
+			stmt.Default = p.parseSelectCaseBody()
+		case token.Case:
+			c := ast.SelectCase{Token: p.curToken}
+			p.nextToken()
+			if p.curTokenIs(token.Let) {
+				if !p.expectPeek(token.Ident) {
+					return stmt
+				}
+				c.Binding = p.curToken.Literal
+				if !p.expectPeek(token.Assign) {
+					return stmt
+				}
+				p.nextToken()
+			}
+			expr := p.parseExpression(lowest)
+			call, ok := expr.(*ast.CallExpression)
+			if !ok {
+				p.errorf(c.Token, "select case head must be a channel.recv() or channel.send(...) call")
+				return stmt
+			}
+			selector, ok := call.Callee.(*ast.SelectorExpression)
+			if !ok || selector.Name == nil {
+				p.errorf(c.Token, "select case head must be a method call")
+				return stmt
+			}
+			switch selector.Name.Value {
+			case "recv":
+				if len(call.Arguments) != 0 {
+					p.errorf(c.Token, "recv() takes no arguments")
+					return stmt
+				}
+				c.Kind = "recv"
+				c.Channel = selector.Object
+			case "send":
+				if c.Binding != "" {
+					p.errorf(c.Token, "send case cannot bind a variable")
+					return stmt
+				}
+				if len(call.Arguments) != 1 {
+					p.errorf(c.Token, "send(value) takes exactly one argument")
+					return stmt
+				}
+				c.Kind = "send"
+				c.Channel = selector.Object
+				c.Value = call.Arguments[0].Value
+			default:
+				p.errorf(c.Token, "select case must be .recv() or .send(...), got .%s", selector.Name.Value)
+				return stmt
+			}
+			if !p.expectPeek(token.Colon) {
+				return stmt
+			}
+			p.nextToken()
+			c.Body = p.parseSelectCaseBody()
+			stmt.Cases = append(stmt.Cases, c)
+		default:
+			p.errorf(p.curToken, "expected case or default in select, got %s", p.curToken.Type)
+			p.synchronize()
+		}
+	}
+	return stmt
+}
+
+func (p *Parser) parseSelectCaseBody() *ast.BlockStatement {
+	if p.curTokenIs(token.LBrace) {
+		return p.parseBlockStatement()
+	}
+	body := &ast.BlockStatement{Token: p.curToken}
+	for !p.curTokenIs(token.Case) && !p.curTokenIs(token.Default) && !p.curTokenIs(token.RBrace) && !p.curTokenIs(token.EOF) {
+		stmt := p.parseStatement()
+		if stmt != nil {
+			body.Statements = append(body.Statements, stmt)
+		}
+		p.nextToken()
+	}
+	p.rewindOne()
+	return body
 }
 
 func (p *Parser) parseExpressionStatement(requireSemicolon bool) ast.Statement {

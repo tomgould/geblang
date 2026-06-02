@@ -2016,6 +2016,8 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 		return signal{}, e.evalDelStatement(stmt, env)
 	case *ast.MatchStatement:
 		return e.evalMatchStatement(stmt, env)
+	case *ast.SelectStatement:
+		return e.evalSelectStatement(stmt, env)
 	case *ast.ClassStatement:
 		class, err := e.buildClass(stmt, env)
 		if err != nil {
@@ -2440,6 +2442,64 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 	default:
 		return nil, fmt.Errorf("unsupported expression %T", expr)
 	}
+}
+
+func (e *Evaluator) evalSelectStatement(stmt *ast.SelectStatement, env *runtime.Environment) (signal, error) {
+	handles := make([]*native.ChannelHandle, 0, len(stmt.Cases))
+	kinds := make([]string, 0, len(stmt.Cases))
+	sendValues := make([]runtime.Value, 0, len(stmt.Cases))
+	for _, c := range stmt.Cases {
+		chanValue, err := e.evalExpression(c.Channel, env)
+		if err != nil {
+			return signal{}, err
+		}
+		handle, err := selectChannelHandle(chanValue)
+		if err != nil {
+			return signal{}, err
+		}
+		handles = append(handles, handle)
+		kinds = append(kinds, c.Kind)
+		if c.Kind == "send" {
+			sendValue, err := e.evalExpression(c.Value, env)
+			if err != nil {
+				return signal{}, err
+			}
+			sendValues = append(sendValues, sendValue)
+		} else {
+			sendValues = append(sendValues, nil)
+		}
+	}
+	chosen, recvValue, err := native.SelectChannels(handles, kinds, sendValues, stmt.Default != nil)
+	if err != nil {
+		return signal{}, fmt.Errorf("select: %s", err.Error())
+	}
+	if chosen == -1 {
+		return e.evalBlock(stmt.Default, env)
+	}
+	caseEnv := runtime.NewEnclosedEnvironment(env)
+	c := stmt.Cases[chosen]
+	if c.Kind == "recv" && c.Binding != "" {
+		if err := caseEnv.Define(c.Binding, recvValue, true); err != nil {
+			return signal{}, err
+		}
+	}
+	return e.evalBlock(c.Body, caseEnv)
+}
+
+func selectChannelHandle(v runtime.Value) (*native.ChannelHandle, error) {
+	instance, ok := v.(*runtime.Instance)
+	if !ok {
+		return nil, fmt.Errorf("select case channel must be a Channel instance")
+	}
+	handleValue, ok := instance.Fields["_h"]
+	if !ok {
+		return nil, fmt.Errorf("select case channel is not a Channel (no _h field)")
+	}
+	h, ok := native.ChannelHandleFromValue(handleValue)
+	if !ok {
+		return nil, fmt.Errorf("select case channel handle is invalid")
+	}
+	return h, nil
 }
 
 func (e *Evaluator) evalMatchStatement(stmt *ast.MatchStatement, env *runtime.Environment) (signal, error) {
@@ -8412,6 +8472,15 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"boolLoad":           e.registryBuiltin("async.atomic", "boolLoad"),
 			"boolStore":          e.registryBuiltin("async.atomic", "boolStore"),
 			"boolCompareAndSwap": e.registryBuiltin("async.atomic", "boolCompareAndSwap"),
+		},
+		"async.channel": {
+			"make":     e.registryBuiltin("async.channel", "make"),
+			"send":     e.registryBuiltin("async.channel", "send"),
+			"recv":     e.registryBuiltin("async.channel", "recv"),
+			"tryRecv":  e.registryBuiltin("async.channel", "tryRecv"),
+			"trySend":  e.registryBuiltin("async.channel", "trySend"),
+			"close":    e.registryBuiltin("async.channel", "close"),
+			"isClosed": e.registryBuiltin("async.channel", "isClosed"),
 		},
 		"errors": {
 			"new":           e.registryBuiltin("errors", "new"),

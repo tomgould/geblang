@@ -1623,6 +1623,12 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
 			vm.push(runtime.String{Value: native.DumpValue(vmv.ToValue())})
+		case OpSelect:
+			nextIP, err := vm.executeSelect(instruction, ip)
+			if err != nil {
+				return err
+			}
+			ip = nextIP
 		case OpInstanceOf:
 			if err := vm.instanceOf(instruction); err != nil {
 				return err
@@ -4685,6 +4691,74 @@ func (vm *VM) tagCollectionWithSpec(value runtime.Value, spec vmTypeSpec) (runti
 // execRange implements OpRange: pops 2 or 3 integer values and pushes a
 // list<int> covering the inclusive range. With 3 args the step is
 // explicit; with 2 args the step defaults to +1 (or -1 when start > end).
+func (vm *VM) executeSelect(instruction Instruction, ip int) (int, error) {
+	ops := instruction.Operands
+	if len(ops) < 2 {
+		return 0, vm.runtimeError(instruction, "select: invalid operands")
+	}
+	numCases := int(ops[0])
+	hasDefault := ops[1] == 1
+	expected := 2 + numCases*3
+	if hasDefault {
+		expected++
+	}
+	if len(ops) != expected {
+		return 0, vm.runtimeError(instruction, "select: operand count mismatch")
+	}
+	kinds := make([]string, numCases)
+	bodyOffsets := make([]int, numCases)
+	bindingSlots := make([]int64, numCases)
+	for i := 0; i < numCases; i++ {
+		base := 2 + i*3
+		if ops[base] == 1 {
+			kinds[i] = "send"
+		} else {
+			kinds[i] = "recv"
+		}
+		bodyOffsets[i] = int(ops[base+1])
+		bindingSlots[i] = ops[base+2]
+	}
+	defaultOffset := -1
+	if hasDefault {
+		defaultOffset = int(ops[expected-1])
+	}
+	handles := make([]*native.ChannelHandle, numCases)
+	sendValues := make([]runtime.Value, numCases)
+	// Stack layout (top to bottom): for the LAST case first - handle (and
+	// value if send). Pop in reverse order to keep parallel arrays.
+	for i := numCases - 1; i >= 0; i-- {
+		if kinds[i] == "send" {
+			v, err := vm.pop()
+			if err != nil {
+				return 0, vm.runtimeError(instruction, "%s", err.Error())
+			}
+			sendValues[i] = v
+		}
+		hVal, err := vm.pop()
+		if err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		h, ok := native.ChannelHandleFromValue(hVal)
+		if !ok {
+			return 0, vm.runtimeError(instruction, "select case channel handle is invalid")
+		}
+		handles[i] = h
+	}
+	chosen, recvValue, err := native.SelectChannels(handles, kinds, sendValues, hasDefault)
+	if err != nil {
+		return vm.throwTyped(instruction, ip, "RuntimeError", "select: "+err.Error())
+	}
+	if chosen == -1 {
+		return defaultOffset - 1, nil
+	}
+	if kinds[chosen] == "recv" && bindingSlots[chosen] >= 0 {
+		if err := vm.setLocal(bindingSlots[chosen], recvValue); err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+	}
+	return bodyOffsets[chosen] - 1, nil
+}
+
 func (vm *VM) execRange(instruction Instruction) error {
 	if len(instruction.Operands) != 1 {
 		return vm.runtimeError(instruction, "range expects argument count operand")

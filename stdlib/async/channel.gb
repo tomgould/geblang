@@ -1,0 +1,115 @@
+module async.channel;
+
+import async.channel as native;
+
+/**
+ * Typed message-passing channel. Send and recv block; with a positive
+ * buffer, sends are non-blocking until the buffer fills. close() halts
+ * further sends; subsequent recvs drain the buffer then return null.
+ *
+ * ```gb
+ * import async;
+ * import async.channel as ch;
+ *
+ * let c = ch.Channel<int>(8);
+ * async.run(func(): void {
+ *     for (let int i = 0; i < 5; i++) { c.send(i); }
+ *     c.close();
+ * });
+ * for (var v in c) {
+ *     io.println(v);
+ * }
+ * ```
+ */
+export class Channel<T> {
+    any _h;
+    int _buffer;
+    any _cached;
+    bool _hasCache;
+    bool _exhausted;
+
+    func Channel(int buffer = 0) {
+        this._h = native.make(buffer);
+        this._buffer = buffer;
+        this._cached = null;
+        this._hasCache = false;
+        this._exhausted = false;
+    }
+
+    /**
+     * Sends `value` to the channel, blocking until a receiver is ready
+     * (unbuffered) or the buffer has space. Throws on send-after-close.
+     */
+    func send(T value): void {
+        native.send(this._h, value);
+    }
+
+    /**
+     * Receives the next value. Blocks until one is available. Returns
+     * `null` when the channel is closed and drained.
+     */
+    func recv(): T {
+        return native.recv(this._h);
+    }
+
+    /**
+     * Non-blocking receive: returns the next value if one is
+     * immediately available, otherwise `null`. Pair with `isClosed()`
+     * to disambiguate "no value pending" from "closed and drained".
+     */
+    func tryRecv(): T {
+        return native.tryRecv(this._h);
+    }
+
+    /**
+     * Non-blocking send: returns `true` if the send completed
+     * immediately, `false` if it would have blocked. Throws on
+     * send-after-close.
+     */
+    func trySend(T value): bool {
+        return native.trySend(this._h, value);
+    }
+
+    /**
+     * Closes the channel. Subsequent sends throw; pending and
+     * subsequent recvs drain the buffer then return null. Double-close
+     * throws.
+     */
+    func close(): void {
+        native.close(this._h);
+    }
+
+    ## True when the channel has been closed.
+    func isClosed(): bool {
+        return native.isClosed(this._h);
+    }
+
+    /**
+     * Iterator protocol: `for (x in channel)` blocks on each recv and
+     * terminates when the channel is closed and drained.
+     */
+    func __iter(): Channel<T> {
+        return this;
+    }
+
+    func __done(): bool {
+        if (this._exhausted) { return true; }
+        if (!this._hasCache) {
+            let v = native.recv(this._h);
+            if (v == null) {
+                this._exhausted = true;
+                return true;
+            }
+            this._cached = v;
+            this._hasCache = true;
+        }
+        return false;
+    }
+
+    func __next(): T {
+        let v = this._cached;
+        this._cached = null;
+        this._hasCache = false;
+        return v;
+    }
+}

@@ -1,0 +1,162 @@
+/**
+ * @title async.channel (1.7.0)
+ * @summary Typed message-passing channels. send / recv block;
+ * trySend / tryRecv are non-blocking; close halts further sends.
+ * Closed-drained recv returns null. `for x in c` iterates until
+ * close.
+ */
+import test;
+import async;
+import async.channel as ch;
+import async.sync as sync;
+import async.atomic as atomic;
+import time;
+
+class AsyncChannelTest extends test.Test {
+
+    @test
+    func bufferedSendRecv(): void {
+        let c = ch.Channel<int>(3);
+        c.send(1); c.send(2); c.send(3);
+        this.assertEquals(1, c.recv());
+        this.assertEquals(2, c.recv());
+        this.assertEquals(3, c.recv());
+    }
+
+    @test
+    func trySendFullBufferReturnsFalse(): void {
+        let c = ch.Channel<int>(2);
+        this.assertTrue(c.trySend(10));
+        this.assertTrue(c.trySend(20));
+        this.assertFalse(c.trySend(30));
+    }
+
+    @test
+    func tryRecvEmptyReturnsNull(): void {
+        let c = ch.Channel<int>(2);
+        this.assertEquals(null, c.tryRecv());
+        c.send(42);
+        this.assertEquals(42, c.tryRecv());
+        this.assertEquals(null, c.tryRecv());
+    }
+
+    @test
+    func recvOnClosedAndDrainedReturnsNull(): void {
+        let c = ch.Channel<int>(2);
+        c.send(7);
+        c.close();
+        this.assertEquals(7, c.recv());
+        this.assertEquals(null, c.recv());
+    }
+
+    @test
+    func sendOnClosedThrows(): void {
+        let c = ch.Channel<int>(1);
+        c.close();
+        let threw = false;
+        try { c.send(1); } catch (Error e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func doubleCloseThrows(): void {
+        let c = ch.Channel<int>(1);
+        c.close();
+        let threw = false;
+        try { c.close(); } catch (Error e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func isClosedReportsState(): void {
+        let c = ch.Channel<int>(1);
+        this.assertFalse(c.isClosed());
+        c.close();
+        this.assertTrue(c.isClosed());
+    }
+
+    @test
+    func negativeBufferRejected(): void {
+        let threw = false;
+        try { ch.Channel<int>(-1); } catch (Error e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func unbufferedHandoffViaTasks(): void {
+        let c = ch.Channel<int>(0);
+        let producer = async.run(func(): void {
+            for (let int i = 1; i <= 5; i++) {
+                c.send(i);
+            }
+            c.close();
+        });
+        let collected = ([] as list<int>);
+        for (var v in c) {
+            collected.append(v);
+        }
+        await producer;
+        this.assertEquals([1, 2, 3, 4, 5], collected);
+    }
+
+    @test
+    func forInDrainsAndExits(): void {
+        let c = ch.Channel<string>(4);
+        c.send("a"); c.send("b"); c.send("c");
+        c.close();
+        let out = ([] as list<string>);
+        for (var v in c) {
+            out.append(v);
+        }
+        this.assertEquals(["a", "b", "c"], out);
+    }
+
+    @test
+    func multipleProducersConvergeOnSingleConsumer(): void {
+        let c = ch.Channel<int>(16);
+        let wg = sync.WaitGroup();
+        for (let int p = 0; p < 5; p++) {
+            wg.add(1);
+            async.run(func(): void {
+                for (let int i = 0; i < 10; i++) {
+                    c.send(1);
+                }
+                wg.done();
+            });
+        }
+        # Closer task waits for all producers then closes.
+        async.run(func(): void {
+            wg.wait();
+            c.close();
+        });
+        let total = 0;
+        for (var v in c) {
+            total = total + v;
+        }
+        this.assertEquals(50, total);
+    }
+
+    @test
+    func tryRecvAfterCloseDrainsThenNull(): void {
+        let c = ch.Channel<int>(3);
+        c.send(1); c.send(2);
+        c.close();
+        this.assertEquals(1, c.tryRecv());
+        this.assertEquals(2, c.tryRecv());
+        this.assertEquals(null, c.tryRecv());
+    }
+
+    @test
+    func pendingRecvUnblocksOnClose(): void {
+        let c = ch.Channel<int>(0);
+        let observed = atomic.AtomicInt(0);
+        let consumer = async.run(func(): void {
+            let v = c.recv();
+            if (v == null) { observed.store(-1); } else { observed.store(v); }
+        });
+        time.sleep(50);
+        c.close();
+        await consumer;
+        this.assertEquals(-1, observed.load());
+    }
+}

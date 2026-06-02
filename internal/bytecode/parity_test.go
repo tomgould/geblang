@@ -5546,6 +5546,114 @@ sync.mutexUnlock(h);
 `, "class works\nnative works\n")
 }
 
+func TestParitySelect(t *testing.T) {
+	// Default fires when no case is ready.
+	runParityWithStdlib(t, `import io;
+import async.channel as ch;
+let c = ch.Channel<int>(0);
+select {
+    case let v = c.recv(): { io.println("recv: " + (v as string)); }
+    default: { io.println("default"); }
+}
+`, "default\n")
+
+	// recv from a buffered channel fires immediately.
+	runParityWithStdlib(t, `import io;
+import async.channel as ch;
+let c = ch.Channel<int>(2);
+c.send(7);
+select {
+    case let v = c.recv(): { io.println("got: " + (v as string)); }
+    default: { io.println("default"); }
+}
+`, "got: 7\n")
+
+	// send to a buffered channel fires immediately when space is available.
+	runParityWithStdlib(t, `import io;
+import async.channel as ch;
+let c = ch.Channel<int>(2);
+select {
+    case c.send(42): { io.println("sent"); }
+    default: { io.println("blocked"); }
+}
+io.println(c.recv());
+`, "sent\n42\n")
+
+	// Multi-case picks the only ready one.
+	runParityWithStdlib(t, `import io;
+import async.channel as ch;
+let a = ch.Channel<int>(1);
+let b = ch.Channel<int>(1);
+b.send(99);
+select {
+    case let v = a.recv(): { io.println("a: " + (v as string)); }
+    case let v = b.recv(): { io.println("b: " + (v as string)); }
+}
+`, "b: 99\n")
+
+	// recv without binding works.
+	runParityWithStdlib(t, `import io;
+import async.channel as ch;
+let c = ch.Channel<int>(1);
+c.send(5);
+select {
+    case c.recv(): { io.println("drained"); }
+    default: { io.println("nope"); }
+}
+`, "drained\n")
+}
+
+func TestParityAsyncChannel(t *testing.T) {
+	// Buffered: send three values, then drain.
+	runParityWithStdlib(t, `import io;
+import async.channel as ch;
+let c = ch.Channel<int>(3);
+c.send(1); c.send(2); c.send(3);
+io.println(c.recv());
+io.println(c.recv());
+io.println(c.recv());
+`, "1\n2\n3\n")
+
+	// trySend / tryRecv behaviour.
+	runParityWithStdlib(t, `import io;
+import async.channel as ch;
+let c = ch.Channel<int>(2);
+io.println(c.trySend(10));
+io.println(c.trySend(20));
+io.println(c.trySend(30));
+io.println(c.tryRecv());
+io.println(c.tryRecv());
+io.println(c.tryRecv() == null);
+`, "true\ntrue\nfalse\n10\n20\ntrue\n")
+
+	// Close + drain + null on closed-empty + send-on-closed throws.
+	runParityWithStdlib(t, `import io;
+import async.channel as ch;
+let c = ch.Channel<int>(2);
+c.send(7);
+c.close();
+io.println(c.isClosed());
+io.println(c.recv());
+io.println(c.recv() == null);
+try { c.send(8); } catch (Error e) { io.println("send on closed throws"); }
+try { c.close(); } catch (Error e) { io.println("double close throws"); }
+`, "true\n7\ntrue\nsend on closed throws\ndouble close throws\n")
+
+	// Producer + consumer via async.run.
+	runParityWithStdlib(t, `import io;
+import async;
+import async.channel as ch;
+let c = ch.Channel<int>(0);
+async.run(func(): void {
+    for (let int i = 1; i <= 4; i++) { c.send(i * 11); }
+    c.close();
+});
+let total = 0;
+for (var v in c) { total = total + v; }
+io.println(total);
+`, "110\n")
+}
+
 func TestParityAsyncSync(t *testing.T) {
 	// Mutex tryLock semantics + atomics arithmetic round-trip.
 	runParityWithStdlib(t, `import io;

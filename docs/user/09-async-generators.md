@@ -331,6 +331,123 @@ collection before iteration. Async tasks allow other work to continue while a
 result is pending. For a large remote dataset, an API should usually combine
 both ideas: fetch or read chunks asynchronously, then yield records lazily.
 
+## Channels (1.7.0)
+
+Typed message-passing between tasks. `import async.channel`
+exposes the `Channel<T>` class.
+
+```gb
+import async;
+import async.channel as ch;
+
+let c = ch.Channel<int>(0);   # 0 = unbuffered handoff
+async.run(func(): void {
+    for (let int i = 0; i < 5; i++) { c.send(i); }
+    c.close();
+});
+for (var v in c) {
+    io.println(v);
+}
+```
+
+Constructor: `Channel<T>(buffer = 0)`. With `buffer = 0` send blocks
+until a receiver is ready (synchronous handoff); a positive buffer
+lets up to that many values sit pending before sends block.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `send(value)` | `void` | Sends value; blocks if the buffer is full. Throws on send-after-close. |
+| `recv()` | `T?` | Receives the next value; blocks until one is available. Returns `null` once the channel is closed and drained. |
+| `trySend(value)` | `bool` | Non-blocking send. Returns `true` if completed, `false` if it would have blocked. Throws on send-after-close. |
+| `tryRecv()` | `T?` | Non-blocking receive. Returns the next value or `null` if none is immediately available. Pair with `isClosed()` to distinguish "no value pending" from "closed and drained". |
+| `close()` | `void` | Halts further sends and lets recvs drain to the end. Double-close throws. |
+| `isClosed()` | `bool` | Reports closed state. Cheap atomic load. |
+
+Channels implement the iterator protocol, so `for (x in channel)`
+blocks on each recv and exits when the channel is closed and
+drained. This is the idiomatic consumer pattern:
+
+```gb
+for (var msg in incoming) {
+    handle(msg);
+}
+```
+
+### Typical patterns
+
+**Producer / consumer**: producer task closes the channel when
+done; consumer's `for-in` exits naturally.
+
+**Fan-in to one consumer**: many producers share one channel;
+close it from a coordinator once a WaitGroup observes the
+producers are done.
+
+```gb
+import async;
+import async.channel as ch;
+import async.sync as sync;
+
+let c = ch.Channel<int>(16);
+let wg = sync.WaitGroup();
+for (let int p = 0; p < 5; p++) {
+    wg.add(1);
+    async.run(func(): void {
+        produceInto(c);
+        wg.done();
+    });
+}
+async.run(func(): void { wg.wait(); c.close(); });
+
+for (var v in c) { consume(v); }
+```
+
+**Non-blocking poll**: use `tryRecv()` when you want to check for
+work without blocking. Pair with `isClosed()` to decide whether to
+keep polling.
+
+### Sentinel caveat
+
+`recv()` returns `null` on a closed-drained channel. If you send
+real `null` values, consumers cannot distinguish them from the
+end-of-channel signal. Either avoid sending null or wrap your
+values in a small dict / class.
+
+### `select` statement (1.7.0)
+
+`select` waits on multiple channel operations at once and runs
+the case whose op becomes ready first. Cases are recv-with-
+binding, recv-discard, send, plus an optional `default`.
+
+```gb
+select {
+    case let v = c1.recv(): {
+        handleC1(v);
+    }
+    case let s = c2.recv(): {
+        handleC2(s);
+    }
+    case c3.send(payload): {
+        sentToC3();
+    }
+    default: {
+        nothingReady();
+    }
+}
+```
+
+The case head must be `c.recv()` (with or without a `let` binding)
+or `c.send(value)`. The binding is scoped to the case body and
+holds the received value (or `null` if the channel was
+closed-drained at the moment of dispatch).
+
+`default` makes the select opportunistic: if no other case can
+fire immediately, the default body runs. Without `default`,
+select blocks until at least one case is ready.
+
+When several cases are simultaneously ready, the chosen one is
+pseudo-random (Go's `reflect.Select` semantics) so producers and
+consumers cannot starve each other through ordering.
+
 ## Synchronisation Primitives (1.6.0)
 
 Tasks spawned via `async.run` execute as real goroutines, so when

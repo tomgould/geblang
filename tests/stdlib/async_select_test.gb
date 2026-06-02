@@ -1,0 +1,128 @@
+/**
+ * @title select statement over channels (1.7.0)
+ * @summary Multi-channel select. Cases: `case let v = c.recv()`,
+ * `case c.send(value)`, `default`. The chosen case's body runs;
+ * a binding is scoped to that body.
+ */
+import test;
+import async;
+import async.channel as ch;
+import async.sync as sync;
+import async.atomic as atomic;
+import time;
+
+class AsyncSelectTest extends test.Test {
+
+    @test
+    func defaultFiresWhenNothingReady(): void {
+        let c = ch.Channel<int>(0);
+        let fired = atomic.AtomicInt(0);
+        select {
+            case let v = c.recv(): { fired.store(1); }
+            default: { fired.store(2); }
+        }
+        this.assertEquals(2, fired.load());
+    }
+
+    @test
+    func recvFiresOnBufferedReady(): void {
+        let c = ch.Channel<int>(2);
+        c.send(42);
+        let got = atomic.AtomicInt(-1);
+        select {
+            case let v = c.recv(): { got.store(v); }
+            default: { got.store(0); }
+        }
+        this.assertEquals(42, got.load());
+    }
+
+    @test
+    func sendFiresOnBufferedSpace(): void {
+        let c = ch.Channel<string>(1);
+        let sent = atomic.AtomicInt(0);
+        select {
+            case c.send("hi"): { sent.store(1); }
+            default: { sent.store(2); }
+        }
+        this.assertEquals(1, sent.load());
+        this.assertEquals("hi", c.recv());
+    }
+
+    @test
+    func sendBlockedWithDefaultPicksDefault(): void {
+        let c = ch.Channel<int>(1);
+        c.send(1);
+        let result = atomic.AtomicInt(0);
+        select {
+            case c.send(2): { result.store(1); }
+            default: { result.store(2); }
+        }
+        this.assertEquals(2, result.load());
+    }
+
+    @test
+    func multiRecvPicksReady(): void {
+        let a = ch.Channel<int>(1);
+        let b = ch.Channel<int>(1);
+        b.send(99);
+        let picked = atomic.AtomicInt(0);
+        select {
+            case let v = a.recv(): { picked.store(v); }
+            case let v = b.recv(): { picked.store(v); }
+        }
+        this.assertEquals(99, picked.load());
+    }
+
+    @test
+    func recvWithoutBindingWorks(): void {
+        let c = ch.Channel<int>(1);
+        c.send(5);
+        let fired = atomic.AtomicInt(0);
+        select {
+            case c.recv(): { fired.store(1); }
+            default: { fired.store(2); }
+        }
+        this.assertEquals(1, fired.load());
+    }
+
+    @test
+    func bindingScopedToCase(): void {
+        let c = ch.Channel<int>(1);
+        c.send(123);
+        let outer = 0;
+        select {
+            case let v = c.recv(): {
+                outer = v + 1;
+            }
+        }
+        this.assertEquals(124, outer);
+    }
+
+    @test
+    func producerConsumerHandoff(): void {
+        let c = ch.Channel<int>(0);
+        let received = atomic.AtomicInt(0);
+        let consumer = async.run(func(): void {
+            select {
+                case let v = c.recv(): { received.store(v); }
+            }
+        });
+        time.sleep(20);
+        c.send(77);
+        await consumer;
+        this.assertEquals(77, received.load());
+    }
+
+    @test
+    func closedChannelRecvReturnsNullInSelect(): void {
+        let c = ch.Channel<int>(1);
+        c.close();
+        let observed = atomic.AtomicInt(-1);
+        select {
+            case let v = c.recv(): {
+                if (v == null) { observed.store(0); } else { observed.store(v); }
+            }
+        }
+        this.assertEquals(0, observed.load());
+    }
+}

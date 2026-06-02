@@ -70,6 +70,53 @@ Used by the new `async.sync` and `async.atomic` modules (below).
 Existing dual-named pairs that previously had to use distinct names
 (`strbuilder` + `strings.StringBuilder`, etc.) keep working unchanged.
 
+### Channels (`async.channel`)
+
+Typed message-passing between tasks. `Channel<T>(buffer = 0)`
+creates a channel; `buffer = 0` is synchronous handoff, positive
+buffer queues up to N values before sends block.
+
+```gb
+import async;
+import async.channel as ch;
+
+let c = ch.Channel<int>(0);
+async.run(func(): void {
+    for (let int i = 0; i < 5; i++) { c.send(i); }
+    c.close();
+});
+for (var v in c) {
+    io.println(v);
+}
+```
+
+Methods: `send`, `recv`, `tryRecv`, `trySend`, `close`, `isClosed`.
+`recv()` returns `null` once the channel is closed and drained, so
+`for (x in channel)` iterates naturally to the end.
+
+Send-after-close and double-close throw. Recv on a still-open empty
+channel blocks; `tryRecv` returns `null` without blocking when
+nothing is pending.
+
+### `select` statement
+
+`select` waits on multiple channel operations and runs the case
+whose op fires first. New `select` keyword in the lexer.
+
+```gb
+select {
+    case let v = c1.recv(): handleA(v);
+    case c2.send(x): handleB();
+    default: nothingReady();
+}
+```
+
+Case heads are `c.recv()` (with or without a `let` binding) or
+`c.send(value)`. `default` makes the select opportunistic; without
+it the select blocks. When several cases are simultaneously ready
+the chosen one is pseudo-random so producers and consumers cannot
+starve each other through ordering. Backed by Go's `reflect.Select`.
+
 ### Synchronisation primitives (`async.sync`, `async.atomic`)
 
 Two new sub-modules under `async` add the canonical concurrency

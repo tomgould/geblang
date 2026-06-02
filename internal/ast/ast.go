@@ -617,6 +617,28 @@ func (*MatchStatement) statementNode()         {}
 func (s *MatchStatement) TokenLiteral() string { return "match" }
 func (s *MatchStatement) String() string       { return "match (" + s.Expr.String() + ") {...}" }
 
+// SelectStatement waits on multiple channel operations and runs the
+// case whose op fires first. Cases are recv-with-binding,
+// recv-discard, or send. A Default body fires when no case is ready.
+type SelectStatement struct {
+	Token   token.Token
+	Cases   []SelectCase
+	Default *BlockStatement
+}
+
+type SelectCase struct {
+	Kind    string // "recv" or "send"
+	Channel Expression
+	Binding string
+	Value   Expression
+	Body    *BlockStatement
+	Token   token.Token
+}
+
+func (*SelectStatement) statementNode()         {}
+func (s *SelectStatement) TokenLiteral() string { return "select" }
+func (s *SelectStatement) String() string       { return "select {...}" }
+
 type Identifier struct {
 	Token token.Token
 	Value string

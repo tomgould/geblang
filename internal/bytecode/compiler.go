@@ -528,6 +528,8 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		return c.compileForStatement(stmt)
 	case *ast.MatchStatement:
 		return c.compileMatchStatement(stmt)
+	case *ast.SelectStatement:
+		return c.compileSelectStatement(stmt)
 	case *ast.FunctionStatement:
 		return c.compileFunctionStatement(stmt)
 	case *ast.ClassStatement:
@@ -1713,6 +1715,81 @@ func (c *Compiler) compileIfStatement(stmt *ast.IfStatement) error {
 	}
 	for _, jump := range endJumps {
 		c.patchJump(jump)
+	}
+	return nil
+}
+
+func (c *Compiler) compileSelectStatement(stmt *ast.SelectStatement) error {
+	c.pushScope()
+	defer c.popScope()
+	line, col := stmt.Token.Line, stmt.Token.Column
+	for _, sc := range stmt.Cases {
+		if err := c.compileExpression(sc.Channel); err != nil {
+			return err
+		}
+		hIdx := int64(len(c.chunk.Constants))
+		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "_h"})
+		c.emitAt(OpGetField, sc.Token.Line, sc.Token.Column, hIdx)
+		if sc.Kind == "send" {
+			if err := c.compileExpression(sc.Value); err != nil {
+				return err
+			}
+		}
+	}
+	hasDefault := int64(0)
+	if stmt.Default != nil {
+		hasDefault = 1
+	}
+	operands := []int64{int64(len(stmt.Cases)), hasDefault}
+	bodyOffsetPositions := make([]int, 0, len(stmt.Cases)+1)
+	bindingSlots := make([]int64, 0, len(stmt.Cases))
+	for _, sc := range stmt.Cases {
+		kindCode := int64(0)
+		if sc.Kind == "send" {
+			kindCode = 1
+		}
+		operands = append(operands, kindCode)
+		// Placeholder for body offset; patched after body emitted.
+		bodyOffsetPositions = append(bodyOffsetPositions, len(operands))
+		operands = append(operands, -1)
+		bindingSlot := int64(-1)
+		if sc.Kind == "recv" && sc.Binding != "" {
+			bindingSlot = c.allocateLocal()
+		}
+		bindingSlots = append(bindingSlots, bindingSlot)
+		operands = append(operands, bindingSlot)
+	}
+	if hasDefault == 1 {
+		bodyOffsetPositions = append(bodyOffsetPositions, len(operands))
+		operands = append(operands, -1)
+	}
+	c.emitAt(OpSelect, line, col, operands...)
+	selectIPos := len(c.chunk.Instructions) - 1
+	endJumps := []int{}
+	for i, sc := range stmt.Cases {
+		c.chunk.Instructions[selectIPos].Operands[bodyOffsetPositions[i]] = int64(len(c.chunk.Instructions))
+		c.pushScope()
+		if sc.Kind == "recv" && sc.Binding != "" {
+			c.scopes[len(c.scopes)-1][sc.Binding] = binding{kind: "local", slot: bindingSlots[i]}
+		}
+		if sc.Body != nil {
+			if err := c.compileBlock(sc.Body); err != nil {
+				c.popScope()
+				return err
+			}
+		}
+		c.popScope()
+		endJumps = append(endJumps, c.emitJump(OpJump, sc.Token.Line, sc.Token.Column))
+	}
+	if hasDefault == 1 {
+		c.chunk.Instructions[selectIPos].Operands[bodyOffsetPositions[len(stmt.Cases)]] = int64(len(c.chunk.Instructions))
+		if err := c.compileBlock(stmt.Default); err != nil {
+			return err
+		}
+		endJumps = append(endJumps, c.emitJump(OpJump, line, col))
+	}
+	for _, j := range endJumps {
+		c.patchJump(j)
 	}
 	return nil
 }

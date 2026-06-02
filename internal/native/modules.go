@@ -7,7 +7,7 @@ package native
 // module to the LSP catalog.
 var NativeModuleNames = map[string]struct{}{
 	"amqp": {}, "archive": {}, "args": {}, "async": {}, "binary": {},
-	"async.atomic": {}, "async.sync": {},
+	"async.atomic": {}, "async.channel": {}, "async.sync": {},
 	"bytes": {}, "cli": {}, "cli.widgets": {}, "collections": {},
 	"compress": {}, "cron": {}, "crypt": {}, "csv": {}, "datetime": {}, "db": {},
 	"dotenv": {}, "encoding": {}, "errors": {}, "ext": {}, "ffinative": {},

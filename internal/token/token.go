@@ -123,6 +123,7 @@ const (
 	Enum
 	With
 	Del
+	Select
 )
 
 var typeNames = map[Type]string{
@@ -243,6 +244,7 @@ var typeNames = map[Type]string{
 	By:         "BY",
 	With:       "WITH",
 	Del:        "DEL",
+	Select:     "SELECT", // contextual; not in keywords map
 	Enum:       "ENUM",
 }
 

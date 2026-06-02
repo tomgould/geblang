@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(63)
+	Version = uint16(64)
 )
 
 type Op byte
@@ -278,6 +278,14 @@ const (
 	// OpDump pops a value and pushes its type-annotated debug string
 	// (the dump(value) builtin).
 	OpDump
+	// OpSelect runs a select-statement dispatch over the cases pushed
+	// on the stack. Operands: numCases, hasDefault (0/1), one
+	// per-case triple (kindCode 0=recv 1=send, bodyOffset,
+	// bindingSlot or -1), optional defaultOffset. The VM pops
+	// (handle, value) for each case and runs reflect.Select, then
+	// jumps to the chosen body. For a recv case with a binding the
+	// received value is stored in bindingSlot before the jump.
+	OpSelect
 )
 
 type Instruction struct {

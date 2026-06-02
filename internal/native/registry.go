@@ -170,6 +170,10 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"intNew": {}, "intLoad": {}, "intStore": {}, "intAdd": {}, "intCompareAndSwap": {},
 		"boolNew": {}, "boolLoad": {}, "boolStore": {}, "boolCompareAndSwap": {},
 	},
+	"async.channel": {
+		"make": {}, "send": {}, "recv": {}, "tryRecv": {}, "trySend": {},
+		"close": {}, "isClosed": {},
+	},
 	"sys": {
 		"hostname": {}, "pid": {}, "platform": {}, "arch": {},
 		"tmpdir": {}, "homedir": {}, "username": {}, "environ": {},
