@@ -43,6 +43,19 @@ io.println("AFTER");
 	}
 }
 
+// TestParityCaughtFaultHasStackTrace proves a caught runtime fault
+// carries a stack trace on both backends (the VM routing must not drop
+// the trace the dispatch error already holds).
+func TestParityCaughtFaultHasStackTrace(t *testing.T) {
+	runParity(t, `import io; import errors;
+func g(): void { let x = 1 / 0; }
+func f(): void { g(); }
+try { f(); } catch (Error e) {
+    io.println("${errors.hasStackTrace(e)}");
+}
+`, "true\n")
+}
+
 // TestParityErrorInstanceOf proves instanceof resolves the built-in
 // error hierarchy identically on both backends: a built-in error is an
 // Error, FatalError is not, and subclass relationships hold.

@@ -3142,8 +3142,15 @@ func (vm *VM) faultToRuntimeError(loopErr error) (runtime.Error, bool) {
 	if errors.As(loopErr, &fatalErr) {
 		return runtime.Error{}, true
 	}
-	msg := cleanRuntimeFaultMessage(loopErr.Error())
-	return runtime.Error{Class: "RuntimeError", Message: msg, Parents: []string{"RuntimeError", "Error"}}, false
+	full := loopErr.Error()
+	msg := cleanRuntimeFaultMessage(full)
+	// Preserve the stack trace the dispatch error already carries so a
+	// caught runtime fault exposes errors.stackTrace like the evaluator.
+	trace := ""
+	if idx := strings.Index(full, "\n"); idx >= 0 {
+		trace = full[idx+1:]
+	}
+	return runtime.Error{Class: "RuntimeError", Message: msg, Parents: []string{"RuntimeError", "Error"}, StackTrace: trace}, false
 }
 
 // cleanRuntimeFaultMessage strips the "bytecode runtime error at L:C: "
