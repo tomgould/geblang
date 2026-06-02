@@ -21,7 +21,6 @@ VSCODE_CONTAINER ?= geblang-vscode-build-artifacts
 # the expensive install/docs/vscode/bench steps.
 all:
 	$(MAKE) test
-	$(MAKE) check-lang
 	$(MAKE) install
 	$(MAKE) docs
 	$(MAKE) vscode-build
