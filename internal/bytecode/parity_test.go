@@ -10895,3 +10895,69 @@ let kDate = crypt.hmacSha256Bytes("AWS4wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
 io.println(bytes.toHex(kDate));
 `, "0138c7a6cbd60aa727b2f653a522567439dfb9f3e72b21f9b25941a42f04a7cd\n")
 }
+
+// Regression: cross-module facade `class X extends mod.X` failed in the
+// evaluator at construction because parent() routed through
+// applyOverloadedFunction with a label matching this.Class.Name.
+func TestParityFacadeSubclassSameName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "base.gb"), []byte(`module base;
+export class Tenant {
+    string id;
+    string label;
+    func Tenant(string id, string label = "") {
+        this.id = id;
+        this.label = label;
+    }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "facade.gb"), []byte(`module facade;
+import base as basemod;
+export class Tenant extends basemod.Tenant {
+    func Tenant(string id, string label = "") {
+        parent(id, label);
+    }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write facade: %v", err)
+	}
+	source := `import io;
+import facade;
+let t = facade.Tenant("acme");
+let u = facade.Tenant("beta", "Beta Co");
+io.println(t.id);
+io.println(u.label);
+`
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: %v", err)
+	}
+	if evOut.String() != "acme\nBeta Co\n" {
+		t.Fatalf("evaluator output: %q", evOut.String())
+	}
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: %v", err)
+	}
+	if vmOut.String() != "acme\nBeta Co\n" {
+		t.Fatalf("vm output: %q", vmOut.String())
+	}
+}

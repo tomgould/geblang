@@ -11013,13 +11013,29 @@ func (e *Evaluator) webHandle(call *ast.CallExpression, args []runtime.Value) (r
 	if !ok {
 		return nil, fmt.Errorf("%s request must be dict", call.Callee.String())
 	}
-	method, _ := dictStringField(request, "method")
-	path, _ := dictStringField(request, "path")
 	e.webMu.Lock()
 	routes := append([]webRoute(nil), app.routes...)
 	beforeMiddlewares := append([]runtime.Value(nil), app.beforeMiddlewares...)
 	middlewares := append([]runtime.Value(nil), app.middlewares...)
 	e.webMu.Unlock()
+	for _, middleware := range beforeMiddlewares {
+		result, err := e.callValue(middleware, []runtime.Value{request})
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := result.(runtime.Null); !ok {
+			response := normalizeWebResponse(result)
+			for i := len(middlewares) - 1; i >= 0; i-- {
+				response, err = e.callValue(middlewares[i], []runtime.Value{request, response})
+				if err != nil {
+					return nil, err
+				}
+			}
+			return response, nil
+		}
+	}
+	method, _ := dictStringField(request, "method")
+	path, _ := dictStringField(request, "path")
 	for _, route := range routes {
 		params, ok := matchWebRoute(route, method, path)
 		if !ok {
@@ -11027,22 +11043,6 @@ func (e *Evaluator) webHandle(call *ast.CallExpression, args []runtime.Value) (r
 		}
 		requestWithParams := copyDict(request)
 		putDict(requestWithParams.Entries, "params", params)
-		for _, middleware := range beforeMiddlewares {
-			result, err := e.callValue(middleware, []runtime.Value{requestWithParams})
-			if err != nil {
-				return nil, err
-			}
-			if _, ok := result.(runtime.Null); !ok {
-				response := normalizeWebResponse(result)
-				for i := len(middlewares) - 1; i >= 0; i-- {
-					response, err = e.callValue(middlewares[i], []runtime.Value{requestWithParams, response})
-					if err != nil {
-						return nil, err
-					}
-				}
-				return response, nil
-			}
-		}
 		response, err := e.callValue(route.handler, []runtime.Value{requestWithParams})
 		if err != nil {
 			return nil, err
@@ -24901,8 +24901,11 @@ func (e *Evaluator) applyOverloadedFunction(label string, overloads []runtime.Fu
 		return nil, fmt.Errorf("ambiguous overload for %s", label)
 	}
 	if this != nil && this.Class != nil && strings.EqualFold(label, this.Class.Name) {
-		if err := e.applyAutoParentConstructor(this, matches[0]); err != nil {
-			return nil, err
+		// Skip when dispatching a parent's same-named constructor via parent().
+		if matches[0].OwnerClass == nil || matches[0].OwnerClass == this.Class {
+			if err := e.applyAutoParentConstructor(this, matches[0]); err != nil {
+				return nil, err
+			}
 		}
 	}
 	chosen := matches[0]

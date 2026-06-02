@@ -1,0 +1,10 @@
+module facade_subclass_same_name_donor;
+
+export class Tenant {
+    string id;
+    string label;
+    func Tenant(string id, string label = "") {
+        this.id = id;
+        this.label = label;
+    }
+}

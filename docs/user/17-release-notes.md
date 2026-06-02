@@ -1,5 +1,33 @@
 # Release Notes
 
+## 1.7.1
+
+### Web request handler runs app-level before-middleware ahead of routing
+
+The built-in web request handler now runs every app-level
+before-middleware once, against the original request, before route
+matching. Previously the middleware ran inside the matching loop after
+the path had already been read, so a middleware could not rewrite
+`request["path"]` and have routes match the new value. Two consequences:
+middleware that strips or rewrites the path (locale prefix, version
+prefix, host rewrites) now influences which route matches, and
+before-middleware fires even when no route ends up matching (404).
+Path parameters are no longer present on the request dict at the time
+middleware runs; reading parameters is a routing concern that belongs
+in a route-bound layer.
+
+### Subclass constructor across modules no longer crashes
+
+A subclass whose name matches its parent's (`class X extends mod.X`)
+and whose constructor explicitly forwards via `parent(...)` no longer
+fails at construction with `no matching overload for X` on the
+evaluator. The VM was already correct. The fix targets the overloaded-
+function dispatch path: when an explicit `parent(...)` call resolves
+to the parent's constructor, the auto-parent-chaining trigger now
+checks the matched function's owner class before re-firing, so
+dispatching the parent's same-named constructor no longer re-attempts
+the chain with zero arguments.
+
 ## 1.7.0
 
 ### Runtime faults are catchable on both backends

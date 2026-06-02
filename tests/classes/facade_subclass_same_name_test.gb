@@ -1,0 +1,19 @@
+import test;
+import facade_subclass_same_name_facade as facade;
+
+class FacadeSubclassSameNameTest extends test.Test {
+
+    @test
+    func constructsViaFacadeOneArg(): void {
+        let t = facade.Tenant("acme");
+        this.assertEquals("acme", t.id);
+        this.assertEquals("", t.label);
+    }
+
+    @test
+    func constructsViaFacadeAllArgs(): void {
+        let t = facade.Tenant("beta", "Beta Co");
+        this.assertEquals("beta", t.id);
+        this.assertEquals("Beta Co", t.label);
+    }
+}

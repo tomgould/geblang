@@ -1,0 +1,9 @@
+module facade_subclass_same_name_facade;
+
+import facade_subclass_same_name_donor as donor;
+
+export class Tenant extends donor.Tenant {
+    func Tenant(string id, string label = "") {
+        parent(id, label);
+    }
+}
