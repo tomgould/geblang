@@ -269,6 +269,20 @@ Checks resolve relative to each file and respect local scope, so a local
 variable that shadows a module name is not mistaken for the module. The
 same resolution backs the editor language server.
 
+It also flags a method call on a typed instance whose class - across its
+parent chain and implemented interfaces, including classes imported from
+other modules - has no such method:
+
+```sh
+$ geblang check app.gb
+app.gb:6:3: error[semantic]: Circle has no method bogus
+```
+
+The method check is conservative: it stays silent when the receiver's
+type is not a statically known class, when the class or an ancestor
+defines `__call`, when decorators may inject members, or when any part
+of the hierarchy cannot be resolved.
+
 ## 1.5.4
 
 ### Bytecode VM: fused mod-zero branch

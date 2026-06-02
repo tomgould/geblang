@@ -180,6 +180,86 @@ func TestSourceImportEngineNativeNotFlaggedUnresolved(t *testing.T) {
 	}
 }
 
+func classCheckOpts(dir string) Options {
+	return Options{Resolver: modules.NewResolver([]string{dir}), CrossModule: true}
+}
+
+func TestSourceFlagsUnknownMethodSameFileClass(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "class Box {\n    func open(): void {}\n}\nBox b = Box();\nb.open();\nb.smash();\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	if !hasDiag(diags, "semantic", "Box has no method smash") {
+		t.Fatalf("expected unknown-method diagnostic, got %+v", diags)
+	}
+	for _, d := range diags {
+		if strings.Contains(d.Message, "no method open") {
+			t.Fatalf("real method flagged: %+v", d)
+		}
+	}
+}
+
+func TestSourceFlagsUnknownMethodCrossFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "shapes.gb"),
+		[]byte("module shapes;\nexport class Circle {\n    func area(): float { return 3.14; }\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "main.gb")
+	src := "from shapes import Circle;\nCircle c = Circle();\nc.area();\nc.bogus();\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	if !hasDiag(diags, "semantic", "Circle has no method bogus") {
+		t.Fatalf("expected cross-file unknown-method diagnostic, got %+v", diags)
+	}
+	for _, d := range diags {
+		if strings.Contains(d.Message, "no method area") {
+			t.Fatalf("real cross-file method flagged: %+v", d)
+		}
+	}
+}
+
+func TestSourceAllowsInheritedMethod(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "class Base {\n    func ping(): void {}\n}\nclass Derived extends Base {\n    func pong(): void {}\n}\nDerived d = Derived();\nd.ping();\nd.pong();\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	for _, d := range diags {
+		if d.Rule == "semantic" && strings.Contains(d.Message, "no method") {
+			t.Fatalf("inherited/own method flagged: %+v", d)
+		}
+	}
+}
+
+func TestSourceBailsOnCallClass(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	// A __call class dispatches dynamically; unknown methods must not flag.
+	src := "class Proxy {\n    func __call(string m, list<any> a): any { return null; }\n}\nProxy p = Proxy();\np.anything();\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	for _, d := range diags {
+		if d.Rule == "semantic" && strings.Contains(d.Message, "no method") {
+			t.Fatalf("__call class should bail, got %+v", d)
+		}
+	}
+}
+
+func TestSourceBailsOnDecoratedClass(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "deco.gb"),
+		[]byte("module deco;\nexport func Tag(any c): any { return c; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "main.gb")
+	// Decorators may inject members; the class must bail.
+	src := "from deco import Tag;\n@Tag\nclass Svc {\n    func run(): void {}\n}\nSvc s = Svc();\ns.injectedMaybe();\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	for _, d := range diags {
+		if d.Rule == "semantic" && strings.Contains(d.Message, "no method") {
+			t.Fatalf("decorated class should bail, got %+v", d)
+		}
+	}
+}
+
 func TestSourceReturnsParseDiagnostics(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.gb")

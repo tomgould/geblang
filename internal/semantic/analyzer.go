@@ -38,6 +38,18 @@ type Analyzer struct {
 	classes     map[string]classInfo
 	interfaces  map[string]interfaceInfo
 	aliases     map[string]typeInfo
+	// classSurface, when set, returns the full member set (methods +
+	// fields, walked across parents/interfaces and modules) for a class
+	// name, plus whether the class was cleanly resolvable. Injected by
+	// the check command to enable cross-module unknown-method detection;
+	// nil in the execution (test/run) path, which disables the check.
+	classSurface func(className string) (map[string]bool, bool)
+}
+
+// SetClassSurfaceResolver installs the cross-module class member
+// resolver used by the unknown-method check. Call before Analyze.
+func (a *Analyzer) SetClassSurfaceResolver(fn func(string) (map[string]bool, bool)) {
+	a.classSurface = fn
 }
 
 type typeInfo struct {
@@ -698,6 +710,37 @@ func (a *Analyzer) validateContainerLiteral(declared typeInfo, value ast.Express
 // checkTypedCollectionMethodCall validates that mutation methods on typed
 // collections (list<T>.push, set<T>.add, dict<K,V>.set/insert) receive
 // arguments compatible with the declared element/key/value types.
+// checkClassMethodCall flags `obj.method(...)` when obj is a typed
+// instance of a resolvable class whose full hierarchy (parents +
+// interfaces, across modules) has no such method or callable field.
+// Only runs when a class-surface resolver is installed (the check
+// command); stays silent on any uncertainty to avoid false positives.
+func (a *Analyzer) checkClassMethodCall(call *ast.CallExpression) {
+	if a.classSurface == nil {
+		return
+	}
+	selector, ok := call.Callee.(*ast.SelectorExpression)
+	if !ok || selector.Name == nil || selector.Optional {
+		return
+	}
+	receiver, ok := selector.Object.(*ast.Identifier)
+	if !ok {
+		return
+	}
+	receiverType, ok := a.lookup(receiver.Value)
+	if !ok || !receiverType.known || receiverType.nullable {
+		return
+	}
+	members, resolvable := a.classSurface(receiverType.name)
+	if !resolvable {
+		return
+	}
+	if members[strings.ToLower(selector.Name.Value)] {
+		return
+	}
+	a.errorAt(selector.Name.Token, "%s has no method %s", receiverType.name, selector.Name.Value)
+}
+
 func (a *Analyzer) checkTypedCollectionMethodCall(call *ast.CallExpression) {
 	selector, ok := call.Callee.(*ast.SelectorExpression)
 	if !ok {
@@ -1075,6 +1118,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 			a.analyzeExpression(arg.Value)
 		}
 		a.checkTypedCollectionMethodCall(expr)
+		a.checkClassMethodCall(expr)
 		if ident, ok := expr.Callee.(*ast.Identifier); ok {
 			if overloads := a.functions[strings.ToLower(ident.Value)]; len(overloads) > 0 {
 				a.checkGenericCallInference(expr, ident.Value, overloads)

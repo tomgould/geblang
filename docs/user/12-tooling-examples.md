@@ -86,6 +86,21 @@ Member checks resolve relative to each file and follow local scope, so a local
 variable that shadows a module name (for example a list called `errors`) is not
 mistaken for the module.
 
+The same resolution covers methods on your own classes: calling a method that
+does not exist on a typed instance's class - across its parent chain and
+implemented interfaces, including classes imported from other modules - is an
+error:
+
+```sh
+$ geblang check app.gb
+app.gb:6:3: error[semantic]: Circle has no method bogus
+```
+
+The method check is conservative to avoid false positives: it stays silent when
+the receiver's type is not a statically known class, when the class (or any
+ancestor) defines `__call`, when the class carries decorators that may inject
+members, or when any part of the hierarchy cannot be resolved.
+
 `--no-lint` disables warning rules while keeping parse, semantic, import, and
 module-layout validation. JSON output includes `severity`, `rule`, `file`,
 `line`, `column`, and `message` fields so tools can route errors and warnings

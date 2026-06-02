@@ -101,7 +101,16 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 		return nil, diags
 	}
 	diags := []Diagnostic{}
-	for _, sd := range semantic.New().Analyze(program) {
+	analyzer := semantic.New()
+	if opts.CrossModule && opts.Resolver != nil {
+		cache := opts.ModuleCache
+		if cache == nil {
+			cache = NewModuleCache()
+		}
+		graph := buildClassGraph(program, opts, cache)
+		analyzer.SetClassSurfaceResolver(graph.surface)
+	}
+	for _, sd := range analyzer.Analyze(program) {
 		severity := SeverityError
 		if sd.Severity == semantic.SeverityWarning {
 			severity = SeverityWarning

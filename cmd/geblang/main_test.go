@@ -721,6 +721,34 @@ func TestCheckGeblangPathFlagsUnknownModuleMember(t *testing.T) {
 	}
 }
 
+// TestCheckGeblangPathFlagsUnknownClassMethod verifies the end-to-end
+// cross-module unknown-method check: a method absent from a class's full
+// hierarchy is flagged; a real method is not.
+func TestCheckGeblangPathFlagsUnknownClassMethod(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.gb")
+	src := "class Box {\n    func open(): void {}\n}\nBox b = Box();\nb.open();\nb.smash();\n"
+	if err := os.WriteFile(bad, []byte(src), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	result, err := checkGeblangPath(checkConfig{Path: bad, Lint: true})
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	found := false
+	for _, d := range result.Diagnostics {
+		if strings.Contains(d.Message, "Box has no method smash") {
+			found = true
+		}
+		if strings.Contains(d.Message, "no method open") {
+			t.Fatalf("real method flagged: %v", d)
+		}
+	}
+	if !found {
+		t.Fatalf("expected unknown-method diagnostic, got %v", result.Diagnostics)
+	}
+}
+
 // TestCheckGeblangPathRejectsModuleTopLevelStatement verifies geblang
 // check flags free-standing top-level statements in a module file
 // (i.e. one that begins with `module name;`). The reverse - the same
