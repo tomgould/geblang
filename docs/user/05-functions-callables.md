@@ -145,6 +145,45 @@ overloads can bind, the runtime prefers the overload that drops the
 fewest spread keys. Two overloads tied on that score are still
 reported as ambiguous.
 
+## Pipe Operator
+
+`x |> f(...)` desugars to a call where `x` is injected as the first
+positional argument: `f(x, ...)`. The pipe is left-associative, so
+chains read left-to-right as a transformation pipeline.
+
+```gb
+import io;
+
+func double(int x): int     { return x * 2; }
+func add(int a, int b): int { return a + b; }
+
+io.println(5 |> double);                 # 10  (bare callable form)
+io.println(5 |> double());               # 10  (explicit-paren form)
+io.println(5 |> add(3));                 # 8   (extra positional args follow)
+io.println(5 |> double() |> add(1));     # 11  (chained)
+```
+
+The right-hand side can be a bare identifier, a `module.fn` selector,
+a free-function call, or a `class.staticMethod(...)` selector call.
+For each, the pipe value is prepended to whatever arguments are
+already there.
+
+```gb
+"hello" |> Util.wrap("[", "]")           # Util.wrap("hello", "[", "]")
+xs |> collections.maxBy(scorer)          # collections.maxBy(xs, scorer)
+```
+
+The operator binds at very low precedence (just above assignment), so
+each side absorbs full expressions:
+
+```gb
+2 + 3 |> double                          # (2 + 3) |> double  ->  10
+(true ? 5 : 0) |> double                 # parenthesise to control grouping
+```
+
+If the right-hand side isn't a call, identifier, or selector, the
+pipe is a parse-time error - `x |> 42` is rejected.
+
 ## Function Overloading
 
 Multiple functions may share the same name as long as they differ in the number

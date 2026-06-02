@@ -5398,6 +5398,40 @@ io.println([1, 2, 3].remove(99));
 `, "[1, 2, 3]\n")
 }
 
+func TestParityPipeOperator(t *testing.T) {
+	runParity(t, `import io;
+func double(int x): int { return x * 2; }
+io.println(5 |> double());
+`, "10\n")
+
+	runParity(t, `import io;
+func double(int x): int { return x * 2; }
+io.println(5 |> double);
+`, "10\n")
+
+	runParity(t, `import io;
+func add(int a, int b): int { return a + b; }
+io.println(5 |> add(3));
+`, "8\n")
+
+	runParity(t, `import io;
+func double(int x): int { return x * 2; }
+func add(int a, int b): int { return a + b; }
+io.println(5 |> double() |> add(1));
+`, "11\n")
+
+	runParity(t, `import io;
+func double(int x): int { return x * 2; }
+func add(int a, int b): int { return a + b; }
+io.println(10 |> add(5) |> double);
+`, "30\n")
+
+	runParity(t, `import io;
+class S { static func tag(string s, string suffix): string { return s + ":" + suffix; } }
+io.println("hi" |> S.tag("end"));
+`, "hi:end\n")
+}
+
 func TestParityComprehensions(t *testing.T) {
 	runParity(t, `import io;
 io.println([x * 2 for x in [1, 2, 3, 4, 5]]);

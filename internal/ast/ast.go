@@ -921,6 +921,48 @@ func (e *DictComprehension) String() string {
 	return "{" + e.KeyBody.String() + ": " + e.ValueBody.String() + " for ...}"
 }
 
+// PipeExpression represents `Left |> Right` where Right is either a
+// CallExpression (in which case Left is prepended to its arguments) or
+// a bare callable (Identifier / SelectorExpression, treated as a
+// zero-arg call so Left becomes the single argument).
+type PipeExpression struct {
+	Token token.Token
+	Left  Expression
+	Right Expression
+}
+
+func (*PipeExpression) expressionNode()        {}
+func (e *PipeExpression) TokenLiteral() string { return e.Token.Literal }
+func (e *PipeExpression) String() string       { return e.Left.String() + " |> " + e.Right.String() }
+
+// LowerPipe rewrites `Left |> Right` to an equivalent CallExpression.
+// When Right is a CallExpression, Left becomes the first positional
+// argument; otherwise Right is treated as the callable and Left is the
+// single argument. Returns (call, true) on success or (nil, false) when
+// Right is not a valid pipe target.
+func LowerPipe(pipe *PipeExpression) (*CallExpression, bool) {
+	leftArg := CallArgument{Value: pipe.Left}
+	switch r := pipe.Right.(type) {
+	case *CallExpression:
+		args := make([]CallArgument, 0, len(r.Arguments)+1)
+		args = append(args, leftArg)
+		args = append(args, r.Arguments...)
+		return &CallExpression{
+			Token:         r.Token,
+			Callee:        r.Callee,
+			TypeArguments: r.TypeArguments,
+			Arguments:     args,
+		}, true
+	case *Identifier, *SelectorExpression:
+		return &CallExpression{
+			Token:     pipe.Token,
+			Callee:    pipe.Right,
+			Arguments: []CallArgument{leftArg},
+		}, true
+	}
+	return nil, false
+}
+
 type RangeExpression struct {
 	Token     token.Token
 	Start     Expression

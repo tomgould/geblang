@@ -21,6 +21,21 @@ typed (`for int x in xs`), or destructuring (`for k, v in d.items()`).
 The lazy generator-comprehension form `(expr for x in xs)` is not
 included in this release.
 
+### Pipe operator `|>`
+
+Elixir/F#-style pipe injects the left value as the first positional
+argument of the right-hand call:
+
+```gb
+xs |> filter(positive) |> map(double) |> sum()
+# = sum(map(filter(xs, positive), double))
+```
+
+The right-hand side can be a call (`x |> f(a)` -> `f(x, a)`), a bare
+identifier (`x |> f` -> `f(x)`), or a selector (`x |> mod.fn(a)` ->
+`mod.fn(x, a)`). The operator is left-associative and binds at very
+low precedence so each side absorbs full expressions.
+
 ## 1.5.4
 
 ### Bytecode VM: fused mod-zero branch

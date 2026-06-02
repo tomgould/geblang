@@ -142,6 +142,11 @@ func (l *Lexer) NextToken() token.Token {
 			tok.Type = token.BitOrAssign
 			tok.Literal = "|="
 			tok.Raw = "|="
+		} else if tok.Type == token.BitOr && l.peekChar() == '>' {
+			l.readChar()
+			tok.Type = token.Pipe
+			tok.Literal = "|>"
+			tok.Raw = "|>"
 		}
 	case '^':
 		tok = l.newToken(token.BitXor)

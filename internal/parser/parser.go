@@ -13,6 +13,7 @@ const (
 	_ int = iota
 	lowest
 	assign
+	pipe
 	ternary
 	nullCoalesce
 	logicalOr
@@ -47,6 +48,7 @@ var precedences = map[token.Type]int{
 	token.RShiftAssign:       assign,
 	token.NullCoalesceAssign: assign,
 	token.Question:           ternary,
+	token.Pipe:               pipe,
 	token.NullCoalesce:       nullCoalesce,
 	token.Or:                 logicalOr,
 	token.And:                logicalAnd,
@@ -1219,6 +1221,11 @@ func (p *Parser) parseInfix(left ast.Expression) ast.Expression {
 		return expr
 	case token.Question:
 		return p.parseTernaryExpression(left)
+	case token.Pipe:
+		expr := &ast.PipeExpression{Token: p.curToken, Left: left}
+		p.nextToken()
+		expr.Right = p.parseExpression(pipe)
+		return expr
 	case token.PlusAssign:
 		return p.parseCompoundAssignment(left, token.Plus, "+")
 	case token.MinusAssign:

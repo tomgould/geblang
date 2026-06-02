@@ -40,6 +40,7 @@ const (
 	RShift
 	Inc
 	Dec
+	Pipe
 
 	Dot
 	Ellipsis
@@ -160,6 +161,7 @@ var typeNames = map[Type]string{
 	RShift: ">>",
 	Inc:    "++",
 	Dec:    "--",
+	Pipe:   "|>",
 
 	Dot:           ".",
 	Ellipsis:      "...",

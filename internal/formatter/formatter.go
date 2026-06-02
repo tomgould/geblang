@@ -547,6 +547,8 @@ func (f *fmtr) expr(e ast.Expression) string {
 			parts = append(parts, f.expr(el))
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
+	case *ast.PipeExpression:
+		return f.expr(e.Left) + " |> " + f.expr(e.Right)
 	case *ast.ListComprehension:
 		return "[" + f.expr(e.Body) + f.fmtComprehensionClauses(e.Clauses) + "]"
 	case *ast.SetComprehension:

@@ -2309,6 +2309,12 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		return awaitValue(value)
 	case *ast.MatchExpression:
 		return e.evalMatchExpression(expr, env)
+	case *ast.PipeExpression:
+		call, ok := ast.LowerPipe(expr)
+		if !ok {
+			return nil, fmt.Errorf("`|>` right side must be a call, identifier, or selector")
+		}
+		return e.evalExpression(call, env)
 	case *ast.ListComprehension:
 		acc := []runtime.Value{}
 		if err := e.walkComprehensionClauses(expr.Clauses, 0, env, func(itEnv *runtime.Environment) error {

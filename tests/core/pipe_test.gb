@@ -1,0 +1,64 @@
+/**
+ * @title Pipe operator (1.6.0)
+ * @summary `Left |> Right` injects Left as the first positional argument
+ * of Right. Right can be a call expression (`x |> f(a)` -> `f(x, a)`) or
+ * a bare callable identifier / selector (`x |> f` -> `f(x)`). The pipe
+ * is left-associative and chains read left-to-right.
+ */
+import test;
+
+func double(int x): int { return x * 2; }
+func add(int a, int b): int { return a + b; }
+func tag(string s, string suffix): string { return s + ":" + suffix; }
+
+class Util {
+    static func wrap(string s, string open, string close): string {
+        return open + s + close;
+    }
+}
+
+class PipeOperatorTest extends test.Test {
+
+    @test
+    func basicCall(): void {
+        this.assertEquals(10, 5 |> double());
+    }
+
+    @test
+    func bareIdentifier(): void {
+        this.assertEquals(10, 5 |> double);
+    }
+
+    @test
+    func extraArgs(): void {
+        this.assertEquals(8, 5 |> add(3));
+    }
+
+    @test
+    func chaining(): void {
+        this.assertEquals(11, 5 |> double() |> add(1));
+        this.assertEquals(30, 10 |> add(5) |> double);
+    }
+
+    @test
+    func selectorCall(): void {
+        this.assertEquals("[hi]", "hi" |> Util.wrap("[", "]"));
+    }
+
+    @test
+    func stringChain(): void {
+        this.assertEquals("hello:world", "hello" |> tag("world"));
+    }
+
+    @test
+    func precedenceBelowArithmetic(): void {
+        # `2 + 3 |> double` should parse as `(2 + 3) |> double` = 10
+        this.assertEquals(10, 2 + 3 |> double);
+    }
+
+    @test
+    func precedenceBelowTernary(): void {
+        # `(true ? 5 : 0) |> double` = 10
+        this.assertEquals(10, (true ? 5 : 0) |> double);
+    }
+}

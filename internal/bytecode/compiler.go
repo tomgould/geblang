@@ -2271,6 +2271,12 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		}
 		c.emitAt(OpBuildSet, expr.Token.Line, expr.Token.Column, int64(len(expr.Elements)))
 		return nil
+	case *ast.PipeExpression:
+		call, ok := ast.LowerPipe(expr)
+		if !ok {
+			return fmt.Errorf("`|>` right side must be a call, identifier, or selector")
+		}
+		return c.compileExpression(call)
 	case *ast.ListComprehension:
 		return c.compileExpression(desugarListComprehension(expr))
 	case *ast.SetComprehension:
