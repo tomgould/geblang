@@ -548,7 +548,7 @@ func (s *server) analyze(uri, source string) []Diagnostic {
 		Lint:          true,
 		Resolver:      s.resolverForFile(file),
 		CrossModule:   true,
-		NativeSymbols: catalogNativeSymbols(),
+		NativeSymbols: EngineNativeSymbols(),
 		ModuleCache:   s.moduleCache,
 	}
 	_, raw := check.Source(file, source, opts)

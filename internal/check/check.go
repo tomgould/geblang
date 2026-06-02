@@ -124,7 +124,7 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 		})
 	}
 	if opts.Resolver != nil {
-		diags = append(diags, checkImports(file, program, opts.Resolver)...)
+		diags = append(diags, checkImports(file, program, opts)...)
 		if opts.CrossModule {
 			diags = append(diags, checkCrossModuleSymbols(file, program, opts)...)
 		}
@@ -155,13 +155,24 @@ func parseParserError(msg string) (line, col int, text string) {
 	return line, col, parts[1]
 }
 
-func checkImports(file string, program *ast.Program, resolver *modules.Resolver) []Diagnostic {
+func checkImports(file string, program *ast.Program, opts Options) []Diagnostic {
+	resolver := opts.Resolver
+	isNative := func(canonical string) bool {
+		if IsNativeImport(canonical) {
+			return true
+		}
+		// Engine-native modules (e.g. secureRandom, the ffi/ssh/proc
+		// bridges) are not all listed in NativeModuleNames; trust the
+		// engine-derived symbol set when present.
+		_, ok := opts.NativeSymbols[canonical]
+		return ok
+	}
 	diags := []Diagnostic{}
 	for _, stmt := range program.Statements {
 		switch imp := stmt.(type) {
 		case *ast.ImportStatement:
 			canonical := strings.Join(imp.Path, ".")
-			if canonical == "" || IsNativeImport(canonical) {
+			if canonical == "" || isNative(canonical) {
 				continue
 			}
 			if _, err := resolver.Resolve(canonical); err != nil {
@@ -176,7 +187,7 @@ func checkImports(file string, program *ast.Program, resolver *modules.Resolver)
 			}
 		case *ast.FromImportStatement:
 			canonical := strings.Join(imp.Path, ".")
-			if canonical == "" || IsNativeImport(canonical) {
+			if canonical == "" || isNative(canonical) {
 				continue
 			}
 			if _, err := resolver.Resolve(canonical); err != nil {

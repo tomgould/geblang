@@ -828,6 +828,11 @@ type checkConfig struct {
 	JSON   bool
 	Lint   bool
 	Strict bool
+
+	// nativeSymbols and moduleCache back the cross-module symbol check;
+	// built once per run in checkGeblangPath and shared across files.
+	nativeSymbols map[string]map[string]struct{}
+	moduleCache   *check.ModuleCache
 }
 
 type checkResult struct {
@@ -912,6 +917,8 @@ func checkGeblangPath(config checkConfig) (checkResult, error) {
 	if len(files) == 0 {
 		return checkResult{}, fmt.Errorf("no Geblang files found")
 	}
+	config.nativeSymbols = evaluator.NativeModuleSymbols()
+	config.moduleCache = check.NewModuleCache()
 	result := checkResult{Checked: len(files), Diagnostics: []checkDiagnostic{}}
 	programs := map[string]*ast.Program{}
 	for _, file := range files {
@@ -932,9 +939,11 @@ func checkGeblangPath(config checkConfig) (checkResult, error) {
 
 func checkGeblangSource(file, source string, config checkConfig) (*ast.Program, []checkDiagnostic) {
 	opts := check.Options{
-		Lint:        config.Lint,
-		Resolver:    checkResolver(config, file),
-		CrossModule: false,
+		Lint:          config.Lint,
+		Resolver:      checkResolver(config, file),
+		CrossModule:   true,
+		NativeSymbols: config.nativeSymbols,
+		ModuleCache:   config.moduleCache,
 	}
 	program, raw := check.Source(file, source, opts)
 	diagnostics := make([]checkDiagnostic, 0, len(raw))
@@ -1062,16 +1071,12 @@ func checkModuleDeclarations(config checkConfig, programs map[string]*ast.Progra
 }
 
 func checkResolver(config checkConfig, file string) *modules.Resolver {
-	paths := []string{}
-	if config.Path != "" {
-		if info, err := os.Stat(config.Path); err == nil && info.IsDir() {
-			paths = append(paths, config.Path)
-		} else {
-			paths = append(paths, filepath.Dir(config.Path))
-		}
-	}
-	paths = append(paths, filepath.Dir(file))
-	return modules.NewResolver(paths)
+	// Root at the importing file's own directory (plus stdlib/manifest
+	// paths added by NewResolver), matching how the runtime resolves
+	// imports. Rooting at the check-target directory would let dotted
+	// imports (async.http) resolve to sibling files under it instead of
+	// the bundled stdlib module.
+	return modules.NewResolver([]string{filepath.Dir(file)})
 }
 
 func sameFilePath(left, right string) bool {

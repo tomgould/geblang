@@ -685,6 +685,42 @@ func TestCheckGeblangPathReportsDiagnostics(t *testing.T) {
 	}
 }
 
+// TestCheckGeblangPathFlagsUnknownModuleMember verifies the end-to-end
+// cross-module check: an unknown native member is an error, a real one
+// is not. This exercises the engine-derived native symbol source.
+func TestCheckGeblangPathFlagsUnknownModuleMember(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.gb")
+	if err := os.WriteFile(bad, []byte("import io;\nio.foobar();\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	result, err := checkGeblangPath(checkConfig{Path: bad, Lint: true})
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	found := false
+	for _, d := range result.Diagnostics {
+		if d.Rule == "import" && strings.Contains(d.Message, "io has no exported member foobar") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected unknown-member diagnostic, got %v", result.Diagnostics)
+	}
+
+	good := filepath.Join(dir, "good.gb")
+	if err := os.WriteFile(good, []byte("import io;\nio.println(\"hi\");\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	goodResult, err := checkGeblangPath(checkConfig{Path: good, Lint: true})
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(goodResult.Diagnostics) != 0 {
+		t.Fatalf("valid member should not be flagged: %v", goodResult.Diagnostics)
+	}
+}
+
 // TestCheckGeblangPathRejectsModuleTopLevelStatement verifies geblang
 // check flags free-standing top-level statements in a module file
 // (i.e. one that begins with `module name;`). The reverse - the same

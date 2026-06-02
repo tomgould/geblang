@@ -252,6 +252,23 @@ The conversion methods (`toInt`, `toDecimal`, `toFloat`, `toBool`) work
 on every primitive; `value as type` remains the idiomatic cast, with the
 methods offering chaining and finer control.
 
+### Cross-module symbol checking in geblang check
+
+`geblang check` now resolves `module.member` and `from module import
+name` against the actual exported surface of each module, for both
+built-in modules and your own modules across a multi-file project. An
+unknown member is reported as an error, so typos and outdated API calls
+are caught statically:
+
+```sh
+$ geblang check app.gb
+app.gb:2:4: error[import]: io has no exported member foobar
+```
+
+Checks resolve relative to each file and respect local scope, so a local
+variable that shadows a module name is not mistaken for the module. The
+same resolution backs the editor language server.
+
 ## 1.5.4
 
 ### Bytecode VM: fused mod-zero branch

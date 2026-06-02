@@ -70,6 +70,22 @@ The checker parses files, runs semantic analysis, validates imports through the
 normal module resolver, verifies declared module names resolve back to their
 files, reports duplicate module declarations across a checked directory, and
 reports lint warnings such as unused imports and unreachable statements.
+
+It also performs cross-module symbol resolution: a `module.member` access or
+`from module import name` is an error when the module does not export that
+name. This works for both built-in modules and your own modules across a
+multi-file project, so a typo like `io.foobar()` or an outdated API call is
+caught before you run anything:
+
+```sh
+$ geblang check app.gb
+app.gb:2:4: error[import]: io has no exported member foobar
+```
+
+Member checks resolve relative to each file and follow local scope, so a local
+variable that shadows a module name (for example a list called `errors`) is not
+mistaken for the module.
+
 `--no-lint` disables warning rules while keeping parse, semantic, import, and
 module-layout validation. JSON output includes `severity`, `rule`, `file`,
 `line`, `column`, and `message` fields so tools can route errors and warnings

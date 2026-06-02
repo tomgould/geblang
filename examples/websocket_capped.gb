@@ -11,11 +11,11 @@ import async;
  */
 let id = http.listen(":8080", func(dict<string, any> req): any {
     if (req["path"] == "/ws") {
-        return http.websocketUpgrade(func(int conn): void {
+        return websocket.upgrade(func(int conn): void {
             while (true) {
-                let msg = websocket.read(conn);
+                let msg = websocket.readText(conn);
                 if (msg == null) { break; }
-                websocket.send(conn, "echo: " + (msg as string));
+                websocket.sendText(conn, "echo: " + (msg as string));
             }
         });
     }

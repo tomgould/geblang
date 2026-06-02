@@ -119,6 +119,67 @@ func TestSourceCrossModuleAllowsProjectSymbol(t *testing.T) {
 	}
 }
 
+func TestSourceCrossModuleIgnoresShadowedModule(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	// `errors` is imported but shadowed by a local list; `errors.push`
+	// is the list method, not a module member.
+	source := "import errors;\nlet errors = [1, 2];\nerrors = errors.push(3);\n"
+	opts := Options{
+		Resolver:      modules.NewResolver([]string{dir}),
+		CrossModule:   true,
+		NativeSymbols: map[string]map[string]struct{}{"errors": {"raise": {}}},
+	}
+	_, diags := Source(file, source, opts)
+	for _, d := range diags {
+		if d.Rule == "import" && strings.Contains(d.Message, "errors") {
+			t.Fatalf("shadowed module member should not be flagged: %+v", d)
+		}
+	}
+}
+
+func TestSourceCrossModuleNativeFallsThroughToSource(t *testing.T) {
+	dir := t.TempDir()
+	// A bundled-source module named like a native (empty native symbols)
+	// must resolve its real exports from the .gb file.
+	if err := os.WriteFile(filepath.Join(dir, "streams.gb"),
+		[]byte("module streams;\nexport func of(any x): int { return 1; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "main.gb")
+	source := "import streams;\nstreams.of(5);\n"
+	opts := Options{
+		Resolver:      modules.NewResolver([]string{dir}),
+		CrossModule:   true,
+		NativeSymbols: map[string]map[string]struct{}{"streams": {}},
+	}
+	_, diags := Source(file, source, opts)
+	for _, d := range diags {
+		if d.Rule == "import" && strings.Contains(d.Message, "streams.of") {
+			t.Fatalf("bundled-source member should resolve, got %+v", d)
+		}
+	}
+}
+
+func TestSourceImportEngineNativeNotFlaggedUnresolved(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	// A module present in NativeSymbols but absent from NativeModuleNames
+	// is still recognised as native (the engine-aware fallback).
+	source := "import zzengineonly;\n"
+	opts := Options{
+		Resolver:      modules.NewResolver([]string{dir}),
+		CrossModule:   true,
+		NativeSymbols: map[string]map[string]struct{}{"zzengineonly": {"go": {}}},
+	}
+	_, diags := Source(file, source, opts)
+	for _, d := range diags {
+		if d.Rule == "import" && strings.Contains(d.Message, "cannot resolve") {
+			t.Fatalf("engine-native import should not be flagged unresolved: %+v", d)
+		}
+	}
+}
+
 func TestSourceReturnsParseDiagnostics(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.gb")

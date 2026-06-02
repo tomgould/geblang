@@ -133,6 +133,12 @@ func exportedName(stmt ast.Statement) string {
 // their AST via opts.Resolver and ModuleCache.
 func checkCrossModuleSymbols(file string, program *ast.Program, opts Options) []Diagnostic {
 	aliases := collectImportAliases(program)
+	// A local binding whose name matches an imported module shadows it
+	// (lexical scope wins), so `name.member` resolves to the local, not
+	// the module. Drop shadowed aliases to avoid false positives.
+	for name := range collectDeclaredNames(program) {
+		delete(aliases, name)
+	}
 	cache := opts.ModuleCache
 	if cache == nil {
 		cache = NewModuleCache()
@@ -191,14 +197,14 @@ func checkFromImportSymbols(program *ast.Program, opts Options, cache *ModuleCac
 
 func resolveExportSet(canonical string, native bool, opts Options, cache *ModuleCache) (map[string]struct{}, bool) {
 	if native {
-		if opts.NativeSymbols == nil {
-			return nil, false
+		if opts.NativeSymbols != nil {
+			if symbols, ok := opts.NativeSymbols[canonical]; ok && len(symbols) > 0 {
+				return symbols, true
+			}
 		}
-		symbols, ok := opts.NativeSymbols[canonical]
-		if !ok {
-			return nil, false
-		}
-		return symbols, true
+		// Named in NativeModuleNames but with no Go-native surface: it is
+		// bundled source stdlib (e.g. streams). Fall through and resolve
+		// its exports from the .gb file like any source module.
 	}
 	if opts.Resolver == nil {
 		return nil, false
@@ -238,6 +244,107 @@ func collectImportAliases(program *ast.Program) map[string]importAlias {
 		}
 	}
 	return out
+}
+
+// collectDeclaredNames gathers every name introduced by a local
+// declaration, parameter, loop variable, destructuring target, or catch
+// binding anywhere in the program. Used to detect module-name shadowing.
+func collectDeclaredNames(program *ast.Program) map[string]bool {
+	names := map[string]bool{}
+	for _, stmt := range program.Statements {
+		collectNamesStmt(stmt, names)
+	}
+	return names
+}
+
+func addName(id *ast.Identifier, names map[string]bool) {
+	if id != nil && id.Value != "" {
+		names[id.Value] = true
+	}
+}
+
+func addParams(params []ast.Parameter, names map[string]bool) {
+	for _, p := range params {
+		addName(p.Name, names)
+		collectNamesExpr(p.Default, names)
+	}
+}
+
+func collectNamesStmt(stmt ast.Statement, names map[string]bool) {
+	switch s := stmt.(type) {
+	case *ast.ExportStatement:
+		collectNamesStmt(s.Statement, names)
+	case *ast.DeclarationStatement:
+		addName(s.Name, names)
+		collectNamesExpr(s.Value, names)
+	case *ast.DestructuringStatement:
+		for _, n := range s.Names {
+			addName(n, names)
+		}
+		collectNamesExpr(s.Value, names)
+	case *ast.ExpressionStatement:
+		collectNamesExpr(s.Expression, names)
+	case *ast.ReturnStatement:
+		collectNamesExpr(s.Value, names)
+	case *ast.YieldStatement:
+		collectNamesExpr(s.Value, names)
+	case *ast.SimpleStatement:
+		collectNamesExpr(s.Value, names)
+	case *ast.IfStatement:
+		collectNamesExpr(s.Condition, names)
+		collectNamesBlock(s.Consequence, names)
+		for _, clause := range s.ElseIfs {
+			collectNamesExpr(clause.Condition, names)
+			collectNamesBlock(clause.Body, names)
+		}
+		collectNamesBlock(s.Alternative, names)
+	case *ast.WhileStatement:
+		collectNamesBlock(s.Body, names)
+	case *ast.ForStatement:
+		for _, n := range s.VarNames {
+			addName(n, names)
+		}
+		collectNamesStmt(s.Init, names)
+		collectNamesBlock(s.Body, names)
+	case *ast.FunctionStatement:
+		addParams(s.Parameters, names)
+		collectNamesBlock(s.Body, names)
+	case *ast.ClassStatement:
+		for _, member := range s.Members {
+			collectNamesStmt(member, names)
+		}
+	case *ast.TryStatement:
+		collectNamesBlock(s.Body, names)
+		for _, clause := range s.Catches {
+			addName(clause.Name, names)
+			collectNamesBlock(clause.Body, names)
+		}
+		collectNamesBlock(s.Finally, names)
+	case *ast.MatchStatement:
+		for _, clause := range s.Cases {
+			collectNamesBlock(clause.Body, names)
+		}
+	case *ast.InitStatement:
+		collectNamesBlock(s.Body, names)
+	}
+}
+
+func collectNamesBlock(block *ast.BlockStatement, names map[string]bool) {
+	if block == nil {
+		return
+	}
+	for _, stmt := range block.Statements {
+		collectNamesStmt(stmt, names)
+	}
+}
+
+// collectNamesExpr only recurses into expressions that can introduce
+// new bindings (function literals); other expression shapes are skipped.
+func collectNamesExpr(expr ast.Expression, names map[string]bool) {
+	if fn, ok := expr.(*ast.FunctionLiteral); ok {
+		addParams(fn.Parameters, names)
+		collectNamesBlock(fn.Body, names)
+	}
 }
 
 func joinPath(path []string) string {
@@ -297,26 +404,8 @@ func (c *crossModuleCollector) visit(expr ast.Expression) {
 }
 
 func (c *crossModuleCollector) symbolExists(alias importAlias, name string) bool {
-	if alias.native {
-		if c.opts.NativeSymbols == nil {
-			return true
-		}
-		symbols, ok := c.opts.NativeSymbols[alias.canonical]
-		if !ok {
-			return true
-		}
-		_, exists := symbols[name]
-		return exists
-	}
-	if c.opts.Resolver == nil {
-		return true
-	}
-	path, err := c.opts.Resolver.Resolve(alias.canonical)
-	if err != nil {
-		return true
-	}
-	_, exports, err := c.cache.load(path)
-	if err != nil {
+	exports, ok := resolveExportSet(alias.canonical, alias.native, c.opts, c.cache)
+	if !ok {
 		return true
 	}
 	_, exists := exports[name]
