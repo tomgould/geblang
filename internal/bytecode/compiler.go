@@ -2234,7 +2234,9 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			if err := c.compileExpression(part); err != nil {
 				return err
 			}
-			if _, isStr := part.(*ast.StringLiteral); !isStr {
+			_, isStr := part.(*ast.StringLiteral)
+			_, isFmt := part.(*ast.FormattedInterpolation)
+			if !isStr && !isFmt {
 				// cast expression result to string using the same path as `as string`
 				c.emitConstant(runtime.String{Value: "string"}, expr.Token.Line, expr.Token.Column)
 				c.emitAt(OpCast, expr.Token.Line, expr.Token.Column)
@@ -2243,6 +2245,13 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				c.emitAt(OpAdd, expr.Token.Line, expr.Token.Column)
 			}
 		}
+		return nil
+	case *ast.FormattedInterpolation:
+		if err := c.compileExpression(expr.Value); err != nil {
+			return err
+		}
+		c.emitConstant(runtime.String{Value: expr.Spec}, expr.Token.Line, expr.Token.Column)
+		c.emitAt(OpFormatSpec, expr.Token.Line, expr.Token.Column)
 		return nil
 	case *ast.Literal:
 		switch value := expr.Value.(type) {

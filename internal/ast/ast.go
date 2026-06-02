@@ -661,6 +661,19 @@ type InterpolatedString struct {
 	Parts []Expression // mix of *StringLiteral (literal segments) and arbitrary expressions
 }
 
+// FormattedInterpolation wraps an interpolation expression that carries
+// a Python-style format spec, e.g. `${x:.2f}` or `${n:>5}`. The Spec
+// string is the raw text between `:` and `}` inside `${...}`.
+type FormattedInterpolation struct {
+	Token token.Token
+	Value Expression
+	Spec  string
+}
+
+func (*FormattedInterpolation) expressionNode()        {}
+func (e *FormattedInterpolation) TokenLiteral() string { return e.Token.Literal }
+func (e *FormattedInterpolation) String() string       { return "${" + e.Value.String() + ":" + e.Spec + "}" }
+
 func (*InterpolatedString) expressionNode()        {}
 func (e *InterpolatedString) TokenLiteral() string { return e.Token.Literal }
 func (e *InterpolatedString) String() string {

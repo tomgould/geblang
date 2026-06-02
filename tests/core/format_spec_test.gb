@@ -1,0 +1,101 @@
+/**
+ * @title f-string format specifiers (1.6.0)
+ * @summary `${expr:spec}` formats the value via a Python-style spec
+ * mini-language: [[fill]align][sign][#][0][width][,][.precision][type].
+ * Types: d, x, X, o, b, f, e, g, s, %.
+ */
+import test;
+
+class FormatSpecTest extends test.Test {
+
+    @test
+    func floatPrecision(): void {
+        let pi = 3.14159;
+        this.assertEquals("3.14", "${pi:.2f}");
+        this.assertEquals("3.1416", "${pi:.4f}");
+    }
+
+    @test
+    func intThousands(): void {
+        this.assertEquals("1,234,567", "${1234567:,}");
+        this.assertEquals("100", "${100:,}");
+        this.assertEquals("-1,000", "${-1000:,}");
+    }
+
+    @test
+    func intRightAlign(): void {
+        this.assertEquals("   42", "${42:>5}");
+        this.assertEquals("    42", "${42:>6}");
+    }
+
+    @test
+    func intLeftAlign(): void {
+        this.assertEquals("42   ", "${42:<5}");
+    }
+
+    @test
+    func intCenterAlign(): void {
+        this.assertEquals(" 42  ", "${42:^5}");
+    }
+
+    @test
+    func zeroPadding(): void {
+        this.assertEquals("00042", "${42:05}");
+        this.assertEquals("0000003", "${3:07}");
+    }
+
+    @test
+    func customFillChar(): void {
+        this.assertEquals("**42", "${42:*>4}");
+        this.assertEquals("42**", "${42:*<4}");
+        this.assertEquals(".42.", "${42:.^4}");
+    }
+
+    @test
+    func hexFormatting(): void {
+        this.assertEquals("ff", "${255:x}");
+        this.assertEquals("FF", "${255:X}");
+        this.assertEquals("0xff", "${255:#x}");
+    }
+
+    @test
+    func octalAndBinary(): void {
+        this.assertEquals("377", "${255:o}");
+        this.assertEquals("1010", "${10:b}");
+    }
+
+    @test
+    func signControl(): void {
+        this.assertEquals("+42", "${42:+d}");
+        this.assertEquals("-42", "${-42:+d}");
+        this.assertEquals(" 42", "${42: d}");
+    }
+
+    @test
+    func percentType(): void {
+        this.assertEquals("50.000000%", "${0.5:%}");
+        this.assertEquals("12.50%", "${0.125:.2%}");
+    }
+
+    @test
+    func stringAlign(): void {
+        let name = "Ada";
+        this.assertEquals("       Ada", "${name:>10}");
+        this.assertEquals("Ada       ", "${name:<10}");
+        this.assertEquals("   Ada    ", "${name:^10}");
+    }
+
+    @test
+    func stringTruncation(): void {
+        let s = "hello";
+        this.assertEquals("hel", "${s:.3}");
+        this.assertEquals("hello", "${s:.10}");
+    }
+
+    @test
+    func ternaryNotMistakenForSpec(): void {
+        let x = 5;
+        this.assertEquals("5", "${true ? x : 0}");
+        this.assertEquals("005", "${(true ? x : 0):03d}");
+    }
+}

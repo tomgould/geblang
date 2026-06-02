@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(62)
+	Version = uint16(63)
 )
 
 type Op byte
@@ -267,6 +267,10 @@ const (
 	// against the underlying function's ParamNames.
 	OpDeferCallableCallNamed
 	OpImportFrom
+	// OpFormatSpec applies a Python-style format spec to the value at
+	// the top of the stack. Pops (value, spec-string), pushes the
+	// formatted string. Emitted for `${expr:spec}` interpolations.
+	OpFormatSpec
 )
 
 type Instruction struct {

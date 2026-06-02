@@ -2408,12 +2408,68 @@ func (p *Parser) parseInterpolatedString(tok token.Token) *ast.InterpolatedStrin
 		exprSrc := raw[start+2 : i]
 		raw = raw[i+1:]
 
-		subLexer := lexer.New(exprSrc)
+		// Locate the format-spec separator `:` that sits at depth 0
+		// and isn't being consumed by an enclosing ternary `? ... :`.
+		exprText, spec, hasSpec := splitInterpolationSpec(exprSrc)
+
+		subLexer := lexer.New(exprText)
 		subParser := New(subLexer)
 		expr := subParser.parseExpression(lowest)
-		node.Parts = append(node.Parts, expr)
+		if hasSpec {
+			node.Parts = append(node.Parts, &ast.FormattedInterpolation{
+				Token: tok,
+				Value: expr,
+				Spec:  spec,
+			})
+		} else {
+			node.Parts = append(node.Parts, expr)
+		}
 	}
 	return node
+}
+
+// splitInterpolationSpec finds the format-spec separator `:` inside a
+// `${...}` body. It must be at depth 0 (parens/brackets/braces) and not
+// consumed by an unmatched ternary `?`. Returns (expr, spec, true) when
+// a separator is found, else (whole, "", false).
+func splitInterpolationSpec(src string) (string, string, bool) {
+	depth := 0
+	ternary := 0
+	inStr := byte(0)
+	for i := 0; i < len(src); i++ {
+		ch := src[i]
+		if inStr != 0 {
+			if ch == '\\' && i+1 < len(src) {
+				i++
+				continue
+			}
+			if ch == inStr {
+				inStr = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			inStr = ch
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+		case '?':
+			if depth == 0 {
+				ternary++
+			}
+		case ':':
+			if depth == 0 {
+				if ternary > 0 {
+					ternary--
+					continue
+				}
+				return src[:i], src[i+1:], true
+			}
+		}
+	}
+	return src, "", false
 }
 
 func (p *Parser) nextToken() {

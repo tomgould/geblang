@@ -5398,6 +5398,54 @@ io.println([1, 2, 3].remove(99));
 `, "[1, 2, 3]\n")
 }
 
+func TestParityFStringFormatSpecs(t *testing.T) {
+	runParity(t, `import io;
+let pi = 3.14159;
+io.println("${pi:.2f}");
+io.println("${pi:.4f}");
+`, "3.14\n3.1416\n")
+
+	runParity(t, `import io;
+io.println("${100000:,}");
+io.println("${1234567:,}");
+`, "100,000\n1,234,567\n")
+
+	runParity(t, `import io;
+io.println("${42:>5}|");
+io.println("${42:<5}|");
+io.println("${42:^5}|");
+io.println("${42:05}");
+`, "   42|\n42   |\n 42  |\n00042\n")
+
+	runParity(t, `import io;
+io.println("${255:x}");
+io.println("${255:X}");
+io.println("${255:o}");
+io.println("${15:b}");
+`, "ff\nFF\n377\n1111\n")
+
+	runParity(t, `import io;
+io.println("${0.5:%}");
+io.println("${42:+d}");
+io.println("${-42:+d}");
+`, "50.000000%\n+42\n-42\n")
+
+	runParity(t, `import io;
+let name = "Ada";
+io.println("${name:>10}|");
+io.println("${name:<10}|");
+io.println("${name:^10}|");
+io.println("${name:.2}");
+`, "       Ada|\nAda       |\n   Ada    |\nAd\n")
+
+	// Spec separator inside a ternary should not be confused for format-spec.
+	runParity(t, `import io;
+let x = 5;
+io.println("${true ? x : 0}");
+io.println("${(true ? x : 0):03d}");
+`, "5\n005\n")
+}
+
 func TestParityOrPatterns(t *testing.T) {
 	// Literal alternation.
 	runParity(t, `import io;

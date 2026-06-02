@@ -2088,6 +2088,16 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			}
 		}
 		return runtime.String{Value: sb.String()}, nil
+	case *ast.FormattedInterpolation:
+		val, err := e.evalExpression(expr.Value, env)
+		if err != nil {
+			return nil, err
+		}
+		formatted, err := native.FormatValueWithSpec(val, expr.Spec)
+		if err != nil {
+			return nil, err
+		}
+		return runtime.String{Value: formatted}, nil
 	case *ast.Literal:
 		switch v := expr.Value.(type) {
 		case bool:

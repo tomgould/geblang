@@ -638,9 +638,16 @@ func (f *fmtr) fmtInterpolated(e *ast.InterpolatedString) string {
 		sb.WriteString(q)
 	}
 	for _, p := range e.Parts {
-		if sl, ok := p.(*ast.StringLiteral); ok {
-			sb.WriteString(sl.Raw)
-		} else {
+		switch part := p.(type) {
+		case *ast.StringLiteral:
+			sb.WriteString(part.Raw)
+		case *ast.FormattedInterpolation:
+			sb.WriteString("${")
+			sb.WriteString(f.expr(part.Value))
+			sb.WriteString(":")
+			sb.WriteString(part.Spec)
+			sb.WriteString("}")
+		default:
 			sb.WriteString("${")
 			sb.WriteString(f.expr(p))
 			sb.WriteString("}")

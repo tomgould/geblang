@@ -76,6 +76,28 @@ This change also fixes a pre-existing bug where union-typed
 `case T | U =>` patterns matched only the first arm; the dispatcher
 now consults the full type string on both backends.
 
+### f-string format specifiers
+
+String interpolation now accepts a Python-style format spec after the
+expression: `${expr:spec}`. The spec follows
+`[[fill]align][sign][#][0][width][,][.precision][type]` with type
+characters `d`, `x`, `X`, `o`, `b`, `f`, `e`, `g`, `s`, and `%`.
+
+```gb
+"${pi:.2f}"         // 3.14
+"${1234567:,}"      // 1,234,567
+"${42:>5}"          // "   42"  (right-align width 5)
+"${42:05}"          // 00042    (zero-pad)
+"${255:#x}"         // 0xff
+"${0.125:.2%}"      // 12.50%
+"${name:.3}"        // first 3 chars
+```
+
+The `f` / `e` / `g` types operate on `decimal` as well as `float`,
+matching Geblang's default-decimal numeric convention. Width and
+alignment also apply to strings. Plain `${expr}` (no `:`) behaves
+exactly as before.
+
 ## 1.5.4
 
 ### Bytecode VM: fused mod-zero branch

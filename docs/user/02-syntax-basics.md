@@ -123,6 +123,57 @@ io.println("${label}: ${count}");   # ok
 io.println("${'items'}: ${count}"); # ok - single-quoted inside expression
 ```
 
+### Format specifiers
+
+An interpolation can carry an optional `:spec` formatter that follows
+Python's mini-language. The spec is parsed as
+
+```
+[[fill]align][sign][#][0][width][,][.precision][type]
+```
+
+with the following type characters:
+
+| Type | Use |
+|------|-----|
+| `d`  | integer decimal |
+| `x` / `X` | hex (lower / upper) |
+| `o`  | octal |
+| `b`  | binary |
+| `f`  | fixed-point float (`f` works on `decimal` too) |
+| `e`  | scientific notation |
+| `g`  | general float (auto-pick fixed or scientific) |
+| `s`  | string (default) |
+| `%`  | percentage (value * 100, suffixed with `%`) |
+
+```gb
+let pi    = 3.14159;
+let big   = 1234567;
+let label = "Ada";
+
+io.println("${pi:.2f}");        # 3.14
+io.println("${big:,}");         # 1,234,567
+io.println("${42:>5}|");        # "   42|"  (right-align width 5)
+io.println("${42:<5}|");        # "42   |"  (left-align)
+io.println("${42:^5}|");        # " 42  |"  (center)
+io.println("${42:05}");         # 00042     (zero-pad)
+io.println("${42:*>4}");        # **42      (custom fill)
+io.println("${255:x}");         # ff
+io.println("${255:#x}");        # 0xff
+io.println("${42:+d}");         # +42       (forced sign)
+io.println("${0.125:.2%}");     # 12.50%
+io.println("${label:>10}|");    # "       Ada|"
+io.println("${label:.3}");      # Ada
+```
+
+A bare `${expr}` without a `:` behaves as before - the value is
+converted using its default representation.
+
+When the expression itself contains a ternary `?:`, the format-spec
+`:` doesn't get confused: `${cond ? a : b}` keeps the inner `:` as
+part of the ternary. To attach a spec to a ternary result, parenthesise
+the expression: `${(cond ? a : b):03d}`.
+
 ## Numbers
 
 Three numeric types:

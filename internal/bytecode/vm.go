@@ -1712,6 +1712,20 @@ func (vm *VM) Run() (err error) {
 			if err := vm.importFrom(instruction); err != nil {
 				return err
 			}
+		case OpFormatSpec:
+			spec, err := vm.popString(instruction, "format spec must be string")
+			if err != nil {
+				return err
+			}
+			value, err := vm.pop()
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
+			out, ferr := native.FormatValueWithSpec(value, spec)
+			if ferr != nil {
+				return vm.runtimeError(instruction, "%s", ferr.Error())
+			}
+			vm.push(runtime.String{Value: out})
 		case OpMakeClosure:
 			if len(instruction.Operands) < 2 {
 				return vm.runtimeError(instruction, "make closure instruction has invalid operands")
