@@ -179,6 +179,9 @@ func main() {
 			}
 			allowFFI = append(allowFFI, args[1])
 			args = args[2:]
+		case "--no-assert":
+			bytecode.AssertionsDisabled = true
+			args = args[1:]
 		case "-m", "--module":
 			if len(args) < 2 {
 				fmt.Fprintln(os.Stderr, "usage: geblang -m <module> [args...]")
@@ -262,13 +265,14 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  geblang --disable-vm <script.gb>   run a script with the tree-walking evaluator")
 	fmt.Fprintln(writer, "  geblang --vm-strict <script.gb>    run a script with the VM only, failing instead of falling back")
 	fmt.Fprintln(writer, "  geblang --trace-exec <script.gb>   print which engine handled the script")
+	fmt.Fprintln(writer, "  geblang --no-assert <script.gb>    elide assert(...) calls (arguments are not evaluated)")
 	fmt.Fprintln(writer, "  geblang -m <module> [args...]      run the named module's exported main()")
 	fmt.Fprintln(writer, "  geblang repl                       start the interactive REPL")
 	fmt.Fprintln(writer)
 	fmt.Fprintln(writer, "Project workflow:")
 	fmt.Fprintln(writer, "  geblang init [--name n] [--source d]  scaffold a geblang.yaml manifest in the current directory")
 	fmt.Fprintln(writer, "  geblang install [git-url[@ver]]    install a package or all manifest dependencies")
-	fmt.Fprintln(writer, "  geblang build --entry m --out p    bundle the project into a single self-contained binary")
+	fmt.Fprintln(writer, "  geblang build --entry m --out p [--no-assert]  bundle the project into a single self-contained binary")
 	fmt.Fprintln(writer, "  geblang fmt <file.gb> [...]        format files in place (use --stdin for piped input)")
 	fmt.Fprintln(writer, "  geblang check [--strict] <path>    parse + lint without executing")
 	fmt.Fprintln(writer, "  geblang test [--tag n] [-v] <p>    discover and run *_test.gb files")
@@ -1116,6 +1120,7 @@ func runScript(sourcePath string, scriptArgs []string, source []byte, program *a
 			loader.mainChunk = chunk
 			loader.hasMainChunk = true
 			stateful := evaluator.NewWithArgsAndModulePaths(stdout, scriptArgs, []string{filepath.Dir(sourcePath)})
+			stateful.AssertionsDisabled = bytecode.AssertionsDisabled
 			defer stateful.Cleanup()
 			if policy, perr := stateful.BuildFFIPolicy(filepath.Dir(sourcePath), allowFFI); perr == nil {
 				stateful.SetFFIPolicy(policy)
@@ -1200,6 +1205,7 @@ func traceExecution(writer io.Writer, engine string, reason string) {
 
 func runEvaluator(sourcePath string, scriptArgs []string, program *ast.Program, allowFFI []string, stdout io.Writer) (int, error) {
 	e := evaluator.NewWithArgsAndModulePaths(stdout, scriptArgs, []string{filepath.Dir(sourcePath)})
+	e.AssertionsDisabled = bytecode.AssertionsDisabled
 	if policy, err := e.BuildFFIPolicy(filepath.Dir(sourcePath), allowFFI); err == nil {
 		e.SetFFIPolicy(policy)
 	} else {
@@ -1642,15 +1648,23 @@ func printTestOutput(output string) {
 func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Program) (bytecode.Chunk, error) {
 	cacheDir := bytecodeCacheDir()
 	cachePath := bytecode.CachePath(cacheDir, sourcePath, source, version)
-	if data, err := os.ReadFile(cachePath); err == nil {
-		chunk, err := bytecode.Decode(data)
-		if err == nil && chunk.Compiler == version && chunk.SourceHash == bytecode.SourceHash(source) {
-			return chunk, nil
+	// --no-assert mutates the compiled chunk in a way the cache key
+	// doesn't capture; skip the cache on both read and write so the
+	// next normal run doesn't pick up an asserts-elided chunk.
+	if !bytecode.AssertionsDisabled {
+		if data, err := os.ReadFile(cachePath); err == nil {
+			chunk, err := bytecode.Decode(data)
+			if err == nil && chunk.Compiler == version && chunk.SourceHash == bytecode.SourceHash(source) {
+				return chunk, nil
+			}
 		}
 	}
 	chunk, err := bytecode.Compile(astProgram, source, version)
 	if err != nil {
 		return bytecode.Chunk{}, err
+	}
+	if bytecode.AssertionsDisabled {
+		return chunk, nil
 	}
 	encoded, err := bytecode.Encode(chunk)
 	if err != nil {

@@ -797,3 +797,110 @@ let result = crypt.generateSelfSignedCert({
 io.writeFile("server.crt", result["cert"]);
 io.writeFile("server.key", result["key"]);
 ```
+
+## Provably-fair RNG (`secureRandom`)
+
+The `secureRandom` module (added in 1.6.0) provides a verifiable
+random-number stream for use cases where an outcome has to be
+auditable after the fact: gaming, lotteries, betting, public
+draws, distributed leader elections, any place where "did the
+house cheat?" is a real question.
+
+It uses a commit / reveal scheme. The server generates a 32-byte
+seed, publishes its SHA-256 commitment up front, draws values
+from an HMAC-SHA-256 stream keyed by that seed, then reveals the
+seed at the end. Anyone holding the commitment and the audit log
+can independently re-derive every draw and check that the seed
+matches its commitment.
+
+For ordinary cryptographic tokens or session IDs, keep using
+`secrets.*`. `secureRandom` is for the narrower case where the
+caller has to prove fairness, not just unpredictability.
+
+### Surface
+
+| Function | Purpose |
+|----------|---------|
+| `secureRandom.openSession(opts = {})` | Opens a session with a fresh 32-byte server seed. `opts.clientSeed` (string) mixes a caller-supplied nonce into every draw. |
+| `secureRandom.fromSeed(seedHex, clientSeed = "")` | Opens a session from a caller-supplied 64-char hex seed (useful for tests and deterministic replays). |
+| `secureRandom.commitment(s)` | Returns `sha256(serverSeed)` as a 64-char hex string. Publish this before drawing. |
+| `secureRandom.reveal(s)` | Returns the server seed (hex) and locks the session so no further draws are allowed. |
+| `secureRandom.auditLog(s)` | Returns the per-draw records: `{nonce, method, args, output}` in draw order. |
+| `secureRandom.auditLogJson(s)` | Returns the audit log + commitment + clientSeed (and serverSeed, once revealed) as a JSON envelope ready to publish. |
+| `secureRandom.bytes(s, n)` | Draws `n` provably-fair random bytes. |
+| `secureRandom.uintRange(s, lo, hi)` | Unbiased uniform integer in `[lo, hi)`. Uses rejection sampling. |
+| `secureRandom.float(s)` | Uniform float in `[0, 1)`. |
+| `secureRandom.bool(s)` | Fair coin flip. |
+| `secureRandom.choice(s, items)` | Uniformly picks one element of `items`. |
+| `secureRandom.shuffle(s, items)` | Fisher-Yates shuffled copy. |
+| `secureRandom.weightedChoice(s, items, weights)` | Picks one element with probability proportional to its weight. |
+| `secureRandom.verifyCommitment(commit, seedHex)` | True if `sha256(seedHex) == commit`. |
+| `secureRandom.replay(seedHex, clientSeed, nonce, method, args)` | Reproduces a single draw outside a session; same inputs always yield the same output. |
+
+### Example: a provably-fair dice roll
+
+```gb
+import secureRandom;
+import io;
+
+# The "house" opens a session and publishes the commitment first.
+let s = secureRandom.openSession({"clientSeed": "player#42"});
+io.println("commitment: " + secureRandom.commitment(s));
+
+# The house draws an outcome.
+let outcome = secureRandom.uintRange(s, 1, 7);   # 1..6
+io.println("you rolled: " + (outcome as string));
+
+# At end of round (or end of day) the house reveals the seed.
+let seed = secureRandom.reveal(s);
+io.println("seed: " + seed);
+io.println(secureRandom.auditLogJson(s));
+```
+
+### Verifying after the fact
+
+A third party with just the commitment, the published seed, and
+the audit log can re-derive every outcome:
+
+```gb
+import secureRandom;
+import json;
+import io;
+
+let published = json.parse(io.readFile("round-1234.json"));
+if (!secureRandom.verifyCommitment(
+        published["commitment"] as string,
+        published["serverSeed"] as string)) {
+    throw RuntimeError("server seed does not match published commitment");
+}
+
+for (var draw in published["draws"]) {
+    let expected = secureRandom.replay(
+        published["serverSeed"] as string,
+        published["clientSeed"] as string,
+        draw["nonce"] as int,
+        draw["method"] as string,
+        draw["args"] as list<any>
+    );
+    if (draw["output"] != expected) {
+        throw RuntimeError("draw " + (draw["nonce"] as string) + " does not replay");
+    }
+}
+```
+
+### Notes
+
+- Per-draw randomness derives from
+  `hmacSha256(serverSeed, json({clientSeed, nonce, method, args}))`,
+  so identical inputs always produce identical outputs. The
+  caller cannot influence the result without changing the input,
+  and the server cannot retroactively change the result without
+  invalidating the commitment.
+- `uintRange` uses rejection sampling so the distribution stays
+  unbiased even for ranges that are not powers of two.
+- Once `reveal` has been called the session refuses further
+  draws. This prevents accidentally leaking entropy from a
+  revealed seed.
+- For plain unpredictable randomness (session IDs, tokens, OTPs),
+  use `secrets.*`. `secureRandom` is heavier and only worth the
+  cost when the audit trail matters.

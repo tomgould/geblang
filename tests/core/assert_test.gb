@@ -1,0 +1,89 @@
+/**
+ * @title assert builtin (1.6.0)
+ * @summary `assert(cond)` and `assert(cond, msg)` throw AssertionError
+ * (a subclass of Error) when cond is falsy. `--no-assert` on
+ * `geblang` and `geblang build` elides the call entirely.
+ */
+import test;
+
+class AssertTest extends test.Test {
+
+    @test
+    func truthyConditionIsNoOp(): void {
+        # Should not throw.
+        assert(true);
+        assert(1 + 1 == 2);
+        assert("abc".length() == 3);
+        assert([1, 2, 3].length() > 0);
+    }
+
+    @test
+    func falsyConditionThrowsAssertionError(): void {
+        let caught = false;
+        try {
+            assert(false);
+        } catch (AssertionError e) {
+            caught = true;
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func defaultMessageRendersSourceText(): void {
+        let msg = "";
+        try {
+            assert(1 == 2);
+        } catch (AssertionError e) {
+            msg = e.message;
+        }
+        this.assertTrue(msg.contains("assertion failed"));
+        this.assertTrue(msg.contains("=="));
+    }
+
+    @test
+    func explicitMessageWins(): void {
+        let msg = "";
+        try {
+            assert(false, "custom failure reason");
+        } catch (AssertionError e) {
+            msg = e.message;
+        }
+        this.assertEquals("custom failure reason", msg);
+    }
+
+    @test
+    func assertionErrorIsSubclassOfError(): void {
+        let caughtAsError = false;
+        try {
+            assert(false, "boom");
+        } catch (Error e) {
+            caughtAsError = true;
+            this.assertEquals("AssertionError", e.class);
+        }
+        this.assertTrue(caughtAsError);
+    }
+
+    @test
+    func conditionExpressionResultIsThrown(): void {
+        let x = 5;
+        let y = 10;
+        let msg = "";
+        try {
+            assert(x > y);
+        } catch (AssertionError e) {
+            msg = e.message;
+        }
+        this.assertTrue(msg.contains("x > y") || msg.contains("(x > y)"));
+    }
+
+    @test
+    func messageMustBeString(): void {
+        let threw = false;
+        try {
+            assert(false, 42);
+        } catch (Error e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+}

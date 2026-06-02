@@ -127,6 +127,16 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"log2": {}, "trunc": {}, "sign": {}, "cbrt": {}, "hypot": {},
 		"inf": {}, "nan": {}, "isNaN": {}, "isInf": {}, "isPrime": {},
 		"median": {}, "percentile": {}, "quantile": {}, "mode": {},
+		"tau": {}, "ln2": {}, "ln10": {}, "sqrt2": {}, "phi": {},
+		"maxInt": {}, "minInt": {}, "maxFloat": {}, "minFloat": {},
+		"epsilon": {}, "sqrt2Pi": {}, "log2Pi": {},
+	},
+	"secureRandom": {
+		"openSession": {}, "fromSeed": {}, "commitment": {}, "reveal": {},
+		"auditLog": {}, "auditLogJson": {},
+		"bytes": {}, "uintRange": {}, "float": {}, "bool": {},
+		"choice": {}, "shuffle": {}, "weightedChoice": {},
+		"verifyCommitment": {}, "replay": {},
 	},
 	"sys": {
 		"hostname": {}, "pid": {}, "platform": {}, "arch": {},

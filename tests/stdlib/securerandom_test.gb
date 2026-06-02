@@ -1,0 +1,171 @@
+/**
+ * @title secureRandom (1.6.0)
+ * @summary Provably-fair RNG session API. Server commits to a seed,
+ * draws are HMAC-SHA-256 derived from (clientSeed, nonce, method, args),
+ * the seed is revealed at the end so anyone can replay every draw and
+ * check the commitment.
+ */
+import test;
+import secureRandom;
+
+class SecureRandomTest extends test.Test {
+
+    @test
+    func openSessionGeneratesCommitment(): void {
+        let s = secureRandom.openSession({"clientSeed": "Alice"});
+        let c = secureRandom.commitment(s);
+        # 32 bytes hex = 64 chars
+        this.assertEquals(64, c.length());
+    }
+
+    @test
+    func uintRangeIsWithinBounds(): void {
+        let s = secureRandom.openSession({"clientSeed": "Alice"});
+        for (int i = 0; i < 50; i++) {
+            let v = secureRandom.uintRange(s, 1, 7);
+            this.assertTrue(v >= 1);
+            this.assertTrue(v < 7);
+        }
+    }
+
+    @test
+    func floatIsInUnitInterval(): void {
+        let s = secureRandom.openSession({"clientSeed": "Alice"});
+        for (int i = 0; i < 20; i++) {
+            let f = secureRandom.float(s);
+            this.assertTrue(f >= (0.0 as float));
+            this.assertTrue(f < (1.0 as float));
+        }
+    }
+
+    @test
+    func boolFlipsBothWays(): void {
+        let s = secureRandom.openSession({"clientSeed": "Alice"});
+        let trues = 0;
+        let falses = 0;
+        for (int i = 0; i < 100; i++) {
+            if (secureRandom.bool(s)) { trues = trues + 1; }
+            else                       { falses = falses + 1; }
+        }
+        this.assertTrue(trues > 20);
+        this.assertTrue(falses > 20);
+    }
+
+    @test
+    func choicePicksFromList(): void {
+        let s = secureRandom.openSession({"clientSeed": "Alice"});
+        let items = ["A", "B", "C"];
+        for (int i = 0; i < 20; i++) {
+            let pick = secureRandom.choice(s, items);
+            this.assertTrue(items.contains(pick));
+        }
+    }
+
+    @test
+    func shufflePreservesElementsAndIsAPermutation(): void {
+        let s = secureRandom.openSession({"clientSeed": "Alice"});
+        let original = [1, 2, 3, 4, 5, 6, 7];
+        let shuffled = secureRandom.shuffle(s, original);
+        this.assertEquals(original.length(), shuffled.length());
+        for (int v in original) {
+            this.assertTrue(shuffled.contains(v));
+        }
+    }
+
+    @test
+    func weightedChoiceRespectsWeights(): void {
+        let s = secureRandom.openSession({"clientSeed": "Alice"});
+        # Weight z heavily so it should dominate.
+        let counts = {"x": 0, "y": 0, "z": 0};
+        for (int i = 0; i < 300; i++) {
+            let pick = secureRandom.weightedChoice(s, ["x", "y", "z"], [1.0, 1.0, 98.0]);
+            counts.set(pick, counts[pick] + 1);
+        }
+        this.assertTrue(counts["z"] > 250);
+    }
+
+    @test
+    func revealedSeedMatchesCommitment(): void {
+        let s = secureRandom.openSession({"clientSeed": "Alice"});
+        let commit = secureRandom.commitment(s);
+        let seed = secureRandom.reveal(s);
+        this.assertTrue(secureRandom.verifyCommitment(commit, seed));
+    }
+
+    @test
+    func replayMatchesLoggedOutcomes(): void {
+        let s = secureRandom.openSession({"clientSeed": "Verifier"});
+        let a = secureRandom.uintRange(s, 0, 100);
+        let b = secureRandom.bool(s);
+        let c = secureRandom.choice(s, ["red", "green", "blue"]);
+        let seed = secureRandom.reveal(s);
+
+        let ra = secureRandom.replay(seed, "Verifier", 0, "uintRange", [0, 100]);
+        let rb = secureRandom.replay(seed, "Verifier", 1, "bool", []);
+        let rc = secureRandom.replay(seed, "Verifier", 2, "choice", [["red", "green", "blue"]]);
+
+        this.assertEquals(a, ra);
+        this.assertEquals(b, rb);
+        this.assertEquals(c, rc);
+    }
+
+    @test
+    func auditLogContainsEveryDraw(): void {
+        let s = secureRandom.openSession({"clientSeed": "Bob"});
+        secureRandom.uintRange(s, 1, 7);
+        secureRandom.bool(s);
+        secureRandom.float(s);
+        let log = secureRandom.auditLog(s);
+        this.assertEquals(3, log.length());
+        this.assertEquals(0, log[0]["nonce"]);
+        this.assertEquals("uintRange", log[0]["method"]);
+        this.assertEquals("bool", log[1]["method"]);
+        this.assertEquals("float", log[2]["method"]);
+    }
+
+    @test
+    func auditLogJsonIncludesEnvelope(): void {
+        let s = secureRandom.openSession({"clientSeed": "Bob"});
+        secureRandom.uintRange(s, 1, 7);
+        secureRandom.reveal(s);
+        let json = secureRandom.auditLogJson(s);
+        this.assertTrue(json.contains("\"commitment\""));
+        this.assertTrue(json.contains("\"clientSeed\":\"Bob\""));
+        this.assertTrue(json.contains("\"draws\""));
+        this.assertTrue(json.contains("\"serverSeed\""));
+    }
+
+    @test
+    func revealedSessionRejectsFurtherDraws(): void {
+        let s = secureRandom.openSession({"clientSeed": "Bob"});
+        secureRandom.reveal(s);
+        this.assertThrows(func(): void {
+            secureRandom.uintRange(s, 1, 7);
+        });
+    }
+
+    @test
+    func sameSeedReproducesSameSequence(): void {
+        let seed = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let a = secureRandom.fromSeed(seed, "Alice");
+        let b = secureRandom.fromSeed(seed, "Alice");
+        for (int i = 0; i < 10; i++) {
+            this.assertEquals(secureRandom.uintRange(a, 1, 1000), secureRandom.uintRange(b, 1, 1000));
+        }
+    }
+
+    @test
+    func differentClientSeedsProduceDifferentSequences(): void {
+        let seed = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let a = secureRandom.fromSeed(seed, "Alice");
+        let b = secureRandom.fromSeed(seed, "Bob");
+        let same = 0;
+        for (int i = 0; i < 20; i++) {
+            if (secureRandom.uintRange(a, 1, 1000000000) == secureRandom.uintRange(b, 1, 1000000000)) {
+                same = same + 1;
+            }
+        }
+        # Astronomically unlikely they overlap > 1 time across 20 draws.
+        this.assertTrue(same < 2);
+    }
+}

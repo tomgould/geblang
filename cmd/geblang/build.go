@@ -34,6 +34,8 @@ func runBuild(args []string) {
 			}
 			i++
 			outPath = args[i]
+		case "--no-assert":
+			bytecode.AssertionsDisabled = true
 		default:
 			if strings.HasPrefix(args[i], "-") {
 				fmt.Fprintf(os.Stderr, "geblang build: unknown flag %s\n", args[i])

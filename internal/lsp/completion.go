@@ -515,6 +515,24 @@ func topLevelCompletionItems(prefix string) []CompletionItem {
 			items = append(items, CompletionItem{Label: kw, Kind: completionKindKeyword, Detail: "keyword"})
 		}
 	}
+	builtinNames := make([]string, 0, len(globalBuiltins))
+	for name := range globalBuiltins {
+		builtinNames = append(builtinNames, name)
+	}
+	sort.Strings(builtinNames)
+	for _, name := range builtinNames {
+		if prefix != "" && !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		f := globalBuiltins[name]
+		f.name = name
+		items = append(items, CompletionItem{
+			Label:         name,
+			Kind:          completionKindFunction,
+			Detail:        f.signature(),
+			Documentation: f.doc,
+		})
+	}
 	if strings.HasPrefix(prefix, "_") || prefix == "" {
 		for _, m := range magicMethods {
 			if prefix == "" || strings.HasPrefix(m.name, prefix) {

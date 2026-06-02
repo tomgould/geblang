@@ -48,6 +48,10 @@ type Compiler struct {
 	// import so module-recognition sites can translate `Y.fn(...)` calls
 	// back to the canonical `X.fn` dispatch.
 	moduleAliases   map[string]string
+	// AssertionsDisabled elides assert(...) call sites at compile time
+	// (no code emitted; arguments are not evaluated). Set via the
+	// --no-assert CLI flag on `geblang` and `geblang build`.
+	AssertionsDisabled bool
 }
 
 type binding struct {
@@ -73,12 +77,18 @@ type finalizerContext struct {
 	hasWithCleanup bool
 }
 
+// AssertionsDisabled, when set true before Compile (typically by the
+// --no-assert CLI flag), elides every assert(...) call at compile time:
+// neither the condition nor the message is evaluated. Off by default.
+var AssertionsDisabled bool
+
 func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk, error) {
 	c := &Compiler{
 		chunk: Chunk{
 			SourceHash: SourceHash(source),
 			Compiler:   compilerVersion,
 		},
+		AssertionsDisabled: AssertionsDisabled,
 		globals:         map[string]int64{},
 		globalTypes:     map[string]string{},
 		scopes:          []map[string]binding{{}},
@@ -2711,6 +2721,9 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				c.emitAt(OpTypeOf, expr.Token.Line, expr.Token.Column)
 				return nil
 			}
+			if ident.Value == "assert" {
+				return c.compileAssertCall(expr)
+			}
 			if ident.Value == "range" {
 				if len(expr.Arguments) < 2 || len(expr.Arguments) > 3 {
 					return fmt.Errorf("range expects (start, end) or (start, end, step)")
@@ -5051,6 +5064,42 @@ func foldBoolBool(op string, l, r bool) (runtime.Value, bool, error) {
 	return nil, false, nil
 }
 
+func (c *Compiler) compileAssertCall(expr *ast.CallExpression) error {
+	if len(expr.Arguments) < 1 || len(expr.Arguments) > 2 {
+		return fmt.Errorf("assert expects (condition) or (condition, message)")
+	}
+	for _, arg := range expr.Arguments {
+		if arg.Name != nil {
+			return fmt.Errorf("assert does not accept named arguments")
+		}
+	}
+	line, col := expr.Token.Line, expr.Token.Column
+	if c.AssertionsDisabled {
+		c.emitConstant(runtime.Null{}, line, col)
+		return nil
+	}
+	cond := expr.Arguments[0].Value
+	if err := c.compileExpression(cond); err != nil {
+		return err
+	}
+	c.emitAt(OpNot, line, col)
+	jumpEnd := c.emitJump(OpJumpIfFalse, line, col)
+	if len(expr.Arguments) == 2 {
+		if err := c.compileExpression(expr.Arguments[1].Value); err != nil {
+			return err
+		}
+	} else {
+		c.emitConstant(runtime.String{Value: "assertion failed: " + cond.String()}, line, col)
+	}
+	classIndex := int64(len(c.chunk.Constants))
+	c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "AssertionError"})
+	c.emitAt(OpMakeError, line, col, classIndex, 1)
+	c.emitAt(OpThrow, line, col)
+	c.patchJump(jumpEnd)
+	c.emitConstant(runtime.Null{}, line, col)
+	return nil
+}
+
 func (c *Compiler) emit(op Op, operands ...int64) {
 	c.emitAt(op, 0, 0, operands...)
 }
@@ -5991,7 +6040,7 @@ func isEvaluatorOnlyBuiltinModule(name string) bool {
 
 func isBuiltinErrorClass(name string) bool {
 	switch name {
-	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError":
+	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError":
 		return true
 	default:
 		return false

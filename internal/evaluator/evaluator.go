@@ -136,6 +136,7 @@ type Evaluator struct {
 	debugHook             DebugHookFunc
 	debugSourcePath       string
 	parent                *Evaluator
+	AssertionsDisabled    bool
 	vmDispatcher          MethodDispatcher
 	dbMu                  sync.Mutex
 	nextDBID              int64
@@ -6269,7 +6270,7 @@ func errorTypeMatches(class string, target string) bool {
 
 func errorParent(class string) string {
 	switch class {
-	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError":
+	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError":
 		return "Error"
 	default:
 		return ""
@@ -6281,7 +6282,7 @@ func (e *Evaluator) errorParent(class string) string {
 		return parent
 	}
 	switch class {
-	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError":
+	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError":
 		return "Error"
 	default:
 		return ""
@@ -6896,6 +6897,9 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 			return nil, err
 		}
 		return newErrorValue(ident.Value, args)
+	}
+	if ident, ok := call.Callee.(*ast.Identifier); ok && ident.Value == "assert" {
+		return e.evalAssertCall(call, env)
 	}
 	// A parenthesized selector like `(this.fn)(args)` is a
 	// "call the value" expression, not a method call. Bypass the
@@ -8322,6 +8326,35 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"percentile": e.registryBuiltin("math", "percentile"),
 			"quantile":   e.registryBuiltin("math", "quantile"),
 			"mode":       e.registryBuiltin("math", "mode"),
+			"tau":        e.registryBuiltin("math", "tau"),
+			"ln2":        e.registryBuiltin("math", "ln2"),
+			"ln10":       e.registryBuiltin("math", "ln10"),
+			"sqrt2":      e.registryBuiltin("math", "sqrt2"),
+			"phi":        e.registryBuiltin("math", "phi"),
+			"maxInt":     e.registryBuiltin("math", "maxInt"),
+			"minInt":     e.registryBuiltin("math", "minInt"),
+			"maxFloat":   e.registryBuiltin("math", "maxFloat"),
+			"minFloat":   e.registryBuiltin("math", "minFloat"),
+			"epsilon":    e.registryBuiltin("math", "epsilon"),
+			"sqrt2Pi":    e.registryBuiltin("math", "sqrt2Pi"),
+			"log2Pi":     e.registryBuiltin("math", "log2Pi"),
+		},
+		"secureRandom": {
+			"openSession":      e.registryBuiltin("secureRandom", "openSession"),
+			"fromSeed":         e.registryBuiltin("secureRandom", "fromSeed"),
+			"commitment":       e.registryBuiltin("secureRandom", "commitment"),
+			"reveal":           e.registryBuiltin("secureRandom", "reveal"),
+			"auditLog":         e.registryBuiltin("secureRandom", "auditLog"),
+			"auditLogJson":     e.registryBuiltin("secureRandom", "auditLogJson"),
+			"bytes":            e.registryBuiltin("secureRandom", "bytes"),
+			"uintRange":        e.registryBuiltin("secureRandom", "uintRange"),
+			"float":            e.registryBuiltin("secureRandom", "float"),
+			"bool":             e.registryBuiltin("secureRandom", "bool"),
+			"choice":           e.registryBuiltin("secureRandom", "choice"),
+			"shuffle":          e.registryBuiltin("secureRandom", "shuffle"),
+			"weightedChoice":   e.registryBuiltin("secureRandom", "weightedChoice"),
+			"verifyCommitment": e.registryBuiltin("secureRandom", "verifyCommitment"),
+			"replay":           e.registryBuiltin("secureRandom", "replay"),
 		},
 		"errors": {
 			"new":           e.registryBuiltin("errors", "new"),
@@ -21644,7 +21677,7 @@ func valueToTOML(value runtime.Value) (any, error) {
 
 func isBuiltinErrorClass(name string) bool {
 	switch name {
-	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError":
+	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError":
 		return true
 	default:
 		return false
@@ -24344,6 +24377,40 @@ func (e *Evaluator) assignSelector(expr *ast.SelectorExpression, newValue runtim
 // evalRangeBuiltin implements the top-level `range(start, end[, step])`
 // shorthand, producing a list<int> inclusive of both endpoints. Negative
 // steps are allowed when start > end. Step zero is rejected.
+func (e *Evaluator) evalAssertCall(call *ast.CallExpression, env *runtime.Environment) (runtime.Value, error) {
+	if e.AssertionsDisabled {
+		return runtime.Null{}, nil
+	}
+	if len(call.Arguments) < 1 || len(call.Arguments) > 2 {
+		return nil, fmt.Errorf("assert expects (condition) or (condition, message)")
+	}
+	for _, arg := range call.Arguments {
+		if arg.Name != nil {
+			return nil, fmt.Errorf("assert does not accept named arguments")
+		}
+	}
+	condValue, err := e.evalExpression(call.Arguments[0].Value, env)
+	if err != nil {
+		return nil, err
+	}
+	if isTruthy(condValue) {
+		return runtime.Null{}, nil
+	}
+	message := "assertion failed: " + call.Arguments[0].Value.String()
+	if len(call.Arguments) == 2 {
+		msgValue, err := e.evalExpression(call.Arguments[1].Value, env)
+		if err != nil {
+			return nil, err
+		}
+		msgStr, ok := msgValue.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("assert message must be string")
+		}
+		message = msgStr.Value
+	}
+	return nil, thrownError{value: e.withTrace(runtime.Error{Class: "AssertionError", Message: message, Parents: e.errorParentChain("AssertionError")})}
+}
+
 func (e *Evaluator) evalRangeBuiltin(call *ast.CallExpression, env *runtime.Environment) (runtime.Value, error) {
 	args, err := e.evalCallArguments(call, env)
 	if err != nil {

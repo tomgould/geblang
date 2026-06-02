@@ -30,6 +30,23 @@ func (f functionDoc) signature() string {
 	return label
 }
 
+// globalBuiltins are the top-level (bare-identifier) builtin functions
+// recognised by both backends - no `import` required. They are
+// special-cased in the parser/compiler dispatch and so do not live
+// inside any stdlib module.
+var globalBuiltins = map[string]functionDoc{
+	"assert": fn([]string{"bool cond", "string message = \"\""}, "void", "Throws AssertionError when cond is false. When message is omitted the error includes the source text of the cond expression. `--no-assert` elides the call (no argument evaluation) at compile time (1.6.0)."),
+	"typeof": fn([]string{"any value"}, "Type", "Returns a runtime Type describing the value's type."),
+	"range":  fn([]string{"int start", "int end", "int step = 1"}, "list<int>", "Builds an integer range. With one arg ranges from 0; with three the third is the step."),
+	"dump":   fn([]string{"any value"}, "string", "Returns a debug-friendly string representation of value (recursive, ordered)."),
+	"dir":    fn([]string{"any value = null"}, "list<string>", "Returns the visible names: with no argument, names in the current scope; with an imported-module identifier, the module's exports; with any other value, its accessible members."),
+}
+
+func globalBuiltinDoc(name string) (functionDoc, bool) {
+	doc, ok := globalBuiltins[name]
+	return doc, ok
+}
+
 func moduleNames() []string {
 	names := make([]string, 0, len(stdlibCatalog))
 	for name := range stdlibCatalog {
@@ -656,6 +673,18 @@ var stdlibCatalog = map[string]moduleDoc{
 		"isInf":      fn([]string{"number value"}, "bool", "True when value is +/- infinity."),
 		"pi":         fn([]string{}, "float", "Returns pi."),
 		"e":          fn([]string{}, "float", "Returns Euler's number."),
+		"tau":        fn([]string{}, "float", "Returns tau (2 * pi)."),
+		"ln2":        fn([]string{}, "float", "Returns the natural logarithm of 2."),
+		"ln10":       fn([]string{}, "float", "Returns the natural logarithm of 10."),
+		"sqrt2":      fn([]string{}, "float", "Returns the square root of 2."),
+		"phi":        fn([]string{}, "float", "Returns the golden ratio (1 + sqrt(5)) / 2."),
+		"maxInt":     fn([]string{}, "int", "Largest representable int64."),
+		"minInt":     fn([]string{}, "int", "Smallest representable int64."),
+		"maxFloat":   fn([]string{}, "float", "Largest finite float64."),
+		"minFloat":   fn([]string{}, "float", "Smallest positive non-zero float64."),
+		"epsilon":    fn([]string{}, "float", "Smallest float such that 1 + epsilon != 1."),
+		"sqrt2Pi":    fn([]string{}, "float", "Returns sqrt(2 * pi)."),
+		"log2Pi":     fn([]string{}, "float", "Returns log(2 * pi)."),
 		"median":     fn([]string{"list<number> xs"}, "float", "Median (50th percentile) using linear-interpolation."),
 		"percentile": fn([]string{"list<number> xs", "number p"}, "float", "p-th percentile (0..100) using R type-7 linear interpolation."),
 		"quantile":   fn([]string{"list<number> xs", "number q"}, "float", "q-quantile (0..1) using R type-7 linear interpolation."),
@@ -942,6 +971,25 @@ var stdlibCatalog = map[string]moduleDoc{
 			"shuffle":  fn([]string{"list<any> items"}, "list<any>", "Shuffled copy."),
 			"seed":     fn([]string{"int seed"}, "void", "Re-seeds this generator."),
 		},
+	}},
+	"secureRandom": {functions: map[string]functionDoc{
+		"openSession":      fn([]string{"dict opts = {}"}, "SecureRandomSession", "Opens a provably-fair session with a fresh 32-byte seed. opts may set clientSeed (defaults to empty)."),
+		"fromSeed":         fn([]string{"string seedHex", "string clientSeed = \"\""}, "SecureRandomSession", "Opens a session with a caller-supplied 64-char hex seed (useful for tests/replay)."),
+		"commitment":       fn([]string{"SecureRandomSession s"}, "string", "Returns the SHA-256 commitment of the server seed (publish before drawing)."),
+		"reveal":           fn([]string{"SecureRandomSession s"}, "string", "Reveals the server seed and closes the session against further draws."),
+		"auditLog":         fn([]string{"SecureRandomSession s"}, "list<dict>", "Returns the per-draw audit records {nonce, method, args, output}."),
+		"auditLogJson":     fn([]string{"SecureRandomSession s"}, "string", "Serialises the audit log (and serverSeed if revealed) to JSON."),
+		"bytes":            fn([]string{"SecureRandomSession s", "int n"}, "bytes", "Draws n provably-fair pseudo-random bytes."),
+		"uintRange":        fn([]string{"SecureRandomSession s", "int lo", "int hi"}, "int", "Returns an unbiased uniform int in [lo, hi)."),
+		"float":            fn([]string{"SecureRandomSession s"}, "float", "Returns a uniform float in [0, 1)."),
+		"bool":             fn([]string{"SecureRandomSession s"}, "bool", "Returns a fair coin flip."),
+		"choice":           fn([]string{"SecureRandomSession s", "list<any> items"}, "any", "Returns one element of items uniformly at random."),
+		"shuffle":          fn([]string{"SecureRandomSession s", "list<any> items"}, "list<any>", "Returns a Fisher-Yates shuffled copy."),
+		"weightedChoice":   fn([]string{"SecureRandomSession s", "list<any> items", "list<float> weights"}, "any", "Returns one element of items with probability proportional to weights."),
+		"verifyCommitment": fn([]string{"string commit", "string seedHex"}, "bool", "True if sha256(seed) == commit (revealed seed matches the published commitment)."),
+		"replay":           fn([]string{"string seedHex", "string clientSeed", "int nonce", "string method", "list<any> args"}, "any", "Reproduces a single draw outside the session; same inputs always yield the same output."),
+	}, classes: map[string]string{
+		"SecureRandomSession": "Opaque handle for a provably-fair RNG session. Keep the commitment public, draw values, then reveal the seed so any party can audit and replay (1.6.0).",
 	}},
 	"streams": {functions: map[string]functionDoc{
 		"of":      fn([]string{"any source"}, "Stream", "Wraps any iterable in a Stream for fluent chaining (1.0.6)."),

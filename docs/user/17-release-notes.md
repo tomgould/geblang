@@ -98,6 +98,80 @@ matching Geblang's default-decimal numeric convention. Width and
 alignment also apply to strings. Plain `${expr}` (no `:`) behaves
 exactly as before.
 
+### Math constants
+
+Twelve new zero-arg constant functions on the `math` module, matching
+the existing `math.pi()` / `math.e()` shape:
+
+| Constant | Value |
+|----------|-------|
+| `math.tau()` | `2 * pi` |
+| `math.ln2()` | natural log of 2 |
+| `math.ln10()` | natural log of 10 |
+| `math.sqrt2()` | square root of 2 |
+| `math.phi()` | golden ratio |
+| `math.sqrt2Pi()` | sqrt(2 * pi) |
+| `math.log2Pi()` | log(2 * pi) |
+| `math.maxInt()` / `math.minInt()` | int64 limits |
+| `math.maxFloat()` / `math.minFloat()` | float64 limits |
+| `math.epsilon()` | smallest float `eps` such that `1 + eps != 1` |
+
+### `assert` builtin
+
+New top-level `assert(cond)` / `assert(cond, message)` builtin and a
+companion `AssertionError` class (direct subclass of `Error`). When
+`cond` is false the call throws `AssertionError`; otherwise it is a
+no-op. With no explicit message, the error includes the source text
+of the condition expression so failures are self-describing:
+
+```gb
+assert(balance >= amount, "insufficient funds");
+assert(1 == 2);
+# AssertionError: assertion failed: (1 == 2)
+```
+
+Both `geblang <script>` and `geblang build` accept a `--no-assert`
+flag that elides every `assert(...)` call at compile time. Neither
+the condition nor the message is evaluated when the flag is set, so
+the call is truly zero-cost (caveat: side effects inside assert
+arguments are lost). `geblang test` always runs assertions.
+
+The LSP catalog also surfaces signatures and hover docs for
+`assert`, `typeof`, `range`, `dump`, and `dir`, which until now
+were callable but invisible to the IDE.
+
+### Provably-fair RNG (`secureRandom`)
+
+New `secureRandom` stdlib module for auditable random outcomes
+(gaming, lotteries, public draws, anywhere "did the operator
+cheat?" matters). It implements a commit / reveal scheme: the
+server publishes the SHA-256 commitment of a freshly generated
+32-byte seed, draws values from an HMAC-SHA-256 stream keyed by
+that seed and the caller's `clientSeed`, then reveals the seed so
+any third party can re-derive every draw and verify the
+commitment.
+
+```gb
+let s = secureRandom.openSession({"clientSeed": "player#42"});
+publish(secureRandom.commitment(s));
+
+let roll = secureRandom.uintRange(s, 1, 7);
+
+let seed = secureRandom.reveal(s);
+audit(secureRandom.auditLogJson(s));
+```
+
+Draw helpers: `bytes`, `uintRange`, `float`, `bool`, `choice`,
+`shuffle`, `weightedChoice`. Verification helpers:
+`verifyCommitment` and `replay` (reproduces a single draw
+outside any session). `uintRange` uses rejection sampling so the
+distribution is unbiased even for ranges that are not powers of
+two. After `reveal` the session refuses further draws.
+
+For plain unpredictable randomness (session IDs, OTPs, salts),
+keep using `secrets.*`. `secureRandom` is for the narrower case
+where the audit trail matters.
+
 ## 1.5.4
 
 ### Bytecode VM: fused mod-zero branch

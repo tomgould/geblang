@@ -102,6 +102,7 @@ func registerAllBuiltins(r *Registry) {
 	registerDatetime(r)
 	registerSecrets(r)
 	registerRandom(r)
+	registerSecureRandom(r)
 	registerTime(r)
 	registerBytes(r)
 	registerString(r)
@@ -254,6 +255,78 @@ func registerMath(r *Registry) {
 			return nil, fmt.Errorf("math.e expects no arguments")
 		}
 		return runtime.Float{Value: math.E}, nil
+	})
+	r.Register("math", "tau", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("math.tau expects no arguments")
+		}
+		return runtime.Float{Value: 2 * math.Pi}, nil
+	})
+	r.Register("math", "ln2", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("math.ln2 expects no arguments")
+		}
+		return runtime.Float{Value: math.Ln2}, nil
+	})
+	r.Register("math", "ln10", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("math.ln10 expects no arguments")
+		}
+		return runtime.Float{Value: math.Log(10)}, nil
+	})
+	r.Register("math", "sqrt2", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("math.sqrt2 expects no arguments")
+		}
+		return runtime.Float{Value: math.Sqrt2}, nil
+	})
+	r.Register("math", "phi", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("math.phi expects no arguments")
+		}
+		return runtime.Float{Value: math.Phi}, nil
+	})
+	r.Register("math", "maxInt", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("math.maxInt expects no arguments")
+		}
+		return runtime.SmallInt{Value: math.MaxInt64}, nil
+	})
+	r.Register("math", "minInt", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("math.minInt expects no arguments")
+		}
+		return runtime.SmallInt{Value: math.MinInt64}, nil
+	})
+	r.Register("math", "maxFloat", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("math.maxFloat expects no arguments")
+		}
+		return runtime.Float{Value: math.MaxFloat64}, nil
+	})
+	r.Register("math", "minFloat", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("math.minFloat expects no arguments")
+		}
+		return runtime.Float{Value: math.SmallestNonzeroFloat64}, nil
+	})
+	r.Register("math", "epsilon", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("math.epsilon expects no arguments")
+		}
+		return runtime.Float{Value: 2.220446049250313e-16}, nil
+	})
+	r.Register("math", "sqrt2Pi", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("math.sqrt2Pi expects no arguments")
+		}
+		return runtime.Float{Value: math.Sqrt(2 * math.Pi)}, nil
+	})
+	r.Register("math", "log2Pi", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("math.log2Pi expects no arguments")
+		}
+		return runtime.Float{Value: math.Log(2 * math.Pi)}, nil
 	})
 	r.Register("math", "log2", func(args []runtime.Value) (runtime.Value, error) {
 		return FloatUnaryMath(args, math.Log2, "math.log2")

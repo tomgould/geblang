@@ -1,0 +1,102 @@
+/**
+ * @title math constants (1.6.0)
+ * @summary New math constants: tau, ln2, ln10, sqrt2, phi, maxInt,
+ * minInt, maxFloat, minFloat, epsilon, sqrt2Pi, log2Pi. Each is a
+ * zero-arg function matching the existing math.pi / math.e shape.
+ */
+import test;
+import math;
+
+class MathConstantsTest extends test.Test {
+
+    @test
+    func tauEqualsTwoPi(): void {
+        let pi = math.pi();
+        let tau = math.tau();
+        let diff = tau - (2.0 as float) * pi;
+        let tol = math.epsilon() * (10.0 as float);
+        this.assertTrue(diff < tol);
+        this.assertTrue(diff > -tol);
+    }
+
+    @test
+    func ln2(): void {
+        # math.exp(math.ln2()) should equal 2
+        let v = math.exp(math.ln2());
+        let tol = (0.001 as float);
+        this.assertTrue(v > (2.0 as float) - tol);
+        this.assertTrue(v < (2.0 as float) + tol);
+    }
+
+    @test
+    func ln10(): void {
+        let v = math.exp(math.ln10());
+        let tol = (0.001 as float);
+        this.assertTrue(v > (10.0 as float) - tol);
+        this.assertTrue(v < (10.0 as float) + tol);
+    }
+
+    @test
+    func sqrt2Squared(): void {
+        let s = math.sqrt2();
+        let v = s * s;
+        let tol = (0.001 as float);
+        this.assertTrue(v > (2.0 as float) - tol);
+        this.assertTrue(v < (2.0 as float) + tol);
+    }
+
+    @test
+    func phiSatisfiesGoldenIdentity(): void {
+        # phi^2 == phi + 1
+        let phi = math.phi();
+        let lhs = phi * phi;
+        let rhs = phi + (1.0 as float);
+        let diff = lhs - rhs;
+        let tol = (0.000000000001 as float);
+        this.assertTrue(diff < tol);
+        this.assertTrue(diff > -tol);
+    }
+
+    @test
+    func intLimits(): void {
+        this.assertEquals(9223372036854775807, math.maxInt());
+        this.assertEquals(-9223372036854775808, math.minInt());
+    }
+
+    @test
+    func floatLimits(): void {
+        # 10^300 via repeated multiplication so we don't need scientific notation
+        let big = (1.0 as float);
+        for (int i = 0; i < 300; i++) { big = big * (10.0 as float); }
+        this.assertTrue(math.maxFloat() > big);
+        this.assertTrue(math.minFloat() > (0.0 as float));
+        let tiny = (1.0 as float);
+        for (int i = 0; i < 300; i++) { tiny = tiny / (10.0 as float); }
+        this.assertTrue(math.minFloat() < tiny);
+    }
+
+    @test
+    func epsilonIsPositive(): void {
+        this.assertTrue(math.epsilon() > (0.0 as float));
+    }
+
+    @test
+    func sqrt2Pi(): void {
+        let v = math.sqrt2Pi() * math.sqrt2Pi();
+        let expected = (2.0 as float) * math.pi();
+        let diff = v - expected;
+        let tol = (0.0000000001 as float);
+        this.assertTrue(diff < tol);
+        this.assertTrue(diff > -tol);
+    }
+
+    @test
+    func log2Pi(): void {
+        let v = math.exp(math.log2Pi());
+        let expected = (2.0 as float) * math.pi();
+        let diff = v - expected;
+        let tol = (0.0000000001 as float);
+        this.assertTrue(diff < tol);
+        this.assertTrue(diff > -tol);
+    }
+}

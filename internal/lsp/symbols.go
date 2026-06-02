@@ -217,7 +217,7 @@ func hoverContent(source string, line, char int) string {
 	// Check stdlib catalog
 	for modName, mod := range stdlibCatalog {
 		if modName == word {
-			return "**" + word + "** — stdlib module"
+			return "**" + word + "** - stdlib module"
 		}
 		if fn, ok := mod.functions[word]; ok {
 			return "```geblang\n" + fn.signature() + "\n```\n\n" + fn.doc
@@ -225,6 +225,11 @@ func hoverContent(source string, line, char int) string {
 		if doc, ok := mod.classes[word]; ok {
 			return "```geblang\n" + word + "\n```\n\n" + doc
 		}
+	}
+
+	if fn, ok := globalBuiltinDoc(word); ok {
+		fn.name = word
+		return "```geblang\n" + fn.signature() + "\n```\n\n" + fn.doc
 	}
 
 	return ""

@@ -5398,6 +5398,78 @@ io.println([1, 2, 3].remove(99));
 `, "[1, 2, 3]\n")
 }
 
+func TestParitySecureRandom(t *testing.T) {
+	// Deterministic seed; both backends must produce identical draws + outcomes.
+	const seedHex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	runParity(t, `import io;
+import secureRandom;
+let s = secureRandom.fromSeed("`+seedHex+`", "Alice");
+io.println(secureRandom.commitment(s));
+io.println(secureRandom.uintRange(s, 1, 7));
+io.println(secureRandom.uintRange(s, 0, 52));
+io.println(secureRandom.bool(s));
+io.println(secureRandom.float(s));
+io.println(secureRandom.choice(s, ["A", "K", "Q", "J"]));
+io.println(secureRandom.shuffle(s, [1, 2, 3, 4, 5, 6]));
+io.println(secureRandom.weightedChoice(s, ["x", "y", "z"], [1.0, 2.0, 3.0]));
+`, "4884fdaafea47c29fea7159d0daddd9c085d6200e1359e85bb81736af6b7c837\n1\n41\ntrue\n0.5284162290333269\nQ\n[5, 4, 6, 1, 3, 2]\ny\n")
+
+	// Verifier: commitment passes for the right seed, fails for the wrong one.
+	runParity(t, `import io;
+import secureRandom;
+let s = secureRandom.fromSeed("`+seedHex+`", "Bob");
+let commit = secureRandom.commitment(s);
+let seed = secureRandom.reveal(s);
+io.println(secureRandom.verifyCommitment(commit, seed));
+io.println(secureRandom.verifyCommitment(commit, "0000000000000000000000000000000000000000000000000000000000000000"));
+`, "true\nfalse\n")
+
+	// Replay reproduces the same outcome from raw inputs.
+	runParity(t, `import io;
+import secureRandom;
+let s = secureRandom.fromSeed("`+seedHex+`", "Carol");
+let v1 = secureRandom.uintRange(s, 100, 1000);
+let v2 = secureRandom.uintRange(s, 100, 1000);
+let seed = secureRandom.reveal(s);
+let r1 = secureRandom.replay(seed, "Carol", 0, "uintRange", [100, 1000]);
+let r2 = secureRandom.replay(seed, "Carol", 1, "uintRange", [100, 1000]);
+io.println(v1 == r1);
+io.println(v2 == r2);
+`, "true\ntrue\n")
+}
+
+func TestParityAssert(t *testing.T) {
+	// Truthy assert is a no-op; falsy assert throws AssertionError.
+	runParity(t, `import io;
+assert(1 + 1 == 2);
+io.println("ok");
+try {
+    assert(1 == 2);
+} catch (AssertionError e) {
+    io.println("caught: " + e.message);
+}
+`, "ok\ncaught: assertion failed: (1 == 2)\n")
+
+	// Explicit message overrides the default source-text rendering.
+	runParity(t, `import io;
+try {
+    assert(false, "custom message");
+} catch (AssertionError e) {
+    io.println(e.message);
+}
+`, "custom message\n")
+
+	// AssertionError is a subclass of Error.
+	runParity(t, `import io;
+try {
+    assert(false, "boom");
+} catch (Error e) {
+    io.println(e.class);
+}
+`, "AssertionError\n")
+}
+
 func TestParityFStringFormatSpecs(t *testing.T) {
 	runParity(t, `import io;
 let pi = 3.14159;

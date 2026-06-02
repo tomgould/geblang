@@ -12607,7 +12607,7 @@ func (vm *VM) lookupErrorParent(class string) (string, bool) {
 		}
 	}
 	switch class {
-	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError":
+	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError":
 		return "Error", true
 	}
 	return "", false

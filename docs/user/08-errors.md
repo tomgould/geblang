@@ -143,6 +143,60 @@ and `class`.
 | `IOError` | File and network I/O errors |
 | `ParseError` | Parsing failures |
 | `MatchError` | Non-exhaustive match |
+| `AssertionError` | Failed `assert(...)` (1.6.0) |
+
+## The `assert` Builtin (1.6.0)
+
+`assert(cond)` and `assert(cond, message)` are top-level builtins that
+throw `AssertionError` when `cond` is `false`. They are the idiomatic
+way to express "this must be true at this point in the program" - both
+for debugging help and for shipped runtime invariants.
+
+```gb
+func transfer(int amount, Account from, Account to): void {
+    assert(amount > 0, "amount must be positive");
+    assert(from.balance >= amount, "insufficient funds");
+    from.balance = from.balance - amount;
+    to.balance   = to.balance + amount;
+}
+```
+
+The condition must be a `bool`, like every other Geblang condition.
+When the optional `message` is omitted, the thrown error includes the
+source text of the condition expression so failures are
+self-describing:
+
+```gb
+assert(1 == 2);
+# AssertionError: assertion failed: (1 == 2)
+```
+
+`AssertionError` is a direct subclass of `Error`, sibling to
+`RuntimeError`, so it is catchable both specifically and generically:
+
+```gb
+try {
+    assert(invariantHolds());
+} catch (AssertionError e) {
+    log.error("invariant violated: " + e.message);
+}
+```
+
+### Disabling at runtime
+
+Both `geblang <script>` and `geblang build` accept a `--no-assert`
+flag that elides every `assert(...)` call site at compile time. With
+the flag set, **the condition and the message are not evaluated**, so
+the call has truly zero runtime cost (and any side effects inside the
+arguments are lost - assertions should never have side effects).
+
+```sh
+geblang --no-assert myapp.gb
+geblang build --entry app.main --out app --no-assert
+```
+
+`geblang test` always runs assertions; the flag is intentionally not
+honoured there.
 
 ## The `errors` Module
 

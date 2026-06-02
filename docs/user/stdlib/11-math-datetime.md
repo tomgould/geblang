@@ -125,11 +125,29 @@ io.println(math.exp(1.0f));        # ~2.71828...
 
 ### Constants
 
-`math.pi()` and `math.e()` return the constant as `float`:
+`math.pi()` and `math.e()` return the constant as `float`. Geblang 1.6.0
+adds the following additional zero-arg constant functions:
+
+| Constant | Value |
+|----------|-------|
+| `math.tau()` | `2 * pi` |
+| `math.ln2()` | natural log of 2 |
+| `math.ln10()` | natural log of 10 |
+| `math.sqrt2()` | square root of 2 |
+| `math.phi()` | golden ratio `(1 + sqrt(5)) / 2` |
+| `math.sqrt2Pi()` | sqrt(2 * pi); used in normal-distribution formulas |
+| `math.log2Pi()` | log(2 * pi) |
+| `math.maxInt()` | largest representable int64 |
+| `math.minInt()` | smallest representable int64 |
+| `math.maxFloat()` | largest finite float64 |
+| `math.minFloat()` | smallest positive non-zero float64 |
+| `math.epsilon()` | smallest float `eps` such that `1 + eps != 1` |
 
 ```gb
-io.println(math.pi());   # 3.141592653589793
-io.println(math.e());    # 2.718281828459045
+io.println(math.pi());        # 3.141592653589793
+io.println(math.tau());       # 6.283185307179586
+io.println(math.phi());       # 1.618033988749895
+io.println(math.maxInt());    # 9223372036854775807
 ```
 
 `math.inf()` returns positive infinity. `math.nan()` returns a not-a-number
