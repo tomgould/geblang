@@ -283,6 +283,21 @@ type is not a statically known class, when the class or an ancestor
 defines `__call`, when decorators may inject members, or when any part
 of the hierarchy cannot be resolved.
 
+Typos on built-in type methods (e.g. `"x".fooBar()`, `(42).nope()`) are
+flagged too, checked against the authoritative per-type method set, and
+a call to an undefined function (not a function, imported name,
+constructor, variable, or built-in) is reported as well.
+
+### dir() reports the correct method set
+
+`dir(value)` previously listed several string methods that do not exist
+(`trimLeft`, `padLeft`, `codeAt`) and omitted many real ones. It now
+reports the accurate, complete method set for each built-in type
+(identical on both backends), including methods such as `string.count`
+/ `slice` / `reverse`, the `list` collection helpers (`groupBy`,
+`chunk`, `zip`, `partition`, `topK`, ...), and the `dict` graph helpers
+(`bfs`, `dfs`, `shortestPath`, `topologicalSort`).
+
 ## 1.5.4
 
 ### Bytecode VM: fused mod-zero branch

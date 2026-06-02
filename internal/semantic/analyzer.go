@@ -44,12 +44,22 @@ type Analyzer struct {
 	// the check command to enable cross-module unknown-method detection;
 	// nil in the execution (test/run) path, which disables the check.
 	classSurface func(className string) (map[string]bool, bool)
+	// methodChecks enables the unknown-method checks (primitive + class).
+	// Off in the execution path; turned on by the check command.
+	methodChecks bool
 }
 
 // SetClassSurfaceResolver installs the cross-module class member
 // resolver used by the unknown-method check. Call before Analyze.
 func (a *Analyzer) SetClassSurfaceResolver(fn func(string) (map[string]bool, bool)) {
 	a.classSurface = fn
+}
+
+// EnableMethodChecks turns on the unknown-method diagnostics (primitive
+// method typos and, when a class resolver is set, class methods). Call
+// before Analyze.
+func (a *Analyzer) EnableMethodChecks() {
+	a.methodChecks = true
 }
 
 type typeInfo struct {
@@ -710,6 +720,32 @@ func (a *Analyzer) validateContainerLiteral(declared typeInfo, value ast.Express
 // checkTypedCollectionMethodCall validates that mutation methods on typed
 // collections (list<T>.push, set<T>.add, dict<K,V>.set/insert) receive
 // arguments compatible with the declared element/key/value types.
+// checkPrimitiveMethodCall flags `value.method(...)` when value has a
+// statically known built-in type (from a literal or typed binding) that
+// has no such method. Conversion helpers and unknown/any types are
+// never flagged.
+func (a *Analyzer) checkPrimitiveMethodCall(call *ast.CallExpression) {
+	if !a.methodChecks {
+		return
+	}
+	selector, ok := call.Callee.(*ast.SelectorExpression)
+	if !ok || selector.Name == nil || selector.Optional {
+		return
+	}
+	recv := a.expressionTypeName(selector.Object)
+	if !recv.known || recv.nullable {
+		return
+	}
+	isPrimitive, exists := primitiveMethodLookup(recv.name, selector.Name.Value)
+	if !isPrimitive || exists {
+		return
+	}
+	// native.PrimitiveMethods is the authoritative built-in method set,
+	// guarded against phantoms (every entry callable) and completeness
+	// drift (the tripwire test), so an unlisted method is a real typo.
+	a.errorAt(selector.Name.Token, "%s has no method %s", recv.name, selector.Name.Value)
+}
+
 // checkClassMethodCall flags `obj.method(...)` when obj is a typed
 // instance of a resolvable class whose full hierarchy (parents +
 // interfaces, across modules) has no such method or callable field.
@@ -1118,6 +1154,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 			a.analyzeExpression(arg.Value)
 		}
 		a.checkTypedCollectionMethodCall(expr)
+		a.checkPrimitiveMethodCall(expr)
 		a.checkClassMethodCall(expr)
 		if ident, ok := expr.Callee.(*ast.Identifier); ok {
 			if overloads := a.functions[strings.ToLower(ident.Value)]; len(overloads) > 0 {

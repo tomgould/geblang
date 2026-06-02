@@ -140,6 +140,7 @@ io.println("hello"[1:4]); # ell
 | `insert(index, value)` | `list<T>` | New list with `value` inserted before `index` |
 | `removeAt(index)` | `list<T>` | New list with the element at `index` removed |
 | `remove(value)` | `list<T>` | New list with the first occurrence of `value` removed. Returns an equivalent list if `value` is absent |
+| `copy()` | `list<T>` | New list with the same elements (shallow copy) |
 | `reverse()` | `list<T>` | New list with elements in reverse order |
 | `reversed()` | `list<T>` | Alias for `reverse` |
 
@@ -370,6 +371,7 @@ Dictionaries are mutable, key-value stores.  Keys must be primitive values
 | `values()` | `list<V>` | All values as a list |
 | `items()` | `list<list<any>>` | All entries as `[key, value]` pairs |
 | `entries()` | `list<list<any>>` | Alias for `items` |
+| `copy()` | `dict<K, V>` | New dict with the same entries (shallow copy) |
 
 ```gb
 import io;
@@ -440,6 +442,8 @@ equality for membership.
 | `length()` | `int` | Number of elements |
 | `isEmpty()` | `bool` | `true` when the set has no elements |
 | `contains(value)` | `bool` | `true` when `value` is a member |
+| `copy()` | `set<T>` | New set with the same elements (shallow copy) |
+| `toList()` | `list<T>` | Members as a list |
 
 ```gb
 import io;

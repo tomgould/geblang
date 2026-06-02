@@ -260,6 +260,60 @@ func TestSourceBailsOnDecoratedClass(t *testing.T) {
 	}
 }
 
+func TestSourcePrimitiveMethodTypoErrors(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "\"hello\".upper();\n\"hello\".fooBar();\n[1, 2].push(3);\n[1, 2].smoosh();\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	if !hasDiag(diags, "semantic", "string has no method fooBar") {
+		t.Fatalf("expected string method diagnostic, got %+v", diags)
+	}
+	if !hasDiag(diags, "semantic", "list has no method smoosh") {
+		t.Fatalf("expected list method diagnostic, got %+v", diags)
+	}
+	for _, d := range diags {
+		if strings.Contains(d.Message, "has no method") && d.Severity != SeverityError {
+			t.Fatalf("primitive method typo should be an error: %+v", d)
+		}
+		if strings.Contains(d.Message, "no method upper") || strings.Contains(d.Message, "no method push") {
+			t.Fatalf("real method flagged: %+v", d)
+		}
+	}
+}
+
+func TestSourceFlagsUndefinedFunction(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	_, diags := Source(file, "notAThing();\n", classCheckOpts(dir))
+	found := false
+	for _, d := range diags {
+		if d.Severity == SeverityError && strings.Contains(d.Message, "notAThing") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected undefined-function error, got %+v", diags)
+	}
+}
+
+func TestSourceAllowsDefinedAndImportedCalls(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "helper.gb"),
+		[]byte("module helper;\nexport func go(): int { return 1; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "main.gb")
+	// forward reference, local function-variable, from-imported name, and
+	// a bare builtin must all resolve cleanly.
+	src := "from helper import go;\nfunc a(): void { b(); }\nfunc b(): void {}\nlet f = a;\nf();\ngo();\nlet t = typeof(1);\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	for _, d := range diags {
+		if d.Severity == SeverityError {
+			t.Fatalf("valid calls should not error: %+v", d)
+		}
+	}
+}
+
 func TestSourceReturnsParseDiagnostics(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.gb")

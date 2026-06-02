@@ -522,12 +522,12 @@ io.println("${dir([1, 2] as set)}");
 io.println("${dir(42)}");
 io.println("${dir(3.5)}");
 io.println("${dir("x")}");
-`, `["append", "clear", "contains", "extend", "filter", "first", "indexOf", "insert", "isEmpty", "join", "last", "length", "map", "pop", "prepend", "push", "remove", "reverse", "set", "slice", "sort", "toList", "unshift"]
-["clear", "contains", "delete", "entries", "get", "hasKey", "insert", "isEmpty", "items", "keys", "length", "merge", "remove", "set", "values"]
-["add", "contains", "difference", "intersection", "isEmpty", "length", "remove", "toList", "union"]
+`, `["all", "any", "append", "averageBy", "binarySearch", "bottomK", "chunk", "clear", "concat", "contains", "containsBy", "copy", "count", "difference", "differenceBy", "extend", "filter", "find", "findLast", "first", "flatten", "frequencies", "get", "groupBy", "indexBy", "indexOf", "insert", "intersection", "intersectionBy", "isEmpty", "join", "last", "length", "lowerBound", "map", "maxBy", "minBy", "mode", "partition", "pop", "prepend", "push", "reduce", "remove", "removeAt", "reverse", "reversed", "set", "slice", "sort", "sortBy", "sorted", "sumBy", "toList", "topBy", "topK", "unique", "unshift", "upperBound", "zip", "zipWith"]
+["bfs", "clear", "contains", "copy", "delete", "dfs", "entries", "get", "hasKey", "insert", "isEmpty", "items", "keys", "length", "merge", "remove", "set", "shortestPath", "topologicalSort", "values"]
+["add", "contains", "copy", "difference", "intersection", "isEmpty", "length", "remove", "toList", "union"]
 ["abs", "clamp", "isEven", "isNegative", "isOdd", "isPositive", "isZero", "sign", "toString"]
-["abs", "ceil", "clamp", "floor", "isNegative", "isPositive", "isZero", "round", "sign", "toString", "truncate"]
-["chars", "codeAt", "contains", "endsWith", "format", "indexOf", "isEmpty", "length", "lower", "padLeft", "padRight", "replace", "split", "startsWith", "substring", "toBool", "toDecimal", "toFloat", "toInt", "trim", "trimLeft", "trimRight", "upper"]
+["abs", "ceil", "clamp", "floor", "format", "isNegative", "isPositive", "isZero", "round", "sign", "toString", "truncate"]
+["chars", "codePointAt", "contains", "count", "endsWith", "format", "get", "indexOf", "isEmpty", "lastIndexOf", "length", "lower", "matchesRegex", "padEnd", "padStart", "repeat", "replace", "replaceRegex", "reverse", "slice", "split", "splitRegex", "startsWith", "substring", "toBool", "toDecimal", "toFloat", "toInt", "toString", "trim", "trimEnd", "trimStart", "upper"]
 `)
 }
 
@@ -8015,7 +8015,7 @@ io.println(reflect.methods([1,2,3])[0]);
 io.println(reflect.methods({"a":1})[0]);
 io.println(reflect.methods("abc")[0]);
 io.println(reflect.methods(1..5)[0]);
-`, "append\nclear\nchars\ncontains\n")
+`, "all\nbfs\nchars\ncontains\n")
 }
 
 // TestParityUserErrorParentChain verifies that user-defined error

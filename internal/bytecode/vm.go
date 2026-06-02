@@ -7678,13 +7678,13 @@ func vmDirValue(value runtime.Value) runtime.Value {
 	case runtime.Range:
 		names = vmPrimitiveMethodNamesFor("range")
 	case runtime.SmallInt, runtime.Int:
-		names = []string{"abs", "clamp", "isEven", "isNegative", "isOdd", "isPositive", "isZero", "sign", "toString"}
+		names = vmPrimitiveMethodNamesFor("int")
 	case runtime.Decimal:
-		names = []string{"abs", "ceil", "clamp", "floor", "isNegative", "isPositive", "isZero", "round", "sign", "toString", "truncate"}
+		names = vmPrimitiveMethodNamesFor("decimal")
 	case runtime.Float:
-		names = []string{"abs", "ceil", "clamp", "floor", "isNegative", "isPositive", "isZero", "round", "sign", "toString", "truncate"}
+		names = vmPrimitiveMethodNamesFor("float")
 	case runtime.Bool:
-		names = []string{"not", "toString"}
+		names = vmPrimitiveMethodNamesFor("bool")
 	case runtime.Function, runtime.OverloadedFunction:
 		names = []string{"call"}
 	default:
@@ -7699,21 +7699,7 @@ func vmDirValue(value runtime.Value) runtime.Value {
 }
 
 func vmPrimitiveMethodNamesFor(typeName string) []string {
-	switch typeName {
-	case "list":
-		return []string{"append", "clear", "contains", "extend", "filter", "first", "indexOf", "insert", "isEmpty", "join", "last", "length", "map", "pop", "prepend", "push", "remove", "reverse", "set", "slice", "sort", "toList", "unshift"}
-	case "dict":
-		return []string{"clear", "contains", "delete", "entries", "get", "hasKey", "insert", "isEmpty", "items", "keys", "length", "merge", "remove", "set", "values"}
-	case "set":
-		return []string{"add", "contains", "difference", "intersection", "isEmpty", "length", "remove", "toList", "union"}
-	case "string":
-		return []string{"chars", "codeAt", "contains", "endsWith", "format", "indexOf", "isEmpty", "length", "lower", "padLeft", "padRight", "replace", "split", "startsWith", "substring", "toBool", "toDecimal", "toFloat", "toInt", "trim", "trimLeft", "trimRight", "upper"}
-	case "bytes":
-		return []string{"contains", "get", "isEmpty", "length", "slice", "toBase64", "toBase64Url", "toHex", "toString"}
-	case "range":
-		return []string{"contains", "first", "isEmpty", "last", "length", "toList"}
-	}
-	return nil
+	return append([]string(nil), native.PrimitiveMethods[typeName]...)
 }
 
 func runtimeClassMetadata(value *runtime.Class) (runtime.ClassMetadata, bool) {

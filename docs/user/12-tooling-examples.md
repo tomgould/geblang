@@ -101,6 +101,24 @@ the receiver's type is not a statically known class, when the class (or any
 ancestor) defines `__call`, when the class carries decorators that may inject
 members, or when any part of the hierarchy cannot be resolved.
 
+A typo on a built-in type's method - for example `"x".fooBar()` or
+`(42).nope()` - is also an error, checked against the authoritative
+built-in method set for each type:
+
+```sh
+$ geblang check app.gb
+app.gb:1:5: error[semantic]: string has no method fooBar
+```
+
+Calling a function that is not defined - not a top-level function,
+imported name, class constructor, in-scope variable, or built-in - is an
+error as well:
+
+```sh
+$ geblang check app.gb
+app.gb:1:1: error[type]: unknown bytecode function notAThing
+```
+
 `--no-lint` disables warning rules while keeping parse, semantic, import, and
 module-layout validation. JSON output includes `severity`, `rule`, `file`,
 `line`, `column`, and `message` fields so tools can route errors and warnings

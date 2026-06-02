@@ -102,13 +102,16 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 	}
 	diags := []Diagnostic{}
 	analyzer := semantic.New()
-	if opts.CrossModule && opts.Resolver != nil {
-		cache := opts.ModuleCache
-		if cache == nil {
-			cache = NewModuleCache()
+	if opts.CrossModule {
+		analyzer.EnableMethodChecks()
+		if opts.Resolver != nil {
+			cache := opts.ModuleCache
+			if cache == nil {
+				cache = NewModuleCache()
+			}
+			graph := buildClassGraph(program, opts, cache)
+			analyzer.SetClassSurfaceResolver(graph.surface)
 		}
-		graph := buildClassGraph(program, opts, cache)
-		analyzer.SetClassSurfaceResolver(graph.surface)
 	}
 	for _, sd := range analyzer.Analyze(program) {
 		severity := SeverityError

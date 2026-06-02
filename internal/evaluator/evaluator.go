@@ -7353,13 +7353,13 @@ func dirValue(value runtime.Value) []string {
 	case runtime.Range:
 		names = primitiveMethodNamesFor("range")
 	case runtime.SmallInt, runtime.Int:
-		names = []string{"abs", "clamp", "isEven", "isNegative", "isOdd", "isPositive", "isZero", "sign", "toString"}
+		names = primitiveMethodNamesFor("int")
 	case runtime.Decimal:
-		names = []string{"abs", "ceil", "clamp", "floor", "isNegative", "isPositive", "isZero", "round", "sign", "toString", "truncate"}
+		names = primitiveMethodNamesFor("decimal")
 	case runtime.Float:
-		names = []string{"abs", "ceil", "clamp", "floor", "isNegative", "isPositive", "isZero", "round", "sign", "toString", "truncate"}
+		names = primitiveMethodNamesFor("float")
 	case runtime.Bool:
-		names = []string{"not", "toString"}
+		names = primitiveMethodNamesFor("bool")
 	case runtime.NativeObject:
 		names = nativeObjectMethods(value.Kind)
 	case runtime.Function, runtime.OverloadedFunction:
@@ -12810,21 +12810,7 @@ func primitiveTypeMetadata(value runtime.Value) (runtime.ClassMetadata, bool) {
 // dispatch tables because some method names share an implementation and
 // some have different effective surfaces per type.
 func primitiveMethodNamesFor(typeName string) []string {
-	switch typeName {
-	case "list":
-		return []string{"append", "clear", "contains", "extend", "filter", "first", "indexOf", "insert", "isEmpty", "join", "last", "length", "map", "pop", "prepend", "push", "remove", "reverse", "set", "slice", "sort", "toList", "unshift"}
-	case "dict":
-		return []string{"clear", "contains", "delete", "entries", "get", "hasKey", "insert", "isEmpty", "items", "keys", "length", "merge", "remove", "set", "values"}
-	case "set":
-		return []string{"add", "contains", "difference", "intersection", "isEmpty", "length", "remove", "toList", "union"}
-	case "string":
-		return []string{"chars", "codeAt", "contains", "endsWith", "format", "indexOf", "isEmpty", "length", "lower", "padLeft", "padRight", "replace", "split", "startsWith", "substring", "toBool", "toDecimal", "toFloat", "toInt", "trim", "trimLeft", "trimRight", "upper"}
-	case "bytes":
-		return []string{"contains", "get", "isEmpty", "length", "slice", "toBase64", "toBase64Url", "toHex", "toString"}
-	case "range":
-		return []string{"contains", "first", "isEmpty", "last", "length", "toList"}
-	}
-	return nil
+	return append([]string(nil), native.PrimitiveMethods[typeName]...)
 }
 
 func classMetadataFromRuntimeClass(class *runtime.Class) runtime.ClassMetadata {
