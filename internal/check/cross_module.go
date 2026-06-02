@@ -196,28 +196,35 @@ func checkFromImportSymbols(program *ast.Program, opts Options, cache *ModuleCac
 }
 
 func resolveExportSet(canonical string, native bool, opts Options, cache *ModuleCache) (map[string]struct{}, bool) {
-	if native {
-		if opts.NativeSymbols != nil {
-			if symbols, ok := opts.NativeSymbols[canonical]; ok && len(symbols) > 0 {
-				return symbols, true
+	var nativeExports map[string]struct{}
+	if native && opts.NativeSymbols != nil {
+		if symbols, ok := opts.NativeSymbols[canonical]; ok && len(symbols) > 0 {
+			nativeExports = symbols
+		}
+	}
+	if opts.Resolver != nil {
+		if path, err := opts.Resolver.Resolve(canonical); err == nil {
+			if _, exports, err := cache.load(path); err == nil {
+				// Dual-name module: stdlib wraps a native of the same name.
+				// Surface both sets so callers can reach either.
+				if nativeExports != nil {
+					merged := make(map[string]struct{}, len(exports)+len(nativeExports))
+					for k := range nativeExports {
+						merged[k] = struct{}{}
+					}
+					for k := range exports {
+						merged[k] = struct{}{}
+					}
+					return merged, true
+				}
+				return exports, true
 			}
 		}
-		// Named in NativeModuleNames but with no Go-native surface: it is
-		// bundled source stdlib (e.g. streams). Fall through and resolve
-		// its exports from the .gb file like any source module.
 	}
-	if opts.Resolver == nil {
-		return nil, false
+	if nativeExports != nil {
+		return nativeExports, true
 	}
-	path, err := opts.Resolver.Resolve(canonical)
-	if err != nil {
-		return nil, false
-	}
-	_, exports, err := cache.load(path)
-	if err != nil {
-		return nil, false
-	}
-	return exports, true
+	return nil, false
 }
 
 func diagsWithFile(diags []Diagnostic, file string) []Diagnostic {

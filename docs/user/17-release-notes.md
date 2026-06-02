@@ -51,6 +51,59 @@ format from its exact value instead of routing through a binary `float`,
 so `${d:.Nf}` matches `d.toString(N)` with no binary-rounding artifacts.
 `float` values are unchanged.
 
+### Dual-name modules (native + stdlib)
+
+The import resolver now lets a native module and a Geblang stdlib
+`.gb` module share the same canonical name. From outside the
+stdlib wins; from inside, self-import returns the native module so
+the wrapper can call its primitives. A missed export on a module
+receiver falls back to the native registry, so users can reach
+both surfaces through a single alias.
+
+```gb
+import async.sync as sync;
+let m = sync.Mutex();      # stdlib OO wrapper class
+let h = sync.mutexNew();   # native handle, via the same alias
+```
+
+Used by the new `async.sync` and `async.atomic` modules (below).
+Existing dual-named pairs that previously had to use distinct names
+(`strbuilder` + `strings.StringBuilder`, etc.) keep working unchanged.
+
+### Synchronisation primitives (`async.sync`, `async.atomic`)
+
+Two new sub-modules under `async` add the canonical concurrency
+building blocks. `async.run` already spawns real goroutines, so
+these primitives coordinate across them.
+
+```gb
+import async;
+import async.sync as sync;
+import async.atomic as atomic;
+
+let counter = atomic.AtomicInt(0);
+let wg = sync.WaitGroup();
+for (let int i = 0; i < 100; i++) {
+    wg.add(1);
+    async.run(func(): void {
+        counter.add(1);
+        wg.done();
+    });
+}
+wg.wait();
+io.println(counter.load());   # 100
+```
+
+`async.sync` exposes `Mutex`, `RWMutex`, `Semaphore`, and
+`WaitGroup`. Each constructor returns an instance whose methods
+delegate to Go's `sync` package; `Mutex.tryLock`,
+`RWMutex.tryLock` / `tryRLock`, and `Semaphore.tryAcquire`
+provide non-blocking variants.
+
+`async.atomic` exposes lock-free `AtomicInt` (int64) and
+`AtomicBool`. Operations are sequentially consistent;
+`compareAndSwap(old, new)` returns whether the swap happened.
+
 ## 1.6.0
 
 ### geblang check: clearer error-versus-warning contract
@@ -248,59 +301,6 @@ arguments are lost). `geblang test` always runs assertions.
 The LSP catalog also surfaces signatures and hover docs for
 `assert`, `typeof`, `range`, `dump`, and `dir`, which until now
 were callable but invisible to the IDE.
-
-### Dual-name modules (native + stdlib)
-
-The import resolver now lets a native module and a Geblang stdlib
-`.gb` module share the same canonical name. From outside the
-stdlib wins; from inside, self-import returns the native module so
-the wrapper can call its primitives. A missed export on a module
-receiver falls back to the native registry, so users can reach
-both surfaces through a single alias.
-
-```gb
-import async.sync as sync;
-let m = sync.Mutex();      # stdlib OO wrapper class
-let h = sync.mutexNew();   # native handle, via the same alias
-```
-
-Used by the new `async.sync` and `async.atomic` modules (below).
-Existing dual-named pairs that previously had to use distinct names
-(`strbuilder` + `strings.StringBuilder`, etc.) keep working unchanged.
-
-### Synchronisation primitives (`async.sync`, `async.atomic`)
-
-Two new sub-modules under `async` add the canonical concurrency
-building blocks. `async.run` already spawns real goroutines, so
-these primitives coordinate across them.
-
-```gb
-import async;
-import async.sync as sync;
-import async.atomic as atomic;
-
-let counter = atomic.AtomicInt(0);
-let wg = sync.WaitGroup();
-for (let int i = 0; i < 100; i++) {
-    wg.add(1);
-    async.run(func(): void {
-        counter.add(1);
-        wg.done();
-    });
-}
-wg.wait();
-io.println(counter.load());   # 100
-```
-
-`async.sync` exposes `Mutex`, `RWMutex`, `Semaphore`, and
-`WaitGroup`. Each constructor returns an instance whose methods
-delegate to Go's `sync` package; `Mutex.tryLock`,
-`RWMutex.tryLock` / `tryRLock`, and `Semaphore.tryAcquire`
-provide non-blocking variants.
-
-`async.atomic` exposes lock-free `AtomicInt` (int64) and
-`AtomicBool`. Operations are sequentially consistent;
-`compareAndSwap(old, new)` returns whether the swap happened.
 
 ### Cron expression parser (`cron`)
 
