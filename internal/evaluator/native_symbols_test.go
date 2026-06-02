@@ -34,10 +34,11 @@ func TestNativeRegistryCoveredByModuleSymbols(t *testing.T) {
 	symbols := NativeModuleSymbols()
 	missing := []string{}
 	for _, key := range native.NewBuiltinRegistry().Keys() {
-		module, name, ok := strings.Cut(key, ".")
-		if !ok {
+		dot := strings.LastIndex(key, ".")
+		if dot < 0 {
 			continue
 		}
+		module, name := key[:dot], key[dot+1:]
 		members, present := symbols[module]
 		if !present {
 			missing = append(missing, key)

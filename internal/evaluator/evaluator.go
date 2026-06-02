@@ -1101,18 +1101,7 @@ func (e *Evaluator) evalImportStatement(stmt *ast.ImportStatement, env *runtime.
 			return signal{}, nil
 		}
 	}
-	if _, ok := e.builtins[canonical]; ok {
-		module := e.builtinModuleValue(canonical, alias)
-		if err := env.Define(alias, module, true); err != nil {
-			if err := env.Assign(alias, module); err != nil {
-				return signal{}, err
-			}
-		}
-		e.imports[alias] = true
-		e.importNames[alias] = canonical
-		return signal{}, nil
-	}
-	module, err := e.loadUserModule(canonical, alias)
+	module, err := e.resolveImportedModule(canonical, alias)
 	if err != nil {
 		return signal{}, err
 	}
@@ -1126,12 +1115,29 @@ func (e *Evaluator) evalImportStatement(stmt *ast.ImportStatement, env *runtime.
 	return signal{}, nil
 }
 
+// Stdlib wins externally; self-import falls through to native.
+func (e *Evaluator) resolveImportedModule(canonical, alias string) (*runtime.Module, error) {
+	_, nativeExists := e.builtins[canonical]
+	if path, perr := e.resolveModulePath(canonical); perr == nil && !e.loading[path] {
+		return e.loadUserModule(canonical, alias)
+	}
+	if nativeExists {
+		return e.builtinModuleValue(canonical, alias), nil
+	}
+	return e.loadUserModule(canonical, alias)
+}
+
 func (e *Evaluator) evalFromImportStatement(stmt *ast.FromImportStatement, env *runtime.Environment) (signal, error) {
 	canonical := strings.Join(stmt.Path, ".")
 	if canonical == "" {
 		return signal{}, fmt.Errorf("empty import path")
 	}
-	if _, ok := e.builtins[canonical]; ok {
+	preferUser := false
+	if path, perr := e.resolveModulePath(canonical); perr == nil && !e.loading[path] {
+		preferUser = true
+	}
+	if !preferUser {
+		if _, ok := e.builtins[canonical]; ok {
 		moduleClasses := e.builtinModuleValue(canonical, "").Exports
 		functions := e.builtins[canonical]
 		for _, item := range stmt.Names {
@@ -1152,6 +1158,7 @@ func (e *Evaluator) evalFromImportStatement(stmt *ast.FromImportStatement, env *
 		}
 		e.imports[canonical] = true
 		return signal{}, nil
+		}
 	}
 	module, err := e.loadUserModule(canonical, "")
 	if err != nil {
@@ -1165,6 +1172,16 @@ func (e *Evaluator) evalFromImportStatement(stmt *ast.FromImportStatement, env *
 		local := item.Local()
 		value, ok := module.Exports[name]
 		if !ok {
+			if _, hasNative := e.builtins[canonical]; hasNative {
+				if v, found := e.resolveBuiltinExport(e.builtinModuleValue(canonical, "").Exports, e.builtins[canonical], canonical, name); found {
+					if err := env.Define(local, v, true); err != nil {
+						if err := env.Assign(local, v); err != nil {
+							return signal{}, err
+						}
+					}
+					continue
+				}
+			}
 			return signal{}, fmt.Errorf("from %s import %s: %s is not exported", canonical, name, name)
 		}
 		if err := env.Define(local, value, true); err != nil {
@@ -1202,6 +1219,14 @@ func (e *Evaluator) wrapBuiltinAsFunction(canonical, name string, fn builtinFunc
 			return fn(syntheticCall, args)
 		},
 	}
+}
+
+// BuiltinModule lets the bytecode loader fall back to native on self-import.
+func (e *Evaluator) BuiltinModule(canonical, alias string) *runtime.Module {
+	if _, ok := e.builtins[canonical]; !ok {
+		return nil
+	}
+	return e.builtinModuleValue(canonical, alias)
 }
 
 func (e *Evaluator) builtinModuleValue(canonical, alias string) *runtime.Module {
@@ -8356,37 +8381,37 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"nextAfter": e.registryBuiltin("cron", "nextAfter"),
 			"nextN":     e.registryBuiltin("cron", "nextN"),
 		},
-		"asyncsync": {
-			"mutexNew":            e.registryBuiltin("asyncsync", "mutexNew"),
-			"mutexLock":           e.registryBuiltin("asyncsync", "mutexLock"),
-			"mutexUnlock":         e.registryBuiltin("asyncsync", "mutexUnlock"),
-			"mutexTryLock":        e.registryBuiltin("asyncsync", "mutexTryLock"),
-			"rwmutexNew":          e.registryBuiltin("asyncsync", "rwmutexNew"),
-			"rwmutexLock":         e.registryBuiltin("asyncsync", "rwmutexLock"),
-			"rwmutexUnlock":       e.registryBuiltin("asyncsync", "rwmutexUnlock"),
-			"rwmutexTryLock":      e.registryBuiltin("asyncsync", "rwmutexTryLock"),
-			"rwmutexRLock":        e.registryBuiltin("asyncsync", "rwmutexRLock"),
-			"rwmutexRUnlock":      e.registryBuiltin("asyncsync", "rwmutexRUnlock"),
-			"rwmutexTryRLock":     e.registryBuiltin("asyncsync", "rwmutexTryRLock"),
-			"semaphoreNew":        e.registryBuiltin("asyncsync", "semaphoreNew"),
-			"semaphoreAcquire":    e.registryBuiltin("asyncsync", "semaphoreAcquire"),
-			"semaphoreRelease":    e.registryBuiltin("asyncsync", "semaphoreRelease"),
-			"semaphoreTryAcquire": e.registryBuiltin("asyncsync", "semaphoreTryAcquire"),
-			"waitgroupNew":        e.registryBuiltin("asyncsync", "waitgroupNew"),
-			"waitgroupAdd":        e.registryBuiltin("asyncsync", "waitgroupAdd"),
-			"waitgroupDone":       e.registryBuiltin("asyncsync", "waitgroupDone"),
-			"waitgroupWait":       e.registryBuiltin("asyncsync", "waitgroupWait"),
+		"async.sync": {
+			"mutexNew":            e.registryBuiltin("async.sync", "mutexNew"),
+			"mutexLock":           e.registryBuiltin("async.sync", "mutexLock"),
+			"mutexUnlock":         e.registryBuiltin("async.sync", "mutexUnlock"),
+			"mutexTryLock":        e.registryBuiltin("async.sync", "mutexTryLock"),
+			"rwmutexNew":          e.registryBuiltin("async.sync", "rwmutexNew"),
+			"rwmutexLock":         e.registryBuiltin("async.sync", "rwmutexLock"),
+			"rwmutexUnlock":       e.registryBuiltin("async.sync", "rwmutexUnlock"),
+			"rwmutexTryLock":      e.registryBuiltin("async.sync", "rwmutexTryLock"),
+			"rwmutexRLock":        e.registryBuiltin("async.sync", "rwmutexRLock"),
+			"rwmutexRUnlock":      e.registryBuiltin("async.sync", "rwmutexRUnlock"),
+			"rwmutexTryRLock":     e.registryBuiltin("async.sync", "rwmutexTryRLock"),
+			"semaphoreNew":        e.registryBuiltin("async.sync", "semaphoreNew"),
+			"semaphoreAcquire":    e.registryBuiltin("async.sync", "semaphoreAcquire"),
+			"semaphoreRelease":    e.registryBuiltin("async.sync", "semaphoreRelease"),
+			"semaphoreTryAcquire": e.registryBuiltin("async.sync", "semaphoreTryAcquire"),
+			"waitgroupNew":        e.registryBuiltin("async.sync", "waitgroupNew"),
+			"waitgroupAdd":        e.registryBuiltin("async.sync", "waitgroupAdd"),
+			"waitgroupDone":       e.registryBuiltin("async.sync", "waitgroupDone"),
+			"waitgroupWait":       e.registryBuiltin("async.sync", "waitgroupWait"),
 		},
-		"asyncatomic": {
-			"intNew":             e.registryBuiltin("asyncatomic", "intNew"),
-			"intLoad":            e.registryBuiltin("asyncatomic", "intLoad"),
-			"intStore":           e.registryBuiltin("asyncatomic", "intStore"),
-			"intAdd":             e.registryBuiltin("asyncatomic", "intAdd"),
-			"intCompareAndSwap":  e.registryBuiltin("asyncatomic", "intCompareAndSwap"),
-			"boolNew":            e.registryBuiltin("asyncatomic", "boolNew"),
-			"boolLoad":           e.registryBuiltin("asyncatomic", "boolLoad"),
-			"boolStore":          e.registryBuiltin("asyncatomic", "boolStore"),
-			"boolCompareAndSwap": e.registryBuiltin("asyncatomic", "boolCompareAndSwap"),
+		"async.atomic": {
+			"intNew":             e.registryBuiltin("async.atomic", "intNew"),
+			"intLoad":            e.registryBuiltin("async.atomic", "intLoad"),
+			"intStore":           e.registryBuiltin("async.atomic", "intStore"),
+			"intAdd":             e.registryBuiltin("async.atomic", "intAdd"),
+			"intCompareAndSwap":  e.registryBuiltin("async.atomic", "intCompareAndSwap"),
+			"boolNew":            e.registryBuiltin("async.atomic", "boolNew"),
+			"boolLoad":           e.registryBuiltin("async.atomic", "boolLoad"),
+			"boolStore":          e.registryBuiltin("async.atomic", "boolStore"),
+			"boolCompareAndSwap": e.registryBuiltin("async.atomic", "boolCompareAndSwap"),
 		},
 		"errors": {
 			"new":           e.registryBuiltin("errors", "new"),

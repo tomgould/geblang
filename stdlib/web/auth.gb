@@ -131,9 +131,9 @@ export func clearCsrf(dict<string, any> response): dict<string, any> {
 }
 
 ## Verifies a CSRF cookie against a submitted header or form token.
-export func verifyCsrf(dict<string, any> request, string secret): bool {
+export func verifyCsrf(dict<string, any> request, string secret, string cookieName = "geb_csrf"): bool {
     let req = http.requestObject(request);
-    let token = req.cookie("geb_csrf");
+    let token = req.cookie(cookieName);
     if (token.isEmpty()) {
         return false;
     }

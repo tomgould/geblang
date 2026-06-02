@@ -1,6 +1,6 @@
 module async.sync;
 
-import asyncsync as native;
+import async.sync as native;
 
 /**
  * Mutual-exclusion lock. Blocks the current goroutine until the

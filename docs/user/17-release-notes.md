@@ -249,6 +249,25 @@ The LSP catalog also surfaces signatures and hover docs for
 `assert`, `typeof`, `range`, `dump`, and `dir`, which until now
 were callable but invisible to the IDE.
 
+### Dual-name modules (native + stdlib)
+
+The import resolver now lets a native module and a Geblang stdlib
+`.gb` module share the same canonical name. From outside the
+stdlib wins; from inside, self-import returns the native module so
+the wrapper can call its primitives. A missed export on a module
+receiver falls back to the native registry, so users can reach
+both surfaces through a single alias.
+
+```gb
+import async.sync as sync;
+let m = sync.Mutex();      # stdlib OO wrapper class
+let h = sync.mutexNew();   # native handle, via the same alias
+```
+
+Used by the new `async.sync` and `async.atomic` modules (below).
+Existing dual-named pairs that previously had to use distinct names
+(`strbuilder` + `strings.StringBuilder`, etc.) keep working unchanged.
+
 ### Synchronisation primitives (`async.sync`, `async.atomic`)
 
 Two new sub-modules under `async` add the canonical concurrency

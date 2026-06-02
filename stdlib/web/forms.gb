@@ -63,8 +63,8 @@ export func withCsrf(dict<string, any> response, string secret, dict<string, any
 }
 
 ## Returns true when a request passes web.auth CSRF verification.
-export func verifyCsrf(dict<string, any> request, string secret): bool {
-    return auth.verifyCsrf(request, secret);
+export func verifyCsrf(dict<string, any> request, string secret, string cookieName = "geb_csrf"): bool {
+    return auth.verifyCsrf(request, secret, cookieName);
 }
 
 ## Creates a redirect response with a flash message saved to the session store.

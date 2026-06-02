@@ -1169,7 +1169,7 @@ var stdlibCatalog = map[string]moduleDoc{
 			"toList":    fn([]string{}, "list<T>", "Returns a list snapshot in front-to-back order. O(n)."),
 		},
 	}},
-	"asyncsync": {functions: map[string]functionDoc{
+	"async.sync": {functions: map[string]functionDoc{
 		"mutexNew":            fn([]string{}, "AsyncMutex", "Internal: returns a new Mutex handle. Prefer the `async.sync.Mutex` class wrapper (1.6.0)."),
 		"mutexLock":           fn([]string{"AsyncMutex h"}, "void", "Internal."),
 		"mutexUnlock":         fn([]string{"AsyncMutex h"}, "void", "Internal."),
@@ -1190,7 +1190,7 @@ var stdlibCatalog = map[string]moduleDoc{
 		"waitgroupDone":       fn([]string{"AsyncWaitGroup h"}, "void", "Internal."),
 		"waitgroupWait":       fn([]string{"AsyncWaitGroup h"}, "void", "Internal."),
 	}},
-	"asyncatomic": {functions: map[string]functionDoc{
+	"async.atomic": {functions: map[string]functionDoc{
 		"intNew":             fn([]string{"int initial"}, "AsyncAtomicInt", "Internal: returns a new AtomicInt handle. Prefer the `async.atomic.AtomicInt` class wrapper (1.6.0)."),
 		"intLoad":            fn([]string{"AsyncAtomicInt h"}, "int", "Internal."),
 		"intStore":           fn([]string{"AsyncAtomicInt h", "int value"}, "void", "Internal."),

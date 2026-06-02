@@ -1,6 +1,6 @@
 module async.atomic;
 
-import asyncatomic as native;
+import async.atomic as native;
 
 /**
  * Lock-free atomic int64 cell. Operations are sequentially

@@ -39,7 +39,7 @@ func registerAsyncSync(r *Registry) {
 // ---- Mutex ----
 
 func registerAsyncSyncMutex(r *Registry) {
-	r.Register("asyncsync", "mutexNew", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "mutexNew", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {
 			return nil, fmt.Errorf("async.sync.mutexNew expects no arguments")
 		}
@@ -49,7 +49,7 @@ func registerAsyncSyncMutex(r *Registry) {
 		syncMu.Unlock()
 		return runtime.NativeObject{Kind: "AsyncMutex", ID: id}, nil
 	})
-	r.Register("asyncsync", "mutexLock", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "mutexLock", func(args []runtime.Value) (runtime.Value, error) {
 		m, err := lookupMutex(args, "async.sync.mutexLock")
 		if err != nil {
 			return nil, err
@@ -57,7 +57,7 @@ func registerAsyncSyncMutex(r *Registry) {
 		m.Lock()
 		return runtime.Null{}, nil
 	})
-	r.Register("asyncsync", "mutexUnlock", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "mutexUnlock", func(args []runtime.Value) (runtime.Value, error) {
 		m, err := lookupMutex(args, "async.sync.mutexUnlock")
 		if err != nil {
 			return nil, err
@@ -65,7 +65,7 @@ func registerAsyncSyncMutex(r *Registry) {
 		m.Unlock()
 		return runtime.Null{}, nil
 	})
-	r.Register("asyncsync", "mutexTryLock", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "mutexTryLock", func(args []runtime.Value) (runtime.Value, error) {
 		m, err := lookupMutex(args, "async.sync.mutexTryLock")
 		if err != nil {
 			return nil, err
@@ -91,7 +91,7 @@ func lookupMutex(args []runtime.Value, label string) (*sync.Mutex, error) {
 // ---- RWMutex ----
 
 func registerAsyncSyncRWMutex(r *Registry) {
-	r.Register("asyncsync", "rwmutexNew", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "rwmutexNew", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {
 			return nil, fmt.Errorf("async.sync.rwmutexNew expects no arguments")
 		}
@@ -101,7 +101,7 @@ func registerAsyncSyncRWMutex(r *Registry) {
 		syncMu.Unlock()
 		return runtime.NativeObject{Kind: "AsyncRWMutex", ID: id}, nil
 	})
-	r.Register("asyncsync", "rwmutexLock", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "rwmutexLock", func(args []runtime.Value) (runtime.Value, error) {
 		m, err := lookupRWMutex(args, "async.sync.rwmutexLock")
 		if err != nil {
 			return nil, err
@@ -109,7 +109,7 @@ func registerAsyncSyncRWMutex(r *Registry) {
 		m.Lock()
 		return runtime.Null{}, nil
 	})
-	r.Register("asyncsync", "rwmutexUnlock", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "rwmutexUnlock", func(args []runtime.Value) (runtime.Value, error) {
 		m, err := lookupRWMutex(args, "async.sync.rwmutexUnlock")
 		if err != nil {
 			return nil, err
@@ -117,14 +117,14 @@ func registerAsyncSyncRWMutex(r *Registry) {
 		m.Unlock()
 		return runtime.Null{}, nil
 	})
-	r.Register("asyncsync", "rwmutexTryLock", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "rwmutexTryLock", func(args []runtime.Value) (runtime.Value, error) {
 		m, err := lookupRWMutex(args, "async.sync.rwmutexTryLock")
 		if err != nil {
 			return nil, err
 		}
 		return runtime.Bool{Value: m.TryLock()}, nil
 	})
-	r.Register("asyncsync", "rwmutexRLock", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "rwmutexRLock", func(args []runtime.Value) (runtime.Value, error) {
 		m, err := lookupRWMutex(args, "async.sync.rwmutexRLock")
 		if err != nil {
 			return nil, err
@@ -132,7 +132,7 @@ func registerAsyncSyncRWMutex(r *Registry) {
 		m.RLock()
 		return runtime.Null{}, nil
 	})
-	r.Register("asyncsync", "rwmutexRUnlock", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "rwmutexRUnlock", func(args []runtime.Value) (runtime.Value, error) {
 		m, err := lookupRWMutex(args, "async.sync.rwmutexRUnlock")
 		if err != nil {
 			return nil, err
@@ -140,7 +140,7 @@ func registerAsyncSyncRWMutex(r *Registry) {
 		m.RUnlock()
 		return runtime.Null{}, nil
 	})
-	r.Register("asyncsync", "rwmutexTryRLock", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "rwmutexTryRLock", func(args []runtime.Value) (runtime.Value, error) {
 		m, err := lookupRWMutex(args, "async.sync.rwmutexTryRLock")
 		if err != nil {
 			return nil, err
@@ -170,7 +170,7 @@ func lookupRWMutex(args []runtime.Value, label string) (*sync.RWMutex, error) {
 // overflow). Permits are an upper bound on outstanding holders.
 
 func registerAsyncSyncSemaphore(r *Registry) {
-	r.Register("asyncsync", "semaphoreNew", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "semaphoreNew", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("async.sync.semaphoreNew expects one int permits argument")
 		}
@@ -191,7 +191,7 @@ func registerAsyncSyncSemaphore(r *Registry) {
 		syncMu.Unlock()
 		return runtime.NativeObject{Kind: "AsyncSemaphore", ID: id}, nil
 	})
-	r.Register("asyncsync", "semaphoreAcquire", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "semaphoreAcquire", func(args []runtime.Value) (runtime.Value, error) {
 		ch, err := lookupSemaphore(args, "async.sync.semaphoreAcquire")
 		if err != nil {
 			return nil, err
@@ -199,7 +199,7 @@ func registerAsyncSyncSemaphore(r *Registry) {
 		<-ch
 		return runtime.Null{}, nil
 	})
-	r.Register("asyncsync", "semaphoreRelease", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "semaphoreRelease", func(args []runtime.Value) (runtime.Value, error) {
 		ch, err := lookupSemaphore(args, "async.sync.semaphoreRelease")
 		if err != nil {
 			return nil, err
@@ -211,7 +211,7 @@ func registerAsyncSyncSemaphore(r *Registry) {
 			return nil, fmt.Errorf("async.sync.semaphoreRelease: more releases than acquires")
 		}
 	})
-	r.Register("asyncsync", "semaphoreTryAcquire", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "semaphoreTryAcquire", func(args []runtime.Value) (runtime.Value, error) {
 		ch, err := lookupSemaphore(args, "async.sync.semaphoreTryAcquire")
 		if err != nil {
 			return nil, err
@@ -242,7 +242,7 @@ func lookupSemaphore(args []runtime.Value, label string) (chan struct{}, error) 
 // ---- WaitGroup ----
 
 func registerAsyncSyncWaitGroup(r *Registry) {
-	r.Register("asyncsync", "waitgroupNew", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "waitgroupNew", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {
 			return nil, fmt.Errorf("async.sync.waitgroupNew expects no arguments")
 		}
@@ -252,7 +252,7 @@ func registerAsyncSyncWaitGroup(r *Registry) {
 		syncMu.Unlock()
 		return runtime.NativeObject{Kind: "AsyncWaitGroup", ID: id}, nil
 	})
-	r.Register("asyncsync", "waitgroupAdd", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "waitgroupAdd", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("async.sync.waitgroupAdd expects (handle, delta)")
 		}
@@ -271,7 +271,7 @@ func registerAsyncSyncWaitGroup(r *Registry) {
 		wg.Add(int(delta))
 		return runtime.Null{}, nil
 	})
-	r.Register("asyncsync", "waitgroupDone", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "waitgroupDone", func(args []runtime.Value) (runtime.Value, error) {
 		wg, err := lookupWaitGroup(args, "async.sync.waitgroupDone")
 		if err != nil {
 			return nil, err
@@ -279,7 +279,7 @@ func registerAsyncSyncWaitGroup(r *Registry) {
 		wg.Done()
 		return runtime.Null{}, nil
 	})
-	r.Register("asyncsync", "waitgroupWait", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.sync", "waitgroupWait", func(args []runtime.Value) (runtime.Value, error) {
 		wg, err := lookupWaitGroup(args, "async.sync.waitgroupWait")
 		if err != nil {
 			return nil, err

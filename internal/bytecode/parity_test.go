@@ -65,6 +65,13 @@ func newStdlibModuleLoader(stdout io.Writer, stateful bytecode.StatefulNativeCal
 	}
 }
 
+func (l *stdlibModuleLoader) lookupBuiltin(canonical, alias string) *runtime.Module {
+	if e, ok := l.stateful.(*evaluator.Evaluator); ok {
+		return e.BuiltinModule(canonical, alias)
+	}
+	return nil
+}
+
 func (l *stdlibModuleLoader) LoadModule(canonical, alias string) (*runtime.Module, error) {
 	if module, ok := l.modules[canonical]; ok {
 		return module, nil
@@ -72,9 +79,15 @@ func (l *stdlibModuleLoader) LoadModule(canonical, alias string) (*runtime.Modul
 	resolver := modules.NewResolver(l.modulePaths)
 	path, err := resolver.Resolve(canonical)
 	if err != nil {
+		if native := l.lookupBuiltin(canonical, alias); native != nil {
+			return native, nil
+		}
 		return nil, err
 	}
 	if l.loading[path] {
+		if native := l.lookupBuiltin(canonical, alias); native != nil {
+			return native, nil
+		}
 		return nil, fmt.Errorf("circular import detected for %s", canonical)
 	}
 	l.loading[path] = true
@@ -113,7 +126,7 @@ func (l *stdlibModuleLoader) LoadModule(canonical, alias string) (*runtime.Modul
 	if err != nil {
 		return nil, fmt.Errorf("export module %s: %w", canonical, err)
 	}
-	module := &runtime.Module{Name: alias, Exports: exports}
+	module := &runtime.Module{Name: alias, Canonical: canonical, Exports: exports}
 	for name, value := range module.Exports {
 		if function, ok := value.(runtime.BytecodeFunction); ok {
 			function.Module = canonical
@@ -5515,6 +5528,22 @@ let r2 = secureRandom.replay(seed, "Carol", 1, "uintRange", [100, 1000]);
 io.println(v1 == r1);
 io.println(v2 == r2);
 `, "true\ntrue\n")
+}
+
+// Dual-name modules: stdlib `async.sync` wraps native `async.sync`.
+// External callers see classes and native free functions on one alias.
+func TestParityDualNameModule(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import async.sync as sync;
+let m = sync.Mutex();
+m.lock();
+io.println("class works");
+m.unlock();
+let h = sync.mutexNew();
+sync.mutexLock(h);
+io.println("native works");
+sync.mutexUnlock(h);
+`, "class works\nnative works\n")
 }
 
 func TestParityAsyncSync(t *testing.T) {

@@ -11708,6 +11708,13 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if module, ok := receiver.(*runtime.Module); ok {
 		value, ok := module.Exports[nameValue.Value]
 		if !ok {
+			if module.Canonical != "" && vm.statefulNative != nil {
+				result, err := vm.statefulNative.CallBuiltin(module.Canonical, nameValue.Value, vm.wrapStatefulNativeArgs(args), nil)
+				if err == nil {
+					vm.push(result)
+					return ip, nil
+				}
+			}
 			return 0, vm.runtimeError(instruction, "module %s has no export %s", module.Name, nameValue.Value)
 		}
 		if function, ok := value.(runtime.BytecodeFunction); ok {

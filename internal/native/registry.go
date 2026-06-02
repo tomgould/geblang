@@ -159,14 +159,14 @@ var pureBuiltins = map[string]map[string]struct{}{
 	"cron": {
 		"parse": {}, "isValid": {}, "nextAfter": {}, "nextN": {},
 	},
-	"asyncsync": {
+	"async.sync": {
 		"mutexNew": {}, "mutexLock": {}, "mutexUnlock": {}, "mutexTryLock": {},
 		"rwmutexNew": {}, "rwmutexLock": {}, "rwmutexUnlock": {}, "rwmutexTryLock": {},
 		"rwmutexRLock": {}, "rwmutexRUnlock": {}, "rwmutexTryRLock": {},
 		"semaphoreNew": {}, "semaphoreAcquire": {}, "semaphoreRelease": {}, "semaphoreTryAcquire": {},
 		"waitgroupNew": {}, "waitgroupAdd": {}, "waitgroupDone": {}, "waitgroupWait": {},
 	},
-	"asyncatomic": {
+	"async.atomic": {
 		"intNew": {}, "intLoad": {}, "intStore": {}, "intAdd": {}, "intCompareAndSwap": {},
 		"boolNew": {}, "boolLoad": {}, "boolStore": {}, "boolCompareAndSwap": {},
 	},

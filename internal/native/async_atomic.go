@@ -8,7 +8,7 @@ import (
 )
 
 func registerAsyncAtomic(r *Registry) {
-	r.Register("asyncatomic", "intNew", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.atomic", "intNew", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("async.atomic.intNew expects (initial)")
 		}
@@ -24,14 +24,14 @@ func registerAsyncAtomic(r *Registry) {
 		syncMu.Unlock()
 		return runtime.NativeObject{Kind: "AsyncAtomicInt", ID: id}, nil
 	})
-	r.Register("asyncatomic", "intLoad", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.atomic", "intLoad", func(args []runtime.Value) (runtime.Value, error) {
 		v, err := lookupAtomicInt(args, "async.atomic.intLoad")
 		if err != nil {
 			return nil, err
 		}
 		return runtime.SmallInt{Value: v.Load()}, nil
 	})
-	r.Register("asyncatomic", "intStore", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.atomic", "intStore", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("async.atomic.intStore expects (handle, value)")
 		}
@@ -46,7 +46,7 @@ func registerAsyncAtomic(r *Registry) {
 		v.Store(next)
 		return runtime.Null{}, nil
 	})
-	r.Register("asyncatomic", "intAdd", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.atomic", "intAdd", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("async.atomic.intAdd expects (handle, delta)")
 		}
@@ -60,7 +60,7 @@ func registerAsyncAtomic(r *Registry) {
 		}
 		return runtime.SmallInt{Value: v.Add(delta)}, nil
 	})
-	r.Register("asyncatomic", "intCompareAndSwap", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.atomic", "intCompareAndSwap", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("async.atomic.intCompareAndSwap expects (handle, old, new)")
 		}
@@ -79,7 +79,7 @@ func registerAsyncAtomic(r *Registry) {
 		return runtime.Bool{Value: v.CompareAndSwap(old, next)}, nil
 	})
 
-	r.Register("asyncatomic", "boolNew", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.atomic", "boolNew", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("async.atomic.boolNew expects (initial)")
 		}
@@ -95,14 +95,14 @@ func registerAsyncAtomic(r *Registry) {
 		syncMu.Unlock()
 		return runtime.NativeObject{Kind: "AsyncAtomicBool", ID: id}, nil
 	})
-	r.Register("asyncatomic", "boolLoad", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.atomic", "boolLoad", func(args []runtime.Value) (runtime.Value, error) {
 		v, err := lookupAtomicBool(args, "async.atomic.boolLoad")
 		if err != nil {
 			return nil, err
 		}
 		return runtime.Bool{Value: v.Load()}, nil
 	})
-	r.Register("asyncatomic", "boolStore", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.atomic", "boolStore", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("async.atomic.boolStore expects (handle, value)")
 		}
@@ -117,7 +117,7 @@ func registerAsyncAtomic(r *Registry) {
 		v.Store(next.Value)
 		return runtime.Null{}, nil
 	})
-	r.Register("asyncatomic", "boolCompareAndSwap", func(args []runtime.Value) (runtime.Value, error) {
+	r.Register("async.atomic", "boolCompareAndSwap", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("async.atomic.boolCompareAndSwap expects (handle, old, new)")
 		}

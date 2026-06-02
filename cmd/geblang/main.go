@@ -1734,15 +1734,28 @@ func newBytecodeModuleLoader(stdout io.Writer, modulePaths []string) *bytecodeMo
 	}
 }
 
+func (l *bytecodeModuleLoader) lookupBuiltin(canonical, alias string) *runtime.Module {
+	if e, ok := l.stateful.(*evaluator.Evaluator); ok {
+		return e.BuiltinModule(canonical, alias)
+	}
+	return nil
+}
+
 func (l *bytecodeModuleLoader) LoadModule(canonical string, alias string) (*runtime.Module, error) {
 	if module, ok := l.modules[canonical]; ok {
 		return module, nil
 	}
 	path, err := modules.NewResolver(l.modulePaths).Resolve(canonical)
 	if err != nil {
+		if native := l.lookupBuiltin(canonical, alias); native != nil {
+			return native, nil
+		}
 		return nil, err
 	}
 	if l.loading[path] {
+		if native := l.lookupBuiltin(canonical, alias); native != nil {
+			return native, nil
+		}
 		return nil, fmt.Errorf("circular import detected for %s", canonical)
 	}
 	l.loading[path] = true
@@ -1790,7 +1803,7 @@ func (l *bytecodeModuleLoader) LoadModule(canonical string, alias string) (*runt
 	if err != nil {
 		return nil, fmt.Errorf("export module %s: %w", canonical, err)
 	}
-	module := &runtime.Module{Name: alias, Exports: exports}
+	module := &runtime.Module{Name: alias, Canonical: canonical, Exports: exports}
 	for name, value := range module.Exports {
 		if function, ok := value.(runtime.BytecodeFunction); ok {
 			function.Module = canonical

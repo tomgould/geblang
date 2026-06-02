@@ -248,6 +248,21 @@ User modules take precedence over bundled stdlib modules in the normal package
 resolution path. Prefer unique package names for application code to avoid
 accidentally shadowing stdlib modules.
 
+### Native + stdlib dual-name modules (1.6.0)
+
+When a stdlib `.gb` module and a native module share the same canonical
+name (e.g. `async.sync` ships as both a Go-side native primitive set
+and a Geblang stdlib of wrapper classes), the resolver picks the
+stdlib externally and the native internally:
+
+- `import async.sync` from user code returns the stdlib module. Method
+  calls that miss the stdlib's exports fall back to the native
+  registry, so both the classes and the underlying free functions are
+  reachable through one alias.
+- The stdlib's own `import async.sync as native;` (inside `module
+  async.sync;`) resolves to the native module so the wrapper can call
+  its primitives.
+
 ## Multi-Module Layout
 
 An idiomatic project keeps executable entry points thin and moves reusable code
