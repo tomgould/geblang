@@ -7218,40 +7218,7 @@ func (e *Evaluator) evalDumpCall(call *ast.CallExpression, env *runtime.Environm
 	if err != nil {
 		return nil, err
 	}
-	return runtime.String{Value: dumpValue(value)}, nil
-}
-
-func dumpValue(value runtime.Value) string {
-	switch value := value.(type) {
-	case runtime.String:
-		return "string(" + strconv.Quote(value.Value) + ")"
-	case runtime.Bytes:
-		return fmt.Sprintf("bytes(%q)", value.Value)
-	case *runtime.List:
-		parts := make([]string, 0, len(value.Elements))
-		for _, element := range value.Elements {
-			parts = append(parts, dumpValue(element))
-		}
-		return "list[" + strings.Join(parts, ", ") + "]"
-	case runtime.Dict:
-		parts := make([]string, 0, len(value.Entries))
-		for _, entry := range value.Entries {
-			parts = append(parts, dumpValue(entry.Key)+": "+dumpValue(entry.Value))
-		}
-		sort.Strings(parts)
-		return "dict{" + strings.Join(parts, ", ") + "}"
-	case runtime.Error:
-		return value.Class + "(" + strconv.Quote(value.Message) + ")"
-	case *runtime.Instance:
-		parts := make([]string, 0, len(value.Fields))
-		for name, field := range value.Fields {
-			parts = append(parts, name+": "+dumpValue(field))
-		}
-		sort.Strings(parts)
-		return value.Class.Name + "{" + strings.Join(parts, ", ") + "}"
-	default:
-		return value.TypeName() + "(" + value.Inspect() + ")"
-	}
+	return runtime.String{Value: native.DumpValue(value)}, nil
 }
 
 func (e *Evaluator) dirImportedModule(alias string) ([]string, bool) {
@@ -7911,6 +7878,13 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"unixDecimal":  e.registryBuiltin("time", "unixDecimal"),
 			"elapsedFloat": e.registryBuiltin("time", "elapsedFloat"),
 		},
+		"profiler": {
+			"snapshot": e.registryBuiltin("profiler", "snapshot"),
+			"delta":    e.registryBuiltin("profiler", "delta"),
+			"memory":   e.registryBuiltin("profiler", "memory"),
+			"cpu":      e.registryBuiltin("profiler", "cpu"),
+			"peak":     e.registryBuiltin("profiler", "peak"),
+		},
 		"schema": {
 			"validate": schemaValidate,
 		},
@@ -8355,6 +8329,12 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"weightedChoice":   e.registryBuiltin("secureRandom", "weightedChoice"),
 			"verifyCommitment": e.registryBuiltin("secureRandom", "verifyCommitment"),
 			"replay":           e.registryBuiltin("secureRandom", "replay"),
+		},
+		"msgpack": {
+			"encode":    e.registryBuiltin("msgpack", "encode"),
+			"decode":    e.registryBuiltin("msgpack", "decode"),
+			"tryDecode": e.registryBuiltin("msgpack", "tryDecode"),
+			"validate":  e.registryBuiltin("msgpack", "validate"),
 		},
 		"errors": {
 			"new":           e.registryBuiltin("errors", "new"),

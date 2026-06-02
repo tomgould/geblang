@@ -1144,6 +1144,46 @@ var stdlibCatalog = map[string]moduleDoc{
 			"seed":     fn([]string{"int seed"}, "void", "Re-seeds this generator."),
 		},
 	}},
+	"deque": {classes: map[string]string{
+		"Deque": "Double-ended queue with amortised O(1) push / pop at both ends (1.6.0). Ring-buffer-backed with capacity doubling.",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Deque": {
+			"pushFront": fn([]string{"T value"}, "void", "Inserts at the front. Amortised O(1)."),
+			"pushBack":  fn([]string{"T value"}, "void", "Inserts at the back. Amortised O(1)."),
+			"popFront":  fn([]string{}, "T", "Removes and returns the front element. Throws ValueError on empty. O(1)."),
+			"popBack":   fn([]string{}, "T", "Removes and returns the back element. Throws ValueError on empty. O(1)."),
+			"peekFront": fn([]string{}, "T", "Returns the front element without removing it. Throws ValueError on empty. O(1)."),
+			"peekBack":  fn([]string{}, "T", "Returns the back element without removing it. Throws ValueError on empty. O(1)."),
+			"get":       fn([]string{"int i"}, "T", "Returns the element at logical position i (0 = front; negative = from back). Throws ValueError on out-of-range. O(1)."),
+			"length":    fn([]string{}, "int", "Number of elements currently in the deque."),
+			"isEmpty":   fn([]string{}, "bool", "True when the deque holds no elements."),
+			"clear":     fn([]string{}, "void", "Discards every element. O(cap)."),
+			"toList":    fn([]string{}, "list<T>", "Returns a list snapshot in front-to-back order. O(n)."),
+		},
+	}},
+	"msgpack": {functions: map[string]functionDoc{
+		"encode":    fn([]string{"any value"}, "bytes", "Serialises a Geblang value to MessagePack bytes. Decimal round-trips as a MessagePack string for portability; bytes round-trip as bin. Throws on unsupported types or int values outside int64 range (1.6.0)."),
+		"decode":    fn([]string{"bytes data"}, "any", "Parses MessagePack bytes into a Geblang value. Throws on malformed input or trailing bytes. Returns null / bool / int / float / string / bytes / list / dict (1.6.0)."),
+		"tryDecode": fn([]string{"bytes data"}, "?any", "Like decode but returns null instead of throwing on malformed input or trailing bytes (1.6.0)."),
+		"validate":  fn([]string{"bytes data"}, "bool", "Reports whether bytes parse as a single complete MessagePack value (no exceptions, no trailing bytes) (1.6.0)."),
+	}},
+	"lrucache": {classes: map[string]string{
+		"LruCache": "LRU (least-recently-used) cache with O(1) get / put / evict and optional TTL (1.6.0). Constructor: `LruCache<K, V>(capacity, ttlSeconds = 0)`. capacity must be >= 1; ttlSeconds = 0 disables expiry. get() returns null on miss.",
+	}, classMethods: map[string]map[string]functionDoc{
+		"LruCache": {
+			"get":      fn([]string{"K key"}, "?V", "Returns the value for key and bumps it to most-recent. Returns null on miss or on a hit whose TTL has lapsed."),
+			"put":      fn([]string{"K key", "V value"}, "void", "Stores value under key. Updates and bumps if already present; evicts the least-recently-used entry if at capacity."),
+			"delete":   fn([]string{"K key"}, "bool", "Removes the entry. Returns true if a removal happened, false if the key was absent."),
+			"has":      fn([]string{"K key"}, "bool", "Reports whether key has a non-expired entry. Does NOT bump LRU order. Drops expired entries lazily."),
+			"length":   fn([]string{}, "int", "Number of entries currently held."),
+			"capacity": fn([]string{}, "int", "Configured maximum entry count."),
+			"isEmpty":  fn([]string{}, "bool", "True when the cache holds no entries."),
+			"clear":    fn([]string{}, "void", "Discards every entry. Stats counters are preserved."),
+			"keys":     fn([]string{}, "list<K>", "Returns keys in MRU-to-LRU order; does not affect access ordering. O(n)."),
+			"values":   fn([]string{}, "list<V>", "Returns values in MRU-to-LRU order; does not affect access ordering. O(n)."),
+			"stats":    fn([]string{}, "dict<string, int>", "Returns lifetime counters: {hits, misses, evictions, expirations}."),
+		},
+	}},
 	"priorityq": {classes: map[string]string{
 		"PriorityQueue": "Binary min-heap-backed priority queue (1.6.0). Without a comparator, elements are ordered by Geblang's `<` operator (works for int, float, decimal, string). Pass a `func(T, T): int` comparator (< 0 / 0 / > 0) for custom types or reverse order.",
 	}, classMethods: map[string]map[string]functionDoc{

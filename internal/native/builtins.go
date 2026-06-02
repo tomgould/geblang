@@ -103,6 +103,7 @@ func registerAllBuiltins(r *Registry) {
 	registerSecrets(r)
 	registerRandom(r)
 	registerSecureRandom(r)
+	registerMsgpack(r)
 	registerTime(r)
 	registerBytes(r)
 	registerString(r)

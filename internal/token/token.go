@@ -322,3 +322,14 @@ func LookupIdent(literal string) Type {
 	}
 	return Ident
 }
+
+// Keywords returns the canonical set of reserved keyword literals. It is
+// the single source of truth for keyword identity; the editor grammar's
+// keyword highlighting is guarded against it.
+func Keywords() []string {
+	out := make([]string, 0, len(keywords))
+	for k := range keywords {
+		out = append(out, k)
+	}
+	return out
+}

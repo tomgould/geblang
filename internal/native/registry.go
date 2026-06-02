@@ -46,6 +46,18 @@ func (r *Registry) Has(module, name string) bool {
 	return ok
 }
 
+// Keys returns the "module.name" key of every registered function.
+// Used by guard tests to verify the registry stays a subset of the
+// engine's known module surface (so the VM fast path cannot recognise a
+// builtin the analyzer and dir do not).
+func (r *Registry) Keys() []string {
+	keys := make([]string, 0, len(r.functions))
+	for k := range r.functions {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // Returns nil when a test patch shadows the key; the caller must
 // fall back to Call/CallKey so patches still win.
 func (r *Registry) LookupKey(key string) Function {
@@ -137,6 +149,9 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"bytes": {}, "uintRange": {}, "float": {}, "bool": {},
 		"choice": {}, "shuffle": {}, "weightedChoice": {},
 		"verifyCommitment": {}, "replay": {},
+	},
+	"msgpack": {
+		"encode": {}, "decode": {}, "tryDecode": {}, "validate": {},
 	},
 	"sys": {
 		"hostname": {}, "pid": {}, "platform": {}, "arch": {},

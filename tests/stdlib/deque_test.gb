@@ -1,0 +1,160 @@
+/**
+ * @title deque.Deque (1.6.0)
+ * @summary Double-ended queue with amortised O(1) push / pop at
+ * both ends. Ring-buffer-backed with capacity doubling.
+ */
+import test;
+import deque;
+
+class DequeTest extends test.Test {
+
+    @test
+    func pushBackPopFrontIsFIFO(): void {
+        let d = deque.Deque<int>();
+        d.pushBack(1); d.pushBack(2); d.pushBack(3);
+        this.assertEquals(1, d.popFront());
+        this.assertEquals(2, d.popFront());
+        this.assertEquals(3, d.popFront());
+    }
+
+    @test
+    func pushFrontPopFrontIsLIFO(): void {
+        let d = deque.Deque<int>();
+        d.pushFront(1); d.pushFront(2); d.pushFront(3);
+        this.assertEquals(3, d.popFront());
+        this.assertEquals(2, d.popFront());
+        this.assertEquals(1, d.popFront());
+    }
+
+    @test
+    func pushBackPopBackIsLIFO(): void {
+        let d = deque.Deque<int>();
+        d.pushBack(1); d.pushBack(2); d.pushBack(3);
+        this.assertEquals(3, d.popBack());
+        this.assertEquals(2, d.popBack());
+        this.assertEquals(1, d.popBack());
+    }
+
+    @test
+    func mixedEndsOrdering(): void {
+        let d = deque.Deque<int>();
+        d.pushBack(1); d.pushBack(2); d.pushBack(3);
+        d.pushFront(0); d.pushFront(-1);
+        this.assertEquals([-1, 0, 1, 2, 3], d.toList());
+        this.assertEquals(-1, d.popFront());
+        this.assertEquals(3, d.popBack());
+        this.assertEquals([0, 1, 2], d.toList());
+    }
+
+    @test
+    func peekDoesNotMutate(): void {
+        let d = deque.Deque<int>();
+        d.pushBack(1); d.pushBack(2); d.pushBack(3);
+        this.assertEquals(1, d.peekFront());
+        this.assertEquals(3, d.peekBack());
+        this.assertEquals(3, d.length());
+        this.assertEquals(1, d.peekFront());
+    }
+
+    @test
+    func getByIndex(): void {
+        let d = deque.Deque<int>();
+        for (int v in [10, 20, 30, 40, 50]) { d.pushBack(v); }
+        this.assertEquals(10, d.get(0));
+        this.assertEquals(30, d.get(2));
+        this.assertEquals(50, d.get(4));
+        this.assertEquals(50, d.get(-1));
+        this.assertEquals(10, d.get(-5));
+    }
+
+    @test
+    func getOutOfRangeThrows(): void {
+        let d = deque.Deque<int>();
+        d.pushBack(1); d.pushBack(2);
+        let threw = false;
+        try { d.get(5); } catch (ValueError e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func emptyPopThrows(): void {
+        let d = deque.Deque<int>();
+        let frontThrew = false;
+        let backThrew = false;
+        try { d.popFront(); } catch (ValueError e) { frontThrew = true; }
+        try { d.popBack(); }  catch (ValueError e) { backThrew = true; }
+        this.assertTrue(frontThrew);
+        this.assertTrue(backThrew);
+    }
+
+    @test
+    func emptyPeekThrows(): void {
+        let d = deque.Deque<int>();
+        let frontThrew = false;
+        let backThrew = false;
+        try { d.peekFront(); } catch (ValueError e) { frontThrew = true; }
+        try { d.peekBack(); }  catch (ValueError e) { backThrew = true; }
+        this.assertTrue(frontThrew);
+        this.assertTrue(backThrew);
+    }
+
+    @test
+    func clearEmpties(): void {
+        let d = deque.Deque<int>();
+        for (int v in [1, 2, 3, 4, 5]) { d.pushBack(v); }
+        d.clear();
+        this.assertTrue(d.isEmpty());
+        this.assertEquals(0, d.length());
+        d.pushBack(99);
+        this.assertEquals(99, d.peekFront());
+    }
+
+    @test
+    func growsPastInitialCapacity(): void {
+        let d = deque.Deque<int>();
+        for (let int i = 0; i < 100; i++) { d.pushBack(i); }
+        this.assertEquals(100, d.length());
+        this.assertEquals(0, d.get(0));
+        this.assertEquals(99, d.get(99));
+        for (let int i = 0; i < 100; i++) {
+            this.assertEquals(i, d.popFront());
+        }
+        this.assertTrue(d.isEmpty());
+    }
+
+    @test
+    func iterWalksFrontToBack(): void {
+        let d = deque.Deque<int>();
+        d.pushBack(2); d.pushBack(3); d.pushBack(4);
+        d.pushFront(1); d.pushFront(0);
+        let seen = ([] as list<int>);
+        for (var x in d) {
+            seen.append(x);
+        }
+        this.assertEquals([0, 1, 2, 3, 4], seen);
+    }
+
+    @test
+    func toListMatchesIteration(): void {
+        let d = deque.Deque<int>();
+        for (int v in [5, 3, 1, 4, 1, 5, 9, 2, 6]) { d.pushBack(v); }
+        d.pushFront(0);
+        let viaIter = ([] as list<int>);
+        for (var x in d) { viaIter.append(x); }
+        this.assertEquals(d.toList(), viaIter);
+    }
+
+    @test
+    func pushFrontGrowsCorrectly(): void {
+        # Stress the wrap-around growth path: head wraps below 0.
+        let d = deque.Deque<int>();
+        for (let int i = 0; i < 50; i++) { d.pushFront(i); }
+        # After 50 pushFronts, list is [49, 48, ..., 1, 0].
+        this.assertEquals(50, d.length());
+        this.assertEquals(49, d.peekFront());
+        this.assertEquals(0, d.peekBack());
+        for (let int i = 49; i >= 0; i = i - 1) {
+            this.assertEquals(i, d.popFront());
+        }
+    }
+}

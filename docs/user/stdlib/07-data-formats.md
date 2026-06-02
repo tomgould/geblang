@@ -142,6 +142,56 @@ csv.stream(io.open("large.csv", "r"), func(row): void {
 });
 ```
 
+## MessagePack (1.6.0)
+
+The `msgpack` module encodes Geblang values to MessagePack 5 bytes
+and back. The codec is hand-rolled (no Go dependency) and covers
+the common cases: nil, bool, signed integers, float, str, bin,
+array, and map. Ext types and the timestamp extension are not
+supported in 1.6.0.
+
+```gb
+import msgpack;
+
+let bytes = msgpack.encode({"items": [1, 2, 3], "ok": true});
+let value = msgpack.decode(bytes);
+```
+
+### Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `msgpack.encode(value)` | `bytes` | Serialises any encodable value. Throws on unsupported types or int values outside int64 range. |
+| `msgpack.decode(bytes)` | `any` | Parses bytes into a Geblang value. Throws on malformed input or trailing bytes. |
+| `msgpack.tryDecode(bytes)` | `?any` | Like `decode` but returns `null` instead of throwing on malformed input. |
+| `msgpack.validate(bytes)` | `bool` | True when `bytes` is exactly one well-formed MessagePack value. |
+
+### Type mapping
+
+| Geblang | MessagePack |
+|---------|-------------|
+| `null` | nil (0xc0) |
+| `bool` | false / true (0xc2 / 0xc3) |
+| `int` (in int64 range) | int family (positive / negative fixint, int 8/16/32/64) |
+| `float` | float 64 (0xcb) |
+| `decimal` | str (encoded as the canonical decimal string for lossless round-trip) |
+| `string` | str family (fixstr, str 8/16/32) |
+| `bytes` | bin family (bin 8/16/32) |
+| `list<T>` | array family (fixarray, array 16/32) |
+| `dict<K, V>` | map family (fixmap, map 16/32) |
+
+`decimal` values round-trip as MessagePack strings because the
+spec has no decimal type. Round-tripping `1.50` yields the string
+`"1.5000000000"`; cast with `(value as string) as decimal` to
+recover the typed Decimal.
+
+### Limitations
+
+- Ext types are not encoded or decoded. Decoding an ext-tagged
+  value raises an error.
+- The timestamp extension (ext type -1) is not recognised.
+- `int` values whose magnitude exceeds 64 bits raise on encode.
+
 ## Streaming readers
 
 For large JSON, YAML, and XML files, use `reader` to pull records

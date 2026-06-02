@@ -58,6 +58,10 @@ func main() {
 		fmt.Fprintf(os.Stdout, "geblang %s\n", version)
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "licenses" {
+		fmt.Fprint(os.Stdout, licenseText)
+		return
+	}
 	if len(os.Args) > 2 && isHelpArg(os.Args[2]) {
 		topic := os.Args[1]
 		if topic == "--module" || topic == "-m" {
@@ -289,6 +293,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Help:")
 	fmt.Fprintln(writer, "  geblang help [topic]               show detailed help for a command (topic == repl, run, build, ...)")
 	fmt.Fprintln(writer, "  geblang --version                  print the Geblang version and exit")
+	fmt.Fprintln(writer, "  geblang licenses                   print third-party attribution notices")
 }
 
 func isHelpArg(arg string) bool {

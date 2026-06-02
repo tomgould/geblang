@@ -124,6 +124,24 @@ module-layout validation. JSON output includes `severity`, `rule`, `file`,
 `line`, `column`, and `message` fields so tools can route errors and warnings
 separately.
 
+## Introspection Builtins
+
+Two builtins help inspect values at runtime, on both execution backends:
+
+- `dir(value)` returns the sorted list of method names callable on a value.
+- `dump(value)` returns a type-annotated debug string for a value.
+
+```gb
+import io;
+
+io.println(dir([1, 2, 3]));   # ["all", "any", "append", ...]
+io.println(dump({"a": 1}));   # dict{string("a"): int(1)}
+io.println(dump([1, "x"]));   # list[int(1), string("x")]
+```
+
+`dir()` with no argument lists the names in the current scope and is available
+only in the REPL/evaluator.
+
 ## Module Invocation
 
 Executable modules expose `main(args)` and can be launched with `-m`:

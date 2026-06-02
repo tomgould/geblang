@@ -275,6 +275,9 @@ const (
 	// callable on it (the dir(value) builtin). The no-argument and
 	// module-introspection forms of dir are evaluator/REPL-only.
 	OpDir
+	// OpDump pops a value and pushes its type-annotated debug string
+	// (the dump(value) builtin).
+	OpDump
 )
 
 type Instruction struct {

@@ -2,6 +2,13 @@
 
 ## 1.6.0
 
+### profiler available on the evaluator
+
+The `profiler` module (`snapshot`, `delta`, `memory`, `cpu`, `peak`) now
+works on the evaluator - and therefore in `geblang test` - in addition
+to compiled runs, so profiling helpers behave identically on both
+execution paths.
+
 ### List, set, and dict comprehensions
 
 New Python-style comprehension syntax for building a list, set, or dict
@@ -136,6 +143,28 @@ try {
 }
 ```
 
+### Bug fix: iterator dispatch across stdlib module boundary (VM)
+
+Fixed a sibling VM-mode regression for the iterator protocol:
+`for (x in instance)` failed with `<Class> is not an iterator`
+when the instance's class was defined in an imported stdlib
+module. The user-iterator dispatcher looked the class up via the
+running chunk's local class table, which doesn't contain
+foreign-module classes. Fix routes the `__done` / `__next`
+presence check through the trampoline table the module loader
+populates at import time, and threads any thrown errors back to
+the calling VM's `pendingThrow` via the same propagation path the
+catch fix uses.
+
+```gb
+import deque;
+let d = deque.Deque<int>();
+d.pushBack(1); d.pushBack(2);
+for (var x in d) {
+    # now iterates on the VM, as on the evaluator
+}
+```
+
 ### `assert` builtin
 
 New top-level `assert(cond)` / `assert(cond, message)` builtin and a
@@ -159,6 +188,77 @@ arguments are lost). `geblang test` always runs assertions.
 The LSP catalog also surfaces signatures and hover docs for
 `assert`, `typeof`, `range`, `dump`, and `dir`, which until now
 were callable but invisible to the IDE.
+
+### MessagePack codec (`msgpack`)
+
+New native `msgpack` module with `encode`, `decode`, `tryDecode`,
+and `validate`. Hand-rolled implementation - no Go dependency -
+covering the MessagePack 5 common cases: nil, bool, signed
+integers (int family), float64, str family, bin family, array
+family, and map family.
+
+```gb
+import msgpack;
+
+let bytes = msgpack.encode({"items": [1, 2, 3], "ok": true});
+let value = msgpack.decode(bytes);
+```
+
+Type mapping is one-to-one for primitives and containers. `bytes`
+round-trip via the bin family; `decimal` round-trips as a
+MessagePack string (lossless, portable). Ext types and the
+timestamp extension are not supported in 1.6.0; integers outside
+int64 range raise on encode.
+
+### `lrucache.LruCache<K, V>`
+
+New stdlib LRU cache with O(1) get / put / evict and optional
+time-to-live. Backed by a doubly-linked list (for ordering) plus
+a dict (for lookup); pure Geblang.
+
+```gb
+import lrucache;
+
+let c = lrucache.LruCache<string, int>(100);
+c.put("a", 1); c.put("b", 2);
+io.println(c.get("a"));   # 1 - now most recent
+
+let withTtl = lrucache.LruCache<string, int>(100, 60);   # 60s expiry
+```
+
+`get(key)` returns `null` on a miss (or on a hit whose entry has
+expired). Pair with `has(key)` when you need to distinguish a
+stored-null value from an absent key. Operations: `get`, `put`,
+`delete`, `has`, `length`, `capacity`, `isEmpty`, `clear`,
+`keys`, `values`, `stats`. `stats()` returns lifetime
+`{hits, misses, evictions, expirations}` counters useful for
+tuning capacity.
+
+Expiry is lazy: an expired entry is dropped on the next `get` or
+`has`, no background scan. Capacity must be at least 1.
+
+### `deque.Deque<T>`
+
+New stdlib double-ended queue with amortised O(1) push / pop at
+both ends. Backed by a ring buffer that doubles in capacity when
+full.
+
+```gb
+import deque;
+
+let d = deque.Deque<int>();
+d.pushBack(1); d.pushBack(2); d.pushBack(3);
+d.pushFront(0);
+io.println(d.popFront());   # 0
+io.println(d.popBack());    # 3
+```
+
+Operations: `pushFront`, `pushBack`, `popFront`, `popBack`,
+`peekFront`, `peekBack`, `get(i)` (O(1) random access; negative
+counts from the back), `length`, `isEmpty`, `clear`, `toList`.
+Implements the iterator protocol so `for (x in d)` walks
+front-to-back. `popFront` / `popBack` / `peekFront` /
+`peekBack` / `get` throw `ValueError` on out-of-range access.
 
 ### `priorityq.PriorityQueue<T>`
 

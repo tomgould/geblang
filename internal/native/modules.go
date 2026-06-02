@@ -11,7 +11,7 @@ var NativeModuleNames = map[string]struct{}{
 	"compress": {}, "crypt": {}, "csv": {}, "datetime": {}, "db": {},
 	"dotenv": {}, "encoding": {}, "errors": {}, "ext": {}, "ffinative": {},
 	"freeze": {}, "http": {}, "io": {}, "json": {}, "kafka": {}, "log": {},
-	"markdown": {}, "math": {}, "metrics": {}, "net": {}, "path": {},
+	"markdown": {}, "math": {}, "metrics": {}, "msgpack": {}, "net": {}, "path": {},
 	"pcre": {}, "proc": {}, "procnative": {}, "process": {}, "profile": {},
 	"profiler": {}, "random": {}, "re": {}, "reflect": {}, "schema": {},
 	"secrets": {}, "secureRandom": {}, "serde": {}, "smtp": {}, "sockets": {},

@@ -1,0 +1,180 @@
+/**
+ * @title lrucache.LruCache (1.6.0)
+ * @summary LRU cache with O(1) get / put / evict, optional TTL,
+ * and hit/miss/eviction/expiration counters.
+ */
+import test;
+import lrucache;
+import time;
+
+class LruCacheTest extends test.Test {
+
+    @test
+    func basicPutGet(): void {
+        let c = lrucache.LruCache<string, int>(3);
+        c.put("a", 1);
+        c.put("b", 2);
+        this.assertEquals(1, c.get("a"));
+        this.assertEquals(2, c.get("b"));
+        this.assertEquals(2, c.length());
+    }
+
+    @test
+    func missReturnsNull(): void {
+        let c = lrucache.LruCache<string, int>(3);
+        this.assertEquals(null, c.get("nope"));
+    }
+
+    @test
+    func evictsLruWhenFull(): void {
+        let c = lrucache.LruCache<string, int>(2);
+        c.put("a", 1);
+        c.put("b", 2);
+        c.put("c", 3);
+        this.assertEquals(null, c.get("a"));
+        this.assertEquals(2, c.get("b"));
+        this.assertEquals(3, c.get("c"));
+    }
+
+    @test
+    func getBumpsToMostRecent(): void {
+        let c = lrucache.LruCache<string, int>(2);
+        c.put("a", 1);
+        c.put("b", 2);
+        c.get("a");
+        c.put("c", 3);
+        this.assertEquals(1, c.get("a"));
+        this.assertEquals(null, c.get("b"));
+    }
+
+    @test
+    func putOnExistingUpdatesAndBumps(): void {
+        let c = lrucache.LruCache<string, int>(2);
+        c.put("a", 1);
+        c.put("b", 2);
+        c.put("a", 99);
+        c.put("c", 3);
+        this.assertEquals(99, c.get("a"));
+        this.assertEquals(null, c.get("b"));
+    }
+
+    @test
+    func hasDoesNotBumpOrder(): void {
+        let c = lrucache.LruCache<string, int>(2);
+        c.put("a", 1);
+        c.put("b", 2);
+        this.assertTrue(c.has("a"));
+        c.put("c", 3);
+        this.assertFalse(c.has("a"));
+        this.assertTrue(c.has("b"));
+    }
+
+    @test
+    func deleteRemovesAndReportsAccurately(): void {
+        let c = lrucache.LruCache<string, int>(3);
+        c.put("a", 1); c.put("b", 2);
+        this.assertTrue(c.delete("a"));
+        this.assertFalse(c.delete("missing"));
+        this.assertEquals(1, c.length());
+        this.assertFalse(c.has("a"));
+    }
+
+    @test
+    func keysAreMruToLru(): void {
+        let c = lrucache.LruCache<string, int>(4);
+        c.put("a", 1);
+        c.put("b", 2);
+        c.put("c", 3);
+        c.get("a");
+        this.assertEquals(["a", "c", "b"], c.keys());
+    }
+
+    @test
+    func valuesAreMruToLru(): void {
+        let c = lrucache.LruCache<string, int>(4);
+        c.put("a", 1);
+        c.put("b", 2);
+        c.put("c", 3);
+        c.get("a");
+        this.assertEquals([1, 3, 2], c.values());
+    }
+
+    @test
+    func clearEmptiesCacheButKeepsStats(): void {
+        let c = lrucache.LruCache<string, int>(3);
+        c.put("a", 1);
+        c.get("a");
+        c.get("missing");
+        c.clear();
+        this.assertEquals(0, c.length());
+        this.assertEquals(null, c.get("a"));
+        let s = c.stats();
+        this.assertEquals(1, s["hits"]);
+    }
+
+    @test
+    func statsTrackHitsMissesEvictionsExpirations(): void {
+        let c = lrucache.LruCache<string, int>(2);
+        c.put("a", 1); c.put("b", 2);
+        c.get("a"); c.get("a");                /* 2 hits */
+        c.get("missing");                       /* 1 miss */
+        c.put("c", 3);                          /* 1 eviction */
+        let s = c.stats();
+        this.assertEquals(2, s["hits"]);
+        this.assertEquals(1, s["misses"]);
+        this.assertEquals(1, s["evictions"]);
+        this.assertEquals(0, s["expirations"]);
+    }
+
+    @test
+    func capacityReportsConfiguredLimit(): void {
+        let c = lrucache.LruCache<string, int>(42);
+        this.assertEquals(42, c.capacity());
+    }
+
+    @test
+    func capacityMustBePositive(): void {
+        let threw = false;
+        try {
+            let c = lrucache.LruCache<string, int>(0);
+        } catch (ValueError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func ttlExpiresEntries(): void {
+        /* 1-second TTL; sleep past it and verify miss + expiration counter */
+        let c = lrucache.LruCache<string, int>(10, 1);
+        c.put("k", 99);
+        this.assertEquals(99, c.get("k"));
+        time.sleep(1200);
+        this.assertEquals(null, c.get("k"));
+        this.assertEquals(1, c.stats()["expirations"]);
+    }
+
+    @test
+    func hasReportsFalseForExpiredEntries(): void {
+        let c = lrucache.LruCache<string, int>(10, 1);
+        c.put("k", 99);
+        this.assertTrue(c.has("k"));
+        time.sleep(1200);
+        this.assertFalse(c.has("k"));
+    }
+
+    @test
+    func mixedDeletesAndPutsKeepLinkedListConsistent(): void {
+        let c = lrucache.LruCache<string, int>(5);
+        for (let int i = 0; i < 50; i++) {
+            c.put("k" + (i as string), i);
+            if (i % 7 == 0 && i > 0) {
+                c.delete("k" + ((i - 3) as string));
+            }
+        }
+        /* No assertion on specific membership beyond keeping cache sane: */
+        this.assertTrue(c.length() <= c.capacity());
+        let ks = c.keys();
+        this.assertEquals(c.length(), ks.length());
+    }
+}

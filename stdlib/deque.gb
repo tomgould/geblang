@@ -1,0 +1,178 @@
+module deque;
+
+/**
+ * Double-ended queue with amortised O(1) push / pop at both
+ * ends. Internally a ring buffer with capacity doubling: when
+ * the buffer fills, a new buffer twice the size is allocated
+ * and elements are copied in front-to-back order.
+ *
+ * ```gb
+ * let d = Deque<int>();
+ * d.pushBack(1);
+ * d.pushBack(2);
+ * d.pushFront(0);
+ * io.println(d.popFront());   # 0
+ * io.println(d.popBack());    # 2
+ * ```
+ */
+export class Deque<T> {
+    list<any> _buf;
+    int _head;
+    int _size;
+    int _cap;
+    int _iterPos;
+
+    func Deque() {
+        this._cap = 8;
+        this._buf = ([] as list<any>);
+        for (let int i = 0; i < this._cap; i++) {
+            this._buf.append(null);
+        }
+        this._head = 0;
+        this._size = 0;
+        this._iterPos = 0;
+    }
+
+    ## Inserts at the front. Amortised O(1).
+    func pushFront(T value): void {
+        if (this._size == this._cap) { this._grow(); }
+        this._head = (this._head - 1 + this._cap) % this._cap;
+        this._buf[this._head] = value;
+        this._size = this._size + 1;
+    }
+
+    ## Inserts at the back. Amortised O(1).
+    func pushBack(T value): void {
+        if (this._size == this._cap) { this._grow(); }
+        let tail = (this._head + this._size) % this._cap;
+        this._buf[tail] = value;
+        this._size = this._size + 1;
+    }
+
+    /**
+     * Removes and returns the front element. Throws ValueError
+     * on an empty deque. O(1).
+     */
+    func popFront(): T {
+        if (this._size == 0) { throw ValueError("Deque.popFront on empty deque"); }
+        let v = this._buf[this._head];
+        this._buf[this._head] = null;
+        this._head = (this._head + 1) % this._cap;
+        this._size = this._size - 1;
+        return v;
+    }
+
+    /**
+     * Removes and returns the back element. Throws ValueError
+     * on an empty deque. O(1).
+     */
+    func popBack(): T {
+        if (this._size == 0) { throw ValueError("Deque.popBack on empty deque"); }
+        this._size = this._size - 1;
+        let idx = (this._head + this._size) % this._cap;
+        let v = this._buf[idx];
+        this._buf[idx] = null;
+        return v;
+    }
+
+    /**
+     * Returns the front element without removing it. Throws
+     * ValueError on an empty deque. O(1).
+     */
+    func peekFront(): T {
+        if (this._size == 0) { throw ValueError("Deque.peekFront on empty deque"); }
+        return this._buf[this._head];
+    }
+
+    /**
+     * Returns the back element without removing it. Throws
+     * ValueError on an empty deque. O(1).
+     */
+    func peekBack(): T {
+        if (this._size == 0) { throw ValueError("Deque.peekBack on empty deque"); }
+        return this._buf[(this._head + this._size - 1) % this._cap];
+    }
+
+    /**
+     * Returns the element at logical position `i` (0 = front).
+     * Negative `i` counts from the back (-1 = last). Throws
+     * ValueError on an out-of-range index. O(1).
+     */
+    func get(int i): T {
+        let idx = i;
+        if (idx < 0) { idx = idx + this._size; }
+        if (idx < 0 || idx >= this._size) {
+            throw ValueError("Deque.get index out of range");
+        }
+        return this._buf[(this._head + idx) % this._cap];
+    }
+
+    ## Number of elements currently in the deque.
+    func length(): int {
+        return this._size;
+    }
+
+    ## True when the deque holds no elements.
+    func isEmpty(): bool {
+        return this._size == 0;
+    }
+
+    /**
+     * Discards every element. Resets the buffer slots so any
+     * references they held are released for GC. O(cap).
+     */
+    func clear(): void {
+        for (let int i = 0; i < this._cap; i++) {
+            this._buf[i] = null;
+        }
+        this._head = 0;
+        this._size = 0;
+    }
+
+    /**
+     * Returns a list snapshot in front-to-back order. Useful
+     * for inspection and debugging. O(n).
+     */
+    func toList(): list<T> {
+        let out = ([] as list<T>);
+        for (let int i = 0; i < this._size; i++) {
+            out.append(this._buf[(this._head + i) % this._cap]);
+        }
+        return out;
+    }
+
+    /**
+     * Iterator-protocol entry. Resets the internal cursor and
+     * returns `this`. Note: concurrent iteration of the same
+     * deque is not supported because the cursor is shared.
+     */
+    func __iter(): Deque<T> {
+        this._iterPos = 0;
+        return this;
+    }
+
+    func __done(): bool {
+        return this._iterPos >= this._size;
+    }
+
+    func __next(): T {
+        let v = this._buf[(this._head + this._iterPos) % this._cap];
+        this._iterPos = this._iterPos + 1;
+        return v;
+    }
+
+    func _grow(): void {
+        let newCap = this._cap * 2;
+        let newBuf = ([] as list<any>);
+        for (let int i = 0; i < this._size; i++) {
+            newBuf.append(this._buf[(this._head + i) % this._cap]);
+        }
+        for (let int i = this._size; i < newCap; i++) {
+            newBuf.append(null);
+        }
+        this._buf = newBuf;
+        this._head = 0;
+        this._cap = newCap;
+    }
+}
+

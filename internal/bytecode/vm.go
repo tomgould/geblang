@@ -1472,6 +1472,21 @@ func (vm *VM) Run() (err error) {
 		case OpIterNext:
 			hasNext, err := vm.iterNext(instruction)
 			if err != nil {
+				// A foreign-class __done / __next that threw returns a
+				// wrappedError carrying the original vmThrownError; route
+				// it to a try / catch via pendingThrow so the user's
+				// catch fires. Non-thrown errors bubble out unchanged.
+				var thrown vmThrownError
+				if errors.As(err, &thrown) {
+					captured := thrown.err
+					vm.pendingThrow = &captured
+					nextIP, perr := vm.jumpToExceptionHandler(instruction, ip)
+					if perr != nil {
+						return perr
+					}
+					ip = nextIP
+					continue
+				}
 				return err
 			}
 			if !hasNext {
@@ -1568,6 +1583,12 @@ func (vm *VM) Run() (err error) {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
 			vm.push(vmDirValue(vmv.ToValue()))
+		case OpDump:
+			vmv, err := vm.popVM()
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
+			vm.push(runtime.String{Value: native.DumpValue(vmv.ToValue())})
 		case OpInstanceOf:
 			if err := vm.instanceOf(instruction); err != nil {
 				return err
@@ -4304,18 +4325,26 @@ func (vm *VM) iterNext(instruction Instruction) (bool, error) {
 // advanceUserIterator drives one step of a user-defined iterator
 // (Instance with __next()/__done() methods). Returns (value, true)
 // for an item, (nil, false) when the iterator reports done.
+//
+// CallMethod errors are returned unchanged so the OpIterNext
+// dispatch site can detect a wrapped vmThrownError (from a method
+// defined in another module) and forward it to the calling VM's
+// pendingThrow via propagateModuleError. Wrapping with runtimeError
+// here would collapse the chain to a string and silently bypass any
+// try / catch the user code had installed.
 func (vm *VM) advanceUserIterator(instruction Instruction, iter *runtime.Instance) (runtime.Value, bool, error) {
 	if iter == nil || iter.Class == nil {
 		return nil, false, vm.runtimeError(instruction, "user iterator has no class")
 	}
-	classInfo, ok := vm.classInfo(iter.Class.Name)
-	if !ok {
+	isForeign := iter.Class.Module != vm.moduleName
+	hasDone, hasNext := vm.userIteratorMethodPresence(iter, isForeign)
+	if !hasDone && !hasNext {
 		return nil, false, vm.runtimeError(instruction, "%s is not an iterator", iter.Class.Name)
 	}
-	if _, hasDone := vm.lookupMethod(classInfo, "__done"); hasDone {
+	if hasDone {
 		doneResult, err := vm.CallMethod(iter, "__done", nil)
 		if err != nil {
-			return nil, false, vm.runtimeError(instruction, "%s.__done: %s", iter.Class.Name, err.Error())
+			return nil, false, err
 		}
 		doneBool, ok := doneResult.(runtime.Bool)
 		if !ok {
@@ -4325,14 +4354,33 @@ func (vm *VM) advanceUserIterator(instruction Instruction, iter *runtime.Instanc
 			return nil, false, nil
 		}
 	}
-	if _, hasNext := vm.lookupMethod(classInfo, "__next"); !hasNext {
+	if !hasNext {
 		return nil, false, vm.runtimeError(instruction, "%s is not an iterator: define __next()", iter.Class.Name)
 	}
 	value, err := vm.CallMethod(iter, "__next", nil)
 	if err != nil {
-		return nil, false, vm.runtimeError(instruction, "%s.__next: %s", iter.Class.Name, err.Error())
+		return nil, false, err
 	}
 	return value, true, nil
+}
+
+// userIteratorMethodPresence reports whether the iterator instance
+// exposes __done / __next. Foreign classes are checked via the
+// trampoline table on iter.Class.Methods (the module loader
+// populates it when the class is imported); local classes go
+// through the running chunk's classInfo so overload selection and
+// inheritance work the same way they do for direct method calls.
+func (vm *VM) userIteratorMethodPresence(iter *runtime.Instance, isForeign bool) (bool, bool) {
+	if isForeign {
+		return len(iter.Class.Methods["__done"]) > 0, len(iter.Class.Methods["__next"]) > 0
+	}
+	classInfo, ok := vm.classInfo(iter.Class.Name)
+	if !ok {
+		return false, false
+	}
+	_, hasDone := vm.lookupMethod(classInfo, "__done")
+	_, hasNext := vm.lookupMethod(classInfo, "__next")
+	return hasDone, hasNext
 }
 
 // withEnter pops the resource from the stack. If the resource is a

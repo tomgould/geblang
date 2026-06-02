@@ -2721,6 +2721,16 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				c.emitAt(OpDir, expr.Token.Line, expr.Token.Column)
 				return nil
 			}
+			if strings.EqualFold(ident.Value, "dump") {
+				if len(expr.Arguments) != 1 || expr.Arguments[0].Name != nil {
+					return fmt.Errorf("dump expects exactly one positional argument")
+				}
+				if err := c.compileExpression(expr.Arguments[0].Value); err != nil {
+					return err
+				}
+				c.emitAt(OpDump, expr.Token.Line, expr.Token.Column)
+				return nil
+			}
 			if strings.EqualFold(ident.Value, "typeof") {
 				if len(expr.Arguments) != 1 || expr.Arguments[0].Name != nil {
 					return fmt.Errorf("typeof expects exactly one positional argument")

@@ -1,0 +1,19 @@
+/**
+ * @title dump() builtin
+ * @summary dump(value) returns a type-annotated debug string. Works on
+ * the evaluator and the VM identically (it was evaluator-only before).
+ */
+import test;
+
+class DumpTest extends test.Test {
+    @test
+    func dumpsScalarsWithTypeTags(): void {
+        this.assertEquals("int(42)", dump(42));
+        this.assertEquals("bool(true)", dump(true));
+    }
+
+    @test
+    func dumpsCollections(): void {
+        this.assertEquals("list[int(1), int(2)]", dump([1, 2]));
+    }
+}

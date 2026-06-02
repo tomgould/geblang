@@ -1,0 +1,140 @@
+/**
+ * @title msgpack codec (1.6.0)
+ * @summary MessagePack 5 encode / decode for the common cases:
+ * nil / bool / int / float / str / bin / array / map. Decimal
+ * round-trips as a string for portability. Hand-rolled, no Go
+ * dependency.
+ */
+import test;
+import msgpack;
+import bytes;
+
+class MsgpackTest extends test.Test {
+
+    @test
+    func roundTripPrimitives(): void {
+        for (var v in [null, true, false, 0, 1, -1, 127, -32, 1000, -1000]) {
+            this.assertEquals(v, msgpack.decode(msgpack.encode(v)));
+        }
+    }
+
+    @test
+    func roundTripStrings(): void {
+        for (var s in ["", "a", "hello", "x".repeat(40), "x".repeat(300)]) {
+            this.assertEquals(s, msgpack.decode(msgpack.encode(s)));
+        }
+    }
+
+    @test
+    func roundTripBytes(): void {
+        let b = bytes.fromHex("deadbeef");
+        let back = msgpack.decode(msgpack.encode(b));
+        this.assertEquals(bytes.toHex(b), bytes.toHex(back));
+    }
+
+    @test
+    func roundTripFloat(): void {
+        for (var v in [(1.5 as float), (0.0 as float), (-3.14 as float), (1000000000.0 as float)]) {
+            let dec = msgpack.decode(msgpack.encode(v));
+            this.assertEquals(v, dec);
+        }
+    }
+
+    @test
+    func decimalEncodesAsString(): void {
+        let d = 1.50;
+        let enc = msgpack.encode(d);
+        let dec = msgpack.decode(enc);
+        this.assertEquals(d, (dec as string) as decimal);
+    }
+
+    @test
+    func roundTripList(): void {
+        let v = [1, 2, "three", true, null, [4, 5]];
+        this.assertEquals(v, msgpack.decode(msgpack.encode(v)));
+    }
+
+    @test
+    func roundTripDict(): void {
+        let v = {"a": 1, "b": "two", "c": [3, 4]};
+        let back = msgpack.decode(msgpack.encode(v));
+        this.assertEquals(1, back["a"]);
+        this.assertEquals("two", back["b"]);
+        this.assertEquals([3, 4], back["c"]);
+    }
+
+    @test
+    func emptyContainers(): void {
+        this.assertEquals([], msgpack.decode(msgpack.encode([])));
+        let emptyMap = msgpack.decode(msgpack.encode({}));
+        this.assertEquals(0, emptyMap.length());
+    }
+
+    @test
+    func nestedDeeply(): void {
+        let v = {"layer": {"a": [1, {"b": [2, [3]]}]}};
+        let back = msgpack.decode(msgpack.encode(v));
+        this.assertEquals(3, back["layer"]["a"][1]["b"][1][0]);
+    }
+
+    @test
+    func validateAcceptsWellFormedBytes(): void {
+        this.assertTrue(msgpack.validate(msgpack.encode([1, 2, 3])));
+        this.assertTrue(msgpack.validate(msgpack.encode(null)));
+        this.assertTrue(msgpack.validate(msgpack.encode("hi")));
+    }
+
+    @test
+    func validateRejectsMalformedBytes(): void {
+        this.assertFalse(msgpack.validate(bytes.fromHex("ff80")));
+        this.assertFalse(msgpack.validate(bytes.fromHex("")));
+        this.assertFalse(msgpack.validate(bytes.fromHex("c1")));
+    }
+
+    @test
+    func tryDecodeReturnsNullOnMalformed(): void {
+        this.assertEquals(null, msgpack.tryDecode(bytes.fromHex("ff80")));
+        this.assertEquals(null, msgpack.tryDecode(bytes.fromHex("c1")));
+    }
+
+    @test
+    func tryDecodeReturnsValueOnGood(): void {
+        let b = msgpack.encode([1, 2]);
+        this.assertEquals([1, 2], msgpack.tryDecode(b));
+    }
+
+    @test
+    func decodeRejectsTrailingBytes(): void {
+        let enc = msgpack.encode("hello");
+        let withTrailing = bytes.concat(enc, bytes.fromHex("ff"));
+        let threw = false;
+        try {
+            msgpack.decode(withTrailing);
+        } catch (Error e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func unsupportedValueErrors(): void {
+        let threw = false;
+        try {
+            msgpack.encode(typeof(0));
+        } catch (Error e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func integerBoundaries(): void {
+        /* Each magnitude lands on a different MessagePack tag. */
+        for (int v in [127, 128, 255, 256, 32767, 32768, 65535, 65536]) {
+            this.assertEquals(v, msgpack.decode(msgpack.encode(v)));
+        }
+        for (int v in [-32, -33, -128, -129, -32768, -32769, -2147483648]) {
+            this.assertEquals(v, msgpack.decode(msgpack.encode(v)));
+        }
+    }
+}

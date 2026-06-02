@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
+	"geblang/internal/native"
 	"geblang/internal/parser"
 	"geblang/internal/runtime"
 	"geblang/internal/semantic"
@@ -514,21 +516,50 @@ io.println((-4).isEven());
 
 func TestParityDirBuiltin(t *testing.T) {
 	// dir(value) returns the sorted method-name list for a value; both
-	// backends must produce identical output.
+	// backends must produce identical output AND it must match the
+	// authoritative registry (expected is derived from it, so a wrong
+	// list can't be silently re-encoded - the original dir-phantom bug).
+	cases := []struct{ literal, typeName string }{
+		{`[1, 2, 3]`, "list"},
+		{`{"a": 1}`, "dict"},
+		{`[1, 2] as set`, "set"},
+		{`42`, "int"},
+		{`3.5`, "decimal"},
+		{`"x"`, "string"},
+	}
+	src := "import io;\n"
+	want := ""
+	for _, c := range cases {
+		src += `io.println("${dir(` + c.literal + `)}");` + "\n"
+		want += formatPrimitiveMethodList(c.typeName) + "\n"
+	}
+	runParity(t, src, want)
+}
+
+func TestParityDumpBuiltin(t *testing.T) {
+	// dump(value) renders a type-annotated debug string; identical on
+	// both backends (was evaluator-only before R1).
 	runParity(t, `import io;
-io.println("${dir([1, 2, 3])}");
-io.println("${dir({"a": 1})}");
-io.println("${dir([1, 2] as set)}");
-io.println("${dir(42)}");
-io.println("${dir(3.5)}");
-io.println("${dir("x")}");
-`, `["all", "any", "append", "averageBy", "binarySearch", "bottomK", "chunk", "clear", "concat", "contains", "containsBy", "copy", "count", "difference", "differenceBy", "extend", "filter", "find", "findLast", "first", "flatten", "frequencies", "get", "groupBy", "indexBy", "indexOf", "insert", "intersection", "intersectionBy", "isEmpty", "join", "last", "length", "lowerBound", "map", "maxBy", "minBy", "mode", "partition", "pop", "prepend", "push", "reduce", "remove", "removeAt", "reverse", "reversed", "set", "slice", "sort", "sortBy", "sorted", "sumBy", "toList", "topBy", "topK", "unique", "unshift", "upperBound", "zip", "zipWith"]
-["bfs", "clear", "contains", "copy", "delete", "dfs", "entries", "get", "hasKey", "insert", "isEmpty", "items", "keys", "length", "merge", "remove", "set", "shortestPath", "topologicalSort", "values"]
-["add", "contains", "copy", "difference", "intersection", "isEmpty", "length", "remove", "toList", "union"]
-["abs", "clamp", "isEven", "isNegative", "isOdd", "isPositive", "isZero", "sign", "toString"]
-["abs", "ceil", "clamp", "floor", "format", "isNegative", "isPositive", "isZero", "round", "sign", "toString", "truncate"]
-["chars", "codePointAt", "contains", "count", "endsWith", "format", "get", "indexOf", "isEmpty", "lastIndexOf", "length", "lower", "matchesRegex", "padEnd", "padStart", "repeat", "replace", "replaceRegex", "reverse", "slice", "split", "splitRegex", "startsWith", "substring", "toBool", "toDecimal", "toFloat", "toInt", "toString", "trim", "trimEnd", "trimStart", "upper"]
-`)
+io.println(dump(42));
+io.println(dump("hi"));
+io.println(dump([1, 2]));
+io.println(dump({"a": 1}));
+io.println(dump(true));
+`, "int(42)\nstring(\"hi\")\nlist[int(1), int(2)]\ndict{string(\"a\"): int(1)}\nbool(true)\n")
+}
+
+func TestParityProfilerModule(t *testing.T) {
+	// profiler must work on both backends (it was VM-only before being
+	// wired into the evaluator). Values are non-deterministic, so assert
+	// the result shape rather than contents.
+	runParity(t, `import io;
+import profiler;
+io.println(typeof(profiler.snapshot()));
+io.println(typeof(profiler.memory()));
+io.println(typeof(profiler.cpu()));
+io.println(typeof(profiler.peak()));
+io.println(typeof(profiler.delta(profiler.snapshot())));
+`, "dict\ndict\ndict\ndict\ndict\n")
 }
 
 func TestParityTestingAssertions(t *testing.T) {
@@ -5486,6 +5517,154 @@ io.println(v2 == r2);
 `, "true\ntrue\n")
 }
 
+func TestParityMsgpack(t *testing.T) {
+	// Primitives encode to the spec-fixed byte sequences.
+	runParity(t, `import io;
+import msgpack;
+import bytes;
+io.println(bytes.toHex(msgpack.encode(null)));
+io.println(bytes.toHex(msgpack.encode(true)));
+io.println(bytes.toHex(msgpack.encode(false)));
+io.println(bytes.toHex(msgpack.encode(0)));
+io.println(bytes.toHex(msgpack.encode(127)));
+io.println(bytes.toHex(msgpack.encode(-1)));
+io.println(bytes.toHex(msgpack.encode(-32)));
+io.println(bytes.toHex(msgpack.encode("hello")));
+io.println(bytes.toHex(msgpack.encode([])));
+io.println(bytes.toHex(msgpack.encode([1, 2, 3])));
+io.println(bytes.toHex(msgpack.encode({})));
+`, "c0\nc3\nc2\n00\n7f\nff\ne0\na568656c6c6f\n90\n93010203\n80\n")
+
+	// Round trip for nested structures.
+	runParity(t, `import io;
+import msgpack;
+let v = {"items": [1, 2, 3], "meta": {"k": "v"}};
+let b = msgpack.encode(v);
+let back = msgpack.decode(b);
+io.println(back["items"]);
+io.println(back["meta"]["k"]);
+`, "[1, 2, 3]\nv\n")
+
+	// Float is preserved as float; decimal as a lossless string.
+	runParity(t, `import io;
+import msgpack;
+let f = (1.5 as float);
+io.println(msgpack.decode(msgpack.encode(f)));
+let d = 1.5;
+io.println(msgpack.decode(msgpack.encode(d)));
+`, "1.5\n1.5000000000\n")
+
+	// validate + tryDecode behaviours.
+	runParity(t, `import io;
+import msgpack;
+import bytes;
+io.println(msgpack.validate(msgpack.encode([1, 2, 3])));
+io.println(msgpack.validate(bytes.fromHex("ff80")));
+io.println(msgpack.tryDecode(bytes.fromHex("ff80")));
+io.println(msgpack.tryDecode(bytes.fromHex("a3616263")));
+`, "true\nfalse\nnull\nabc\n")
+
+	// int boundaries spill into the larger integer tags.
+	runParity(t, `import io;
+import msgpack;
+import bytes;
+io.println(bytes.toHex(msgpack.encode(128)));
+io.println(bytes.toHex(msgpack.encode(1000)));
+io.println(bytes.toHex(msgpack.encode(-1000)));
+io.println(msgpack.decode(msgpack.encode(128)));
+io.println(msgpack.decode(msgpack.encode(1000)));
+io.println(msgpack.decode(msgpack.encode(-1000)));
+`, "d10080\nd103e8\nd1fc18\n128\n1000\n-1000\n")
+
+	// Bytes round-trip.
+	runParity(t, `import io;
+import msgpack;
+import bytes;
+let b = bytes.fromHex("deadbeef");
+let enc = msgpack.encode(b);
+io.println(bytes.toHex(enc));
+io.println(bytes.toHex(msgpack.decode(enc)));
+`, "c404deadbeef\ndeadbeef\n")
+}
+
+func TestParityLruCache(t *testing.T) {
+	// Basic put / get with eviction order.
+	runParityWithStdlib(t, `import io;
+import lrucache;
+let c = lrucache.LruCache<string, int>(3);
+c.put("a", 1); c.put("b", 2); c.put("c", 3);
+io.println(c.length());
+io.println(c.get("a"));
+c.put("d", 4);
+io.println(c.get("a"));
+io.println(c.get("b"));
+io.println(c.get("c"));
+io.println(c.get("d"));
+`, "3\n1\n1\nnull\n3\n4\n")
+
+	// has() does not bump LRU order; delete() removes.
+	runParityWithStdlib(t, `import io;
+import lrucache;
+let c = lrucache.LruCache<string, int>(2);
+c.put("x", 1);
+c.put("y", 2);
+io.println(c.has("x"));
+c.put("z", 3);
+io.println(c.has("x"));
+io.println(c.delete("y"));
+io.println(c.delete("missing"));
+io.println(c.length());
+`, "true\nfalse\ntrue\nfalse\n1\n")
+
+	// Stats counters - field access avoids dict display-order
+	// divergence between backends.
+	runParityWithStdlib(t, `import io;
+import lrucache;
+let c = lrucache.LruCache<string, int>(2);
+c.put("a", 1);
+c.put("b", 2);
+c.get("a");
+c.get("a");
+c.get("missing");
+c.put("c", 3);
+let s = c.stats();
+io.println(s["hits"]);
+io.println(s["misses"]);
+io.println(s["evictions"]);
+io.println(s["expirations"]);
+`, "2\n1\n1\n0\n")
+
+	// Capacity must be at least 1.
+	runParityWithStdlib(t, `import io;
+import lrucache;
+try {
+    let c = lrucache.LruCache<string, int>(0);
+} catch (ValueError e) {
+    io.println("caught");
+}
+`, "caught\n")
+}
+
+// Regression: the VM's user-iterator dispatch looked the iterator's
+// class up via the running chunk's classInfo, which fails for an
+// instance whose class is defined in another module. Iteration of
+// any stdlib class that implements __iter / __done / __next reported
+// "is not an iterator" even though the trampoline table populated at
+// import time exposed the methods. Fix routes the presence check
+// through iter.Class.Methods for foreign classes and lets thrown
+// errors flow back through propagateModuleError so try / catch
+// around the loop still fires.
+func TestParityIterAcrossStdlibBoundary(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import deque;
+let d = deque.Deque<int>();
+d.pushBack(1); d.pushBack(2); d.pushBack(3);
+for (var x in d) {
+    io.println(x);
+}
+`, "1\n2\n3\n")
+}
+
 // Regression: the VM's foreign-class method dispatch was wrapping
 // the native trampoline's error via runtimeError, which stripped the
 // vmThrownError chain and prevented a try/catch in the calling module
@@ -8009,13 +8188,22 @@ io.println(reflect.fields(f)[0]["type"]);
 // built-in primitive values (list / dict / set / string / bytes /
 // range) and returns a sorted method list.
 func TestParityReflectPrimitives(t *testing.T) {
-	runParity(t, `import io;
-import reflect;
-io.println(reflect.methods([1,2,3])[0]);
-io.println(reflect.methods({"a":1})[0]);
-io.println(reflect.methods("abc")[0]);
-io.println(reflect.methods(1..5)[0]);
-`, "all\nbfs\nchars\ncontains\n")
+	// Expected first-method derived from the registry, not frozen.
+	cases := []struct{ literal, typeName string }{
+		{`[1,2,3]`, "list"},
+		{`{"a":1}`, "dict"},
+		{`"abc"`, "string"},
+		{`1..5`, "range"},
+	}
+	src := "import io;\nimport reflect;\n"
+	want := ""
+	for _, c := range cases {
+		src += "io.println(reflect.methods(" + c.literal + ")[0]);\n"
+		names := append([]string(nil), native.PrimitiveMethods[c.typeName]...)
+		sort.Strings(names)
+		want += names[0] + "\n"
+	}
+	runParity(t, src, want)
 }
 
 // TestParityUserErrorParentChain verifies that user-defined error

@@ -1,0 +1,263 @@
+module lrucache;
+
+import time;
+
+/**
+ * LRU (least-recently-used) cache with optional TTL. Doubly-
+ * linked-list + dict for O(1) get / put / evict. On eviction
+ * the least-recently-used entry is dropped; on a TTL hit-but-
+ * expired the entry is dropped lazily and the call counts as
+ * a miss.
+ *
+ * ```gb
+ * import lrucache;
+ *
+ * let c = lrucache.LruCache<string, int>(100);
+ * c.put("a", 1);
+ * c.put("b", 2);
+ * io.println(c.get("a"));    # 1 - now most recent
+ * io.println(c.length());    # 2
+ *
+ * let withTtl = lrucache.LruCache<string, int>(100, 60);   # 60s expiry
+ * ```
+ *
+ * `get(k)` returns `null` on a miss (or on a hit whose entry
+ * has expired). Pair with `has(k)` if you need to distinguish a
+ * stored-null value from an absent key (but note `has` does NOT
+ * bump LRU order).
+ */
+export class LruCache<K, V> {
+    int _capacity;
+    int _ttlSeconds;
+    dict<K, any> _index;
+    any _head;
+    any _tail;
+    int _size;
+    int _hits;
+    int _misses;
+    int _evictions;
+    int _expirations;
+
+    func LruCache(int capacity, int ttlSeconds = 0) {
+        if (capacity < 1) {
+            throw ValueError("LruCache capacity must be >= 1");
+        }
+        this._capacity = capacity;
+        this._ttlSeconds = ttlSeconds;
+        this._index = ({} as dict<K, any>);
+        this._head = null;
+        this._tail = null;
+        this._size = 0;
+        this._hits = 0;
+        this._misses = 0;
+        this._evictions = 0;
+        this._expirations = 0;
+    }
+
+    /**
+     * Returns the value for `key`, bumping it to most-recent.
+     * Returns `null` on a miss or on a hit whose TTL has lapsed.
+     */
+    func get(K key): any {
+        let entry = this._index.get(key);
+        if (entry == null) {
+            this._misses = this._misses + 1;
+            return null;
+        }
+        if (this._isExpired(entry)) {
+            this._removeEntry(entry);
+            this._expirations = this._expirations + 1;
+            this._misses = this._misses + 1;
+            return null;
+        }
+        this._moveToHead(entry);
+        this._hits = this._hits + 1;
+        return entry.value;
+    }
+
+    /**
+     * Stores `value` under `key`. If `key` is already present
+     * the entry is updated and bumped to most-recent. Otherwise
+     * a new entry is inserted at the head; if the cache is at
+     * capacity, the least-recently-used entry is evicted first.
+     */
+    func put(K key, V value): void {
+        let existing = this._index.get(key);
+        if (existing != null) {
+            existing.value = value;
+            existing.expiresAt = this._computeExpiry();
+            this._moveToHead(existing);
+            return;
+        }
+        if (this._size >= this._capacity) {
+            this._evict();
+        }
+        let entry = _LruEntry(key, value, this._computeExpiry());
+        this._addToHead(entry);
+        this._index.set(key, entry);
+        this._size = this._size + 1;
+    }
+
+    /**
+     * Removes the entry for `key` if present. Returns `true`
+     * when a removal happened, `false` when the key was absent.
+     */
+    func delete(K key): bool {
+        let entry = this._index.get(key);
+        if (entry == null) { return false; }
+        this._removeEntry(entry);
+        return true;
+    }
+
+    /**
+     * Reports whether `key` has a non-expired entry, without
+     * bumping it to most-recent. An expired entry is dropped
+     * lazily as a side effect.
+     */
+    func has(K key): bool {
+        let entry = this._index.get(key);
+        if (entry == null) { return false; }
+        if (this._isExpired(entry)) {
+            this._removeEntry(entry);
+            this._expirations = this._expirations + 1;
+            return false;
+        }
+        return true;
+    }
+
+    ## Number of entries currently held.
+    func length(): int { return this._size; }
+
+    ## Configured maximum entry count.
+    func capacity(): int { return this._capacity; }
+
+    ## True when the cache holds no entries.
+    func isEmpty(): bool { return this._size == 0; }
+
+    /**
+     * Discards every entry without yielding them. Counters are
+     * preserved so `stats()` still reflects lifetime activity.
+     */
+    func clear(): void {
+        this._index = ({} as dict<K, any>);
+        this._head = null;
+        this._tail = null;
+        this._size = 0;
+    }
+
+    /**
+     * Returns the keys in MRU-to-LRU order. Iteration does not
+     * affect access ordering. O(n).
+     */
+    func keys(): list<K> {
+        let out = ([] as list<K>);
+        let node = this._head;
+        while (node != null) {
+            out.append(node.key);
+            node = node.next;
+        }
+        return out;
+    }
+
+    /**
+     * Returns the values in MRU-to-LRU order. Does not affect
+     * access ordering. O(n).
+     */
+    func values(): list<V> {
+        let out = ([] as list<V>);
+        let node = this._head;
+        while (node != null) {
+            out.append(node.value);
+            node = node.next;
+        }
+        return out;
+    }
+
+    /**
+     * Returns counters {hits, misses, evictions, expirations}
+     * accumulated since construction (or the last clear was a
+     * no-op here, since stats survive clear).
+     */
+    func stats(): dict<string, int> {
+        return {
+            "hits": this._hits,
+            "misses": this._misses,
+            "evictions": this._evictions,
+            "expirations": this._expirations
+        };
+    }
+
+    /* Internal helpers below; underscore-prefixed to discourage
+     * external use. Geblang has no `private` keyword. */
+
+    func _computeExpiry(): any {
+        if (this._ttlSeconds <= 0) { return null; }
+        return time.unix() + this._ttlSeconds;
+    }
+
+    func _isExpired(any entry): bool {
+        if (entry.expiresAt == null) { return false; }
+        return time.unix() >= entry.expiresAt;
+    }
+
+    func _moveToHead(any entry): void {
+        if (entry.prev == null) { return; }
+        this._unlink(entry);
+        this._addToHead(entry);
+    }
+
+    func _addToHead(any entry): void {
+        entry.prev = null;
+        entry.next = this._head;
+        if (this._head != null) {
+            this._head.prev = entry;
+        } else {
+            this._tail = entry;
+        }
+        this._head = entry;
+    }
+
+    func _unlink(any entry): void {
+        if (entry.prev != null) {
+            entry.prev.next = entry.next;
+        } else {
+            this._head = entry.next;
+        }
+        if (entry.next != null) {
+            entry.next.prev = entry.prev;
+        } else {
+            this._tail = entry.prev;
+        }
+        entry.prev = null;
+        entry.next = null;
+    }
+
+    func _removeEntry(any entry): void {
+        this._unlink(entry);
+        this._index.delete(entry.key);
+        this._size = this._size - 1;
+    }
+
+    func _evict(): void {
+        if (this._tail == null) { return; }
+        let lru = this._tail;
+        this._removeEntry(lru);
+        this._evictions = this._evictions + 1;
+    }
+}
+
+class _LruEntry {
+    any key;
+    any value;
+    any expiresAt;
+    any prev;
+    any next;
+
+    func _LruEntry(any key, any value, any expiresAt) {
+        this.key = key;
+        this.value = value;
+        this.expiresAt = expiresAt;
+        this.prev = null;
+        this.next = null;
+    }
+}

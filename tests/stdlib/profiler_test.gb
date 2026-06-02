@@ -1,0 +1,31 @@
+/**
+ * @title profiler module
+ * @summary profiler.snapshot / delta / memory / cpu / peak work on the
+ * evaluator (geblang test) as well as the VM. Values are non-
+ * deterministic, so assert structure and that deltas are dicts.
+ */
+import test;
+import profiler;
+
+class ProfilerTest extends test.Test {
+    @test
+    func snapshotIsADict(): void {
+        let s = profiler.snapshot();
+        this.assertEquals("dict", typeof(s) as string);
+        this.assertFalse(s.isEmpty());
+    }
+
+    @test
+    func memoryAndCpuAndPeak(): void {
+        this.assertEquals("dict", typeof(profiler.memory()) as string);
+        this.assertEquals("dict", typeof(profiler.cpu()) as string);
+        this.assertEquals("dict", typeof(profiler.peak()) as string);
+    }
+
+    @test
+    func deltaFromSnapshot(): void {
+        let start = profiler.snapshot();
+        let d = profiler.delta(start);
+        this.assertEquals("dict", typeof(d) as string);
+    }
+}

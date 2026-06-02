@@ -645,6 +645,147 @@ for (let int i = 0; i < users.length(); i++) {
 }
 ```
 
+## `deque.Deque<T>` (1.6.0)
+
+A double-ended queue with amortised O(1) push / pop at both ends.
+Backed by a ring buffer that doubles in capacity when full.
+
+```gb
+import deque;
+
+let d = deque.Deque<int>();
+d.pushBack(1); d.pushBack(2); d.pushBack(3);
+d.pushFront(0);
+io.println(d.popFront());   # 0
+io.println(d.popBack());    # 3
+io.println(d.toList());     # [1, 2]
+```
+
+### Operations
+
+| Method | Returns | Complexity | Description |
+|--------|---------|------------|-------------|
+| `pushFront(value)` | `void` | Amortised O(1) | Insert at the front. |
+| `pushBack(value)` | `void` | Amortised O(1) | Insert at the back. |
+| `popFront()` | `T` | O(1) | Remove and return the front element. Throws `ValueError` on empty. |
+| `popBack()` | `T` | O(1) | Remove and return the back element. Throws `ValueError` on empty. |
+| `peekFront()` | `T` | O(1) | Return the front element without removing it. Throws `ValueError` on empty. |
+| `peekBack()` | `T` | O(1) | Return the back element without removing it. Throws `ValueError` on empty. |
+| `get(i)` | `T` | O(1) | Element at logical position `i` (0 = front; negative counts from the back). Throws `ValueError` on out-of-range. |
+| `length()` | `int` | O(1) | Number of elements currently in the deque. |
+| `isEmpty()` | `bool` | O(1) | True when the deque holds no elements. |
+| `clear()` | `void` | O(cap) | Discard every element. |
+| `toList()` | `list<T>` | O(n) | Snapshot in front-to-back order. |
+
+The deque implements the iterator protocol so it slots into
+`for` loops directly:
+
+```gb
+let d = deque.Deque<string>();
+d.pushBack("a"); d.pushBack("b"); d.pushBack("c");
+for (var s in d) {
+    io.println(s);   # a, b, c
+}
+```
+
+Mutating the deque during iteration is not supported (the cursor
+is shared with the deque); snapshot with `toList()` first if you
+need that pattern.
+
+### Common patterns
+
+**FIFO queue**: `pushBack` to enqueue, `popFront` to dequeue.
+**LIFO stack**: `pushBack` to push, `popBack` to pop.
+**Sliding window**: `pushBack` new elements, `popFront` to drop
+the oldest when the window is full.
+
+```gb
+import deque;
+import io;
+
+# Last-N rolling buffer
+let recent = deque.Deque<int>();
+let windowSize = 3;
+for (int v in [10, 20, 30, 40, 50]) {
+    recent.pushBack(v);
+    if (recent.length() > windowSize) { recent.popFront(); }
+}
+io.println(recent.toList());   # [30, 40, 50]
+```
+
+## `lrucache.LruCache<K, V>` (1.6.0)
+
+A least-recently-used cache backed by a doubly-linked list and a
+dict for O(1) `get`, `put`, and eviction. Optional time-to-live
+expires entries lazily on access.
+
+```gb
+import lrucache;
+
+let c = lrucache.LruCache<string, int>(100);   # capacity = 100
+c.put("a", 1);
+c.put("b", 2);
+io.println(c.get("a"));    # 1 - now most recent
+
+let withTtl = lrucache.LruCache<string, int>(100, 60);   # 60s expiry
+```
+
+`get(key)` returns `null` on a miss (or on a hit whose entry has
+expired). Pair with `has(key)` when you need to distinguish a
+stored-null value from an absent key, but note `has` does NOT
+bump the entry to most-recent.
+
+### Operations
+
+| Method | Returns | Complexity | Description |
+|--------|---------|------------|-------------|
+| `get(key)` | `?V` | O(1) | Returns the value and bumps to most-recent. Null on miss or expired. |
+| `put(key, value)` | `void` | O(1) | Stores value. Updates and bumps if present; evicts the LRU when at capacity. |
+| `delete(key)` | `bool` | O(1) | Removes the entry. True if a removal happened, false if absent. |
+| `has(key)` | `bool` | O(1) | Membership check. Does NOT bump LRU order. Drops expired entries lazily. |
+| `length()` | `int` | O(1) | Number of entries currently held. |
+| `capacity()` | `int` | O(1) | Configured maximum entry count. |
+| `isEmpty()` | `bool` | O(1) | True when the cache is empty. |
+| `clear()` | `void` | O(n) | Discards every entry. Stats counters are preserved. |
+| `keys()` | `list<K>` | O(n) | MRU-to-LRU order. Does not affect access ordering. |
+| `values()` | `list<V>` | O(n) | MRU-to-LRU order. Does not affect access ordering. |
+| `stats()` | `dict<string, int>` | O(1) | Lifetime counters: `{hits, misses, evictions, expirations}`. |
+
+### TTL behaviour
+
+The `ttlSeconds` constructor argument sets a uniform expiry for
+every entry. Expiry is checked lazily: a `get` on an expired
+entry counts as a miss, increments the `expirations` counter,
+and drops the entry from the cache. A `has` on an expired entry
+returns `false` and likewise drops it. No background scan walks
+the cache; entries only leave on access or on capacity-eviction.
+
+### Common patterns
+
+**Memoising an expensive call**:
+
+```gb
+import lrucache;
+
+let memo = lrucache.LruCache<string, int>(1000);
+
+func expensive(string input): int {
+    let cached = memo.get(input);
+    if (cached != null) { return cached; }
+    let result = doExpensiveWork(input);
+    memo.put(input, result);
+    return result;
+}
+```
+
+**Tuning capacity from stats**:
+
+```gb
+let s = memo.stats();
+let ratio = s["hits"] as float / ((s["hits"] + s["misses"]) as float);
+log.info("cache hit ratio: " + (ratio as string));
+```
+
 ## `priorityq.PriorityQueue<T>` (1.6.0)
 
 A binary min-heap-backed priority queue. The smallest-by-order
