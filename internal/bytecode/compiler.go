@@ -3362,6 +3362,20 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 						c.emitAt(OpGetField, expr.Token.Line, expr.Token.Column, nameIndex)
 						return nil
 					}
+					// An imported native module's function as a first-class value
+					// (math.abs without calling it). Native modules are not runtime
+					// values, so emit a dedicated push.
+					if _, imported := c.moduleAliases[object.Value]; imported {
+						canonical := c.canonicalModule(object.Value)
+						if native.IsPureBuiltin(canonical, expr.Name.Value) {
+							canonicalIdx := int64(len(c.chunk.Constants))
+							c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: canonical})
+							nameIdx := int64(len(c.chunk.Constants))
+							c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: expr.Name.Value})
+							c.emitAt(OpNativeValue, expr.Token.Line, expr.Token.Column, canonicalIdx, nameIdx)
+							return nil
+						}
+					}
 				}
 			}
 		}

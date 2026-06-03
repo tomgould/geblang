@@ -7505,11 +7505,20 @@ func (e *Evaluator) evalSelectorExpression(expr *ast.SelectorExpression, env *ru
 		return nil, fmt.Errorf("unknown static member %s.%s", class.Name, expr.Name.Value)
 	}
 	if module, ok := object.(*runtime.Module); ok {
-		value, ok := module.Exports[expr.Name.Value]
-		if !ok {
-			return nil, fmt.Errorf("module %s has no export %s", module.Name, expr.Name.Value)
+		if value, ok := module.Exports[expr.Name.Value]; ok {
+			return value, nil
 		}
-		return value, nil
+		// A native module's functions are not in Exports; expose a pure one as
+		// a first-class callable value (math.abs without calling it), matching
+		// the bytecode VM's OpNativeValue.
+		canonical := module.Canonical
+		if canonical == "" {
+			canonical = module.Name
+		}
+		if native.IsPureBuiltin(canonical, expr.Name.Value) {
+			return e.wrapBuiltinAsFunction(canonical, expr.Name.Value, e.registryBuiltin(canonical, expr.Name.Value)), nil
+		}
+		return nil, fmt.Errorf("module %s has no export %s", module.Name, expr.Name.Value)
 	}
 	if typeVal, ok := object.(runtime.Type); ok {
 		// Builtin type statics as first-class values (no import):

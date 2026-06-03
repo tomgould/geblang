@@ -11049,6 +11049,17 @@ func TestParityGlobalRedeclarationRule(t *testing.T) {
 	}
 }
 
+// A native module function can be referenced as a first-class value (with
+// the module imported) and passed as a callback, on both backends.
+func TestParityNativeModuleFnAsValue(t *testing.T) {
+	runParity(t, `import io;
+import math;
+let g = math.abs;
+io.println(g(-7));
+io.println([-3, 1, -2].map(math.abs));
+`, "7\n[3, 1, 2]\n")
+}
+
 // Grapheme cluster methods segment by user-perceived character (UAX #29):
 // an emoji ZWJ sequence and a base+combining-mark each count as one, while
 // length()/codePoints() stay code-point based. Identical on both backends.

@@ -1,0 +1,24 @@
+import test;
+import math;
+
+class NativeFnValueTest extends test.Test {
+
+    @test
+    func nativeModuleFunctionAsValue(): void {
+        /* an imported native module's function is a first-class value */
+        let g = math.abs;
+        this.assertEquals(7, g(-7));
+    }
+
+    @test
+    func nativeModuleFunctionAsCallback(): void {
+        this.assertEquals([3, 1, 2], [-3, 1, -2].map(math.abs));
+    }
+
+    @test
+    func typeStaticAsValue(): void {
+        /* type statics work bare without an import */
+        let chr = string.fromCodePoint;
+        this.assertEquals("A", chr(65));
+    }
+}

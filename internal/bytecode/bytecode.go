@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(65)
+	Version = uint16(66)
 )
 
 type Op byte
@@ -286,6 +286,10 @@ const (
 	// jumps to the chosen body. For a recv case with a binding the
 	// received value is stored in bindingSlot before the jump.
 	OpSelect
+	// OpNativeValue pushes a pure native builtin (e.g. math.abs) as a
+	// first-class callable value. Operands: canonical-name const index,
+	// function-name const index.
+	OpNativeValue
 )
 
 type Instruction struct {

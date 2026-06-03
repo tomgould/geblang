@@ -1779,6 +1779,23 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err := vm.importFrom(instruction); err != nil {
 				return err
 			}
+		case OpNativeValue:
+			if len(instruction.Operands) != 2 {
+				return vm.fatalError(instruction, "native value instruction has invalid operands")
+			}
+			canonical, err := vm.constantStringAt(instruction, instruction.Operands[0], "native value module must be string")
+			if err != nil {
+				return err
+			}
+			name, err := vm.constantStringAt(instruction, instruction.Operands[1], "native value name must be string")
+			if err != nil {
+				return err
+			}
+			v, ok := vm.builtinValue(canonical, name)
+			if !ok {
+				return vm.runtimeError(instruction, "%s.%s is not a native function", canonical, name)
+			}
+			vm.push(v)
 		case OpFormatSpec:
 			spec, err := vm.popString(instruction, "format spec must be string")
 			if err != nil {

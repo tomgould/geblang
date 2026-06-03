@@ -2,6 +2,14 @@
 
 ## 1.7.2
 
+### Native module functions are first-class values
+
+A function from an imported native module can now be referenced as a value,
+not just called - `let f = math.abs;` or `xs.map(math.abs)` after
+`import math`. This completes the first-class-function story: builtin type
+statics (`string.compare`) already worked bare, and native module functions
+now work once their module is imported.
+
 ### Grapheme clusters (user-perceived characters)
 
 Strings gain `graphemes()`, `graphemeLength()`, and `truncateGraphemes(n)`,
