@@ -391,6 +391,7 @@ type httpServerHandle struct {
 	listener net.Listener
 	done     chan error
 	pool     *concurrent.Pool
+	certPEM  []byte // served TLS certificate (PEM); nil for plain HTTP
 }
 
 type httpStreamHandle struct {
@@ -8204,6 +8205,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"close":              e.httpClose,
 			"shutdown":           e.httpShutdown,
 			"serverAddr":         e.httpServerAddr,
+			"serverCert":         e.httpServerCert,
 			"serverStats":        e.httpServerStats,
 			"stream":             httpStreamResponse,
 			"streamWrite":        e.httpStreamWrite,
@@ -16461,9 +16463,24 @@ func (e *Evaluator) httpServe(call *ast.CallExpression, args []runtime.Value) (r
 	if err != nil {
 		return nil, err
 	}
+	var serverOpts runtime.Value = runtime.Null{}
+	if len(args) >= 3 {
+		serverOpts = args[2]
+	}
+	tlsCfg, _, err := buildHTTPServerTLSConfig(serverOpts, addr.Value, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	server := &http.Server{
 		Addr:    addr.Value,
 		Handler: e.httpHandler(handler, pool),
+	}
+	if tlsCfg != nil {
+		server.TLSConfig = tlsCfg
+		if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+			return nil, err
+		}
+		return runtime.Null{}, nil
 	}
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return nil, err
@@ -16487,19 +16504,33 @@ func (e *Evaluator) httpListen(call *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
+	var serverOpts runtime.Value = runtime.Null{}
+	if len(args) >= 3 {
+		serverOpts = args[2]
+	}
+	tlsCfg, certPEM, err := buildHTTPServerTLSConfig(serverOpts, addr.Value, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	listener, err := net.Listen("tcp", addr.Value)
 	if err != nil {
 		return nil, err
 	}
 	server := &http.Server{Handler: e.httpHandler(handler, pool)}
-	handle := &httpServerHandle{server: server, listener: listener, done: make(chan error, 1), pool: pool}
+	handle := &httpServerHandle{server: server, listener: listener, done: make(chan error, 1), pool: pool, certPEM: certPEM}
 	e.httpServerMu.Lock()
 	e.nextHTTPServerID++
 	id := e.nextHTTPServerID
 	e.httpServers[id] = handle
 	e.httpServerMu.Unlock()
 	go func() {
-		err := server.Serve(listener)
+		var err error
+		if tlsCfg != nil {
+			server.TLSConfig = tlsCfg
+			err = server.ServeTLS(listener, "", "")
+		} else {
+			err = server.Serve(listener)
+		}
 		if err == http.ErrServerClosed {
 			err = nil
 		}
@@ -16605,6 +16636,20 @@ func (e *Evaluator) httpServerAddr(call *ast.CallExpression, args []runtime.Valu
 		return nil, err
 	}
 	return runtime.String{Value: handle.listener.Addr().String()}, nil
+}
+
+func (e *Evaluator) httpServerCert(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects a server handle", call.Callee.String())
+	}
+	handle, err := e.httpServerHandle(args[0])
+	if err != nil {
+		return nil, err
+	}
+	if len(handle.certPEM) == 0 {
+		return runtime.Null{}, nil
+	}
+	return runtime.String{Value: string(handle.certPEM)}, nil
 }
 
 func (e *Evaluator) httpClose(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -17153,6 +17198,16 @@ func (e *Evaluator) httpNewClient(call *ast.CallExpression, args []runtime.Value
 		} else if useEnv, ok := dictBoolField(opts, "proxyFromEnv"); ok && useEnv {
 			transport.Proxy = http.ProxyFromEnvironment
 			transportChanged = true
+		}
+		if tlsVal, ok := dictField(opts, "tls"); ok {
+			cfg, err := buildHTTPClientTLSConfig(tlsVal, call.Callee.String())
+			if err != nil {
+				return nil, err
+			}
+			if cfg != nil {
+				transport.TLSClientConfig = cfg
+				transportChanged = true
+			}
 		}
 	}
 	if transportChanged {

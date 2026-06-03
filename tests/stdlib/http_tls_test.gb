@@ -1,0 +1,46 @@
+import test;
+import http;
+
+class HttpTlsTest extends test.Test {
+
+    @test
+    func selfSignedServerRoundTrip(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            return {"status": 200, "body": "secure"};
+        }, {"tls": {"selfSigned": true}});
+
+        let url = "https://" + http.serverAddr(server) + "/";
+        let cert = http.serverCert(server);
+        this.assertNotNull(cert);
+
+        /* a client that trusts the server's cert via caCerts connects */
+        let trusting = http.newClient({"tls": {"caCerts": cert}});
+        this.assertEquals("secure", trusting.get(url)["body"] as string);
+
+        /* verify:false skips verification entirely */
+        let insecure = http.newClient({"tls": {"verify": false}});
+        this.assertEquals("secure", insecure.get(url)["body"] as string);
+
+        /* the default secure client rejects the untrusted self-signed cert */
+        this.assertThrows(func(): void {
+            let strict = http.newClient({});
+            strict.get(url);
+        });
+
+        http.close(server);
+    }
+
+    @test
+    func clientCertAndKeyMustComeTogether(): void {
+        this.assertThrows(func(): void {
+            http.newClient({"tls": {"clientCert": "not-a-pem"}});
+        });
+    }
+
+    @test
+    func invalidCaCertsRejected(): void {
+        this.assertThrows(func(): void {
+            http.newClient({"tls": {"caCerts": "not a certificate"}});
+        });
+    }
+}

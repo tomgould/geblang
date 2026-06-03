@@ -2,6 +2,19 @@
 
 ## 1.7.1
 
+### HTTP TLS: client verification control and HTTPS servers
+
+HTTP clients verify TLS certificates against the system trust store by
+default. A new `tls` option on `http.newClient` controls this: `verify`
+(set `false` to skip verification), `caCerts` (PEM certificate(s) to
+trust), `caCertsOnly` (trust only those, ignoring system roots), and
+`clientCert` / `clientKey` (PEM, for mutual TLS). HTTP servers now serve
+HTTPS when `http.serve` / `http.listen` are given a `tls` block: either
+`{cert, key}` (PEM) or `{selfSigned: true}` to generate an in-memory
+certificate for local development (with optional explicit SANs). The new
+`http.serverCert(server)` returns the served certificate as PEM so a
+client can trust a self-signed server precisely.
+
 ### Builtin type static methods no longer require an import
 
 Static methods on a builtin type - `bytes.fromString(...)`,

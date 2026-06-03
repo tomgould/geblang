@@ -4,7 +4,7 @@
 
 Import `http` for client calls and simple servers.
 
-- server: `serve`, `listen`, `close`, `shutdown`, `serverAddr`
+- server: `serve`, `listen`, `close`, `shutdown`, `serverAddr`, `serverCert`
 - client: `get`, `post`, `postJson`, `request`, `requestWithOptions`
 - streaming: `stream`, `streamWrite`, `streamFlush`, `streamClose`
 - helpers: `parseJson`, `Headers`, `Cookie`, `response`, `jsonResponse`
@@ -48,6 +48,7 @@ shape the underlying connection pool and cookie behaviour:
 | `maxIdleConns` | int                           | Go default | Idle-connection pool size (per host and total) |
 | `proxy`        | string                        | none    | Forward all requests through this HTTP/HTTPS proxy URL |
 | `proxyFromEnv` | bool                          | `false` | Honour `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` environment variables |
+| `tls`          | dict                          | none    | TLS settings (see TLS below): `verify`, `caCerts`, `caCertsOnly`, `clientCert`, `clientKey` |
 
 Per-call options accepted by `Client.request(opts)` cover retries and
 timeouts in addition to the standard `method`, `url`, `body`, and `headers`:
@@ -59,6 +60,44 @@ timeouts in addition to the standard `method`, `url`, `body`, and `headers`:
 | `retryBackoffMs`     | int       | `100`                  | Base backoff before retry 2; doubled each retry, with full jitter |
 | `retryBackoffMaxMs`  | int       | `5000`                 | Upper bound on a single sleep |
 | `retryStatuses`      | list<int> | `[502, 503, 504, 429]` | Status codes that trigger a retry |
+
+### TLS (HTTPS)
+
+Clients verify TLS certificates against the system trust store by default. The
+`tls` option customises this:
+
+| Key           | Type           | Default | Meaning |
+|---------------|----------------|---------|---------|
+| `verify`      | bool           | `true`  | Set `false` to skip certificate verification (testing / self-signed only) |
+| `caCerts`     | string / bytes | none    | PEM certificate(s) to trust in addition to the system roots |
+| `caCertsOnly` | bool           | `false` | When `true`, trust *only* `caCerts` and ignore the system roots |
+| `clientCert`  | string / bytes | none    | PEM client certificate for mutual TLS |
+| `clientKey`   | string / bytes | none    | PEM private key for `clientCert` (the two must be supplied together) |
+
+`http.serve` / `http.listen` serve HTTPS when their opts dict carries a `tls`
+block: pass `{cert, key}` (PEM) for a real certificate, or `{selfSigned: true}`
+to generate an in-memory certificate for local development. A self-signed cert
+covers `localhost`, `127.0.0.1`, `::1`, and the bind host; pass
+`selfSigned: ["host", ...]` to set the SANs explicitly. `http.serverCert(server)`
+returns the served certificate as PEM so a client can trust it precisely
+instead of disabling verification.
+
+```gb
+import http;
+import io;
+
+let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+    return {"status": 200, "body": "secure"};
+}, {"tls": {"selfSigned": true}});
+
+let url = "https://" + http.serverAddr(server) + "/";
+
+# trust the server's self-signed cert precisely (no verify:false needed)
+let client = http.newClient({"tls": {"caCerts": http.serverCert(server)}});
+io.println(client.get(url)["body"]);   # secure
+
+http.close(server);
+```
 
 ### Cookie jars
 

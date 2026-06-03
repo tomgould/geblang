@@ -5165,6 +5165,26 @@ io.println(typeof(c));
 // TestParityHTTPClientNewOptions verifies http.newClient accepts the
 // cookieJar (instance and auto), keepAlive, maxIdleConns, proxy, and
 // proxyFromEnv options on both backends.
+// TestParityHTTPServerTLS exercises the HTTPS surface end to end on both
+// backends: a self-signed server, a client trusting it via caCerts, an
+// insecure client, and the default client rejecting the untrusted cert.
+func TestParityHTTPServerTLS(t *testing.T) {
+	runParityStateful(t, `
+import http;
+import io;
+let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+    return {"status": 200, "body": "secure"};
+}, {"tls": {"selfSigned": true}});
+let url = "https://" + http.serverAddr(server) + "/";
+let cert = http.serverCert(server);
+io.println(cert != null);
+io.println(http.newClient({"tls": {"caCerts": cert}}).get(url)["body"] as string);
+io.println(http.newClient({"tls": {"verify": false}}).get(url)["body"] as string);
+try { http.newClient({}).get(url); io.println("strict-ok"); } catch (Error e) { io.println("strict-rejected"); }
+http.close(server);
+`, "true\nsecure\nsecure\nstrict-rejected\n")
+}
+
 func TestParityHTTPClientNewOptions(t *testing.T) {
 	runParityStateful(t, `
 import http;
