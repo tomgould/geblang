@@ -2,7 +2,19 @@
 
 ## 1.7.2
 
+### Deep copies
+
+- New `clone.deep(value)` returns a deep copy of any value - containers and
+  class instances are cloned recursively, primitives pass through, and
+  resource handles are left as-is. Self-referential lists and object cycles
+  are handled.
+- Lists, dicts, and sets gain a `deepCopy()` method, the deep counterpart of
+  the shallow `copy()`.
+
 ### Fixes
+
+- `dict.copy()` now preserves insertion order on both backends (the
+  tree-walking path previously returned the entries in an arbitrary order).
 
 - Concurrent field access on an object shared across async tasks no longer
   crashes the interpreter. A per-instance guard makes ordinary field reads

@@ -8,7 +8,7 @@ package native
 var NativeModuleNames = map[string]struct{}{
 	"amqp": {}, "archive": {}, "args": {}, "async": {}, "binary": {},
 	"async.atomic": {}, "async.channel": {}, "async.sync": {},
-	"bytes": {}, "cli": {}, "cli.widgets": {}, "collections": {},
+	"bytes": {}, "clone": {}, "cli": {}, "cli.widgets": {}, "collections": {},
 	"compress": {}, "cron": {}, "crypt": {}, "csv": {}, "datetime": {}, "db": {},
 	"dotenv": {}, "encoding": {}, "errors": {}, "ext": {}, "ffinative": {},
 	"freeze": {}, "http": {}, "io": {}, "json": {}, "kafka": {}, "log": {},

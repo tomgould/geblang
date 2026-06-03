@@ -12,6 +12,7 @@ type cloneState struct {
 	classes   map[*Class]*Class
 	ifaces    map[*Interface]*Interface
 	instances map[*Instance]*Instance
+	lists     map[*List]*List
 }
 
 func CloneEnvironment(env *Environment) *Environment {
@@ -36,6 +37,7 @@ func newCloneState() *cloneState {
 		classes:   map[*Class]*Class{},
 		ifaces:    map[*Interface]*Interface{},
 		instances: map[*Instance]*Instance{},
+		lists:     map[*List]*List{},
 	}
 }
 
@@ -74,17 +76,32 @@ func (s *cloneState) cloneValue(value Value) Value {
 	case Bytes:
 		return Bytes{Value: append([]byte(nil), value.Value...)}
 	case *List:
-		elements := make([]Value, len(value.Elements))
-		for i, element := range value.Elements {
-			elements[i] = s.cloneValue(element)
+		if cloned, ok := s.lists[value]; ok {
+			return cloned
 		}
-		return &List{Elements: elements}
+		cloned := &List{Elements: make([]Value, len(value.Elements)), ElementTypes: append([]string(nil), value.ElementTypes...)}
+		s.lists[value] = cloned
+		for i, element := range value.Elements {
+			cloned.Elements[i] = s.cloneValue(element)
+		}
+		return cloned
 	case Dict:
 		entries := make(map[string]DictEntry, len(value.Entries))
 		for key, entry := range value.Entries {
 			entries[key] = DictEntry{Key: s.cloneValue(entry.Key), Value: s.cloneValue(entry.Value)}
 		}
-		return Dict{Entries: entries}
+		var order *[]string
+		if value.Order != nil {
+			o := append([]string(nil), *value.Order...)
+			order = &o
+		}
+		return Dict{Entries: entries, Order: order, ElementTypes: append([]string(nil), value.ElementTypes...)}
+	case Set:
+		elements := make(map[string]SetEntry, len(value.Elements))
+		for key, entry := range value.Elements {
+			elements[key] = SetEntry{Value: s.cloneValue(entry.Value)}
+		}
+		return Set{Elements: elements, ElementTypes: append([]string(nil), value.ElementTypes...)}
 	case Range:
 		return Range{
 			Start:     new(big.Int).Set(value.Start),

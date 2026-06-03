@@ -26,7 +26,7 @@ var PrimitiveMethods = map[string][]string{
 	},
 	"list": {
 		"all", "any", "append", "averageBy", "binarySearch", "binarySearchBy", "bottomK", "chunk",
-		"clear", "concat", "contains", "containsBy", "copy", "count", "difference",
+		"clear", "concat", "contains", "containsBy", "copy", "deepCopy", "count", "difference",
 		"differenceBy", "extend", "filter", "find", "findLast", "first", "flatten",
 		"frequencies", "get", "groupBy", "indexBy", "indexOf", "insert",
 		"intersection", "intersectionBy", "isEmpty", "join", "last", "length",
@@ -38,11 +38,11 @@ var PrimitiveMethods = map[string][]string{
 	},
 	"dict": {
 		"bfs", "clear", "contains", "copy", "delete", "dfs", "entries", "get",
-		"hasKey", "insert", "isEmpty", "items", "keys", "length", "merge",
+		"deepCopy", "hasKey", "insert", "isEmpty", "items", "keys", "length", "merge",
 		"remove", "set", "shortestPath", "topologicalSort", "values",
 	},
 	"set": {
-		"add", "contains", "copy", "difference", "intersection", "isEmpty",
+		"add", "contains", "copy", "deepCopy", "difference", "intersection", "isEmpty",
 		"length", "remove", "toList", "union",
 	},
 	"bytes": {

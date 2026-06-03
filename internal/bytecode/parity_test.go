@@ -11087,6 +11087,41 @@ io.println(total);
 `, "60\n")
 }
 
+// clone.deep / deepCopy() produce independent deep copies, and dict.copy()
+// preserves insertion order - identically on both backends.
+func TestParityDeepCopy(t *testing.T) {
+	runParity(t, `import io;
+import clone;
+let a = [[1], [2]];
+let b = clone.deep(a);
+b[0].append(9);
+io.println(a);
+io.println(b);
+let c = a.deepCopy();
+c[0].append(7);
+io.println(a);
+io.println(c);
+let d = {"z": 1, "a": 2, "m": 3};
+io.println(d.copy());
+io.println(d.deepCopy());
+`, "[[1], [2]]\n[[1, 9], [2]]\n[[1], [2]]\n[[1, 7], [2]]\n{\"z\": 1, \"a\": 2, \"m\": 3}\n{\"z\": 1, \"a\": 2, \"m\": 3}\n")
+}
+
+// clone.deep deep-copies user objects: mutating the copy leaves the original
+// untouched, on both backends.
+func TestParityCloneDeepObject(t *testing.T) {
+	runParity(t, `import io;
+import clone;
+class Box { int v; list<int> xs; func Box() { this.v = 1; this.xs = [1, 2]; } }
+let b = Box();
+let c = clone.deep(b);
+c.v = 99;
+c.xs.append(3);
+io.println("${b.v} ${b.xs}");
+io.println("${c.v} ${c.xs}");
+`, "1 [1, 2]\n99 [1, 2, 3]\n")
+}
+
 // New string ergonomics methods behave identically on both backends.
 func TestParityStringErgonomics(t *testing.T) {
 	runParity(t, `import io;

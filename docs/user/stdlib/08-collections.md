@@ -152,6 +152,7 @@ io.println("geblang"[::-1]); # gnalbeg
 | `removeAt(index)` | `list<T>` | New list with the element at `index` removed |
 | `remove(value)` | `list<T>` | New list with the first occurrence of `value` removed. Returns an equivalent list if `value` is absent |
 | `copy()` | `list<T>` | New list with the same elements (shallow copy) |
+| `deepCopy()` | `list<T>` | New list with nested containers and objects cloned recursively |
 | `reverse()` | `list<T>` | New list with elements in reverse order |
 | `reversed()` | `list<T>` | Alias for `reverse` |
 
@@ -423,7 +424,8 @@ Dictionaries are mutable, key-value stores.  Keys must be primitive values
 | `values()` | `list<V>` | All values as a list |
 | `items()` | `list<list<any>>` | All entries as `[key, value]` pairs |
 | `entries()` | `list<list<any>>` | Alias for `items` |
-| `copy()` | `dict<K, V>` | New dict with the same entries (shallow copy) |
+| `copy()` | `dict<K, V>` | New dict with the same entries (shallow copy; preserves insertion order) |
+| `deepCopy()` | `dict<K, V>` | New dict with nested containers and objects cloned recursively |
 
 ```gb
 import io;
@@ -495,6 +497,7 @@ equality for membership.
 | `isEmpty()` | `bool` | `true` when the set has no elements |
 | `contains(value)` | `bool` | `true` when `value` is a member |
 | `copy()` | `set<T>` | New set with the same elements (shallow copy) |
+| `deepCopy()` | `set<T>` | New set with nested containers and objects cloned recursively |
 | `toList()` | `list<T>` | Members as a list |
 
 ```gb

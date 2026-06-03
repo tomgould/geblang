@@ -121,6 +121,41 @@ io.println(next.toString());   # 2026-06-17 12:00:00
 
 ---
 
+## clone - Deep Copies
+
+Import: `import clone;`
+
+`.copy()` is shallow: the new container shares the nested containers and
+objects of the original, so mutating something nested shows through both.
+When you need a fully independent copy, use a deep copy.
+
+| Function / method | Returns | Description |
+|-------------------|---------|-------------|
+| `clone.deep(v)` | same type | Deep copy of any value. Containers and class instances are cloned recursively; primitives are returned unchanged; resource handles (sockets, files, DB connections) are passed through, not duplicated. |
+| `xs.deepCopy()` | same type | Deep-copy method on lists, dicts, and sets - the deep counterpart of `.copy()`. |
+
+```geblang
+import clone;
+
+let a = [[1], [2]];
+let b = a.deepCopy();
+b[0].append(9);
+io.println(a);   # [[1], [2]]   (unchanged)
+io.println(b);   # [[1, 9], [2]]
+
+class Box { int v; func Box() { this.v = 1; } }
+let original = Box();
+let copy = clone.deep(original);
+copy.v = 99;
+io.println(original.v);   # 1   (independent)
+```
+
+`clone.deep` accepts any value, including user-defined objects and nested
+graphs (self-referential lists and object cycles are handled). It works
+identically on the evaluator and the VM.
+
+---
+
 ## result - Explicit Success/Failure Values
 
 Import: `import result;`

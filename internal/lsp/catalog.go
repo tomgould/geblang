@@ -293,6 +293,7 @@ var primitiveMethods = map[string]map[string]functionDoc{
 		"first":          fn([]string{}, "any", "First element or null."),
 		"last":           fn([]string{}, "any", "Last element or null."),
 		"copy":           fn([]string{}, "list<any>", "Shallow copy."),
+		"deepCopy":       fn([]string{}, "list<any>", "Deep copy (nested containers and objects cloned recursively)."),
 		"toList":         fn([]string{}, "list<any>", "Identity (returns the list)."),
 		"insert":         fn([]string{"int index", "any value"}, "list<any>", "Returns a new list with value inserted at index."),
 		"removeAt":       fn([]string{"int index"}, "list<any>", "Returns a new list with the element at index removed."),
@@ -350,6 +351,7 @@ var primitiveMethods = map[string]map[string]functionDoc{
 		"entries":         fn([]string{}, "list<list<any>>", "Alias for items."),
 		"merge":           fn([]string{"dict<any, any> other"}, "dict<any, any>", "Right-biased merge returning a new dict."),
 		"copy":            fn([]string{}, "dict<any, any>", "Shallow copy."),
+		"deepCopy":        fn([]string{}, "dict<any, any>", "Deep copy (nested containers and objects cloned recursively)."),
 		"bfs":             fn([]string{"any start"}, "list<any>", "Breadth-first traversal treating the dict as an adjacency map (keys -> list of neighbours)."),
 		"dfs":             fn([]string{"any start"}, "list<any>", "Depth-first traversal of the adjacency map."),
 		"shortestPath":    fn([]string{"any from", "any to"}, "list<any>", "Shortest path between two nodes in the adjacency map, or empty."),
@@ -365,6 +367,7 @@ var primitiveMethods = map[string]map[string]functionDoc{
 		"intersection": fn([]string{"set<any> other"}, "set<any>", "Intersection."),
 		"difference":   fn([]string{"set<any> other"}, "set<any>", "Asymmetric difference."),
 		"copy":         fn([]string{}, "set<any>", "Shallow copy."),
+		"deepCopy":     fn([]string{}, "set<any>", "Deep copy (nested containers and objects cloned recursively)."),
 		"toList":       fn([]string{}, "list<any>", "Materialise as a list."),
 	},
 	"range": {
@@ -1177,6 +1180,9 @@ var stdlibCatalog = map[string]moduleDoc{
 		"shallow":  fn([]string{"any value"}, "any", "Shallow-freezes a value (top-level fields become read-only)."),
 		"deep":     fn([]string{"any value"}, "any", "Deep-freezes a value (transitively read-only)."),
 		"isFrozen": fn([]string{"any value"}, "bool", "Reports whether a value is frozen."),
+	}},
+	"clone": {functions: map[string]functionDoc{
+		"deep": fn([]string{"any value"}, "any", "Returns a deep copy of any value (containers and objects cloned recursively; resource handles passed through)."),
 	}},
 	"markdown": {functions: map[string]functionDoc{
 		"parse":      fn([]string{"string source"}, "list<dict<string, any>>", "Parses GFM Markdown into block-node dicts."),

@@ -132,6 +132,7 @@ func registerAllBuiltins(r *Registry) {
 	registerArgs(r)
 	registerErrors(r)
 	registerFreeze(r)
+	registerClone(r)
 	registerProfiler(r)
 }
 

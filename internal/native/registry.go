@@ -315,4 +315,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 	"freeze": {
 		"shallow": {}, "deep": {}, "isFrozen": {},
 	},
+	"clone": {
+		"deep": {},
+	},
 }

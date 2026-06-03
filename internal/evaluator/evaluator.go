@@ -8542,6 +8542,9 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"deep":     e.registryBuiltin("freeze", "deep"),
 			"isFrozen": e.registryBuiltin("freeze", "isFrozen"),
 		},
+		"clone": {
+			"deep": e.registryBuiltin("clone", "deep"),
+		},
 	}
 }
 
@@ -21960,11 +21963,16 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.copy expects no arguments")
 			}
-			entries := make(map[string]runtime.DictEntry, len(value.Entries))
-			for k, v := range value.Entries {
-				entries[k] = v
+			copied := runtime.NewDict()
+			for _, k := range value.OrderedKeys() {
+				copied.PutEntry(k, value.Entries[k])
 			}
-			return runtime.Dict{Entries: entries}, nil
+			return copied, nil
+		case "deepCopy":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("dict.deepCopy expects no arguments")
+			}
+			return runtime.CloneValue(value), nil
 		case "keys":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.keys expects no arguments")
@@ -22236,6 +22244,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, fmt.Errorf("set.copy expects no arguments")
 			}
 			return runtime.Set{Elements: cloneSetEntries(value.Elements)}, nil
+		case "deepCopy":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("set.deepCopy expects no arguments")
+			}
+			return runtime.CloneValue(value), nil
 		case "length":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("set.length expects no arguments")
@@ -22324,6 +22337,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			elems := make([]runtime.Value, len(value.Elements))
 			copy(elems, value.Elements)
 			return &runtime.List{Elements: elems}, nil
+		case "deepCopy":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("list.deepCopy expects no arguments")
+			}
+			return runtime.CloneValue(value), nil
 		case "length":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.length expects no arguments")

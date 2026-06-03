@@ -14393,6 +14393,16 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		default:
 			return nil, fmt.Errorf("%s has no method copy", receiver.TypeName())
 		}
+	case "deepcopy":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("%s.deepCopy expects no arguments", receiver.TypeName())
+		}
+		switch receiver.(type) {
+		case *runtime.List, runtime.Dict, runtime.Set:
+			return runtime.CloneValue(receiver), nil
+		default:
+			return nil, fmt.Errorf("%s has no method deepCopy", receiver.TypeName())
+		}
 	case "set":
 		if len(args) != 2 {
 			return nil, fmt.Errorf("set expects two arguments")

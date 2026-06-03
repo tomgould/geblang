@@ -1,0 +1,72 @@
+/**
+ * @title Deep copy
+ * @summary clone.deep(x) and the deepCopy() methods produce fully
+ * independent copies of containers and user objects; dict.copy()
+ * preserves insertion order.
+ */
+import test;
+import clone;
+
+class Box {
+    int v;
+    list<int> xs;
+    func Box() {
+        this.v = 1;
+        this.xs = [1, 2];
+    }
+}
+
+class DeepCopyTest extends test.Test {
+    @test
+    func deepCopyMethodIsIndependent(): void {
+        let a = [[1], [2]];
+        let b = a.deepCopy();
+        b.get(0).append(9);
+        this.assertEquals([[1], [2]], a);
+        this.assertEquals([[1, 9], [2]], b);
+    }
+
+    @test
+    func shallowCopyStillShares(): void {
+        let a = [[1], [2]];
+        let b = a.copy();
+        b.get(0).append(9);
+        /* shallow copy shares the nested lists */
+        this.assertEquals([[1, 9], [2]], a);
+        this.assertEquals([[1, 9], [2]], b);
+    }
+
+    @test
+    func cloneDeepOnDict(): void {
+        let d = {"a": [1, 2], "b": 3};
+        let e = clone.deep(d);
+        e["a"].append(9);
+        this.assertEquals([1, 2], d["a"]);
+        this.assertEquals([1, 2, 9], e["a"]);
+    }
+
+    @test
+    func cloneDeepOnObject(): void {
+        let b = Box();
+        let c = clone.deep(b);
+        c.v = 99;
+        c.xs.append(3);
+        this.assertEquals(1, b.v);
+        this.assertEquals([1, 2], b.xs);
+        this.assertEquals(99, c.v);
+        this.assertEquals([1, 2, 3], c.xs);
+    }
+
+    @test
+    func dictCopyPreservesOrder(): void {
+        let d = {"z": 1, "a": 2, "m": 3};
+        this.assertEquals(["z", "a", "m"], d.copy().keys());
+        this.assertEquals(["z", "a", "m"], d.deepCopy().keys());
+    }
+
+    @test
+    func cloneDeepOnPrimitiveIsValue(): void {
+        this.assertEquals(7, clone.deep(7));
+        this.assertEquals("hi", clone.deep("hi"));
+    }
+}
