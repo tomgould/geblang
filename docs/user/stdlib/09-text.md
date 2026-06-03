@@ -15,6 +15,9 @@ value - the original is unchanged.
 | `chars()` | `list<string>` | All characters as a list |
 | `codePointAt(index)` | `int` | Unicode code point at `index`, or `null` if out of range (the "ord" of one character) |
 | `codePoints()` | `list<int>` | All Unicode code points as a list |
+| `graphemes()` | `list<string>` | Grapheme clusters (user-perceived characters) |
+| `graphemeLength()` | `int` | Number of grapheme clusters |
+| `truncateGraphemes(n)` | `string` | First `n` grapheme clusters |
 
 ```gb
 import io;
@@ -26,6 +29,29 @@ io.println(s.get(0));       # h
 io.println(s.get(-1));      # o
 io.println(s.chars());      # [h, e, l, l, o]
 io.println(s.codePointAt(0)); # 104
+```
+
+### Graphemes vs code points
+
+`length()`, `chars()`, and `codePoints()` work in Unicode **code points**.
+A user-perceived character (a "grapheme cluster") can be several code points:
+a base letter plus combining marks, or an emoji built from a ZWJ sequence.
+Use the `graphemes` methods (UAX #29 segmentation) when you mean
+what the reader sees, for example display width, truncation, or cursor steps.
+
+```gb
+import io;
+
+let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";  # man+ZWJ+woman+ZWJ+girl
+io.println(family.length());          # 5  (code points)
+io.println(family.graphemeLength());  # 1  (one perceived character)
+
+let accented = "e\u{301}llo";          # e + combining acute = "éllo"
+io.println(accented.length());         # 5
+io.println(accented.graphemes());      # [é, l, l, o]
+
+io.println("héllo wörld".truncateGraphemes(5));  # héllo
+io.println("geblang".graphemes().reverse().join("")); # reverse by grapheme
 ```
 
 ### Searching

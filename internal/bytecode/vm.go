@@ -13725,6 +13725,42 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			elements[i] = runtime.NewInt64(int64(r))
 		}
 		return &runtime.List{Elements: elements}, nil
+	case "graphemes":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("string.graphemes expects no arguments")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method graphemes", receiver.TypeName())
+		}
+		clusters := native.Graphemes(value.Value)
+		elements := make([]runtime.Value, len(clusters))
+		for i, c := range clusters {
+			elements[i] = runtime.String{Value: c}
+		}
+		return &runtime.List{Elements: elements}, nil
+	case "graphemelength":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("string.graphemeLength expects no arguments")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method graphemeLength", receiver.TypeName())
+		}
+		return runtime.NewInt64(int64(native.GraphemeCount(value.Value))), nil
+	case "truncategraphemes":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("string.truncateGraphemes expects one argument")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method truncateGraphemes", receiver.TypeName())
+		}
+		n, err := indexInt(args[0])
+		if err != nil {
+			return nil, fmt.Errorf("string.truncateGraphemes: %v", err)
+		}
+		return runtime.String{Value: native.TruncateGraphemes(value.Value, n)}, nil
 	case "codepointat":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("string.codePointAt expects one argument")

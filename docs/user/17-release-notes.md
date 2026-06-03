@@ -2,6 +2,15 @@
 
 ## 1.7.2
 
+### Grapheme clusters (user-perceived characters)
+
+Strings gain `graphemes()`, `graphemeLength()`, and `truncateGraphemes(n)`,
+which work in Unicode grapheme clusters (UAX #29) rather than code points.
+A combining sequence (`"e\u{301}"`) or an emoji ZWJ sequence (a family emoji)
+counts as one grapheme even though it is several code points, so these are
+the right tools for display width, truncation, and cursor movement.
+`length()` / `chars()` / `codePoints()` remain code-point based.
+
 ### Clearer sorting and searching
 
 Sort callbacks are now consistent and more flexible. `xs.sort(cb)` /

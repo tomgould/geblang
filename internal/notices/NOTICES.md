@@ -24,6 +24,7 @@ Expat-style MIT license:
   v0.0.0-20240606120523-5a60cdf6a761 - Copyright (c) 2020 Jack Christensen.
 - `github.com/jackc/pgx/v5` v5.9.2 - Copyright (c) 2013-2021 Jack Christensen.
 - `github.com/jackc/puddle/v2` v2.2.2 - Copyright (c) 2018 Jack Christensen.
+- `github.com/rivo/uniseg` v0.4.7 - Copyright (c) 2019 Oliver Kuederle.
 - `github.com/segmentio/kafka-go` v0.4.51 - Copyright (c) 2017 Segment.
 - `github.com/yuin/goldmark` v1.8.2 - Copyright (c) 2019 Yusuke Inuzuka.
 - `github.com/yuin/goldmark-emoji` v1.0.6 - Copyright (c) 2020 Yusuke Inuzuka.

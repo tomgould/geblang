@@ -14,6 +14,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pkg/sftp v1.13.10
 	github.com/rabbitmq/amqp091-go v1.11.0
+	github.com/rivo/uniseg v0.4.7
 	github.com/segmentio/kafka-go v0.4.51
 	github.com/yuin/goldmark v1.8.2
 	github.com/yuin/goldmark-emoji v1.0.6

@@ -11049,6 +11049,20 @@ func TestParityGlobalRedeclarationRule(t *testing.T) {
 	}
 }
 
+// Grapheme cluster methods segment by user-perceived character (UAX #29):
+// an emoji ZWJ sequence and a base+combining-mark each count as one, while
+// length()/codePoints() stay code-point based. Identical on both backends.
+func TestParityGraphemes(t *testing.T) {
+	runParity(t, `import io;
+let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+io.println(family.length());
+io.println(family.graphemeLength());
+io.println("e\u{301}llo".graphemeLength());
+io.println("abcd".truncateGraphemes(2));
+io.println("xy".graphemes());
+`, "5\n1\n4\nab\n[\"x\", \"y\"]\n")
+}
+
 // Sorting/searching ergonomics: dual-mode sort callbacks, sort(string.compare),
 // sortBy descending, binarySearchBy, type statics as values, and slicing -
 // identical on both backends.

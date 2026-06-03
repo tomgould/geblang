@@ -1,0 +1,35 @@
+import test;
+
+class GraphemesTest extends test.Test {
+
+    @test
+    func emojiZwjSequenceIsOneGrapheme(): void {
+        /* man + ZWJ + woman + ZWJ + girl = one perceived character */
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        this.assertEquals(5, family.length());          /* code points */
+        this.assertEquals(1, family.graphemeLength());  /* grapheme clusters */
+        this.assertEquals(1, family.graphemes().length());
+    }
+
+    @test
+    func combiningMarkGroupsWithBase(): void {
+        let s = "e\u{301}llo";   /* e + combining acute -> "éllo" */
+        this.assertEquals(5, s.length());
+        this.assertEquals(4, s.graphemeLength());
+        this.assertEquals(4, s.graphemes().length());
+    }
+
+    @test
+    func truncateByGrapheme(): void {
+        this.assertEquals("ab", "abcdef".truncateGraphemes(2));
+        this.assertEquals("héllo", "héllo wörld".truncateGraphemes(5));
+        this.assertEquals("", "anything".truncateGraphemes(0));
+    }
+
+    @test
+    func graphemesOfAscii(): void {
+        this.assertEquals(["a", "b", "c"], "abc".graphemes());
+        this.assertEquals([], "".graphemes());
+        this.assertEquals(0, "".graphemeLength());
+    }
+}

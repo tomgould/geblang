@@ -23602,6 +23602,30 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				elements[i] = runtime.NewInt64(int64(r))
 			}
 			return &runtime.List{Elements: elements}, nil
+		case "graphemes":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("string.graphemes expects no arguments")
+			}
+			clusters := native.Graphemes(value.Value)
+			elements := make([]runtime.Value, len(clusters))
+			for i, c := range clusters {
+				elements[i] = runtime.String{Value: c}
+			}
+			return &runtime.List{Elements: elements}, nil
+		case "graphemeLength":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("string.graphemeLength expects no arguments")
+			}
+			return runtime.NewInt64(int64(native.GraphemeCount(value.Value))), nil
+		case "truncateGraphemes":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("string.truncateGraphemes expects one argument")
+			}
+			n, err := indexInt(args[0])
+			if err != nil {
+				return nil, fmt.Errorf("string.truncateGraphemes: %v", err)
+			}
+			return runtime.String{Value: native.TruncateGraphemes(value.Value, n)}, nil
 		case "codePointAt":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("string.codePointAt expects one argument")
