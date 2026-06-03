@@ -2,6 +2,15 @@
 
 ## 1.7.2
 
+### Time ergonomics
+
+- `time.humanize(ms)` renders a millisecond duration as a compact string:
+  `45ms`, `1.5s`, `3m 4s`, `2h 5m`, `1d 1h` (largest one or two units).
+- New `time.stopwatch` module with a monotonic `Stopwatch` class
+  (`elapsed`, `elapsedFloat`, `lap`, `reset`) for lap timing without
+  juggling timestamps. Backed by `time.monotonic()`, so it is immune to
+  wall-clock jumps.
+
 ### Datetime ergonomics
 
 - `Instant` gained direct part accessors so you no longer index a parts dict:

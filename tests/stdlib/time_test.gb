@@ -107,4 +107,33 @@ class TimeTest extends test.Test {
         this.assertTrue(b >= a);
         this.assertTrue(b - a >= 10);
     }
+
+    @test
+    func humanizeSubSecond(): void {
+        this.assertEquals("45ms", time.humanize(45));
+        this.assertEquals("999ms", time.humanize(999));
+        this.assertEquals("0ms", time.humanize(0));
+    }
+
+    @test
+    func humanizeSeconds(): void {
+        this.assertEquals("1s", time.humanize(1000));
+        this.assertEquals("1.5s", time.humanize(1500));
+        this.assertEquals("1.2s", time.humanize(1230));
+        this.assertEquals("45s", time.humanize(45000));
+    }
+
+    @test
+    func humanizeMinutesAndUp(): void {
+        this.assertEquals("1m", time.humanize(59999));
+        this.assertEquals("3m 4s", time.humanize(184000));
+        this.assertEquals("2h 5m", time.humanize(7501000));
+        this.assertEquals("1d 1h", time.humanize(90061000));
+        this.assertEquals("1h", time.humanize(3600000));
+    }
+
+    @test
+    func humanizeNegative(): void {
+        this.assertEquals("-1.5s", time.humanize(-1500));
+    }
 }

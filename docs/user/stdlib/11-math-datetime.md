@@ -632,6 +632,7 @@ a block, throttle a loop, or pause execution synchronously. Reach for
 | `time.monotonic()` | `int` | Monotonic milliseconds since process start; never decreases (1.7.0). The correct source for measuring durations, timeouts, and TTLs - immune to wall-clock jumps. |
 | `time.elapsed(start)` | `int` | Convenience for `time.now() - start`. Returns milliseconds elapsed since the `start` value (also in ms). |
 | `time.sleep(ms)` | `null` | Pauses the current thread for `ms` milliseconds. Use `async.sleep` instead inside async tasks where you want cooperative scheduling. |
+| `time.humanize(ms)` | `string` | Compact human-readable duration: `45ms`, `1.5s`, `3m 4s`, `2h 5m`, `1d 1h`. Shows the largest one or two units. |
 
 ```gb
 import time;
@@ -639,21 +640,33 @@ import io;
 
 let start = time.now();
 # ... work ...
-io.println("took " + (time.elapsed(start) as string) + " ms");
+io.println("took " + time.humanize(time.elapsed(start)));
 ```
 
-A stopwatch is just two values:
+### Stopwatch
+
+For lap timing, the `time.stopwatch` module provides a monotonic
+`Stopwatch` so you don't have to juggle timestamps by hand. It is backed
+by `time.monotonic()`, so it is immune to wall-clock jumps.
 
 ```gb
-let started = time.now();
-let lap     = started;
+import time.stopwatch as sw;
+import io;
+
+let s = sw.Stopwatch();
 # ... work block A ...
-io.println("lap A: " + (time.elapsed(lap) as string) + " ms");
-lap = time.now();
+io.println("lap A: " + time.humanize(s.lap()));
 # ... work block B ...
-io.println("lap B: " + (time.elapsed(lap) as string) + " ms");
-io.println("total: " + (time.elapsed(started) as string) + " ms");
+io.println("lap B: " + time.humanize(s.lap()));
+io.println("total: " + time.humanize(s.elapsed()));
 ```
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `elapsed()` | `int` | Milliseconds since creation or the last `reset()`. |
+| `elapsedFloat()` | `float` | Fractional seconds since creation or the last `reset()`. |
+| `lap()` | `int` | Milliseconds since the previous lap (or creation); advances the lap marker. |
+| `reset()` | `void` | Restarts the stopwatch from zero. |
 
 ### Unix time precision
 

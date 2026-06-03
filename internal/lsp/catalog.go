@@ -1503,6 +1503,7 @@ var stdlibCatalog = map[string]moduleDoc{
 		"unixFloat":    fn([]string{}, "float", "Fractional seconds since Unix epoch (PHP microtime(true) / Python time.time())."),
 		"unixDecimal":  fn([]string{}, "decimal", "Lossless seconds since Unix epoch with full nanosecond precision."),
 		"elapsedFloat": fn([]string{"float start"}, "float", "Fractional seconds elapsed since start (from time.unixFloat)."),
+		"humanize":     fn([]string{"int milliseconds"}, "string", "Compact human-readable duration (e.g. \"45ms\", \"1.5s\", \"3m 4s\", \"2h 5m\")."),
 	}},
 	"toml": {functions: map[string]functionDoc{
 		"parse":            fn([]string{"string text"}, "any", "Parses TOML into a dict/list value; throws on error."),

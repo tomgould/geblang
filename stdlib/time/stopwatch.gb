@@ -1,0 +1,56 @@
+module time.stopwatch;
+
+import time;
+
+## A monotonic stopwatch for measuring elapsed durations. Backed by
+## `time.monotonic()`, so it is immune to wall-clock jumps and is the
+## correct tool for timing work, laps, and timeouts.
+##
+## ```gb
+## import time.stopwatch as sw;
+## import io;
+##
+## let s = sw.Stopwatch();
+## # ... work block A ...
+## io.println("lap A: " + (s.lap() as string) + " ms");
+## # ... work block B ...
+## io.println("lap B: " + (s.lap() as string) + " ms");
+## io.println("total: " + (s.elapsed() as string) + " ms");
+## ```
+export class Stopwatch {
+    int startMs;
+    int lapMs;
+
+    func Stopwatch() {
+        let m = time.monotonic();
+        this.startMs = m;
+        this.lapMs = m;
+    }
+
+    ## Milliseconds since creation or the last `reset()`.
+    func elapsed(): int {
+        return time.monotonic() - this.startMs;
+    }
+
+    ## Fractional seconds since creation or the last `reset()`.
+    func elapsedFloat(): float {
+        let delta = time.monotonic() - this.startMs;
+        return (delta as float) / 1000.0f;
+    }
+
+    ## Milliseconds since the previous lap (or creation), advancing the
+    ## lap marker. Call repeatedly to time successive segments.
+    func lap(): int {
+        let now = time.monotonic();
+        let delta = now - this.lapMs;
+        this.lapMs = now;
+        return delta;
+    }
+
+    ## Restarts the stopwatch from zero.
+    func reset(): void {
+        let m = time.monotonic();
+        this.startMs = m;
+        this.lapMs = m;
+    }
+}

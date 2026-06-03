@@ -2196,6 +2196,61 @@ func registerTime(r *Registry) {
 		current := float64(now.Unix()) + float64(now.Nanosecond())/1e9
 		return runtime.Float{Value: current - start}, nil
 	})
+	r.Register("time", "humanize", func(args []runtime.Value) (runtime.Value, error) {
+		ms, ok := singleInt64Arg(args, "time.humanize")
+		if !ok {
+			return nil, fmt.Errorf("time.humanize expects one int argument (milliseconds)")
+		}
+		return runtime.String{Value: humanizeMillis(ms)}, nil
+	})
+}
+
+func singleInt64Arg(args []runtime.Value, label string) (int64, bool) {
+	if len(args) != 1 {
+		return 0, false
+	}
+	return AsInt64(args[0])
+}
+
+// humanizeMillis renders a millisecond duration as a compact 1-2 unit string
+// (e.g. "45ms", "1.5s", "3m 4s", "2h 5m", "1d 1h"). Integer math throughout
+// so output is deterministic across backends.
+func humanizeMillis(ms int64) string {
+	sign := ""
+	if ms < 0 {
+		sign = "-"
+		ms = -ms
+	}
+	if ms < 1000 {
+		return fmt.Sprintf("%s%dms", sign, ms)
+	}
+	tenths := (ms + 50) / 100
+	if tenths < 600 {
+		whole, frac := tenths/10, tenths%10
+		if frac == 0 {
+			return fmt.Sprintf("%s%ds", sign, whole)
+		}
+		return fmt.Sprintf("%s%d.%ds", sign, whole, frac)
+	}
+	totalSec := (ms + 500) / 1000
+	units := []struct {
+		v int64
+		u string
+	}{
+		{totalSec / 86400, "d"},
+		{(totalSec % 86400) / 3600, "h"},
+		{(totalSec % 3600) / 60, "m"},
+		{totalSec % 60, "s"},
+	}
+	i := 0
+	for i < len(units) && units[i].v == 0 {
+		i++
+	}
+	out := fmt.Sprintf("%s%d%s", sign, units[i].v, units[i].u)
+	if i+1 < len(units) && units[i+1].v > 0 {
+		out += fmt.Sprintf(" %d%s", units[i+1].v, units[i+1].u)
+	}
+	return out
 }
 
 // asFloat64Strict accepts int/float/decimal values and returns a

@@ -1,0 +1,49 @@
+/**
+ * @title time.stopwatch test
+ * @summary Monotonic Stopwatch: elapsed / elapsedFloat / lap / reset.
+ */
+import test;
+import time;
+import time.stopwatch as sw;
+
+class StopwatchTest extends test.Test {
+    @test
+    func elapsedAdvances(): void {
+        let s = sw.Stopwatch();
+        time.sleep(15);
+        let e = s.elapsed();
+        this.assertTrue(e >= 10);
+        this.assertTrue(e < 5000);
+    }
+
+    @test
+    func elapsedFloatIsSeconds(): void {
+        let s = sw.Stopwatch();
+        time.sleep(15);
+        let f = s.elapsedFloat();
+        this.assertTrue(f >= 0.01f);
+        this.assertTrue(f < 5.0f);
+    }
+
+    @test
+    func lapMeasuresEachSegment(): void {
+        let s = sw.Stopwatch();
+        time.sleep(15);
+        let a = s.lap();
+        time.sleep(15);
+        let b = s.lap();
+        this.assertTrue(a >= 10);
+        this.assertTrue(b >= 10);
+        /* lap resets the segment marker, so each is a single sleep, not cumulative. */
+        this.assertTrue(b < 5000);
+    }
+
+    @test
+    func resetReturnsToZero(): void {
+        let s = sw.Stopwatch();
+        time.sleep(20);
+        this.assertTrue(s.elapsed() >= 15);
+        s.reset();
+        this.assertTrue(s.elapsed() < 15);
+    }
+}

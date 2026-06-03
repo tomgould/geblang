@@ -109,17 +109,17 @@ type Evaluator struct {
 	// globalClasses is the cross-module class registry. Every user
 	// class registers here at definition time so reflect.class(name)
 	// from any module can find it.
-	globalClasses  map[string]*runtime.Class
+	globalClasses map[string]*runtime.Class
 	// Identifier name -> original class name for class identifiers
 	// that a class decorator rebound to a callable. Used by
 	// applyCallableValue to stamp the returned instance.
 	decoratedClassIdents map[string]string
 	errorSentinels       map[string]*runtime.Class
-	deferFrames    []*deferFrame
-	yieldFrames    []*yieldFrame
-	callStack      []evalFrame
-	callDepth      int
-	maxCallDepth   int
+	deferFrames          []*deferFrame
+	yieldFrames          []*yieldFrame
+	callStack            []evalFrame
+	callDepth            int
+	maxCallDepth         int
 	// classStack tracks the lexical class of the currently executing
 	// method/constructor. `parent(...)` resolves to the parent of the top of
 	// this stack rather than to `this.Class.Parent`, so that calling
@@ -1149,24 +1149,24 @@ func (e *Evaluator) evalFromImportStatement(stmt *ast.FromImportStatement, env *
 	}
 	if !preferUser {
 		if _, ok := e.builtins[canonical]; ok {
-		moduleClasses := e.builtinModuleValue(canonical, "").Exports
-		functions := e.builtins[canonical]
-		for _, item := range stmt.Names {
-			if item.Name == nil {
-				continue
+			moduleClasses := e.builtinModuleValue(canonical, "").Exports
+			functions := e.builtins[canonical]
+			for _, item := range stmt.Names {
+				if item.Name == nil {
+					continue
+				}
+				name := item.Name.Value
+				local := item.Local()
+				value, ok := e.resolveBuiltinExport(moduleClasses, functions, canonical, name)
+				if !ok {
+					return signal{}, fmt.Errorf("from %s import %s: %s is not exported", canonical, name, name)
+				}
+				if err := env.DefineImported(local, value, canonical+"."+name); err != nil {
+					return signal{}, err
+				}
 			}
-			name := item.Name.Value
-			local := item.Local()
-			value, ok := e.resolveBuiltinExport(moduleClasses, functions, canonical, name)
-			if !ok {
-				return signal{}, fmt.Errorf("from %s import %s: %s is not exported", canonical, name, name)
-			}
-			if err := env.DefineImported(local, value, canonical+"."+name); err != nil {
-				return signal{}, err
-			}
-		}
-		e.imports[canonical] = true
-		return signal{}, nil
+			e.imports[canonical] = true
+			return signal{}, nil
 		}
 	}
 	module, err := e.loadUserModule(canonical, "")
@@ -7987,6 +7987,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"unixFloat":    e.registryBuiltin("time", "unixFloat"),
 			"unixDecimal":  e.registryBuiltin("time", "unixDecimal"),
 			"elapsedFloat": e.registryBuiltin("time", "elapsedFloat"),
+			"humanize":     e.registryBuiltin("time", "humanize"),
 		},
 		"profiler": {
 			"snapshot": e.registryBuiltin("profiler", "snapshot"),
