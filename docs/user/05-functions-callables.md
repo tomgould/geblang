@@ -20,6 +20,40 @@ export func loadUser(string id): ?User {
 }
 ```
 
+## Multiple Return Values
+
+A function can return several values by separating them with commas, and the
+caller unpacks them into multiple variables:
+
+```gb
+func minMax(list<int> xs): list<int> {
+    int lo = xs[0];
+    int hi = xs[0];
+    for (var x in xs) {
+        if (x < lo) { lo = x; }
+        if (x > hi) { hi = x; }
+    }
+    return lo, hi;        # returns the two values
+}
+
+let lo, hi = minMax([3, 1, 4, 1, 5]);   # unpack into two variables
+io.println("${lo} ${hi}");              # 1 5
+```
+
+The returned values are carried as a list, so the declared return type is a
+list (`list<int>` here, or `list<any>` for mixed types). Unpacking also works
+in plain assignment and supports the swap idiom:
+
+```gb
+let a, b = 1, 2;     # declare and unpack a literal list
+a, b = b, a;         # swap - no temporary needed
+io.println("${a} ${b}");   # 2 1
+```
+
+The `let a, b = ...` form is shorthand for list destructuring (`let [a, b] =
+...`); both are equivalent. Unpacking takes the leading values when there are
+more on the right than names; too few raises a runtime error.
+
 ## Defaults And Named Arguments
 
 Default parameters must be trailing:
@@ -52,6 +86,19 @@ Unknown names raise an error so typos surface immediately:
 
 ```gb
 connect("example.com", tsl: false);           # error - no parameter "tsl"
+```
+
+A default expression is evaluated **fresh on every call** where the argument
+is omitted, so a mutable default like `[]` or `{}` is a new value each time -
+Geblang has no Python-style "shared mutable default" pitfall:
+
+```gb
+func collect(list<int> xs = []): list<int> {
+    xs.append(1);
+    return xs;
+}
+io.println(collect());   # [1]
+io.println(collect());   # [1]   (a fresh list, not [1, 1])
 ```
 
 Named arguments also feed overload resolution. When overloads share

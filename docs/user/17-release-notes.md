@@ -2,6 +2,13 @@
 
 ## 1.7.2
 
+### Multiple return values
+
+- A function can return several values with `return a, b`, and the caller
+  unpacks them with `let a, b = f()` or `a, b = f()`. The swap idiom
+  `a, b = b, a` works too. Values are carried as a list (so the return type is
+  a list); `let a, b = ...` is shorthand for list destructuring.
+
 ### `const` parameters
 
 - A function parameter can be declared `const` (`func f(const list<int> xs)`)

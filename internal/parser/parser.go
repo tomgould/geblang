@@ -523,6 +523,37 @@ func (p *Parser) parseDeclarationStatement() ast.Statement {
 			return stmt
 		}
 		first := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		if p.peekTokenIs(token.Comma) {
+			// Bracket-less multi-declaration: `let a, b = f()` unpacks the
+			// list a multi-value return produces.
+			ds := &ast.DestructuringStatement{Token: stmt.Token, Define: true, IsList: true}
+			ds.Names = append(ds.Names, first)
+			for p.peekTokenIs(token.Comma) {
+				p.nextToken()
+				if !p.expectPeek(token.Ident) {
+					return ds
+				}
+				ds.Names = append(ds.Names, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+			}
+			if !p.expectPeek(token.Assign) {
+				return ds
+			}
+			p.nextToken()
+			rhs := p.parseExpression(lowest)
+			if p.peekTokenIs(token.Comma) {
+				elements := []ast.Expression{rhs}
+				for p.peekTokenIs(token.Comma) {
+					p.nextToken()
+					p.nextToken()
+					elements = append(elements, p.parseExpression(lowest))
+				}
+				ds.Value = &ast.ListLiteral{Token: ds.Token, Elements: elements}
+			} else {
+				ds.Value = rhs
+			}
+			p.expectPeek(token.Semicolon)
+			return ds
+		}
 		if p.peekTokenIs(token.Assign) || p.peekTokenIs(token.Semicolon) {
 			stmt.Name = first
 		} else {
@@ -982,7 +1013,20 @@ func (p *Parser) parseReturnStatement() ast.Statement {
 		return stmt
 	}
 	p.nextToken()
-	stmt.Value = p.parseExpression(lowest)
+	first := p.parseExpression(lowest)
+	if p.peekTokenIs(token.Comma) {
+		// Multiple return values: `return a, b` yields a list consumed by a
+		// matching multi-assignment (`let a, b = f()`).
+		elements := []ast.Expression{first}
+		for p.peekTokenIs(token.Comma) {
+			p.nextToken()
+			p.nextToken()
+			elements = append(elements, p.parseExpression(lowest))
+		}
+		stmt.Value = &ast.ListLiteral{Token: stmt.Token, Elements: elements}
+	} else {
+		stmt.Value = first
+	}
 	p.expectPeek(token.Semicolon)
 	return stmt
 }

@@ -11087,6 +11087,22 @@ io.println(total);
 `, "60\n")
 }
 
+// Multi-value returns (`return a, b`) and unpacking (`let a, b = f()`,
+// `a, b = b, a`) behave identically on both backends.
+func TestParityMultiReturn(t *testing.T) {
+	runParity(t, `import io;
+func ends(list<int> xs): list<int> { return xs.get(0), xs.get(xs.length() - 1); }
+let a, b = ends([3, 1, 4, 1, 5]);
+io.println("${a} ${b}");
+let x, y = 1, 2;
+x, y = y, x;
+io.println("${x} ${y}");
+func mixed(): list<any> { return 1, "z", true; }
+let p, q, r = mixed();
+io.println("${p} ${q} ${r}");
+`, "3 5\n2 1\n1 z true\n")
+}
+
 // A `const` parameter is frozen on entry: mutating it raises ImmutableError
 // and the caller's value is untouched; reads still work. Identical on both
 // backends.
