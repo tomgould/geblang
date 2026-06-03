@@ -1,7 +1,7 @@
 import test;
-import bytes;
-import string;
 
+/* bytes / string static methods (fromList, fromCodePoints, ...) resolve
+   without importing the primitive type, matching the bytecode VM. */
 class ConversionsTest extends test.Test {
 
     @test

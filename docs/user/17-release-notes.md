@@ -2,6 +2,16 @@
 
 ## 1.7.1
 
+### Builtin type static methods no longer require an import
+
+Static methods on a builtin type - `bytes.fromString(...)`,
+`bytes.fromHex(...)`, `string.fromCodePoint(...)`, `string.compare(...)`,
+and the like - now resolve without `import bytes;` / `import string;`,
+matching how the rest of the toolchain already behaved. Previously the
+tree-walking evaluator rejected these with `unknown method Type.X`
+unless the type was imported first, while compiled programs accepted
+them; the two backends now agree.
+
 ### Type-conversion methods for codepoints and byte lists
 
 New methods round out converting between strings, codepoints, and byte

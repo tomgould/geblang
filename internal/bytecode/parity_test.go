@@ -11029,6 +11029,17 @@ func TestParityGlobalRedeclarationRule(t *testing.T) {
 	}
 }
 
+// Builtin type static methods (bytes.fromString, string.fromCodePoint, ...)
+// resolve without an import on both backends.
+func TestParityTypeStaticsWithoutImport(t *testing.T) {
+	runParity(t, `import io;
+io.println(bytes.fromString("a") as string);
+io.println(bytes.fromList([97, 98, 99]) as string);
+io.println(string.fromCodePoint(65));
+io.println(string.fromCodePoints([72, 105]));
+`, "a\nabc\nA\nHi\n")
+}
+
 // Type-conversion surface: string.codePoints, bytes.toList, bytes.fromList
 // must produce identical results on both backends.
 func TestParityTypeConversions(t *testing.T) {

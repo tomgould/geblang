@@ -24213,6 +24213,15 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 			return nil, fmt.Errorf("Task has no method %s", name)
 		}
 	}
+	// Static methods on a builtin type value (bytes.fromString, string.fromCodePoint)
+	// resolve without an import, matching the bytecode VM.
+	if typeVal, ok := receiver.(runtime.Type); ok {
+		if functions, ok := e.builtins[typeVal.Name]; ok {
+			if fn, ok := functions[name]; ok {
+				return fn(call, args)
+			}
+		}
+	}
 	return e.evalMethodCall(receiver, name, args)
 }
 
