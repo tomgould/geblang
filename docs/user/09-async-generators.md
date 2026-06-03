@@ -536,3 +536,51 @@ hits.add(1);
 // later:
 io.println(hits.load());
 ```
+
+### Sharing mutable state safely
+
+Because tasks run as real goroutines, two tasks (or a task and the main
+flow) that touch the **same mutable value** at the same time are a data
+race - exactly as in any threaded language. A class instance, list, dict,
+or set has no built-in locking, so concurrent writes (or a write racing a
+read) have undefined behaviour and can abort the program.
+
+```gb
+# WRONG: many tasks mutating one shared object with no synchronisation.
+class Counter { int n; func bump(): void { this.n = this.n + 1; } }
+let c = Counter();
+for (let int i = 0; i < 100; i++) {
+    async.run(func(): void { c.bump(); });   # data race on c.n
+}
+```
+
+Make shared access explicit with the tools above:
+
+- **A lock** around the critical section:
+
+  ```gb
+  import async.sync as sync;
+  let m = sync.Mutex();
+  async.run(func(): void {
+      m.lock();
+      try { c.bump(); } finally { m.unlock(); }
+  });
+  ```
+
+- **An atomic** cell for a single counter or flag (`atomic.AtomicInt`).
+- **A channel** to hand values to one owning task instead of sharing the
+  object (`async.channel`).
+
+The concurrency primitives themselves - `async.channel`, `async.sync`,
+and `async.atomic` - are safe to share across tasks; that is their
+purpose. The rule applies to ordinary objects you create.
+
+If a task only needs its own copy, pass the data in as an argument rather
+than closing over a shared variable, so each task works on independent
+state.
+
+The same rule covers whole-object operations: serialising
+(`json.stringify(obj)`), reflecting over, or otherwise reading all of an
+object's fields while another task mutates it is a read-while-write race.
+Take the lock (or hand the object to a single owning task) around those
+reads too, not just around individual field writes.

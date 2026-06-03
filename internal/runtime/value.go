@@ -1092,6 +1092,8 @@ type Instance struct {
 	// Extra class names checked by `instanceof` on top of the
 	// regular parent chain; set by class-decorator typed delegation.
 	ExtraTypeNames []string
+	// mu guards Fields while async tasks are live (see AsyncEnter).
+	mu sync.Mutex
 }
 
 func (v *Instance) TypeName() string { return v.Class.Name }

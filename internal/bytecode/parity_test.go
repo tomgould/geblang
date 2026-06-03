@@ -11074,6 +11074,19 @@ io.println("xy".graphemes());
 `, "5\n1\n4\nab\n[\"x\", \"y\"]\n")
 }
 
+// Channel for-in iteration uses a per-consumer iterator (not the shared
+// channel), and drains a buffered channel identically on both backends.
+func TestParityChannelIteration(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import async.channel as ch;
+let c = ch.Channel<int>(4);
+c.send(10); c.send(20); c.send(30); c.close();
+let total = 0;
+for (var v in c) { total = total + v; }
+io.println(total);
+`, "60\n")
+}
+
 // New string ergonomics methods behave identically on both backends.
 func TestParityStringErgonomics(t *testing.T) {
 	runParity(t, `import io;

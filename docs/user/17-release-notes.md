@@ -2,6 +2,20 @@
 
 ## 1.7.2
 
+### Fixes
+
+- Concurrent field access on an object shared across async tasks no longer
+  crashes the interpreter. A per-instance guard makes ordinary field reads
+  and writes safe under parallelism; it is gated so sequential code keeps
+  its previous speed. Logical correctness for shared mutable state still
+  needs a lock or atomic (see the async chapter); whole-object reads such as
+  serialising or reflecting over an object while another task mutates it
+  remain a data race to synchronise.
+- Iterating a channel with `for x in c` no longer mutates the shared channel,
+  so producer tasks sending on other goroutines can no longer trigger a
+  concurrent-access crash. Iteration now uses a per-consumer cursor, which also
+  lets two consumers iterate the same channel without clobbering each other.
+
 ### String ergonomics
 
 New string methods:

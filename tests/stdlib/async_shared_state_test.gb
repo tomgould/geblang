@@ -1,0 +1,61 @@
+/**
+ * @title Async shared-state safety
+ * @summary Concurrent field access on a shared instance is crash-free, and
+ * with a mutex it is also correct (no lost updates). Pins the engine's
+ * per-instance field guard that makes async-safe objects possible.
+ */
+import test;
+import async;
+import async.sync as sync;
+
+class Counter {
+    int n;
+    func Counter() { this.n = 0; }
+    func bump(): void { this.n = this.n + 1; }
+}
+
+class AsyncSharedStateTest extends test.Test {
+    @test
+    func mutexGuardedFieldUpdatesAreCorrect(): void {
+        let c = Counter();
+        let m = sync.Mutex();
+        let wg = sync.WaitGroup();
+        for (let int t = 0; t < 10; t++) {
+            wg.add(1);
+            async.run(func(): void {
+                for (let int i = 0; i < 100; i++) {
+                    m.lock();
+                    try { c.bump(); } finally { m.unlock(); }
+                }
+                wg.done();
+            });
+        }
+        wg.wait();
+        this.assertEquals(1000, c.n);
+    }
+
+    @test
+    func concurrentReadsOfSharedFieldDoNotCrash(): void {
+        /* Many tasks read a shared instance's field while the main flow
+         * holds it constant; the per-instance guard keeps the reads safe. */
+        let c = Counter();
+        c.bump();
+        let wg = sync.WaitGroup();
+        let total = sync.Mutex();
+        let seen = Counter();
+        for (let int t = 0; t < 10; t++) {
+            wg.add(1);
+            async.run(func(): void {
+                for (let int i = 0; i < 100; i++) {
+                    if (c.n == 1) {
+                        total.lock();
+                        try { seen.bump(); } finally { total.unlock(); }
+                    }
+                }
+                wg.done();
+            });
+        }
+        wg.wait();
+        this.assertEquals(1000, seen.n);
+    }
+}

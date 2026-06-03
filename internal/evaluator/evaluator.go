@@ -7479,7 +7479,7 @@ func (e *Evaluator) evalSelectorExpression(expr *ast.SelectorExpression, env *ru
 		}
 	}
 	if instance, ok := object.(*runtime.Instance); ok {
-		if value, ok := instance.Fields[expr.Name.Value]; ok {
+		if value, ok := instance.GetField(expr.Name.Value); ok {
 			return value, nil
 		}
 		if method, ok := lookupMethod(instance.Class, expr.Name.Value); ok {
@@ -24893,8 +24893,8 @@ func (e *Evaluator) assignSelector(expr *ast.SelectorExpression, newValue runtim
 			return err
 		}
 		newValue = transformed
-		if _, ok := instance.Fields[expr.Name.Value]; ok {
-			instance.Fields[expr.Name.Value] = newValue
+		if instance.HasField(expr.Name.Value) {
+			instance.SetField(expr.Name.Value, newValue)
 			return nil
 		}
 		if method, ok := lookupMethod(instance.Class, "__set"); ok {
@@ -26356,7 +26356,9 @@ func (e *Evaluator) startAsyncFunction(fn runtime.Function, args []runtime.Value
 	// inside the goroutine races with parallel async calls on writes to
 	// package-level native callbacks (InstanceInvoker, ClassDeserializer).
 	child := e.childForCallback()
+	runtime.AsyncEnter()
 	go func() {
+		defer runtime.AsyncLeave()
 		value, err := child.applyFunctionWithThisSync(fn, args, this)
 		if exit, ok := value.(exitValue); ok && err == nil {
 			err = fmt.Errorf("async function attempted to exit with code %d", exit.code)

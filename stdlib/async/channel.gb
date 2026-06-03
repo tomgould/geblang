@@ -24,16 +24,10 @@ import async.channel as native;
 export class Channel<T> {
     any _h;
     int _buffer;
-    any _cached;
-    bool _hasCache;
-    bool _exhausted;
 
     func Channel(int buffer = 0) {
         this._h = native.make(buffer);
         this._buffer = buffer;
-        this._cached = null;
-        this._hasCache = false;
-        this._exhausted = false;
     }
 
     /**
@@ -86,9 +80,32 @@ export class Channel<T> {
 
     /**
      * Iterator protocol: `for (x in channel)` blocks on each recv and
-     * terminates when the channel is closed and drained.
+     * terminates when the channel is closed and drained. Returns a fresh
+     * per-consumer iterator so the shared channel is never mutated during
+     * iteration - concurrent producers can keep sending safely.
      */
-    func __iter(): Channel<T> {
+    func __iter(): ChannelIterator<T> {
+        return ChannelIterator<T>(this._h);
+    }
+}
+
+## Per-consumer cursor over a channel. Holds the one-element lookahead the
+## for-in protocol needs so the shared `Channel` stays immutable while
+## producer tasks send on other goroutines.
+class ChannelIterator<T> {
+    any _h;
+    any _cached;
+    bool _hasCache;
+    bool _exhausted;
+
+    func ChannelIterator(any h) {
+        this._h = h;
+        this._cached = null;
+        this._hasCache = false;
+        this._exhausted = false;
+    }
+
+    func __iter(): ChannelIterator<T> {
         return this;
     }
 

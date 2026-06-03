@@ -5227,7 +5227,9 @@ func (vm *VM) startAsyncFunction(index int64, args []runtime.Value) *runtime.Tas
 	// Snapshot parent VM state into a private worker before spawning the
 	// goroutine; the worker touches no parent fields after this point.
 	worker := vm.spawnAsyncWorker()
+	runtime.AsyncEnter()
 	go func() {
+		defer runtime.AsyncLeave()
 		result, err := worker.CallFunction(index, args)
 		task.Complete(result, err)
 	}()
@@ -5356,7 +5358,9 @@ func (vm *VM) startAsyncCallableWithForwardThis(fn runtime.Value, args []runtime
 	if receiver != nil {
 		worker.forwardThis = receiver
 	}
+	runtime.AsyncEnter()
 	go func() {
+		defer runtime.AsyncLeave()
 		result, err := worker.callCallable(fn, args)
 		task.Complete(result, err)
 	}()
@@ -6408,7 +6412,7 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 		}
 		return 0, vm.runtimeError(instruction, "%s has no field %s", receiver.TypeName(), name)
 	}
-	if value, ok := instance.Fields[name]; ok {
+	if value, ok := instance.GetField(name); ok {
 		vm.cacheFieldShape(instance.Class, name, true)
 		vm.push(value)
 		return ip, nil
@@ -6484,13 +6488,13 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 		value = transformed
 	}
 	if vm.fieldLookupValid && vm.fieldLookupClass == instance.Class && vm.fieldLookupName == name && vm.fieldLookupOnClass {
-		instance.Fields[name] = value
+		instance.SetField(name, value)
 		vm.push(value)
 		return ip, nil
 	}
-	if _, ok := instance.Fields[name]; ok {
+	if instance.HasField(name) {
 		vm.cacheFieldShape(instance.Class, name, true)
-		instance.Fields[name] = value
+		instance.SetField(name, value)
 		vm.push(value)
 		return ip, nil
 	}
@@ -6501,7 +6505,7 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 		// constructor here). The __set magic method can't be looked up
 		// from this chunk; fall back to a direct field write to match
 		// evaluator semantics.
-		instance.Fields[name] = value
+		instance.SetField(name, value)
 		vm.push(value)
 		return ip, nil
 	}
@@ -6515,7 +6519,7 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 		}
 		return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}, value}, value)
 	}
-	instance.Fields[name] = value
+	instance.SetField(name, value)
 	vm.push(value)
 	return ip, nil
 }

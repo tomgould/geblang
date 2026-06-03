@@ -92,8 +92,9 @@ func instanceToSerializable(instance *runtime.Instance, recurse func(runtime.Val
 		return recurse(value)
 	}
 	out := map[string]any{}
-	names := make([]string, 0, len(instance.Fields))
-	for name := range instance.Fields {
+	fields := instance.SnapshotFields()
+	names := make([]string, 0, len(fields))
+	for name := range fields {
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -101,7 +102,7 @@ func instanceToSerializable(instance *runtime.Instance, recurse func(runtime.Val
 		if strings.HasPrefix(name, "_") {
 			continue
 		}
-		converted, err := recurse(instance.Fields[name])
+		converted, err := recurse(fields[name])
 		if err != nil {
 			return nil, err
 		}
