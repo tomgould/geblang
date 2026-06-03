@@ -64,4 +64,22 @@ class MultiReturnTest extends test.Test {
     }
 
     func answer(): int { return 42; }
+
+    @test
+    func tooManyTargetsRaises(): void {
+        let threw = false;
+        try {
+            let a, b, c = [1, 2];
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func fewerTargetsTakesPrefix(): void {
+        let a, b = [1, 2, 3];
+        this.assertEquals(1, a);
+        this.assertEquals(2, b);
+    }
 }

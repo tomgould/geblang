@@ -45,6 +45,20 @@ func TestFormatDeclaration(t *testing.T) {
 	}
 }
 
+func TestFormatMultiReturn(t *testing.T) {
+	src := `func pair(): list<int> { return 1, 2; }
+let a, b = pair();
+a, b = b, a;
+let [c, d] = [3, 4];`
+	out := roundtrip(t, src)
+	parseOK(t, out)
+	for _, want := range []string{"return 1, 2;", "let a, b = pair();", "a, b = b, a;", "let [c, d] = [3, 4];"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in output:\n%s", want, out)
+		}
+	}
+}
+
 func TestFormatFunction(t *testing.T) {
 	src := `func add(int a, int b): int { return a + b; }`
 	out := roundtrip(t, src)

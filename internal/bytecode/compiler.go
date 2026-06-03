@@ -805,6 +805,9 @@ func (c *Compiler) compileDestructuringStatement(stmt *ast.DestructuringStatemen
 	}
 	tempSlot := c.allocateLocal()
 	c.emitAt(OpDefineLocal, stmt.Token.Line, stmt.Token.Column, tempSlot)
+	if stmt.IsList {
+		c.emitAt(OpCheckUnpackLen, stmt.Token.Line, stmt.Token.Column, tempSlot, int64(len(stmt.Names)))
+	}
 	for i, name := range stmt.Names {
 		c.emitAt(OpGetLocal, stmt.Token.Line, stmt.Token.Column, tempSlot)
 		if stmt.IsList {

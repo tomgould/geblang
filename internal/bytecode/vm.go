@@ -1806,6 +1806,15 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err := vm.setLocalVM(slot, runtime.VMValueFromValue(frozen)); err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
+		case OpCheckUnpackLen:
+			v, err := vm.getLocal(instruction.Operands[0])
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
+			expected := int(instruction.Operands[1])
+			if list, ok := v.(*runtime.List); ok && len(list.Elements) < expected {
+				return vm.runtimeError(instruction, "list has %d elements, destructuring expects %d", len(list.Elements), expected)
+			}
 		case OpFormatSpec:
 			spec, err := vm.popString(instruction, "format spec must be string")
 			if err != nil {

@@ -1,9 +1,7 @@
 package runtime
 
-// FreezeShallowCopy returns a shallow copy of a container/instance with the
-// copy marked frozen, leaving the original untouched. Used for `const`
-// parameters: the function receives a read-only view while the caller's value
-// stays mutable. Primitives and other values are returned unchanged.
+// FreezeShallowCopy returns a frozen shallow copy, leaving the original
+// mutable. Backs `const` parameters; primitives are returned unchanged.
 func FreezeShallowCopy(v Value) Value {
 	switch val := v.(type) {
 	case *List:

@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(67)
+	Version = uint16(68)
 )
 
 type Op byte
@@ -290,9 +290,11 @@ const (
 	// first-class callable value. Operands: canonical-name const index,
 	// function-name const index.
 	OpNativeValue
-	// OpFreezeLocal replaces a local slot with a frozen shallow copy of its
-	// value (the `const` parameter prologue). Operand: slot index.
+	// OpFreezeLocal freezes a local slot's value (const-parameter prologue).
 	OpFreezeLocal
+	// OpCheckUnpackLen errors when a list is too short to destructure.
+	// Operands: [tempSlot, expectedCount].
+	OpCheckUnpackLen
 )
 
 type Instruction struct {

@@ -277,6 +277,7 @@ type DestructuringStatement struct {
 	Keys   []string // for dict pattern: keys to extract (parallel to Names)
 	IsList bool     // true = list pattern [a,b], false = dict pattern {a,b}
 	Define bool     // true for let destructuring, false for assignment
+	Bare   bool     // true when written without brackets (`let a, b = ...`)
 	Value  Expression
 }
 
@@ -865,6 +866,9 @@ func (e *IndexExpression) String() string       { return e.Left.String() + "[" +
 type ListLiteral struct {
 	Token    token.Token
 	Elements []Expression
+	// Bare marks the bracket-less multi-value form (`return a, b`) so the
+	// formatter preserves it; semantics match `[a, b]`.
+	Bare bool
 }
 
 func (*ListLiteral) expressionNode()        {}

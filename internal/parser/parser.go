@@ -267,7 +267,7 @@ func (p *Parser) looksLikeMultiAssign() bool {
 // single expression that evaluates to a list. The statement compiles
 // down to the existing DestructuringStatement infrastructure.
 func (p *Parser) parseMultiAssignStatement() ast.Statement {
-	stmt := &ast.DestructuringStatement{Token: p.curToken, IsList: true}
+	stmt := &ast.DestructuringStatement{Token: p.curToken, IsList: true, Bare: true}
 	for {
 		if !p.curTokenIs(token.Ident) {
 			p.errorf(p.curToken, "expected identifier in multi-assignment target")
@@ -296,7 +296,7 @@ func (p *Parser) parseMultiAssignStatement() ast.Statement {
 			p.nextToken()
 			elements = append(elements, p.parseExpression(lowest))
 		}
-		stmt.Value = &ast.ListLiteral{Token: stmt.Token, Elements: elements}
+		stmt.Value = &ast.ListLiteral{Token: stmt.Token, Elements: elements, Bare: true}
 	} else {
 		stmt.Value = first
 	}
@@ -524,9 +524,8 @@ func (p *Parser) parseDeclarationStatement() ast.Statement {
 		}
 		first := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 		if p.peekTokenIs(token.Comma) {
-			// Bracket-less multi-declaration: `let a, b = f()` unpacks the
-			// list a multi-value return produces.
-			ds := &ast.DestructuringStatement{Token: stmt.Token, Define: true, IsList: true}
+			// `let a, b = f()`: bracket-less list-destructuring declaration.
+			ds := &ast.DestructuringStatement{Token: stmt.Token, Define: true, IsList: true, Bare: true}
 			ds.Names = append(ds.Names, first)
 			for p.peekTokenIs(token.Comma) {
 				p.nextToken()
@@ -547,7 +546,7 @@ func (p *Parser) parseDeclarationStatement() ast.Statement {
 					p.nextToken()
 					elements = append(elements, p.parseExpression(lowest))
 				}
-				ds.Value = &ast.ListLiteral{Token: ds.Token, Elements: elements}
+				ds.Value = &ast.ListLiteral{Token: ds.Token, Elements: elements, Bare: true}
 			} else {
 				ds.Value = rhs
 			}
@@ -1015,15 +1014,14 @@ func (p *Parser) parseReturnStatement() ast.Statement {
 	p.nextToken()
 	first := p.parseExpression(lowest)
 	if p.peekTokenIs(token.Comma) {
-		// Multiple return values: `return a, b` yields a list consumed by a
-		// matching multi-assignment (`let a, b = f()`).
+		// `return a, b` yields a list for a matching multi-assignment.
 		elements := []ast.Expression{first}
 		for p.peekTokenIs(token.Comma) {
 			p.nextToken()
 			p.nextToken()
 			elements = append(elements, p.parseExpression(lowest))
 		}
-		stmt.Value = &ast.ListLiteral{Token: stmt.Token, Elements: elements}
+		stmt.Value = &ast.ListLiteral{Token: stmt.Token, Elements: elements, Bare: true}
 	} else {
 		stmt.Value = first
 	}

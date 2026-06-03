@@ -27,8 +27,8 @@ func Format(src []byte) ([]byte, error) {
 }
 
 type fmtr struct {
-	buf    strings.Builder
-	depth  int
+	buf             strings.Builder
+	depth           int
 	prevWasTopLevel bool
 }
 
@@ -87,6 +87,8 @@ func (f *fmtr) stmt(s ast.Statement) {
 	case *ast.ReturnStatement:
 		if s.Value == nil {
 			f.writeln(f.pad() + "return;")
+		} else if lit, ok := s.Value.(*ast.ListLiteral); ok && lit.Bare {
+			f.writeln(f.pad() + "return " + f.bareElements(lit) + ";")
 		} else {
 			f.writeln(f.pad() + "return " + f.expr(s.Value) + ";")
 		}
@@ -181,7 +183,13 @@ func (f *fmtr) fmtDeclaration(s *ast.DeclarationStatement) {
 
 func (f *fmtr) fmtDestructuring(s *ast.DestructuringStatement) {
 	var lhs string
-	if s.IsList {
+	if s.IsList && s.Bare {
+		parts := make([]string, 0, len(s.Names))
+		for _, n := range s.Names {
+			parts = append(parts, n.Value)
+		}
+		lhs = strings.Join(parts, ", ")
+	} else if s.IsList {
 		parts := make([]string, 0, len(s.Names))
 		for _, n := range s.Names {
 			parts = append(parts, n.Value)
@@ -202,7 +210,20 @@ func (f *fmtr) fmtDestructuring(s *ast.DestructuringStatement) {
 	if !s.Define {
 		kw = ""
 	}
-	f.writeln(f.pad() + kw + lhs + " = " + f.expr(s.Value) + ";")
+	rhs := f.expr(s.Value)
+	if lit, ok := s.Value.(*ast.ListLiteral); ok && lit.Bare {
+		rhs = f.bareElements(lit)
+	}
+	f.writeln(f.pad() + kw + lhs + " = " + rhs + ";")
+}
+
+// bareElements renders list elements comma-separated, without brackets.
+func (f *fmtr) bareElements(lit *ast.ListLiteral) string {
+	parts := make([]string, 0, len(lit.Elements))
+	for _, el := range lit.Elements {
+		parts = append(parts, f.expr(el))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ---- if ----

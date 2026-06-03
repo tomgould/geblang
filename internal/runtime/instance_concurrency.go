@@ -2,14 +2,12 @@ package runtime
 
 import "sync/atomic"
 
-// asyncDepth counts live async tasks. While it is nonzero, instance field
-// access takes the per-instance lock so parallel goroutines cannot trip Go's
-// concurrent-map fatal. A purely sequential program keeps it at zero and pays
-// only one atomic load per field access (no locking).
+// asyncDepth counts live async tasks; while nonzero, field access locks so
+// parallel goroutines can't trip Go's concurrent-map fatal. Zero (sequential)
+// pays only an atomic load.
 var asyncDepth atomic.Int64
 
-// AsyncEnter / AsyncLeave bracket a spawned async task. AsyncEnter must run on
-// the parent goroutine before the task goroutine starts.
+// AsyncEnter must run on the parent goroutine before the task goroutine starts.
 func AsyncEnter() { asyncDepth.Add(1) }
 func AsyncLeave() { asyncDepth.Add(-1) }
 
@@ -72,10 +70,8 @@ func (i *Instance) FieldCount() int {
 	return len(i.Fields)
 }
 
-// SnapshotFields returns a shallow copy of the field map, taken under the lock
-// when async tasks are live. Use this instead of ranging i.Fields directly so
-// iteration never runs concurrently with a writer (and never holds the lock
-// across a callback into the interpreter).
+// SnapshotFields copies the field map under the lock, so callers can range it
+// without racing a writer or holding the lock across an interpreter callback.
 func (i *Instance) SnapshotFields() map[string]Value {
 	if asyncActive() {
 		i.mu.Lock()
