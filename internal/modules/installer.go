@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/mod/semver"
 	yamllib "gopkg.in/yaml.v3"
 )
 
@@ -40,20 +41,31 @@ func Install(manifestPath, lockPath string) error {
 			continue
 		}
 		destDir := filepath.Join(vendorDir, name)
-		if entry, ok := lock.Dependencies[name]; ok &&
-			entry.URL == dep.Git && entry.Version == dep.Version {
-			if _, err := os.Stat(destDir); err == nil {
-				short := entry.Commit
-				if len(short) > 8 {
-					short = short[:8]
+		if dep.Version != "latest" {
+			if entry, ok := lock.Dependencies[name]; ok &&
+				entry.URL == dep.Git && entry.Version == dep.Version {
+				if _, err := os.Stat(destDir); err == nil {
+					short := entry.Commit
+					if len(short) > 8 {
+						short = short[:8]
+					}
+					fmt.Printf("  %s: already installed (%s)\n", name, short)
+					continue
 				}
-				fmt.Printf("  %s: already installed (%s)\n", name, short)
-				continue
 			}
 		}
+		resolvedVersion := dep.Version
+		if dep.Version == "latest" {
+			tag, err := resolveLatestSemverTag(dep.Git)
+			if err != nil {
+				return fmt.Errorf("install %s: resolve latest: %w", name, err)
+			}
+			resolvedVersion = tag
+			fmt.Printf("  %s: latest resolved to %s\n", name, tag)
+		}
 		fmt.Printf("  %s: fetching %s", name, dep.Git)
-		if dep.Version != "" {
-			fmt.Printf(" @ %s", dep.Version)
+		if resolvedVersion != "" {
+			fmt.Printf(" @ %s", resolvedVersion)
 		}
 		fmt.Println()
 
@@ -61,8 +73,8 @@ func Install(manifestPath, lockPath string) error {
 			return fmt.Errorf("install %s: clean vendor dir: %w", name, err)
 		}
 		args := []string{"clone", "--depth", "1"}
-		if dep.Version != "" {
-			args = append(args, "--branch", dep.Version)
+		if resolvedVersion != "" {
+			args = append(args, "--branch", resolvedVersion)
 		}
 		args = append(args, dep.Git, destDir)
 		cmd := exec.Command("git", args...)
@@ -115,6 +127,61 @@ func gitHead(dir string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// resolveLatestSemverTag picks the highest stable semver tag from `git ls-remote --tags`.
+func resolveLatestSemverTag(gitURL string) (string, error) {
+	out, err := exec.Command("git", "ls-remote", "--tags", "--refs", gitURL).Output()
+	if err != nil {
+		return "", fmt.Errorf("git ls-remote --tags %s: %w", gitURL, err)
+	}
+	tag, err := pickLatestSemverTag(string(out))
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", gitURL, err)
+	}
+	return tag, nil
+}
+
+// pickLatestSemverTag parses ls-remote output and returns the highest stable
+// semver tag. Pre-release tags (-rc, -beta, ...) only win when no stable tag
+// exists.
+func pickLatestSemverTag(lsRemoteOutput string) (string, error) {
+	var tags []string
+	for _, line := range strings.Split(strings.TrimSpace(lsRemoteOutput), "\n") {
+		_, ref, ok := strings.Cut(line, "refs/tags/")
+		if !ok {
+			continue
+		}
+		tag := strings.TrimSpace(ref)
+		if !semver.IsValid(canonicalSemver(tag)) {
+			continue
+		}
+		tags = append(tags, tag)
+	}
+	if len(tags) == 0 {
+		return "", fmt.Errorf("no semver tags found")
+	}
+	best := tags[0]
+	bestStable := semver.Prerelease(canonicalSemver(best)) == ""
+	for _, t := range tags[1:] {
+		stable := semver.Prerelease(canonicalSemver(t)) == ""
+		switch {
+		case stable && !bestStable:
+			best, bestStable = t, true
+		case stable == bestStable:
+			if semver.Compare(canonicalSemver(t), canonicalSemver(best)) > 0 {
+				best = t
+			}
+		}
+	}
+	return best, nil
+}
+
+func canonicalSemver(tag string) string {
+	if strings.HasPrefix(tag, "v") {
+		return tag
+	}
+	return "v" + tag
 }
 
 func readLockFile(path string) LockFile {

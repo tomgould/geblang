@@ -1,5 +1,19 @@
 # Release Notes
 
+## 1.7.2
+
+### `geblang install pkg@latest` resolves to the highest semver tag
+
+`geblang install <git-url>@latest` now queries the remote with
+`git ls-remote --tags --refs`, picks the highest stable semver
+tag (skipping pre-releases unless every tag is one), and clones
+that tag. Bare-numeric tags like `1.2.3` are accepted alongside
+the `vX.Y.Z` shape. Non-semver refs (`dev`, `release-1`, branch
+names) are ignored during resolution. Re-running `install` with
+`@latest` always re-resolves; pinned versions keep their existing
+lock-skip behaviour. New dependency: `golang.org/x/mod` (BSD-3-
+Clause); added to `NOTICES.md`.
+
 ## 1.7.1
 
 ### HTTP TLS: client verification control and HTTPS servers
