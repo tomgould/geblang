@@ -45,4 +45,46 @@ class StringsTest extends test.Test {
     func substring(): void {
         this.assertEquals("ello", "hello".substring(1, 5));
     }
+
+    @test
+    func capitalizeAndTitle(): void {
+        this.assertEquals("Hello", "hELLO".capitalize());
+        this.assertEquals("Hello world", "hello world".capitalize());
+        this.assertEquals("", "".capitalize());
+        this.assertEquals("Hello World", "hELLO wORLD".title());
+        this.assertEquals("The Quick Fox", "the quick fox".title());
+    }
+
+    @test
+    func isBlank(): void {
+        this.assertTrue("".isBlank());
+        this.assertTrue("   \t\n".isBlank());
+        this.assertFalse(" x ".isBlank());
+    }
+
+    @test
+    func lines(): void {
+        this.assertEquals(["a", "b", "c"], "a\nb\r\nc".lines());
+        /* trailing newline does not add an empty line */
+        this.assertEquals(["a", "b"], "a\nb\n".lines());
+        this.assertEquals([], "".lines());
+        this.assertEquals([""], "\n".lines());
+        this.assertEquals(["a", "", "b"], "a\n\nb".lines());
+    }
+
+    @test
+    func removePrefixSuffix(): void {
+        this.assertEquals("bar", "foobar".removePrefix("foo"));
+        this.assertEquals("foobar", "foobar".removePrefix("xyz"));
+        this.assertEquals("foo", "foobar".removeSuffix("bar"));
+        this.assertEquals("foobar", "foobar".removeSuffix("xyz"));
+    }
+
+    @test
+    func caseInsensitive(): void {
+        this.assertTrue("HELLO".equalsIgnoreCase("hello"));
+        this.assertFalse("HELLO".equalsIgnoreCase("world"));
+        this.assertTrue("Hello World".containsIgnoreCase("WORLD"));
+        this.assertFalse("Hello World".containsIgnoreCase("xyz"));
+    }
 }

@@ -7411,7 +7411,9 @@ func (vm *VM) reflectNativeCall(fn string, args []runtime.Value) (runtime.Value,
 		case "fields":
 			return vm.reflectFieldsResult(args[0], metadata), nil
 		case "methods":
-			return bytecodeStringList(metadata.Methods), nil
+			methods := append([]string(nil), metadata.Methods...)
+			sort.Strings(methods)
+			return bytecodeStringList(methods), nil
 		case "staticMethods":
 			return bytecodeStringList(metadata.StaticMethods), nil
 		case "parent":
@@ -13970,6 +13972,89 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			return nil, fmt.Errorf("%s has no method upper", receiver.TypeName())
 		}
 		return runtime.String{Value: strings.ToUpper(value.Value)}, nil
+	case "capitalize":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("string.capitalize expects no arguments")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method capitalize", receiver.TypeName())
+		}
+		return runtime.String{Value: native.StringCapitalize(value.Value)}, nil
+	case "title":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("string.title expects no arguments")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method title", receiver.TypeName())
+		}
+		return runtime.String{Value: native.StringTitle(value.Value)}, nil
+	case "isblank":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("string.isBlank expects no arguments")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method isBlank", receiver.TypeName())
+		}
+		return runtime.Bool{Value: native.StringIsBlank(value.Value)}, nil
+	case "lines":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("string.lines expects no arguments")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method lines", receiver.TypeName())
+		}
+		parts := native.StringLines(value.Value)
+		out := make([]runtime.Value, 0, len(parts))
+		for _, part := range parts {
+			out = append(out, runtime.String{Value: part})
+		}
+		return &runtime.List{Elements: out}, nil
+	case "removeprefix", "removesuffix":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("string.%s expects one argument (string)", name)
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method %s", receiver.TypeName(), name)
+		}
+		affix, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("string.%s expects string", name)
+		}
+		if strings.ToLower(name) == "removeprefix" {
+			return runtime.String{Value: native.StringRemovePrefix(value.Value, affix.Value)}, nil
+		}
+		return runtime.String{Value: native.StringRemoveSuffix(value.Value, affix.Value)}, nil
+	case "equalsignorecase":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("string.equalsIgnoreCase expects one argument (string)")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method equalsIgnoreCase", receiver.TypeName())
+		}
+		other, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("string.equalsIgnoreCase expects string")
+		}
+		return runtime.Bool{Value: native.StringEqualsIgnoreCase(value.Value, other.Value)}, nil
+	case "containsignorecase":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("string.containsIgnoreCase expects one argument (string)")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method containsIgnoreCase", receiver.TypeName())
+		}
+		sub, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("string.containsIgnoreCase expects string")
+		}
+		return runtime.Bool{Value: native.StringContainsIgnoreCase(value.Value, sub.Value)}, nil
 	case "replace":
 		if len(args) != 2 && len(args) != 3 {
 			return nil, fmt.Errorf("string.replace expects old, new, and optional count")

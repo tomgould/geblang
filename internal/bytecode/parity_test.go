@@ -11074,6 +11074,25 @@ io.println("xy".graphemes());
 `, "5\n1\n4\nab\n[\"x\", \"y\"]\n")
 }
 
+// New string ergonomics methods behave identically on both backends.
+func TestParityStringErgonomics(t *testing.T) {
+	runParity(t, `import io;
+io.println("hELLO".capitalize());
+io.println("hELLO wORLD".title());
+io.println("  ".isBlank());
+io.println("x".isBlank());
+io.println("a\nb\r\nc\n".lines());
+io.println("".lines());
+io.println("\n".lines());
+io.println("foobar".removePrefix("foo"));
+io.println("foobar".removePrefix("xyz"));
+io.println("foobar".removeSuffix("bar"));
+io.println("HELLO".equalsIgnoreCase("hello"));
+io.println("Hello World".containsIgnoreCase("WORLD"));
+io.println("Hello World".containsIgnoreCase("xyz"));
+`, "Hello\nHello World\ntrue\nfalse\n[\"a\", \"b\", \"c\"]\n[]\n[\"\"]\nbar\nfoobar\nfoo\ntrue\ntrue\nfalse\n")
+}
+
 // New collection operations (flatMap/uniqueBy/takeWhile/dropWhile/windowed/
 // unzip/scan) behave identically on both backends and via both surfaces.
 func TestParityCollectionOps(t *testing.T) {

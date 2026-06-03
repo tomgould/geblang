@@ -2,6 +2,18 @@
 
 ## 1.7.2
 
+### String ergonomics
+
+New string methods:
+
+- `capitalize()` / `title()` - upper-case the first character, or title-case
+  each word (the rest is lower-cased).
+- `removePrefix(p)` / `removeSuffix(s)` - strip a fixed affix if present.
+- `lines()` - split on line boundaries (LF and CRLF; no trailing empty).
+- `isBlank()` - true when empty or only whitespace.
+- `equalsIgnoreCase(other)` / `containsIgnoreCase(sub)` - case-insensitive
+  comparison and substring test.
+
 ### More collection operations
 
 Seven new list operations, available both as methods (`xs.flatMap(f)`) and as

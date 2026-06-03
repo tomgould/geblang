@@ -11,6 +11,7 @@ value - the original is unchanged.
 |--------|---------|-------------|
 | `length()` | `int` | Number of Unicode code points |
 | `isEmpty()` | `bool` | `true` when the string has no characters |
+| `isBlank()` | `bool` | `true` when empty or only whitespace |
 | `get(index)` | `string` | Single character at `index` (negative = from end) |
 | `chars()` | `list<string>` | All characters as a list |
 | `codePointAt(index)` | `int` | Unicode code point at `index`, or `null` if out of range (the "ord" of one character) |
@@ -64,6 +65,8 @@ io.println("geblang".graphemes().reverse().join("")); # reverse by grapheme
 | `indexOf(needle)` | `int` | First index of `needle`, or `-1` if not found |
 | `lastIndexOf(needle)` | `int` | Last index of `needle`, or `-1` if not found |
 | `count(needle)` | `int` | Number of non-overlapping occurrences of `needle` |
+| `equalsIgnoreCase(other)` | `bool` | Case-insensitive equality |
+| `containsIgnoreCase(needle)` | `bool` | Case-insensitive substring test |
 
 ```gb
 import io;
@@ -75,6 +78,8 @@ io.println(s.endsWith("world"));   # true
 io.println(s.indexOf("l"));        # 2
 io.println(s.lastIndexOf("l"));    # 9
 io.println(s.count("l"));          # 3
+io.println(s.equalsIgnoreCase("HELLO WORLD"));   # true
+io.println(s.containsIgnoreCase("WORLD"));       # true
 ```
 
 ### Slicing And Substrings
@@ -103,6 +108,8 @@ io.println(s.slice(0, -6));      # hello
 |--------|---------|-------------|
 | `lower()` | `string` | All characters lower-cased |
 | `upper()` | `string` | All characters upper-cased |
+| `capitalize()` | `string` | First character upper-cased, the rest lower-cased |
+| `title()` | `string` | Each whitespace-separated word title-cased |
 | `trim()` | `string` | Leading and trailing whitespace removed |
 | `trimStart()` | `string` | Leading whitespace removed |
 | `trimEnd()` | `string` | Trailing whitespace removed |
@@ -111,6 +118,8 @@ io.println(s.slice(0, -6));      # hello
 | `repeat(n)` | `string` | String repeated `n` times |
 | `padStart(len[, pad])` | `string` | Pad to at least `len` characters on the left |
 | `padEnd(len[, pad])` | `string` | Pad to at least `len` characters on the right |
+| `removePrefix(p)` | `string` | Strip prefix `p` if present, else unchanged |
+| `removeSuffix(s)` | `string` | Strip suffix `s` if present, else unchanged |
 
 ```gb
 import io;
@@ -125,6 +134,10 @@ io.println("7".padStart(4, "0"));          # 0007
 io.println("hi".padEnd(5, "."));           # hi...
 io.println("hello world".replace("o", "0")); # hell0 w0rld
 io.println("hello world".replace("o", "0", 1)); # hell0 world
+io.println("hELLO wORLD".capitalize());     # Hello world
+io.println("hELLO wORLD".title());          # Hello World
+io.println("/usr/bin".removePrefix("/"));   # usr/bin
+io.println("report.txt".removeSuffix(".txt")); # report
 ```
 
 ### Splitting And Joining
@@ -132,6 +145,7 @@ io.println("hello world".replace("o", "0", 1)); # hell0 world
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `split(sep)` | `list<string>` | Split on `sep`; returns list of parts |
+| `lines()` | `list<string>` | Split on line boundaries (LF and CRLF); no trailing empty line |
 | `format(...)` | `string` | `printf`-style formatting with positional `{}` placeholders |
 
 ```gb
@@ -141,6 +155,8 @@ let csv = "a,b,c,d";
 let parts = csv.split(",");
 io.println(parts);          # [a, b, c, d]
 io.println(parts.length()); # 4
+
+io.println("line1\nline2\nline3".lines()); # [line1, line2, line3]
 
 let msg = "Hello, {}! You have {} messages.".format("Ada", 3);
 io.println(msg);  # Hello, Ada! You have 3 messages.

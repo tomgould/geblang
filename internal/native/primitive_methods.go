@@ -21,6 +21,8 @@ var PrimitiveMethods = map[string][]string{
 		"slice", "split", "splitRegex", "startsWith", "substring", "toBool",
 		"toDecimal", "toFloat", "toInt", "toString", "trim", "trimEnd",
 		"trimStart", "upper",
+		"capitalize", "title", "isBlank", "lines", "removePrefix", "removeSuffix",
+		"equalsIgnoreCase", "containsIgnoreCase",
 	},
 	"list": {
 		"all", "any", "append", "averageBy", "binarySearch", "binarySearchBy", "bottomK", "chunk",
