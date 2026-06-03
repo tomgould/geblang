@@ -11049,6 +11049,29 @@ func TestParityGlobalRedeclarationRule(t *testing.T) {
 	}
 }
 
+// Escape sequences (\n, \t, \u{...}) are decoded inside interpolated
+// strings, identically on both backends.
+func TestParityInterpolatedStringEscapes(t *testing.T) {
+	runParity(t, `import io;
+let name = "world";
+io.println("hi\t${name}\nbye \u{1F600}");
+`, "hi\tworld\nbye \U0001F600\n")
+}
+
+// An invalid \u{...} escape is rejected at parse time (shared lexer/parser,
+// so both backends fail identically) in plain and interpolated strings.
+func TestParityInvalidUnicodeEscapeRejected(t *testing.T) {
+	for _, src := range []string{
+		"import io;\nio.println(\"\\u{110000}\");\n",
+		"import io;\nio.println(\"\\u{D800}\");\n",
+		"import io;\nlet x = 1;\nio.println(\"v \\u{} ${x}\");\n",
+	} {
+		if _, _, _, _, compileErr := fuzzRunBoth(src); compileErr == nil {
+			t.Fatalf("expected invalid unicode escape to be rejected:\n%s", src)
+		}
+	}
+}
+
 // Builtin type static methods (bytes.fromString, string.fromCodePoint, ...)
 // resolve without an import on both backends.
 func TestParityTypeStaticsWithoutImport(t *testing.T) {

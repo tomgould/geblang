@@ -1522,7 +1522,7 @@ func (p *Parser) parseCallArguments() []ast.CallArgument {
 
 func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 	expr := &ast.IndexExpression{Token: p.curToken, Left: left}
-	// `xs[..end]` / `xs[..]` — open-start range using the `..` token.
+	// `xs[..end]` / `xs[..]` - open-start range using the `..` token.
 	if p.peekTokenIs(token.Range) || p.peekTokenIs(token.RangeExcl) {
 		p.nextToken()
 		rng := &ast.RangeExpression{Token: p.curToken, Exclusive: p.curTokenIs(token.RangeExcl)}
@@ -1534,13 +1534,13 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 		p.expectPeek(token.RBracket)
 		return expr
 	}
-	// `xs[]` — empty index reads as a full-range expression.
+	// `xs[]` - empty index reads as a full-range expression.
 	if p.peekTokenIs(token.RBracket) {
 		expr.Index = &ast.RangeExpression{Token: p.curToken}
 		p.expectPeek(token.RBracket)
 		return expr
 	}
-	// `xs[:end]` / `xs[::step]` / `xs[:end:step]` — Python-style slice
+	// `xs[:end]` / `xs[::step]` / `xs[:end:step]` - Python-style slice
 	// with optional end and optional step.
 	if p.peekTokenIs(token.Colon) {
 		p.nextToken()
@@ -1556,7 +1556,7 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 	}
 	p.nextToken()
 	first := p.parseExpression(lowest)
-	// `xs[a:b]` / `xs[a:]` / `xs[a:b:step]` / `xs[a::step]` — Python-style slice.
+	// `xs[a:b]` / `xs[a:]` / `xs[a:b:step]` / `xs[a::step]` - Python-style slice.
 	if p.peekTokenIs(token.Colon) {
 		p.nextToken() // consume ':'
 		rng := &ast.RangeExpression{Token: p.curToken, Exclusive: true, Start: first}
@@ -2455,6 +2455,18 @@ func isIdentifierNameToken(t token.Type) bool {
 	}
 }
 
+// interpolationLiteral builds a literal segment of an interpolated string,
+// decoding escapes (\n, \u{...}, ...) the same way a plain double-quoted
+// string does. Reports an invalid \u{...} as a parse error.
+func (p *Parser) interpolationLiteral(tok token.Token, seg string) *ast.StringLiteral {
+	value, err := lexer.UnescapeDoubleQuoted(seg)
+	if err != nil {
+		p.errorf(tok, "%s", err.Error())
+		value = seg
+	}
+	return &ast.StringLiteral{Token: tok, Value: value, Raw: seg, Quote: tok.Quote}
+}
+
 func (p *Parser) parseInterpolatedString(tok token.Token) *ast.InterpolatedString {
 	node := &ast.InterpolatedString{Token: tok}
 	raw := tok.Raw
@@ -2462,16 +2474,11 @@ func (p *Parser) parseInterpolatedString(tok token.Token) *ast.InterpolatedStrin
 	for len(raw) > 0 {
 		start := strings.Index(raw, "${")
 		if start == -1 {
-			node.Parts = append(node.Parts, &ast.StringLiteral{
-				Token: tok, Value: raw, Raw: raw, Quote: tok.Quote,
-			})
+			node.Parts = append(node.Parts, p.interpolationLiteral(tok, raw))
 			break
 		}
 		if start > 0 {
-			lit := raw[:start]
-			node.Parts = append(node.Parts, &ast.StringLiteral{
-				Token: tok, Value: lit, Raw: lit, Quote: tok.Quote,
-			})
+			node.Parts = append(node.Parts, p.interpolationLiteral(tok, raw[:start]))
 		}
 		// find the matching '}', skipping string literals so their braces don't affect depth
 		depth, i := 1, start+2

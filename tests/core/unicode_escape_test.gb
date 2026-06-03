@@ -1,0 +1,26 @@
+import test;
+
+class UnicodeEscapeTest extends test.Test {
+
+    @test
+    func curlyEscapeBuildsCodepoint(): void {
+        this.assertEquals("A", "\u{41}");
+        this.assertEquals("€", "\u{20AC}");
+        this.assertEquals("😀", "\u{1F600}");
+        this.assertEquals(1, "\u{1F600}".length());
+        this.assertEquals(128512, "\u{1F600}".codePointAt(0));
+    }
+
+    @test
+    func escapesWorkInsideInterpolation(): void {
+        let name = "world";
+        /* \u{...} and \n decode even when the string interpolates */
+        this.assertEquals("hi 😀 world", "hi \u{1F600} ${name}");
+        this.assertEquals("a\nb", "a\n${""}b");
+    }
+
+    @test
+    func curlyEscapeMatchesFromCodePoint(): void {
+        this.assertEquals(string.fromCodePoint(0x1F600), "\u{1F600}");
+    }
+}

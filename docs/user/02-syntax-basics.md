@@ -82,6 +82,23 @@ Double-quoted strings process escape sequences and support interpolation:
 string msg = "Hello ${name}!\n";
 ```
 
+The escapes are `\n`, `\t`, `\r`, `\\`, `\"`, `\0` (and the other
+single-letter C escapes), plus `\u{HEX}` for a Unicode code point by hex
+value:
+
+```gb
+io.println("tab\tend");
+io.println("\u{41}");      # A
+io.println("\u{20AC}");    # €
+io.println("\u{1F600}");   # 😀  (U+1F600)
+```
+
+`\u{...}` is the idiomatic way to write a code point in a literal (the same
+value `string.fromCodePoint(...)` produces). It takes 1 to 6 hex digits; an
+empty, out-of-range, or surrogate value is a compile error. Escapes,
+including `\u{...}`, are decoded inside interpolated strings too, so
+`"emoji \u{1F600} for ${name}"` works as expected.
+
 Any expression can appear inside `${...}`:
 
 ```gb

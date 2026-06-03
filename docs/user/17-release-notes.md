@@ -2,6 +2,17 @@
 
 ## 1.7.2
 
+### Escape sequences are decoded inside interpolated strings
+
+Escape sequences in a double-quoted string that also contains `${...}`
+interpolation are now decoded, the same as in a non-interpolated string.
+Previously `"line\n${x}"` emitted a literal backslash-n instead of a
+newline, and `"\u{1F600} ${name}"` left the `\u{...}` escape undecoded.
+Relatedly, an invalid `\u{...}` escape (empty, out of range, or a
+surrogate) is now a clear compile-time error instead of producing a
+malformed string. See the string-escape reference in the syntax guide,
+which now documents `\u{HEX}` for Unicode code points.
+
 ### `geblang install pkg@latest` resolves to the highest semver tag
 
 `geblang install <git-url>@latest` now queries the remote with

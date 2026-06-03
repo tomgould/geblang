@@ -406,16 +406,16 @@ func (l *Lexer) readStringToken(quote rune) token.Token {
 					raw.WriteRune(l.ch)
 					hex.WriteRune(l.ch)
 				}
-				if l.peekChar() == '}' {
-					l.readChar()
-					raw.WriteRune(l.ch)
-					code, err := strconv.ParseInt(hex.String(), 16, 32)
-					if err == nil && utf8.ValidRune(rune(code)) {
-						value.WriteRune(rune(code))
-						continue
-					}
+				if l.peekChar() != '}' {
+					return token.Token{Type: token.Illegal, Literal: fmt.Sprintf("unterminated \\u{...} escape at %d:%d", startLine, startColumn), Line: startLine, Column: startColumn}
 				}
-				value.WriteString(`\u{`)
+				l.readChar()
+				raw.WriteRune(l.ch)
+				r, err := decodeUnicodeEscape(hex.String())
+				if err != nil {
+					return token.Token{Type: token.Illegal, Literal: fmt.Sprintf("%s at %d:%d", err.Error(), startLine, startColumn), Line: startLine, Column: startColumn}
+				}
+				value.WriteRune(r)
 				continue
 			}
 			unquoted, err := strconv.Unquote(`"` + `\` + string(l.ch) + `"`)
@@ -483,6 +483,62 @@ func (l *Lexer) readStringToken(quote rune) token.Token {
 	}
 	l.attachDoc(&tok)
 	return tok
+}
+
+// decodeUnicodeEscape decodes the hex body of a `\u{...}` escape. Shared by
+// the lexer and the interpolation parser so both reject the same invalid
+// (empty, out-of-range, or surrogate) codepoints rather than emit garbage.
+func decodeUnicodeEscape(hex string) (rune, error) {
+	if hex == "" {
+		return 0, fmt.Errorf(`empty \u{} escape`)
+	}
+	code, err := strconv.ParseInt(hex, 16, 32)
+	if err != nil || !utf8.ValidRune(rune(code)) {
+		return 0, fmt.Errorf(`invalid unicode codepoint \u{%s}`, hex)
+	}
+	return rune(code), nil
+}
+
+// UnescapeDoubleQuoted decodes the escape sequences in a double-quoted
+// string's literal content (no surrounding quotes, no `${...}`). The parser
+// uses it on the literal segments of an interpolated string so they decode
+// escapes identically to a plain string. Errors on a malformed `\u{...}`.
+func UnescapeDoubleQuoted(content string) (string, error) {
+	var out strings.Builder
+	runes := []rune(content)
+	for i := 0; i < len(runes); i++ {
+		if runes[i] != '\\' || i+1 >= len(runes) {
+			out.WriteRune(runes[i])
+			continue
+		}
+		next := runes[i+1]
+		if next == 'u' && i+2 < len(runes) && runes[i+2] == '{' {
+			j := i + 3
+			var hex strings.Builder
+			for j < len(runes) && runes[j] != '}' {
+				hex.WriteRune(runes[j])
+				j++
+			}
+			if j >= len(runes) {
+				return "", fmt.Errorf(`unterminated \u{...} escape`)
+			}
+			r, err := decodeUnicodeEscape(hex.String())
+			if err != nil {
+				return "", err
+			}
+			out.WriteRune(r)
+			i = j
+			continue
+		}
+		if unquoted, err := strconv.Unquote(`"\` + string(next) + `"`); err == nil {
+			out.WriteString(unquoted)
+		} else {
+			out.WriteByte('\\')
+			out.WriteRune(next)
+		}
+		i++
+	}
+	return out.String(), nil
 }
 
 func (l *Lexer) skipIgnored() {
