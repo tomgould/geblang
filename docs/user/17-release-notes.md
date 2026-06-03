@@ -2,6 +2,14 @@
 
 ## 1.7.2
 
+### `const` parameters
+
+- A function parameter can be declared `const` (`func f(const list<int> xs)`)
+  to make it read-only: the argument is shallow-frozen on entry, so mutating
+  it inside the function raises `ImmutableError` while the caller's value is
+  left untouched. Documents and enforces that a function only reads an
+  argument.
+
 ### Deep copies
 
 - New `clone.deep(value)` returns a deep copy of any value - containers and

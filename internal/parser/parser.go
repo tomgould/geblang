@@ -2126,6 +2126,11 @@ func (p *Parser) parseParameterList() []ast.Parameter {
 	for {
 		p.nextToken()
 		decorators := p.parseParameterDecorators()
+		isConst := false
+		if p.curTokenIs(token.Const) {
+			isConst = true
+			p.nextToken()
+		}
 		paramType := p.parseTypeRefFromCurrent()
 		variadic := false
 		if p.peekTokenIs(token.Ellipsis) {
@@ -2135,7 +2140,7 @@ func (p *Parser) parseParameterList() []ast.Parameter {
 		if !p.expectPeek(token.Ident) {
 			return params
 		}
-		param := ast.Parameter{Type: paramType, Name: &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}, Variadic: variadic, Decorators: decorators}
+		param := ast.Parameter{Type: paramType, Name: &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}, Variadic: variadic, Const: isConst, Decorators: decorators}
 		if !variadic && p.peekTokenIs(token.Assign) {
 			p.nextToken()
 			p.nextToken()

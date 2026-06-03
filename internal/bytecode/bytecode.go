@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(66)
+	Version = uint16(67)
 )
 
 type Op byte
@@ -290,6 +290,9 @@ const (
 	// first-class callable value. Operands: canonical-name const index,
 	// function-name const index.
 	OpNativeValue
+	// OpFreezeLocal replaces a local slot with a frozen shallow copy of its
+	// value (the `const` parameter prologue). Operand: slot index.
+	OpFreezeLocal
 )
 
 type Instruction struct {
@@ -369,21 +372,21 @@ type FunctionInfo struct {
 	SharesParentFrame bool
 	// DefLine / DefColumn capture the source position of the `func`
 	// keyword for this function, exposed by reflect.location.
-	DefLine           int64
-	DefColumn         int64
-	Decorators        []runtime.DecoratorMetadata
-	paramTypeSpecs    []vmTypeSpec
-	typeParamSet      map[string]bool
+	DefLine        int64
+	DefColumn      int64
+	Decorators     []runtime.DecoratorMetadata
+	paramTypeSpecs []vmTypeSpec
+	typeParamSet   map[string]bool
 	// False when every ParamTypes entry is "" or "any"; lets call
 	// entry skip the validation walk for dynamically-typed funcs.
 	requiresParamValidation bool
 }
 
 type ClassInfo struct {
-	Name                     string
-	Doc                      string
-	ParentIndex              int64
-	ParentName               string
+	Name        string
+	Doc         string
+	ParentIndex int64
+	ParentName  string
 	// ParentArguments captures the type arguments supplied to the
 	// parent in the extends clause (e.g. for `extends Base<string, int>`
 	// this is ["string", "int"]). Empty when the parent is non-generic
@@ -395,30 +398,30 @@ type ClassInfo struct {
 	// FieldTypes parallels FieldNames - the declared type string of
 	// each field, or "" when untyped. Populated at compile time so
 	// reflect.fields can report types without re-reading the AST.
-	FieldTypes               []string
+	FieldTypes []string
 	// FieldDecorators parallels FieldNames - the metadata for any
 	// @-prefixed annotations on the field declaration (e.g.
 	// `@Assert.email`). Empty per field by default. Populated at
 	// compile time; consumed by `reflect.fields` so frameworks can
 	// drive validation / serialization off the field annotations.
-	FieldDecorators          [][]runtime.DecoratorMetadata
-	FieldDefaults            []int64
-	ConstructorIndices       []int64
+	FieldDecorators    [][]runtime.DecoratorMetadata
+	FieldDefaults      []int64
+	ConstructorIndices []int64
 	// DestructorIndex is the function index of `func ~ClassName()`,
 	// or -1 when the class has no destructor.
-	DestructorIndex          int64
-	Methods                  map[string][]int64
-	StaticValues             map[string]int64
-	StaticMethods            map[string][]int64
-	Implements               []string
-	Decorators               []runtime.DecoratorMetadata
-	MethodDecorators         map[string][]runtime.DecoratorMetadata
-	StaticDecorators         map[string][]runtime.DecoratorMetadata
-	Immutable                bool
+	DestructorIndex  int64
+	Methods          map[string][]int64
+	StaticValues     map[string]int64
+	StaticMethods    map[string][]int64
+	Implements       []string
+	Decorators       []runtime.DecoratorMetadata
+	MethodDecorators map[string][]runtime.DecoratorMetadata
+	StaticDecorators map[string][]runtime.DecoratorMetadata
+	Immutable        bool
 	// DefLine / DefColumn capture the source position of the `class`
 	// keyword, exposed by reflect.location.
-	DefLine                  int64
-	DefColumn                int64
+	DefLine   int64
+	DefColumn int64
 }
 
 type InterfaceInfo struct {

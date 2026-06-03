@@ -1796,6 +1796,16 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return vm.runtimeError(instruction, "%s.%s is not a native function", canonical, name)
 			}
 			vm.push(v)
+		case OpFreezeLocal:
+			slot := instruction.Operands[0]
+			cur, err := vm.getLocalVM(slot)
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
+			frozen := runtime.FreezeShallowCopy(cur.ToValue())
+			if err := vm.setLocalVM(slot, runtime.VMValueFromValue(frozen)); err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
 		case OpFormatSpec:
 			spec, err := vm.popString(instruction, "format spec must be string")
 			if err != nil {

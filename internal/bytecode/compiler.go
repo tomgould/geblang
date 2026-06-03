@@ -50,7 +50,7 @@ type Compiler struct {
 	// dotted module path. Populated for every native (bytecode-callable)
 	// import so module-recognition sites can translate `Y.fn(...)` calls
 	// back to the canonical `X.fn` dispatch.
-	moduleAliases   map[string]string
+	moduleAliases map[string]string
 	// AssertionsDisabled elides assert(...) call sites at compile time
 	// (no code emitted; arguments are not evaluated). Set via the
 	// --no-assert CLI flag on `geblang` and `geblang build`.
@@ -92,24 +92,24 @@ func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk
 			Compiler:   compilerVersion,
 		},
 		AssertionsDisabled: AssertionsDisabled,
-		globals:         map[string]int64{},
-		globalTypes:     map[string]string{},
-		globalDeclKinds: map[string]globalDecl{},
-		deletedGlobals:  map[string]bool{},
-		declaredDecls:   map[string]bool{},
-		scopes:          []map[string]binding{{}},
-		funcs:           map[string][]int64{},
-		functionCursors: map[string]int{},
-		classes:         map[string]int64{},
-		interfaces:      map[string]int64{},
-		interfaceAST:    map[string]*ast.InterfaceStatement{},
-		enums:           map[string]int64{},
-		typeAliases:     map[string]*ast.TypeRef{},
-		reflectFuncs:    map[string]runtime.DecoratorTarget{},
-		reflectClasses:  map[string]runtime.DecoratorTarget{},
-		reflectMethods:  map[string]map[string]runtime.DecoratorTarget{},
-		reflectStatics:  map[string]map[string]runtime.DecoratorTarget{},
-		moduleAliases:   map[string]string{},
+		globals:            map[string]int64{},
+		globalTypes:        map[string]string{},
+		globalDeclKinds:    map[string]globalDecl{},
+		deletedGlobals:     map[string]bool{},
+		declaredDecls:      map[string]bool{},
+		scopes:             []map[string]binding{{}},
+		funcs:              map[string][]int64{},
+		functionCursors:    map[string]int{},
+		classes:            map[string]int64{},
+		interfaces:         map[string]int64{},
+		interfaceAST:       map[string]*ast.InterfaceStatement{},
+		enums:              map[string]int64{},
+		typeAliases:        map[string]*ast.TypeRef{},
+		reflectFuncs:       map[string]runtime.DecoratorTarget{},
+		reflectClasses:     map[string]runtime.DecoratorTarget{},
+		reflectMethods:     map[string]map[string]runtime.DecoratorTarget{},
+		reflectStatics:     map[string]map[string]runtime.DecoratorTarget{},
+		moduleAliases:      map[string]string{},
 	}
 	// A top-level `del name` removes the binding, so a later same-name
 	// declaration is a legal re-bind (the evaluator allows it at runtime).
@@ -998,6 +998,7 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 		c.pushFunctionLocals()
 	}
 	paramSlots := make([]int64, 0, len(stmt.Parameters))
+	var constSlots []int64
 	paramNames := make([]string, 0, len(stmt.Parameters))
 	paramTypes := make([]string, 0, len(stmt.Parameters))
 	paramDecorators := make([][]runtime.DecoratorMetadata, 0, len(stmt.Parameters))
@@ -1021,7 +1022,11 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 		}
 		paramNames = append(paramNames, strings.ToLower(param.Name.Value))
 		paramType := c.bytecodeTypeNameForParam(param.Type, allTypeParams)
-		paramSlots = append(paramSlots, c.defineLocalWithType(param.Name.Value, c.bytecodeTypeName(param.Type)))
+		paramSlot := c.defineLocalWithType(param.Name.Value, c.bytecodeTypeName(param.Type))
+		paramSlots = append(paramSlots, paramSlot)
+		if param.Const {
+			constSlots = append(constSlots, paramSlot)
+		}
 		paramTypes = append(paramTypes, paramType)
 		paramDecs, err := decoratorsMetadata(param.Decorators, "parameter", 0)
 		if err != nil {
@@ -1087,6 +1092,9 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 			c.popScope()
 			return err
 		}
+	}
+	for _, slot := range constSlots {
+		c.emitAt(OpFreezeLocal, stmt.Token.Line, stmt.Token.Column, slot)
 	}
 	if err := c.compileBlock(stmt.Body); err != nil {
 		c.inFunc--

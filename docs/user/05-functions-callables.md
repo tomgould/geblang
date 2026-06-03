@@ -64,6 +64,63 @@ func area(decimal radius): decimal       { return 3.14159 * radius * radius; }
 area(radius: 5.0);                            # picks the one-arg overload
 ```
 
+## How Arguments Are Passed
+
+Geblang passes arguments by **call by sharing** (the same model as Python,
+Java, JavaScript, and Ruby). The argument is a reference to the same value the
+caller holds, so:
+
+- **In-place mutation of a collection or object is visible to the caller** -
+  `list.append(x)`, `list.set(i, x)`, `dict.set(k, v)`, and `obj.field = x` all
+  change the caller's value.
+- **Operations that return a new value do not** - `list.push(x)` returns a new
+  list and leaves the caller's list unchanged.
+- **Rebinding the parameter does not affect the caller** - assigning a whole new
+  value to the parameter name (`xs = [9, 9]`) only changes the local binding.
+
+```gb
+func addOne(list<int> xs): void {
+    xs.append(1);     # mutates the caller's list (in place)
+    xs = [99];        # rebinds the local only; caller is unaffected
+}
+let nums = [1, 2, 3];
+addOne(nums);
+io.println(nums);     # [1, 2, 3, 1]
+```
+
+Primitives (`int`, `decimal`, `float`, `bool`, `string`) are immutable, so the
+distinction never matters for them.
+
+When you want a function to work on independent data, pass a copy: `.copy()`
+for a shallow copy or `clone.deep(x)` for a fully independent deep copy (see
+the utilities chapter). When you want to guarantee a function cannot mutate
+your data, freeze it (`freeze.shallow` / `freeze.deep`).
+
+## `const` Parameters
+
+Prefix a parameter with `const` to make it read-only inside the function. The
+argument is shallow-frozen on entry, so any attempt to mutate it raises
+`ImmutableError`, and the **caller's value is left untouched** (the function
+receives a frozen shallow copy, not the original):
+
+```gb
+func sum(const list<int> xs): int {
+    int total = 0;
+    for (var x in xs) { total = total + x; }
+    # xs.append(0);   # would raise ImmutableError
+    return total;
+}
+
+let nums = [1, 2, 3];
+io.println(sum(nums));   # 6
+io.println(nums);        # [1, 2, 3]  (caller unaffected)
+```
+
+`const` is shallow: it protects the parameter's own container or object, not
+deeply nested values reached through it. Use it to document and enforce that a
+function only reads its argument. (For a deep guarantee, pass
+`freeze.deep(x)`.)
+
 ## Variadic Parameters And Spread
 
 A variadic parameter collects trailing arguments into a list inside

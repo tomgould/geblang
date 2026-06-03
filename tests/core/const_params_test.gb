@@ -1,0 +1,59 @@
+/**
+ * @title const parameters
+ * @summary A `const` parameter is shallow-frozen on entry: the function
+ * cannot mutate it (ImmutableError) and the caller's value is left
+ * untouched. Reads still work.
+ */
+import test;
+
+class Box {
+    int v;
+    func Box() { this.v = 0; }
+}
+
+class ConstParamsTest extends test.Test {
+    func appendConst(const list<int> xs): void { xs.append(9); }
+    func readConst(const list<int> xs): int { return xs.length(); }
+    func putConst(const dict<string, int> d): void { d.set("k", 1); }
+    func bumpConst(const Box b): void { b.v = 5; }
+    func appendFree(list<int> xs): void { xs.append(9); }
+
+    @test
+    func constListBlocksMutationAndProtectsCaller(): void {
+        let a = [1, 2, 3];
+        let blocked = false;
+        try { this.appendConst(a); } catch (ImmutableError e) { blocked = true; }
+        this.assertTrue(blocked);
+        this.assertEquals([1, 2, 3], a);
+    }
+
+    @test
+    func constListAllowsReads(): void {
+        this.assertEquals(4, this.readConst([1, 2, 3, 4]));
+    }
+
+    @test
+    func constDictBlocksMutation(): void {
+        let d = {"a": 1};
+        let blocked = false;
+        try { this.putConst(d); } catch (ImmutableError e) { blocked = true; }
+        this.assertTrue(blocked);
+        this.assertEquals(1, d.length());
+    }
+
+    @test
+    func constInstanceBlocksFieldWrite(): void {
+        let b = Box();
+        let blocked = false;
+        try { this.bumpConst(b); } catch (ImmutableError e) { blocked = true; }
+        this.assertTrue(blocked);
+        this.assertEquals(0, b.v);
+    }
+
+    @test
+    func nonConstStillMutatesCaller(): void {
+        let a = [1, 2, 3];
+        this.appendFree(a);
+        this.assertEquals([1, 2, 3, 9], a);
+    }
+}

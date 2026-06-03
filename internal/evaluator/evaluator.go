@@ -26279,6 +26279,9 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 		} else {
 			return nil, fmt.Errorf("missing argument %q", param.Name.Value)
 		}
+		if param.Const {
+			value = runtime.FreezeShallowCopy(value)
+		}
 		if err := callEnv.Define(param.Name.Value, value, false); err != nil {
 			return nil, err
 		}

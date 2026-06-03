@@ -83,11 +83,15 @@ type Parameter struct {
 	Type       *TypeRef
 	Default    Expression
 	Variadic   bool
+	Const      bool
 	Decorators []Decorator
 }
 
 func (p Parameter) String() string {
 	parts := []string{}
+	if p.Const {
+		parts = append(parts, "const")
+	}
 	if p.Type != nil {
 		parts = append(parts, p.Type.String())
 	}

@@ -11087,6 +11087,26 @@ io.println(total);
 `, "60\n")
 }
 
+// A `const` parameter is frozen on entry: mutating it raises ImmutableError
+// and the caller's value is untouched; reads still work. Identical on both
+// backends.
+func TestParityConstParam(t *testing.T) {
+	runParity(t, `import io;
+func mutate(const list<int> xs): void { xs.append(9); }
+let a = [1, 2, 3];
+let blocked = false;
+try { mutate(a); } catch (ImmutableError e) { blocked = true; }
+io.println(blocked);
+io.println(a);
+func readIt(const list<int> xs): int { return xs.length(); }
+io.println(readIt([5, 6, 7]));
+func mutateFree(list<int> xs): void { xs.append(9); }
+let b = [1, 2, 3];
+mutateFree(b);
+io.println(b);
+`, "true\n[1, 2, 3]\n3\n[1, 2, 3, 9]\n")
+}
+
 // clone.deep / deepCopy() produce independent deep copies, and dict.copy()
 // preserves insertion order - identically on both backends.
 func TestParityDeepCopy(t *testing.T) {
