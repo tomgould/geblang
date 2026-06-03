@@ -14,7 +14,7 @@ package native
 // are otherwise handled via PrimitiveConversionMethods.
 var PrimitiveMethods = map[string][]string{
 	"string": {
-		"chars", "codePointAt", "contains", "count", "endsWith", "format", "get",
+		"chars", "codePointAt", "codePoints", "contains", "count", "endsWith", "format", "get",
 		"indexOf", "isEmpty", "lastIndexOf", "length", "lower", "matchesRegex",
 		"padEnd", "padStart", "repeat", "replace", "replaceRegex", "reverse",
 		"slice", "split", "splitRegex", "startsWith", "substring", "toBool",
@@ -43,7 +43,7 @@ var PrimitiveMethods = map[string][]string{
 	},
 	"bytes": {
 		"contains", "get", "isEmpty", "length", "slice", "toBase64",
-		"toBase64Url", "toHex", "toString",
+		"toBase64Url", "toHex", "toList", "toString",
 	},
 	"range": {"contains", "first", "isEmpty", "last", "length", "toList"},
 	"int": {

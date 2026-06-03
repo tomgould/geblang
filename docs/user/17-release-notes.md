@@ -2,6 +2,16 @@
 
 ## 1.7.1
 
+### Type-conversion methods for codepoints and byte lists
+
+New methods round out converting between strings, codepoints, and byte
+lists. `s.codePoints()` returns a string's Unicode code points as a
+`list<int>` (the list form of `codePointAt`, and the inverse of
+`string.fromCodePoints`). `b.toList()` returns a bytes value's byte
+values as a `list<int>`, and `bytes.fromList(list<int>)` builds bytes
+from byte values (0-255, rejecting out-of-range elements). Note that
+`string.fromCodePoint` / `codePointAt` already serve as chr / ord.
+
 ### Web request handler runs app-level before-middleware ahead of routing
 
 The built-in web request handler now runs every app-level

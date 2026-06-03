@@ -7852,6 +7852,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 		},
 		"bytes": {
 			"fromString":    e.registryBuiltin("bytes", "fromString"),
+			"fromList":      e.registryBuiltin("bytes", "fromList"),
 			"toString":      e.registryBuiltin("bytes", "toString"),
 			"fromHex":       e.registryBuiltin("bytes", "fromHex"),
 			"toHex":         e.registryBuiltin("bytes", "toHex"),
@@ -23477,6 +23478,16 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				elements[i] = runtime.String{Value: string(r)}
 			}
 			return &runtime.List{Elements: elements}, nil
+		case "codePoints":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("string.codePoints expects no arguments")
+			}
+			runes := []rune(value.Value)
+			elements := make([]runtime.Value, len(runes))
+			for i, r := range runes {
+				elements[i] = runtime.NewInt64(int64(r))
+			}
+			return &runtime.List{Elements: elements}, nil
 		case "codePointAt":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("string.codePointAt expects one argument")
@@ -23696,6 +23707,15 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, fmt.Errorf("bytes.toBase64Url expects no arguments")
 			}
 			return runtime.String{Value: base64.RawURLEncoding.EncodeToString(value.Value)}, nil
+		case "toList":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("bytes.toList expects no arguments")
+			}
+			elements := make([]runtime.Value, len(value.Value))
+			for i, b := range value.Value {
+				elements[i] = runtime.NewInt64(int64(b))
+			}
+			return &runtime.List{Elements: elements}, nil
 		case "contains":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("bytes.contains expects one argument")

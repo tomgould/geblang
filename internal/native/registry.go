@@ -249,7 +249,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 	"bytes": {
 		"fromString": {}, "toString": {}, "fromHex": {}, "toHex": {},
 		"fromBase64": {}, "toBase64": {}, "fromBase64Url": {}, "toBase64Url": {},
-		"concat": {},
+		"fromList": {}, "concat": {},
 	},
 	"string": {
 		"fromCodePoint": {}, "fromCodePoints": {},

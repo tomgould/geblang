@@ -13,7 +13,8 @@ value - the original is unchanged.
 | `isEmpty()` | `bool` | `true` when the string has no characters |
 | `get(index)` | `string` | Single character at `index` (negative = from end) |
 | `chars()` | `list<string>` | All characters as a list |
-| `codePointAt(index)` | `int` | Unicode code point at `index`, or `null` if out of range |
+| `codePointAt(index)` | `int` | Unicode code point at `index`, or `null` if out of range (the "ord" of one character) |
+| `codePoints()` | `list<int>` | All Unicode code points as a list |
 
 ```gb
 import io;
@@ -141,7 +142,7 @@ Import `string`. The module is a small namespace for static / factory functions 
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `fromCodePoint(n)` | `string` | Single-character string for the Unicode codepoint `n`. Rejects negative values, values above U+10FFFF, and the UTF-16 surrogate range U+D800..U+DFFF. |
+| `fromCodePoint(n)` | `string` | Single-character string for the Unicode codepoint `n` (this is "chr"). Rejects negative values, values above U+10FFFF, and the UTF-16 surrogate range U+D800..U+DFFF. |
 | `fromCodePoints(list<int>)` | `string` | Multi-character string built from a list of codepoints. Same validation per element. |
 | `compare(a, b)` | `int` | Three-way comparison returning -1 / 0 / +1. Useful as a sort key (`xs.sortBy(string.compare)`). Compares the underlying UTF-8 bytes, which agrees with codepoint order. |
 | `equalsFold(a, b)` | `bool` | Case-insensitive equality respecting Unicode case folding. `string.equalsFold("CafÉ", "café")` is `true`. |
@@ -156,6 +157,11 @@ io.println(string.fromCodePoints([72, 105, 33]));   # Hi!
 io.println(string.compare("apple", "banana"));      # -1
 io.println(string.equalsFold("Hello", "HELLO"));    # true
 ```
+
+Geblang has no separate `chr` / `ord`: `string.fromCodePoint(n)` is
+`chr` (codepoint to character) and `s.codePointAt(i)` is `ord`
+(character to codepoint). `s.codePoints()` and `string.fromCodePoints`
+convert a whole string to and from a `list<int>` of codepoints.
 
 For *timing-attack-safe* string equality (HMAC verification, token comparison, etc.) use `secrets.constantTimeEqual(a, b)` from the security module - see [Security](12-security.md). `string.equalsFold` and `string.compare` are **not** constant-time.
 

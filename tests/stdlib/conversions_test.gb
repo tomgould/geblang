@@ -1,0 +1,46 @@
+import test;
+import bytes;
+import string;
+
+class ConversionsTest extends test.Test {
+
+    @test
+    func stringCodePoints(): void {
+        let cps = "abc".codePoints();
+        this.assertEquals(3, cps.length());
+        this.assertEquals(97, cps[0]);
+        this.assertEquals(99, cps[2]);
+    }
+
+    @test
+    func codePointsRoundTripsWithFromCodePoints(): void {
+        this.assertEquals("hi", string.fromCodePoints("hi".codePoints()));
+    }
+
+    @test
+    func bytesToList(): void {
+        let b = "abc" as bytes;
+        let xs = b.toList();
+        this.assertEquals(3, xs.length());
+        this.assertEquals(97, xs[0]);
+    }
+
+    @test
+    func bytesFromList(): void {
+        let b = bytes.fromList([97, 98, 99]);
+        this.assertEquals("abc", b as string);
+    }
+
+    @test
+    func bytesRoundTrip(): void {
+        let original = "hello" as bytes;
+        this.assertEquals("hello", bytes.fromList(original.toList()) as string);
+    }
+
+    @test
+    func fromListRejectsOutOfRange(): void {
+        this.assertThrows(func(): void {
+            let b = bytes.fromList([256]);
+        });
+    }
+}

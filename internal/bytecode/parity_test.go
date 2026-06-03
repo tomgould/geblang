@@ -11029,6 +11029,18 @@ func TestParityGlobalRedeclarationRule(t *testing.T) {
 	}
 }
 
+// Type-conversion surface: string.codePoints, bytes.toList, bytes.fromList
+// must produce identical results on both backends.
+func TestParityTypeConversions(t *testing.T) {
+	runParity(t, `import io;
+import bytes;
+io.println("abc".codePoints());
+io.println(("abc" as bytes).toList());
+io.println(bytes.fromList([97, 98, 99]) as string);
+io.println(bytes.fromList(("hi" as bytes).toList()) as string);
+`, "[97, 98, 99]\n[97, 98, 99]\nabc\nhi\n")
+}
+
 // del operates on variables; deleting a class/func/enum/interface
 // declaration is rejected identically on both backends. (Variable and
 // instance del, and del+rebind, are covered by TestParityDelClearsBinding

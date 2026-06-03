@@ -520,7 +520,7 @@ func mathNumericListSingle(v runtime.Value, label string) ([]float64, error) {
 }
 
 // mathQuantile computes the q-quantile (q in [0, 1]) using R's type-7
-// linear-interpolation algorithm — the most common default across
+// linear-interpolation algorithm - the most common default across
 // numpy, pandas, R, Excel.
 func mathQuantile(nums []float64, q float64) float64 {
 	sorted := append([]float64(nil), nums...)
@@ -2075,8 +2075,8 @@ func asFloat64Strict(value runtime.Value) (float64, bool) {
 // registerRandom registers a deterministic pseudo-random number generator
 // module backed by Go's math/rand. Use this for sampling, shuffling,
 // procedural generation, and any application where reproducibility matters
-// (with a fixed seed). For cryptographic randomness — keys, tokens,
-// salts — use the `secrets` module instead.
+// (with a fixed seed). For cryptographic randomness - keys, tokens,
+// salts - use the `secrets` module instead.
 func registerRandom(r *Registry) {
 	// A package-level RNG with a process-wide default seed lets the
 	// module-level random.* helpers act like Python's `random` while
@@ -2216,6 +2216,24 @@ func registerBytes(r *Registry) {
 			return nil, err
 		}
 		return runtime.Bytes{Value: []byte(text)}, nil
+	})
+	r.Register("bytes", "fromList", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("bytes.fromList expects 1 argument")
+		}
+		list, ok := args[0].(*runtime.List)
+		if !ok {
+			return nil, fmt.Errorf("bytes.fromList expects a list of int byte values")
+		}
+		out := make([]byte, len(list.Elements))
+		for i, elem := range list.Elements {
+			n, err := byteValueInt(elem, fmt.Sprintf("bytes.fromList element %d", i))
+			if err != nil {
+				return nil, err
+			}
+			out[i] = byte(n)
+		}
+		return runtime.Bytes{Value: out}, nil
 	})
 	r.Register("bytes", "toString", func(args []runtime.Value) (runtime.Value, error) {
 		data, err := bytesWithOptionalUTF8Encoding(args, "bytes.toString")
@@ -2370,6 +2388,25 @@ func codePointInt(value runtime.Value, label string) (int64, error) {
 		return 0, fmt.Errorf("%s: %d is not a valid Unicode codepoint", label, code)
 	}
 	return code, nil
+}
+
+func byteValueInt(value runtime.Value, label string) (int64, error) {
+	var n int64
+	switch v := value.(type) {
+	case runtime.SmallInt:
+		n = v.Value
+	case runtime.Int:
+		if !v.Value.IsInt64() {
+			return 0, fmt.Errorf("%s: byte value out of range", label)
+		}
+		n = v.Value.Int64()
+	default:
+		return 0, fmt.Errorf("%s expects an int byte value", label)
+	}
+	if n < 0 || n > 255 {
+		return 0, fmt.Errorf("%s: %d is not a byte value (0-255)", label, n)
+	}
+	return n, nil
 }
 
 func registerCompress(r *Registry) {

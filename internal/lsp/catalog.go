@@ -172,6 +172,7 @@ var primitiveMethods = map[string]map[string]functionDoc{
 		"chars":        fn([]string{}, "list<string>", "List of single-character substrings."),
 		"get":          fn([]string{"int index"}, "string", "Character at position."),
 		"codepointAt":  fn([]string{"int index"}, "int", "Code point at position."),
+		"codePoints":   fn([]string{}, "list<int>", "List of Unicode code points (the ord of each character)."),
 		"format":       fn([]string{"any ...args"}, "string", "printf-style format using % placeholders."),
 		"toString":     fn([]string{}, "string", "Identity."),
 		"toInt":        fn([]string{"int base = 10"}, "int", "Parse as int in base 2-36."),
@@ -243,6 +244,7 @@ var primitiveMethods = map[string]map[string]functionDoc{
 		"contains":    fn([]string{"bytes|int needle"}, "bool", "Substring or byte-value check."),
 		"toString":    fn([]string{}, "string", "Decode as UTF-8."),
 		"toHex":       fn([]string{}, "string", "Lowercase hex."),
+		"toList":      fn([]string{}, "list<int>", "List of byte values (0-255)."),
 		"get":         fn([]string{"int index"}, "int", "Byte value at position (0-255)."),
 		"slice":       fn([]string{"int start", "int end = length"}, "bytes", "Fresh bytes value for the [start, end) range. Negative indices count from the end; out-of-range bounds clamp."),
 		"toBase64":    fn([]string{}, "string", "Standard Base64."),
@@ -436,6 +438,7 @@ var stdlibCatalog = map[string]moduleDoc{
 	}},
 	"bytes": {functions: map[string]functionDoc{
 		"fromString":    fn([]string{"string text"}, "bytes", "Encodes a string as bytes."),
+		"fromList":      fn([]string{"list<int> values"}, "bytes", "Builds bytes from a list of int byte values (0-255)."),
 		"toString":      fn([]string{"bytes data"}, "string", "Decodes bytes as a string."),
 		"fromHex":       fn([]string{"string hex"}, "bytes", "Decodes hex text."),
 		"toHex":         fn([]string{"bytes data"}, "string", "Encodes bytes as hex text."),

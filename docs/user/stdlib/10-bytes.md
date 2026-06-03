@@ -5,6 +5,8 @@
 Import `bytes`:
 
 - `fromString(text)`, `toString(bytes)`
+- `fromList(list<int>)` - builds bytes from a list of byte values
+  (0-255); rejects out-of-range values
 - `fromHex(text)`, `toHex(bytes)`
 - `fromBase64(text)`, `toBase64(bytes)`
 - `fromBase64Url(text)`, `toBase64Url(bytes)` - unpadded URL-safe
@@ -14,6 +16,8 @@ Import `bytes`:
 
 Bytes values also expose `b.toHex()`, `b.toBase64()`, and
 `b.toBase64Url()` as methods, equivalent to the module helpers.
+`b.toList()` returns the byte values as a `list<int>` (the inverse of
+`bytes.fromList`); `b.get(i)` / `b[i]` reads a single byte value.
 
 ```gb
 import bytes;

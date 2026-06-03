@@ -310,7 +310,7 @@ func (e vmTypedError) Error() string { return e.class + ": " + e.message }
 // caller VM can re-throw it as a catchable pendingThrow instead of
 // losing the class / parent-chain information by collapsing it to a
 // plain string. Used when a closure called via the moduleLoader
-// throws — the sub-VM packages its pendingThrow into a vmThrownError
+// throws - the sub-VM packages its pendingThrow into a vmThrownError
 // and the caller VM's invocation site unwraps it.
 type vmThrownError struct {
 	err runtime.Error
@@ -2174,7 +2174,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			slot.generatorDone = nil
 			slot.typeBindings = nil
 			vm.frames = vm.frames[:frameIdx]
-			// Hot path: a regular return — no override, no error-class
+			// Hot path: a regular return - no override, no error-class
 			// reification, no negate, no immutable freeze, not a
 			// destructor-bearing constructor. Push the VMValue
 			// straight back without converting through runtime.Value.
@@ -3306,7 +3306,7 @@ func (vm *VM) binaryNumeric(instruction Instruction, ip int) (int, error) {
 }
 
 func (vm *VM) binaryNumericValues(instruction Instruction, left runtime.Value, right runtime.Value) error {
-	// Fast path: both SmallInt — zero allocation for common integer arithmetic.
+	// Fast path: both SmallInt - zero allocation for common integer arithmetic.
 	if l, ok := left.(runtime.SmallInt); ok {
 		if r, ok := right.(runtime.SmallInt); ok {
 			return vm.smallIntBinary(instruction, l.Value, r.Value)
@@ -10469,7 +10469,7 @@ func shiftInstructionOperands(instruction *Instruction, instructionShift int, co
 			}
 		}
 	case OpSetTypeBindings, OpPlantCallTypeBindings:
-		// Operands: [count, pIdx1, tIdx1, pIdx2, tIdx2, ...] — all indices from 1 onward are constant indices.
+		// Operands: [count, pIdx1, tIdx1, pIdx2, tIdx2, ...] - all indices from 1 onward are constant indices.
 		for i := 1; i < len(instruction.Operands); i++ {
 			if instruction.Operands[i] >= 0 {
 				instruction.Operands[i] += int64(constantShift)
@@ -11059,7 +11059,7 @@ func splitTypeArgs(s string) []string {
 
 // matchValueToTypeStr is the internal recursive implementation of VM type checking.
 // typeParams is the pre-computed set of generic type parameter names (nil for non-generic contexts;
-// a nil map is safe — Go map lookups on nil maps return the zero value).
+// a nil map is safe - Go map lookups on nil maps return the zero value).
 func (vm *VM) matchValueToTypeStr(typeParams map[string]bool, value runtime.Value, typ string) bool {
 	spec := vm.typeSpec(typ)
 	return vm.matchValueToTypeSpec(typeParams, value, spec)
@@ -11514,7 +11514,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if !ok {
 		return 0, vm.runtimeError(instruction, "method name constant must be string")
 	}
-	// slots[0]=receiver, slots[1:]=args — one alloc instead of two.
+	// slots[0]=receiver, slots[1:]=args - one alloc instead of two.
 	slots := make([]runtime.Value, argc+1)
 	for i := argc - 1; i >= 0; i-- {
 		value, err := vm.pop()
@@ -13037,7 +13037,7 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 			displayName := methodKey
 			if len(indices) > 0 && indices[0] >= 0 && int(indices[0]) < len(vm.chunk.Functions) {
 				if n := vm.chunk.Functions[indices[0]].Name; n != "" {
-					// Function names are stored as "ClassName.methodname" — strip class prefix.
+					// Function names are stored as "ClassName.methodname" - strip class prefix.
 					if dotIdx := strings.LastIndex(n, "."); dotIdx >= 0 {
 						displayName = n[dotIdx+1:]
 					} else {
@@ -13647,6 +13647,20 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			elements[i] = runtime.String{Value: string(r)}
 		}
 		return &runtime.List{Elements: elements}, nil
+	case "codepoints":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("string.codePoints expects no arguments")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method codePoints", receiver.TypeName())
+		}
+		runes := []rune(value.Value)
+		elements := make([]runtime.Value, len(runes))
+		for i, r := range runes {
+			elements[i] = runtime.NewInt64(int64(r))
+		}
+		return &runtime.List{Elements: elements}, nil
 	case "codepointat":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("string.codePointAt expects one argument")
@@ -14162,6 +14176,12 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			for rangeContains(current, value.End, step, value.Exclusive) {
 				elements = append(elements, runtime.Int{Value: new(big.Int).Set(current)})
 				current.Add(current, step)
+			}
+			return &runtime.List{Elements: elements}, nil
+		case runtime.Bytes:
+			elements := make([]runtime.Value, len(value.Value))
+			for i, b := range value.Value {
+				elements[i] = runtime.NewInt64(int64(b))
 			}
 			return &runtime.List{Elements: elements}, nil
 		default:
