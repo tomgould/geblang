@@ -283,6 +283,10 @@ points.
 | `any(fn)` | `bool` | `true` when at least one element matches `fn` |
 | `all(fn)` | `bool` | `true` when every element matches `fn` |
 | `count(fn)` | `int` | Count of elements matching `fn` |
+| `flatMap(fn)` | `list<U>` | Map each element to a list, then concatenate (`fn` must return a list) |
+| `takeWhile(fn)` | `list<T>` | Leading elements while `fn` holds; stops at the first failure |
+| `dropWhile(fn)` | `list<T>` | Remaining elements after the leading run where `fn` holds |
+| `scan(initial, fn)` | `list<U>` | Running fold: `initial` followed by each successive accumulation |
 
 ```gb
 import io;
@@ -304,6 +308,15 @@ io.println(first_even); # 2
 io.println(nums.any(func(int x): bool { return x > 5; }));  # true
 io.println(nums.all(func(int x): bool { return x > 0; }));  # true
 io.println(nums.count(func(int x): bool { return x % 2 == 0; })); # 3
+
+let pairs = nums.flatMap(func(int x): list<int> { return [x, x * x]; });
+io.println(pairs);  # [1, 1, 2, 4, 3, 9, 4, 16, 5, 25, 6, 36]
+
+io.println(nums.takeWhile(func(int x): bool { return x < 4; }));  # [1, 2, 3]
+io.println(nums.dropWhile(func(int x): bool { return x < 4; }));  # [4, 5, 6]
+
+let running = nums.scan(0, func(int acc, int x): int { return acc + x; });
+io.println(running);  # [0, 1, 3, 6, 10, 15, 21]
 ```
 
 ### Keyed Functional Helpers
@@ -325,6 +338,7 @@ interchangeable.
 | `averageBy(fn)` | `decimal` | Mean of the numeric key |
 | `frequencies()` | `dict<any, int>` | Count of each distinct value |
 | `mode()` | `T\|null` | Most-frequent element |
+| `uniqueBy(fn)` | `list<T>` | Remove duplicates compared by `fn(element)` (keeps first) |
 | `indexBy(fn)` | `dict<any, T>` | Dict keyed by `fn(element)` (latest wins on collision) |
 | `containsBy(fn)` | `bool` | `true` when any element matches `fn` |
 | `differenceBy(other, fn)` | `list<T>` | Elements whose key isn't in `other`'s keys |
@@ -360,7 +374,10 @@ io.println(by_age[0]["name"]); # Ada
 | `groupBy(fn)` | `dict<string, list<T>>` | Group elements by the key returned by `fn` |
 | `chunk(size)` | `list<list<T>>` | Split into sub-lists of at most `size` elements |
 | `partition(fn)` | `list<list<T>>` | `[[matching], [not-matching]]` |
+| `chunk(size)` | `list<list<T>>` | Non-overlapping sub-lists of at most `size` |
+| `windowed(size, step=1)` | `list<list<T>>` | Overlapping sliding windows of `size` (full windows only) |
 | `zip(other)` | `list<list<any>>` | Pair elements with a second list |
+| `unzip()` | `list<list<any>>` | Inverse of `zip`: a list of pairs becomes `[firsts, seconds]` |
 
 ```gb
 import io;
@@ -379,6 +396,12 @@ io.println(parts[1]);  # [1, 3, 5]
 
 list<string> letters = ["a", "b", "c"];
 io.println(nums.slice(0, 3).zip(letters)); # [[1, a], [2, b], [3, c]]
+
+io.println(nums.windowed(2));     # [[1, 2], [2, 3], [3, 4], [4, 5]]
+io.println(nums.windowed(2, 2));  # [[1, 2], [3, 4]]
+
+let zipped = nums.slice(0, 3).zip(letters);
+io.println(zipped.unzip());       # [[1, 2, 3], [a, b, c]]
 ```
 
 ---
@@ -555,10 +578,11 @@ Size and membership:
 
 Transformations:
 
-- `map`, `filter`, `reduce`
+- `map`, `filter`, `reduce`, `flatMap`, `scan`
 - `reverse`, `sort`, `sorted`, `join`
-- `flatten`, `unique`, `groupBy`, `indexBy`
-- `chunk`, `partition`
+- `flatten`, `unique`, `uniqueBy`, `groupBy`, `indexBy`
+- `chunk`, `windowed`, `partition`
+- `takeWhile`, `dropWhile`
 
 Searching:
 
@@ -574,7 +598,7 @@ Set-style helpers:
 
 - `difference`, `intersection`
 - `differenceBy`, `intersectionBy`
-- `zip`, `zipWith`
+- `zip`, `zipWith`, `unzip`
 
 Graph and tree algorithms:
 

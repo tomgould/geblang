@@ -32,6 +32,7 @@ var PrimitiveMethods = map[string][]string{
 		"prepend", "push", "reduce", "remove", "removeAt", "reverse", "reversed",
 		"set", "slice", "sort", "sortBy", "sorted", "sumBy", "toList", "topBy",
 		"topK", "unique", "unshift", "upperBound", "zip", "zipWith",
+		"flatMap", "uniqueBy", "takeWhile", "dropWhile", "windowed", "unzip", "scan",
 	},
 	"dict": {
 		"bfs", "clear", "contains", "copy", "delete", "dfs", "entries", "get",

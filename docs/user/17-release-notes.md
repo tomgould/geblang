@@ -2,6 +2,18 @@
 
 ## 1.7.2
 
+### More collection operations
+
+Seven new list operations, available both as methods (`xs.flatMap(f)`) and as
+`collections` module functions (`collections.flatMap(xs, f)`):
+
+- `flatMap(fn)` - map each element to a list and concatenate.
+- `uniqueBy(fn)` - remove duplicates compared by a key function.
+- `takeWhile(fn)` / `dropWhile(fn)` - leading run by predicate, and the rest.
+- `windowed(size, step=1)` - overlapping sliding windows (complements `chunk`).
+- `unzip()` - inverse of `zip`: a list of pairs becomes `[firsts, seconds]`.
+- `scan(initial, fn)` - running fold returning every intermediate accumulation.
+
 ### Time ergonomics
 
 - `time.humanize(ms)` renders a millisecond duration as a compact string:

@@ -62,23 +62,23 @@ type VM struct {
 	classIndex        map[string]int
 	natives           *native.Registry
 	// nil entries fall through to evalNativeCall (statefuls / errors.is).
-	nativeCache         []native.Function
-	syncMode            bool // when true, async functions are called synchronously
-	decoratedFuncs      map[int64]runtime.Value
-	decoratedClasses    map[int64]runtime.Value
-	decoratorsApplied   bool
-	applyingDecorators  bool
-	rawFunctionCalls    map[int64]bool
-	methodReceiverFuncs map[int64]bool
+	nativeCache          []native.Function
+	syncMode             bool // when true, async functions are called synchronously
+	decoratedFuncs       map[int64]runtime.Value
+	decoratedClasses     map[int64]runtime.Value
+	decoratorsApplied    bool
+	applyingDecorators   bool
+	rawFunctionCalls     map[int64]bool
+	methodReceiverFuncs  map[int64]bool
 	interfaceFallbacks   map[int64]map[string]crossModuleDefault
 	interfaceExtraFields map[int64][]extraField
-	forwardThis         *runtime.Instance
-	generatorExecution  bool
-	generatorYield      chan vmGeneratorItem
-	generatorDone       <-chan struct{}
-	typeSpecCache       map[string]vmTypeSpec
-	typeAssertSpecs     map[int64]vmTypeSpec
-	callArgsFree        [][]runtime.Value
+	forwardThis          *runtime.Instance
+	generatorExecution   bool
+	generatorYield       chan vmGeneratorItem
+	generatorDone        <-chan struct{}
+	typeSpecCache        map[string]vmTypeSpec
+	typeAssertSpecs      map[int64]vmTypeSpec
+	callArgsFree         [][]runtime.Value
 	// pendingTypeBindings carries an inherited type-binding map from a
 	// closure callsite into the next startFunctionWithValidation call.
 	// startFunctionWithBindings sets it; startFunctionWithValidation
@@ -8488,7 +8488,8 @@ func (vm *VM) collectionsNativeCall(fn string, args []runtime.Value) (runtime.Va
 		"findLast", "containsBy", "indexBy", "binarySearch", "lowerBound", "upperBound",
 		"minBy", "maxBy", "sortBy", "topBy", "sumBy", "averageBy",
 		"topK", "bottomK", "frequencies", "mode",
-		"difference", "intersection", "differenceBy", "intersectionBy", "zipWith":
+		"difference", "intersection", "differenceBy", "intersectionBy", "zipWith",
+		"flatMap", "uniqueBy", "takeWhile", "dropWhile", "windowed", "unzip", "scan":
 		if len(args) == 0 {
 			return nil, fmt.Errorf("collections.%s expects at least a collection argument", fn)
 		}
@@ -9495,6 +9496,140 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			&runtime.List{Elements: yes},
 			&runtime.List{Elements: no},
 		}}, true, nil
+	case "flatMap":
+		if len(args) != 1 {
+			return nil, true, fmt.Errorf("list.flatMap expects one argument (function)")
+		}
+		var result []runtime.Value
+		for _, el := range list.Elements {
+			mapped, err := vm.callCallable(args[0], []runtime.Value{el})
+			if err != nil {
+				return nil, true, err
+			}
+			nested, ok := mapped.(*runtime.List)
+			if !ok {
+				return nil, true, fmt.Errorf("list.flatMap function must return a list")
+			}
+			result = append(result, nested.Elements...)
+		}
+		return &runtime.List{Elements: result}, true, nil
+	case "uniqueBy":
+		if len(args) != 1 {
+			return nil, true, fmt.Errorf("list.uniqueBy expects one argument (function)")
+		}
+		seenKeys := make([]runtime.Value, 0, len(list.Elements))
+		var result []runtime.Value
+		for _, el := range list.Elements {
+			key, err := vm.callCallable(args[0], []runtime.Value{el})
+			if err != nil {
+				return nil, true, err
+			}
+			found := false
+			for _, s := range seenKeys {
+				if valuesEqual(key, s) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				seenKeys = append(seenKeys, key)
+				result = append(result, el)
+			}
+		}
+		return &runtime.List{Elements: result}, true, nil
+	case "takeWhile":
+		if len(args) != 1 {
+			return nil, true, fmt.Errorf("list.takeWhile expects one argument (function)")
+		}
+		var result []runtime.Value
+		for _, el := range list.Elements {
+			keep, err := vm.callCallable(args[0], []runtime.Value{el})
+			if err != nil {
+				return nil, true, err
+			}
+			if b, ok := keep.(runtime.Bool); !ok || !b.Value {
+				break
+			}
+			result = append(result, el)
+		}
+		return &runtime.List{Elements: result}, true, nil
+	case "dropWhile":
+		if len(args) != 1 {
+			return nil, true, fmt.Errorf("list.dropWhile expects one argument (function)")
+		}
+		dropping := true
+		var result []runtime.Value
+		for _, el := range list.Elements {
+			if dropping {
+				keep, err := vm.callCallable(args[0], []runtime.Value{el})
+				if err != nil {
+					return nil, true, err
+				}
+				if b, ok := keep.(runtime.Bool); ok && b.Value {
+					continue
+				}
+				dropping = false
+			}
+			result = append(result, el)
+		}
+		return &runtime.List{Elements: result}, true, nil
+	case "windowed":
+		if len(args) != 1 && len(args) != 2 {
+			return nil, true, fmt.Errorf("list.windowed expects size and optional step")
+		}
+		sizeInt, ok := native.AsInt64(args[0])
+		if !ok {
+			return nil, true, fmt.Errorf("list.windowed size must be int")
+		}
+		step := int64(1)
+		if len(args) == 2 {
+			step, ok = native.AsInt64(args[1])
+			if !ok {
+				return nil, true, fmt.Errorf("list.windowed step must be int")
+			}
+		}
+		size := int(sizeInt)
+		if size <= 0 || step <= 0 {
+			return nil, true, fmt.Errorf("list.windowed size and step must be positive")
+		}
+		var windows []runtime.Value
+		for i := 0; i+size <= len(list.Elements); i += int(step) {
+			windows = append(windows, &runtime.List{Elements: append([]runtime.Value(nil), list.Elements[i:i+size]...)})
+		}
+		return &runtime.List{Elements: windows}, true, nil
+	case "unzip":
+		if len(args) != 0 {
+			return nil, true, fmt.Errorf("list.unzip expects no arguments")
+		}
+		firsts := make([]runtime.Value, 0, len(list.Elements))
+		seconds := make([]runtime.Value, 0, len(list.Elements))
+		for _, el := range list.Elements {
+			pair, ok := el.(*runtime.List)
+			if !ok || len(pair.Elements) != 2 {
+				return nil, true, fmt.Errorf("list.unzip expects a list of 2-element lists")
+			}
+			firsts = append(firsts, pair.Elements[0])
+			seconds = append(seconds, pair.Elements[1])
+		}
+		return &runtime.List{Elements: []runtime.Value{
+			&runtime.List{Elements: firsts},
+			&runtime.List{Elements: seconds},
+		}}, true, nil
+	case "scan":
+		if len(args) != 2 {
+			return nil, true, fmt.Errorf("list.scan expects two arguments (initial, function)")
+		}
+		acc := args[0]
+		result := []runtime.Value{acc}
+		for _, el := range list.Elements {
+			next, err := vm.callCallable(args[1], []runtime.Value{acc, el})
+			if err != nil {
+				return nil, true, err
+			}
+			acc = next
+			result = append(result, acc)
+		}
+		return &runtime.List{Elements: result}, true, nil
 	case "findLast":
 		if len(args) != 1 {
 			return nil, true, fmt.Errorf("list.findLast expects one argument (function)")
@@ -12577,7 +12712,6 @@ func (vm *VM) runtimeClassForParent(classInfo ClassInfo) *runtime.Class {
 		Implements:     vm.runtimeInterfacesForClass(parentInfo),
 	}
 }
-
 
 // reflectFieldsResult returns the per-field metadata list shape that
 // reflect.fields produces - {name, type, nullable, hasDefault} dicts.

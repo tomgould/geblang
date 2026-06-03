@@ -7941,6 +7941,13 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"differenceBy":    e.collectionsMethod("differenceBy", 3),
 			"intersectionBy":  e.collectionsMethod("intersectionBy", 3),
 			"zipWith":         e.collectionsMethod("zipWith", 3),
+			"flatMap":         e.collectionsMethod("flatMap", 2),
+			"uniqueBy":        e.collectionsMethod("uniqueBy", 2),
+			"takeWhile":       e.collectionsMethod("takeWhile", 2),
+			"dropWhile":       e.collectionsMethod("dropWhile", 2),
+			"windowed":        e.collectionsMethod("windowed", -1),
+			"unzip":           e.collectionsMethod("unzip", 1),
+			"scan":            e.collectionsMethod("scan", 3),
 			"bfs":             e.collectionsGraphMethod("bfs", 1),
 			"dfs":             e.collectionsGraphMethod("dfs", 1),
 			"topologicalSort": e.collectionsGraphMethod("topologicalSort", 0),
@@ -22851,6 +22858,143 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				&runtime.List{Elements: yes},
 				&runtime.List{Elements: no},
 			}}, nil
+		case "flatMap":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("list.flatMap expects one argument (function)")
+			}
+			var result []runtime.Value
+			for _, el := range value.Elements {
+				mapped, err := e.callValue(args[0], []runtime.Value{el})
+				if err != nil {
+					return nil, err
+				}
+				nested, ok := mapped.(*runtime.List)
+				if !ok {
+					return nil, fmt.Errorf("list.flatMap function must return a list")
+				}
+				result = append(result, nested.Elements...)
+			}
+			return &runtime.List{Elements: result}, nil
+		case "uniqueBy":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("list.uniqueBy expects one argument (function)")
+			}
+			seenKeys := make([]runtime.Value, 0, len(value.Elements))
+			var result []runtime.Value
+			for _, el := range value.Elements {
+				key, err := e.callValue(args[0], []runtime.Value{el})
+				if err != nil {
+					return nil, err
+				}
+				found := false
+				for _, s := range seenKeys {
+					eq, err := e.valuesEqual(key, s)
+					if err != nil {
+						return nil, err
+					}
+					if eq {
+						found = true
+						break
+					}
+				}
+				if !found {
+					seenKeys = append(seenKeys, key)
+					result = append(result, el)
+				}
+			}
+			return &runtime.List{Elements: result}, nil
+		case "takeWhile":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("list.takeWhile expects one argument (function)")
+			}
+			var result []runtime.Value
+			for _, el := range value.Elements {
+				keep, err := e.callValue(args[0], []runtime.Value{el})
+				if err != nil {
+					return nil, err
+				}
+				if !isTruthy(keep) {
+					break
+				}
+				result = append(result, el)
+			}
+			return &runtime.List{Elements: result}, nil
+		case "dropWhile":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("list.dropWhile expects one argument (function)")
+			}
+			dropping := true
+			var result []runtime.Value
+			for _, el := range value.Elements {
+				if dropping {
+					keep, err := e.callValue(args[0], []runtime.Value{el})
+					if err != nil {
+						return nil, err
+					}
+					if isTruthy(keep) {
+						continue
+					}
+					dropping = false
+				}
+				result = append(result, el)
+			}
+			return &runtime.List{Elements: result}, nil
+		case "windowed":
+			if len(args) != 1 && len(args) != 2 {
+				return nil, fmt.Errorf("list.windowed expects size and optional step")
+			}
+			size, err := indexInt(args[0])
+			if err != nil {
+				return nil, err
+			}
+			step := 1
+			if len(args) == 2 {
+				step, err = indexInt(args[1])
+				if err != nil {
+					return nil, err
+				}
+			}
+			if size <= 0 || step <= 0 {
+				return nil, fmt.Errorf("list.windowed size and step must be positive")
+			}
+			var windows []runtime.Value
+			for i := 0; i+size <= len(value.Elements); i += step {
+				windows = append(windows, &runtime.List{Elements: append([]runtime.Value(nil), value.Elements[i:i+size]...)})
+			}
+			return &runtime.List{Elements: windows}, nil
+		case "unzip":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("list.unzip expects no arguments")
+			}
+			firsts := make([]runtime.Value, 0, len(value.Elements))
+			seconds := make([]runtime.Value, 0, len(value.Elements))
+			for _, el := range value.Elements {
+				pair, ok := el.(*runtime.List)
+				if !ok || len(pair.Elements) != 2 {
+					return nil, fmt.Errorf("list.unzip expects a list of 2-element lists")
+				}
+				firsts = append(firsts, pair.Elements[0])
+				seconds = append(seconds, pair.Elements[1])
+			}
+			return &runtime.List{Elements: []runtime.Value{
+				&runtime.List{Elements: firsts},
+				&runtime.List{Elements: seconds},
+			}}, nil
+		case "scan":
+			if len(args) != 2 {
+				return nil, fmt.Errorf("list.scan expects two arguments (initial, function)")
+			}
+			acc := args[0]
+			result := []runtime.Value{acc}
+			for _, el := range value.Elements {
+				next, err := e.callValue(args[1], []runtime.Value{acc, el})
+				if err != nil {
+					return nil, err
+				}
+				acc = next
+				result = append(result, acc)
+			}
+			return &runtime.List{Elements: result}, nil
 		case "findLast":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.findLast expects one argument (function)")

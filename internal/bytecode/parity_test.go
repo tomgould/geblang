@@ -11074,6 +11074,60 @@ io.println("xy".graphemes());
 `, "5\n1\n4\nab\n[\"x\", \"y\"]\n")
 }
 
+// New collection operations (flatMap/uniqueBy/takeWhile/dropWhile/windowed/
+// unzip/scan) behave identically on both backends and via both surfaces.
+func TestParityCollectionOps(t *testing.T) {
+	runParity(t, `import io;
+import collections;
+let xs = [1, 2, 3, 4, 5];
+io.println(xs.flatMap(func(int x): list<int> { return [x, x * 10]; }));
+io.println([{"k":1},{"k":1},{"k":2}].uniqueBy(func(dict<string,any> d): any { return d["k"]; }));
+io.println(xs.takeWhile(func(int x): bool { return x < 3; }));
+io.println(xs.dropWhile(func(int x): bool { return x < 3; }));
+io.println(xs.windowed(2));
+io.println(xs.windowed(3, 2));
+io.println([[1,"a"],[2,"b"]].unzip());
+io.println(xs.scan(0, func(int acc, int x): int { return acc + x; }));
+io.println(collections.flatMap(xs, func(int x): list<int> { return [x]; }));
+io.println(collections.windowed(xs, 2));
+io.println(collections.scan(xs, 0, func(int acc, int x): int { return acc + x; }));
+`, "[1, 10, 2, 20, 3, 30, 4, 40, 5, 50]\n[{\"k\": 1}, {\"k\": 2}]\n[1, 2]\n[3, 4, 5]\n[[1, 2], [2, 3], [3, 4], [4, 5]]\n[[1, 2, 3], [3, 4, 5]]\n[[1, 2], [\"a\", \"b\"]]\n[0, 1, 3, 6, 10, 15]\n[1, 2, 3, 4, 5]\n[[1, 2], [2, 3], [3, 4], [4, 5]]\n[0, 1, 3, 6, 10, 15]\n")
+}
+
+// time.humanize renders compact duration strings identically on both backends.
+func TestParityTimeHumanize(t *testing.T) {
+	runParity(t, `import io;
+import time;
+io.println(time.humanize(45));
+io.println(time.humanize(999));
+io.println(time.humanize(1000));
+io.println(time.humanize(1500));
+io.println(time.humanize(1230));
+io.println(time.humanize(45000));
+io.println(time.humanize(59999));
+io.println(time.humanize(184000));
+io.println(time.humanize(7501000));
+io.println(time.humanize(90061000));
+io.println(time.humanize(-1500));
+`, "45ms\n999ms\n1s\n1.5s\n1.2s\n45s\n1m\n3m 4s\n2h 5m\n1d 1h\n-1.5s\n")
+}
+
+// time.stopwatch.Stopwatch is a pure stdlib class; assert its structural
+// invariants (deterministic booleans) match on both backends.
+func TestParityStopwatch(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import time;
+import time.stopwatch as sw;
+let s = sw.Stopwatch();
+io.println(s.elapsed() >= 0);
+let lap = s.lap();
+io.println(lap >= 0);
+io.println(s.elapsedFloat() >= 0.0f);
+s.reset();
+io.println(s.elapsed() >= 0);
+`, "true\ntrue\ntrue\ntrue\n")
+}
+
 // Datetime value-method ergonomics: unix accessors, part accessors, ISO
 // weekday, comparisons, duration arithmetic, friendly format/parse layouts,
 // and zone offset - identical on both backends.
