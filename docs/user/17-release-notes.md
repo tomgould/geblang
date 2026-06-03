@@ -2,6 +2,23 @@
 
 ## 1.7.2
 
+### Datetime ergonomics
+
+- `Instant` gained direct part accessors so you no longer index a parts dict:
+  `year()`, `month()`, `day()`, `hour()`, `minute()`, `second()`,
+  `weekday()` (ISO 1=Monday .. 7=Sunday), `dayOfYear()`, `isWeekend()`,
+  plus `inZone(zone)`.
+- `Instant` comparisons and conversions: `isBefore`, `isAfter`, `equals`,
+  `sub(duration)`, `toUnix`, `toUnixMillis`, `toUnixNanos`, `formatHTTP`.
+- `Duration` arithmetic and conversions: `add`, `sub`, `abs`, `negate`,
+  `inSeconds`, `inMillis`, `inNanos`.
+- `Zone.offset()` returns the current UTC offset (alongside the existing
+  `offsetAt(instant)`).
+- `format` and `parse` accept friendlier layouts: strftime tokens
+  (`%Y-%m-%d`) and preset names (`iso`, `date`, `time`, `datetime`, `http`),
+  in addition to the existing Go reference-time layout. `parse(text, layout)`
+  now takes an optional custom layout.
+
 ### Native module functions are first-class values
 
 A function from an imported native module can now be referenced as a value,

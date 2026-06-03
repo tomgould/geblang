@@ -1387,11 +1387,26 @@ func registerDatetime(r *Registry) {
 		return runtime.String{Value: time.Unix(seconds, 0).UTC().Format(time.RFC3339)}, nil
 	})
 	r.Register("datetime", "parse", func(args []runtime.Value) (runtime.Value, error) {
-		text, err := singleString(args, "datetime.parse")
-		if err != nil {
-			return nil, err
+		if len(args) != 1 && len(args) != 2 {
+			return nil, fmt.Errorf("datetime.parse expects text and an optional layout")
 		}
-		parsed, err := time.Parse(time.RFC3339, text)
+		text, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("datetime.parse text must be string")
+		}
+		layout := time.RFC3339
+		if len(args) == 2 {
+			layoutArg, ok := args[1].(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("datetime.parse layout must be string")
+			}
+			resolved, err := ResolveDateLayout(layoutArg.Value)
+			if err != nil {
+				return nil, fmt.Errorf("datetime.parse: %v", err)
+			}
+			layout = resolved
+		}
+		parsed, err := time.Parse(layout, text.Value)
 		if err != nil {
 			return nil, err
 		}
@@ -1409,7 +1424,11 @@ func registerDatetime(r *Registry) {
 		if !ok {
 			return nil, fmt.Errorf("datetime.format layout must be string")
 		}
-		return runtime.String{Value: time.Unix(sec, 0).UTC().Format(layout.Value)}, nil
+		goLayout, err := ResolveDateLayout(layout.Value)
+		if err != nil {
+			return nil, fmt.Errorf("datetime.format: %v", err)
+		}
+		return runtime.String{Value: time.Unix(sec, 0).UTC().Format(goLayout)}, nil
 	})
 	r.Register("datetime", "addSeconds", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
@@ -1661,16 +1680,31 @@ func registerDatetime(r *Registry) {
 
 func DateTimeInstantMethod(receiver runtime.DateTimeInstant, name string, args []runtime.Value) (runtime.Value, error) {
 	switch name {
-	case "unix":
+	case "unix", "toUnix":
 		if len(args) != 0 {
-			return nil, fmt.Errorf("datetime.Instant.unix expects no arguments")
+			return nil, fmt.Errorf("datetime.Instant.%s expects no arguments", name)
 		}
 		return runtime.NewInt64(receiver.Unix), nil
+	case "toUnixMillis":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("datetime.Instant.toUnixMillis expects no arguments")
+		}
+		return runtime.NewInt64(receiver.Unix * 1000), nil
+	case "toUnixNanos":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("datetime.Instant.toUnixNanos expects no arguments")
+		}
+		return runtime.NewInt64(receiver.Unix * 1_000_000_000), nil
 	case "toString", "formatRFC3339", "toUtc":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("datetime.Instant.%s expects no arguments", name)
 		}
 		return runtime.String{Value: time.Unix(receiver.Unix, 0).UTC().Format(time.RFC3339)}, nil
+	case "formatHTTP":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("datetime.Instant.formatHTTP expects no arguments")
+		}
+		return runtime.String{Value: time.Unix(receiver.Unix, 0).UTC().Format(nethttp.TimeFormat)}, nil
 	case "format":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("datetime.Instant.format expects layout")
@@ -1679,7 +1713,11 @@ func DateTimeInstantMethod(receiver runtime.DateTimeInstant, name string, args [
 		if !ok {
 			return nil, fmt.Errorf("datetime.Instant.format layout must be string")
 		}
-		return runtime.String{Value: time.Unix(receiver.Unix, 0).UTC().Format(layout.Value)}, nil
+		goLayout, err := ResolveDateLayout(layout.Value)
+		if err != nil {
+			return nil, fmt.Errorf("datetime.Instant.format: %v", err)
+		}
+		return runtime.String{Value: time.Unix(receiver.Unix, 0).UTC().Format(goLayout)}, nil
 	case "toLocal":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("datetime.Instant.toLocal expects timezone")
@@ -1735,11 +1773,71 @@ func DateTimeInstantMethod(receiver runtime.DateTimeInstant, name string, args [
 			delta = -delta
 		}
 		return runtime.DateTimeDuration{Seconds: delta}, nil
+	case "sub":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("datetime.Instant.sub expects datetime.Duration")
+		}
+		duration, ok := args[0].(runtime.DateTimeDuration)
+		if !ok {
+			return nil, fmt.Errorf("datetime.Instant.sub expects datetime.Duration")
+		}
+		return runtime.DateTimeInstant{Unix: receiver.Unix - duration.Seconds}, nil
+	case "isBefore", "isAfter", "equals":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("datetime.Instant.%s expects datetime.Instant", name)
+		}
+		other, ok := args[0].(runtime.DateTimeInstant)
+		if !ok {
+			return nil, fmt.Errorf("datetime.Instant.%s expects datetime.Instant", name)
+		}
+		switch name {
+		case "isBefore":
+			return runtime.Bool{Value: receiver.Unix < other.Unix}, nil
+		case "isAfter":
+			return runtime.Bool{Value: receiver.Unix > other.Unix}, nil
+		default:
+			return runtime.Bool{Value: receiver.Unix == other.Unix}, nil
+		}
+	case "inZone":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("datetime.Instant.inZone expects a zone")
+		}
+		location, err := datetimeLocation(args[0])
+		if err != nil {
+			return nil, fmt.Errorf("datetime.Instant.inZone: %v", err)
+		}
+		return timePartsDictWithZone(time.Unix(receiver.Unix, 0).In(location), location.String()), nil
 	case "parts":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("datetime.Instant.parts expects no arguments")
 		}
 		return timePartsDict(time.Unix(receiver.Unix, 0).UTC()), nil
+	case "year", "month", "day", "hour", "minute", "second", "weekday", "dayOfYear", "isWeekend":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("datetime.Instant.%s expects no arguments", name)
+		}
+		t := time.Unix(receiver.Unix, 0).UTC()
+		switch name {
+		case "year":
+			return runtime.NewInt64(int64(t.Year())), nil
+		case "month":
+			return runtime.NewInt64(int64(t.Month())), nil
+		case "day":
+			return runtime.NewInt64(int64(t.Day())), nil
+		case "hour":
+			return runtime.NewInt64(int64(t.Hour())), nil
+		case "minute":
+			return runtime.NewInt64(int64(t.Minute())), nil
+		case "second":
+			return runtime.NewInt64(int64(t.Second())), nil
+		case "weekday":
+			return runtime.NewInt64(int64(isoWeekday(t))), nil
+		case "dayOfYear":
+			return runtime.NewInt64(int64(t.YearDay())), nil
+		default:
+			wd := t.Weekday()
+			return runtime.Bool{Value: wd == time.Saturday || wd == time.Sunday}, nil
+		}
 	default:
 		return nil, fmt.Errorf("datetime.Instant has no method %s", name)
 	}
@@ -1747,11 +1845,47 @@ func DateTimeInstantMethod(receiver runtime.DateTimeInstant, name string, args [
 
 func DateTimeDurationMethod(receiver runtime.DateTimeDuration, name string, args []runtime.Value) (runtime.Value, error) {
 	switch name {
-	case "seconds":
+	case "seconds", "inSeconds":
 		if len(args) != 0 {
-			return nil, fmt.Errorf("datetime.Duration.seconds expects no arguments")
+			return nil, fmt.Errorf("datetime.Duration.%s expects no arguments", name)
 		}
 		return runtime.NewInt64(receiver.Seconds), nil
+	case "inMillis":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("datetime.Duration.inMillis expects no arguments")
+		}
+		return runtime.NewInt64(receiver.Seconds * 1000), nil
+	case "inNanos":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("datetime.Duration.inNanos expects no arguments")
+		}
+		return runtime.NewInt64(receiver.Seconds * 1_000_000_000), nil
+	case "abs":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("datetime.Duration.abs expects no arguments")
+		}
+		s := receiver.Seconds
+		if s < 0 {
+			s = -s
+		}
+		return runtime.DateTimeDuration{Seconds: s}, nil
+	case "negate":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("datetime.Duration.negate expects no arguments")
+		}
+		return runtime.DateTimeDuration{Seconds: -receiver.Seconds}, nil
+	case "add", "sub":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("datetime.Duration.%s expects datetime.Duration", name)
+		}
+		other, ok := args[0].(runtime.DateTimeDuration)
+		if !ok {
+			return nil, fmt.Errorf("datetime.Duration.%s expects datetime.Duration", name)
+		}
+		if name == "add" {
+			return runtime.DateTimeDuration{Seconds: receiver.Seconds + other.Seconds}, nil
+		}
+		return runtime.DateTimeDuration{Seconds: receiver.Seconds - other.Seconds}, nil
 	case "toDict":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("datetime.Duration.toDict expects no arguments")
@@ -1774,6 +1908,16 @@ func DateTimeZoneMethod(receiver runtime.DateTimeZone, name string, args []runti
 			return nil, fmt.Errorf("datetime.Zone.%s expects no arguments", name)
 		}
 		return runtime.String{Value: receiver.Name}, nil
+	case "offset":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("datetime.Zone.offset expects no arguments")
+		}
+		location, err := time.LoadLocation(receiver.Name)
+		if err != nil {
+			return nil, fmt.Errorf("datetime.Zone.offset: %v", err)
+		}
+		_, offset := time.Now().In(location).Zone()
+		return runtime.NewInt64(int64(offset)), nil
 	case "offsetAt":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("datetime.Zone.offsetAt expects datetime.Instant")

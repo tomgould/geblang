@@ -11074,6 +11074,35 @@ io.println("xy".graphemes());
 `, "5\n1\n4\nab\n[\"x\", \"y\"]\n")
 }
 
+// Datetime value-method ergonomics: unix accessors, part accessors, ISO
+// weekday, comparisons, duration arithmetic, friendly format/parse layouts,
+// and zone offset - identical on both backends.
+func TestParityDateTimeErgonomics(t *testing.T) {
+	runParity(t, `import io;
+import datetime;
+let a = datetime.Instant(1700000000);
+let b = datetime.Instant(1700000100);
+io.println(a.year());
+io.println(a.month());
+io.println(a.day());
+io.println(a.weekday());
+io.println(a.dayOfYear());
+io.println(a.isWeekend());
+io.println(a.toUnixMillis());
+io.println(a.isBefore(b));
+io.println(a.equals(a));
+io.println(a.diff(b).inSeconds());
+io.println(a.sub(datetime.Duration(100)).toUnix());
+io.println(datetime.Duration(-90).abs().negate().seconds());
+io.println(datetime.Duration(60).add(datetime.Duration(30)).inMillis());
+io.println(a.format("%Y-%m-%d"));
+io.println(a.format("datetime"));
+io.println(a.formatHTTP());
+io.println(datetime.parse("2023-11-14", "%Y-%m-%d"));
+io.println(datetime.Zone("UTC").offsetAt(a));
+`, "2023\n11\n14\n2\n318\nfalse\n1700000000000\ntrue\ntrue\n100\n1699999900\n-90\n90000\n2023-11-14\n2023-11-14 22:13:20\nTue, 14 Nov 2023 22:13:20 GMT\n1699920000\n0\n")
+}
+
 // Sorting/searching ergonomics: dual-mode sort callbacks, sort(string.compare),
 // sortBy descending, binarySearchBy, type statics as values, and slicing -
 // identical on both backends.

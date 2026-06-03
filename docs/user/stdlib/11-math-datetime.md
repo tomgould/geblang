@@ -322,23 +322,36 @@ let tokyo  = datetime.Zone("Asia/Tokyo");
 
 ### Parsing and formatting
 
-`datetime.parse(s)` and `datetime.parseRFC3339(s)` both parse an RFC3339
-string and return Unix seconds:
+`datetime.parse(s)` parses an RFC3339 string and returns Unix seconds.
+A second argument supplies a custom layout (see the layout forms below);
+`datetime.parseRFC3339(s)` is the RFC3339-only equivalent:
 
 ```gb
-let ts = datetime.parse("2025-06-01T12:00:00Z");
+let ts  = datetime.parse("2025-06-01T12:00:00Z");
 let ts2 = datetime.parseRFC3339("2025-06-01T12:00:00Z");
+let ts3 = datetime.parse("2025-06-01 12:00", "%Y-%m-%d %H:%M");
+let ts4 = datetime.parse("2025-06-01", "date");
 ```
 
-`datetime.format(unixSeconds, layout)` formats a timestamp using a Go-style
-layout string. The reference time is `2006-01-02T15:04:05Z07:00`:
+`datetime.format(unixSeconds, layout)` formats a timestamp. The `layout`
+argument accepts three forms:
+
+- **strftime tokens** when it contains `%` (e.g. `%Y-%m-%d`). Supported:
+  `%Y %y %m %d %H %I %M %S %p %A %a %B %b %j %z %Z %%`.
+- **a preset name**: `iso` (RFC3339), `date`, `time`, `datetime`, `http`.
+- **a Go reference-time layout** otherwise (`2006-01-02T15:04:05Z07:00`),
+  for full back-compatibility.
 
 ```gb
-io.println(datetime.format(ts, "2006-01-02"));           # 2025-06-01
-io.println(datetime.format(ts, "2006-01-02 15:04:05"));  # 2025-06-01 12:00:00
+io.println(datetime.format(ts, "%Y-%m-%d"));             # 2025-06-01  (strftime)
+io.println(datetime.format(ts, "%a %b %d %H:%M"));       # Sun Jun 01 12:00
+io.println(datetime.format(ts, "datetime"));             # 2025-06-01 12:00:00  (preset)
+io.println(datetime.format(ts, "2006-01-02"));           # 2025-06-01  (Go layout)
 io.println(datetime.format(ts, "Jan 2, 2006"));          # Jun 1, 2025
-io.println(datetime.format(ts, "3:04 PM"));              # 12:00 PM
 ```
+
+The same three layout forms apply anywhere a layout is taken, including
+`Instant.format(layout)`.
 
 Convenience formatters:
 
@@ -423,13 +436,39 @@ i.addMonths(1);
 i.addYears(1);
 ```
 
-**Components and comparison:**
+**Unix accessors:**
 
 ```gb
-i.unix();    # int: Unix seconds
-i.parts();   # dict with year, month, day, hour, minute, second, weekday, timestamp
+i.unix();          # int: Unix seconds (toUnix() is an alias)
+i.toUnixMillis();  # int: Unix milliseconds
+i.toUnixNanos();   # int: Unix nanoseconds
+```
 
-let diff = a.diff(b);   # Duration (absolute difference)
+**Part accessors** read individual UTC fields directly, without indexing a
+dict. `weekday()` follows ISO 8601 (1 = Monday .. 7 = Sunday):
+
+```gb
+i.year();        # 2025
+i.month();       # 12  (1-12)
+i.day();         # 25
+i.hour();        # 9
+i.minute();      # 30
+i.second();      # 0
+i.weekday();     # 4  (Thursday, ISO 1=Mon..7=Sun)
+i.dayOfYear();   # 359
+i.isWeekend();   # false
+i.parts();       # dict with year, month, day, hour, minute, second, weekday, timestamp
+i.inZone(datetime.Zone("America/New_York"));  # parts dict in the zone
+```
+
+**Comparison** methods return `bool`; `diff` returns an absolute `Duration`:
+
+```gb
+a.isBefore(b);   # bool
+a.isAfter(b);    # bool
+a.equals(b);     # bool
+a.diff(b);       # Duration (absolute difference)
+a.sub(datetime.Duration(3600));   # Instant one hour earlier
 ```
 
 Full chained example - schedule a reminder for 9 AM next Monday:
@@ -457,14 +496,25 @@ io.println(reminder.formatRFC3339());
 ```gb
 let d = datetime.Duration(90061);   # 1 day + 1 hour + 1 minute + 1 second
 
-io.println(d.seconds());   # 90061
-io.println(d.toString());  # "90061s"
+io.println(d.seconds());    # 90061  (inSeconds() is an alias)
+io.println(d.inMillis());   # 90061000
+io.println(d.inNanos());    # 90061000000000
+io.println(d.toString());   # "90061s"
 
 let parts = d.toDict();
 io.println(parts["days"]);     # 1
 io.println(parts["hours"]);    # 1
 io.println(parts["minutes"]);  # 1
 io.println(parts["seconds"]);  # 1
+```
+
+Durations support arithmetic, each returning a new `Duration`:
+
+```gb
+datetime.Duration(60).add(datetime.Duration(30));   # 90s
+datetime.Duration(60).sub(datetime.Duration(30));   # 30s
+datetime.Duration(-90).abs();                        # 90s
+datetime.Duration(90).negate();                      # -90s
 ```
 
 **Predefined durations** using `datetime.Duration`:
@@ -485,11 +535,15 @@ let tz = datetime.Zone("America/Los_Angeles");
 
 io.println(tz.name());           # "America/Los_Angeles"
 io.println(tz.toString());       # "America/Los_Angeles"
+io.println(tz.offset());         # current offset in seconds (accounts for DST now)
 
 let now = datetime.nowInstant();
 let offset = tz.offsetAt(now);   # offset in seconds, e.g. -28800 (UTC-8)
 io.println(offset / 3600);       # -8
 ```
+
+`Zone.offset()` is the offset at the current moment; `Zone.offsetAt(instant)`
+is the offset at a specific instant.
 
 `Zone.offsetAt(instant)` returns the UTC offset in seconds at the given instant
 (accounts for DST):
@@ -506,7 +560,7 @@ io.println(la.offsetAt(winterTs) / 3600);   # -8  (PST)
 ### Labels
 
 ```gb
-io.println(datetime.weekdayName(0));   # Sunday  (0=Sunday, 1=Monday, …)
+io.println(datetime.weekdayName(0));   # Sunday  (0=Sunday, 1=Monday, ...)
 io.println(datetime.weekdayName(1));   # Monday
 io.println(datetime.monthName(1));     # January
 io.println(datetime.monthName(12));    # December

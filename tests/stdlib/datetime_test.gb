@@ -56,4 +56,94 @@ class DateTimeTest extends test.Test {
         }
         this.assertTrue(threw);
     }
+
+    @test
+    func instantPartAccessors(): void {
+        /* 2023-11-14T22:13:20Z is a Tuesday (ISO weekday 2). */
+        let a = datetime.Instant(1700000000);
+        this.assertEquals(2023, a.year());
+        this.assertEquals(11, a.month());
+        this.assertEquals(14, a.day());
+        this.assertEquals(22, a.hour());
+        this.assertEquals(13, a.minute());
+        this.assertEquals(20, a.second());
+        this.assertEquals(2, a.weekday());
+        this.assertEquals(318, a.dayOfYear());
+        this.assertFalse(a.isWeekend());
+    }
+
+    @test
+    func instantUnixAccessors(): void {
+        let a = datetime.Instant(1700000000);
+        this.assertEquals(1700000000, a.toUnix());
+        this.assertEquals(1700000000000, a.toUnixMillis());
+        this.assertEquals(1700000000000000000, a.toUnixNanos());
+    }
+
+    @test
+    func instantComparisons(): void {
+        let a = datetime.Instant(1700000000);
+        let b = datetime.Instant(1700000100);
+        this.assertTrue(a.isBefore(b));
+        this.assertTrue(b.isAfter(a));
+        this.assertFalse(a.isAfter(b));
+        this.assertTrue(a.equals(datetime.Instant(1700000000)));
+    }
+
+    @test
+    func instantSubAndDiff(): void {
+        let a = datetime.Instant(1700000000);
+        let b = datetime.Instant(1700000100);
+        this.assertEquals(100, a.diff(b).inSeconds());
+        this.assertEquals(1699999900, a.sub(datetime.Duration(100)).toUnix());
+    }
+
+    @test
+    func durationArithmetic(): void {
+        this.assertEquals(90, datetime.Duration(60).add(datetime.Duration(30)).seconds());
+        this.assertEquals(30, datetime.Duration(60).sub(datetime.Duration(30)).seconds());
+        this.assertEquals(90, datetime.Duration(-90).abs().seconds());
+        this.assertEquals(-90, datetime.Duration(90).negate().seconds());
+        this.assertEquals(90000, datetime.Duration(90).inMillis());
+    }
+
+    @test
+    func strftimeFormat(): void {
+        let a = datetime.Instant(1700000000);
+        this.assertEquals("2023-11-14", a.format("%Y-%m-%d"));
+        this.assertEquals("22:13:20", a.format("%H:%M:%S"));
+        this.assertEquals("Tue", a.format("%a"));
+    }
+
+    @test
+    func namedFormatPresets(): void {
+        let a = datetime.Instant(1700000000);
+        this.assertEquals("2023-11-14", a.format("date"));
+        this.assertEquals("22:13:20", a.format("time"));
+        this.assertEquals("2023-11-14 22:13:20", a.format("datetime"));
+    }
+
+    @test
+    func parseWithLayout(): void {
+        this.assertEquals(1700000000, datetime.parse("2023-11-14 22:13:20", "%Y-%m-%d %H:%M:%S"));
+        this.assertEquals(1700000000, datetime.parse("2023-11-14T22:13:20Z"));
+    }
+
+    @test
+    func invalidFormatTokenRaises(): void {
+        let threw = false;
+        try {
+            let bad = datetime.Instant(0).format("%Q");
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func zoneOffset(): void {
+        let est = datetime.Zone("America/New_York");
+        /* EST is UTC-5 (-18000s) on 2023-11-14. */
+        this.assertEquals(-18000, est.offsetAt(datetime.Instant(1700000000)));
+    }
 }
