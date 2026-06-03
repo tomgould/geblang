@@ -1,0 +1,35 @@
+import test;
+import math;
+import math;
+from math import abs;
+import secrets as secstdlib;
+
+class ImportCollisionTest extends test.Test {
+
+    @test
+    func fromImportedSymbolUsable(): void {
+        /* a from-imported name is usable directly; it is immutable
+           and cannot be locally redeclared or overloaded */
+        this.assertEquals(3, abs(-3));
+    }
+
+    @test
+    func aliasingAllowsLocalNameToShadow(): void {
+        let v = secstdlib.randomHex(4);
+        this.assertEquals(8, v.length());
+    }
+
+    @test
+    func idempotentReimportResolves(): void {
+        /* the duplicate top-level `import math` must load cleanly */
+        this.assertEquals(2, math.abs(-2));
+    }
+
+    @test
+    func delThenRebindAllowed(): void {
+        let x = 1;
+        del x;
+        let x = 2;
+        this.assertEquals(2, x);
+    }
+}

@@ -1150,10 +1150,8 @@ func (e *Evaluator) evalFromImportStatement(stmt *ast.FromImportStatement, env *
 			if !ok {
 				return signal{}, fmt.Errorf("from %s import %s: %s is not exported", canonical, name, name)
 			}
-			if err := env.Define(local, value, true); err != nil {
-				if err := env.Assign(local, value); err != nil {
-					return signal{}, err
-				}
+			if err := env.DefineImported(local, value, canonical+"."+name); err != nil {
+				return signal{}, err
 			}
 		}
 		e.imports[canonical] = true
@@ -1174,20 +1172,16 @@ func (e *Evaluator) evalFromImportStatement(stmt *ast.FromImportStatement, env *
 		if !ok {
 			if _, hasNative := e.builtins[canonical]; hasNative {
 				if v, found := e.resolveBuiltinExport(e.builtinModuleValue(canonical, "").Exports, e.builtins[canonical], canonical, name); found {
-					if err := env.Define(local, v, true); err != nil {
-						if err := env.Assign(local, v); err != nil {
-							return signal{}, err
-						}
+					if err := env.DefineImported(local, v, canonical+"."+name); err != nil {
+						return signal{}, err
 					}
 					continue
 				}
 			}
 			return signal{}, fmt.Errorf("from %s import %s: %s is not exported", canonical, name, name)
 		}
-		if err := env.Define(local, value, true); err != nil {
-			if err := env.Assign(local, value); err != nil {
-				return signal{}, err
-			}
+		if err := env.DefineImported(local, value, canonical+"."+name); err != nil {
+			return signal{}, err
 		}
 	}
 	return signal{}, nil
@@ -4535,7 +4529,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		return doHTTPRequestAsync(client, req), nil
 	}}}
 
-	// FetchStream class — completion-ordered streaming parallel fetch
+	// FetchStream class - completion-ordered streaming parallel fetch
 	fetchStreamClass := &runtime.Class{
 		Name:    "FetchStream",
 		Fields:  []runtime.Field{{Name: "handle"}},
@@ -5952,7 +5946,7 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 		}
 	case "list":
 		/* `set as list` materializes in iteration order (the underlying
-		 * map's range order; not insertion order — sets are unordered
+		 * map's range order; not insertion order - sets are unordered
 		 * by design). To get a deterministic order, sort the result. */
 		if v, ok := value.(runtime.Set); ok {
 			out := make([]runtime.Value, 0, len(v.Elements))
@@ -6225,8 +6219,8 @@ func (e *Evaluator) evalTryStatement(stmt *ast.TryStatement, env *runtime.Enviro
 // evalWithStatement implements `with (expr) { ... }` and
 // `with (name = expr) { ... }`. The bound value's `__enter__()`
 // (if defined) supplies the binding; otherwise the binding is the
-// expression itself. At any block exit — normal completion,
-// exception, return, break, or continue — the runtime invokes
+// expression itself. At any block exit - normal completion,
+// exception, return, break, or continue - the runtime invokes
 // `__exit__()` when present, else the class destructor
 // (`~ClassName`) when present, else nothing. Errors from cleanup
 // shadow a clean exit but defer to an in-flight exception.
@@ -6922,7 +6916,7 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 		// Resolve the lexical class (the class whose method body is currently
 		// executing) rather than the runtime class of `this`. Falling back to
 		// `this.Class` is only correct when the method body is directly that
-		// of the runtime class — otherwise parent() inside an inherited
+		// of the runtime class - otherwise parent() inside an inherited
 		// constructor would re-target the same class it lives in.
 		lexicalClass := this.Class
 		if len(e.classStack) > 0 {
@@ -11426,7 +11420,7 @@ func globRecursive(pattern string) ([]string, error) {
 	} else if strings.HasSuffix(root, "/") {
 		root = root[:len(root)-1]
 	} else {
-		// pattern like "a**b" — anchor the walk at the parent dir of
+		// pattern like "a**b" - anchor the walk at the parent dir of
 		// `prefix` and treat the rest as a per-name suffix.
 		parent := filepath.Dir(root)
 		if parent == "" {
@@ -25456,7 +25450,7 @@ func valueMatchesFunctionTypeRef(fn runtime.Function, value runtime.Value, typ *
 
 // matchValueToTypeRef is the recursive implementation of collection element type checking.
 // typeParams is the pre-computed generic type parameter set (nil for non-generic contexts); a nil
-// map is safe — Go map lookups on nil maps return the zero value.
+// map is safe - Go map lookups on nil maps return the zero value.
 func matchValueToTypeRef(typeParams map[string]bool, value runtime.Value, typ *ast.TypeRef) bool {
 	if typ == nil || typ.Name == "any" {
 		return true
@@ -25846,7 +25840,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 	for name, typeName := range fn.TypeBindings {
 		callEnv.DefineTypeBinding(name, typeName)
 	}
-	// Inherit class type bindings from receiver instance (lower priority — set first so
+	// Inherit class type bindings from receiver instance (lower priority - set first so
 	// that inferred own-param bindings below can override if needed, but class params win
 	// for methods since the instance binding was set at construction time).
 	if this != nil {

@@ -17,6 +17,9 @@ type Compiler struct {
 	loops           []loopContext
 	globals         map[string]int64
 	globalTypes     map[string]string
+	globalDeclKinds map[string]globalDecl
+	deletedGlobals  map[string]bool
+	declaredDecls   map[string]bool // case-sensitive class/func/enum/interface names
 	scopes          []map[string]binding
 	// locals is the next slot index for the function currently being
 	// compiled. It resets to zero on every function boundary so that
@@ -91,6 +94,9 @@ func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk
 		AssertionsDisabled: AssertionsDisabled,
 		globals:         map[string]int64{},
 		globalTypes:     map[string]string{},
+		globalDeclKinds: map[string]globalDecl{},
+		deletedGlobals:  map[string]bool{},
+		declaredDecls:   map[string]bool{},
 		scopes:          []map[string]binding{{}},
 		funcs:           map[string][]int64{},
 		functionCursors: map[string]int{},
@@ -105,6 +111,15 @@ func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk
 		reflectStatics:  map[string]map[string]runtime.DecoratorTarget{},
 		moduleAliases:   map[string]string{},
 	}
+	// A top-level `del name` removes the binding, so a later same-name
+	// declaration is a legal re-bind (the evaluator allows it at runtime).
+	// Exempt del'd names from the redeclaration check rather than model
+	// control flow; erring toward accept never rejects valid code.
+	for _, stmt := range program.Statements {
+		if del, ok := stmt.(*ast.DelStatement); ok && del.Target != nil {
+			c.deletedGlobals[del.Target.Value] = true
+		}
+	}
 	for _, stmt := range program.Statements {
 		if export, ok := stmt.(*ast.ExportStatement); ok {
 			stmt = export.Statement
@@ -112,7 +127,23 @@ func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk
 		if alias, ok := stmt.(*ast.TypeAliasStatement); ok {
 			c.declareTypeAlias(alias)
 		}
+		if from, ok := stmt.(*ast.FromImportStatement); ok {
+			canonical := strings.Join(from.Path, ".")
+			for _, n := range from.Names {
+				// A from-imported name is immutable: it cannot be locally
+				// redeclared or overloaded. Re-importing the same symbol is idempotent.
+				if local := n.Local(); local != "" && n.Name != nil {
+					if msg := c.claimGlobalKind(local, "import", canonical+"."+n.Name.Value); msg != "" {
+						return Chunk{}, fmt.Errorf("line %d:%d: %s", from.Token.Line, from.Token.Column, msg)
+					}
+				}
+			}
+		}
 		if fn, ok := stmt.(*ast.FunctionStatement); ok {
+			c.declaredDecls[fn.Name.Value] = true
+			if msg := c.claimGlobalKind(fn.Name.Value, "func", ""); msg != "" {
+				return Chunk{}, fmt.Errorf("line %d:%d: %s", fn.Token.Line, fn.Token.Column, msg)
+			}
 			index := c.declareFunction(fn.Name.Value)
 			/* Forward-call resolution: populate the function's
 			 * signature (param names/types, return type, defaults,
@@ -130,6 +161,10 @@ func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk
 			c.reflectFuncs[key] = appendReflectFunctionTarget(c.reflectFuncs[key], meta)
 		}
 		if class, ok := stmt.(*ast.ClassStatement); ok {
+			c.declaredDecls[class.Name.Value] = true
+			if msg := c.claimGlobalKind(class.Name.Value, "class", ""); msg != "" {
+				return Chunk{}, fmt.Errorf("line %d:%d: %s", class.Token.Line, class.Token.Column, msg)
+			}
 			c.declareClass(class.Name.Value)
 			classKey := strings.ToLower(class.Name.Value)
 			classDec, err := decoratorsMetadata(class.Decorators, "class", 0)
@@ -167,10 +202,30 @@ func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk
 			}
 		}
 		if iface, ok := stmt.(*ast.InterfaceStatement); ok {
+			c.declaredDecls[iface.Name.Value] = true
+			if msg := c.claimGlobalKind(iface.Name.Value, "interface", ""); msg != "" {
+				return Chunk{}, fmt.Errorf("line %d:%d: %s", iface.Token.Line, iface.Token.Column, msg)
+			}
 			c.declareInterface(iface.Name.Value)
 		}
 		if enum, ok := stmt.(*ast.EnumStatement); ok {
+			c.declaredDecls[enum.Name.Value] = true
+			if msg := c.claimGlobalKind(enum.Name.Value, "enum", ""); msg != "" {
+				return Chunk{}, fmt.Errorf("line %d:%d: %s", enum.Token.Line, enum.Token.Column, msg)
+			}
 			c.declareEnum(enum)
+		}
+		if decl, ok := stmt.(*ast.DeclarationStatement); ok && decl.Name != nil {
+			if msg := c.claimGlobalKind(decl.Name.Value, "var", ""); msg != "" {
+				return Chunk{}, fmt.Errorf("line %d:%d: %s", decl.Token.Line, decl.Token.Column, msg)
+			}
+		}
+		if imp, ok := stmt.(*ast.ImportStatement); ok {
+			if alias := imp.ModuleName(); alias != "" {
+				if msg := c.claimGlobalKind(alias, "import", strings.Join(imp.Path, ".")); msg != "" {
+					return Chunk{}, fmt.Errorf("line %d:%d: %s", imp.Token.Line, imp.Token.Column, msg)
+				}
+			}
 		}
 	}
 	for _, stmt := range program.Statements {
@@ -1510,6 +1565,10 @@ func (c *Compiler) compileDelStatement(stmt *ast.DelStatement) error {
 	if stmt.Target == nil {
 		return fmt.Errorf("del requires an identifier")
 	}
+	// del operates on variables; declarations are rejected so both backends agree.
+	if c.isDeclaredNonVariable(stmt.Target.Value) {
+		return fmt.Errorf("cannot del %q: del operates on variables, not declarations", stmt.Target.Value)
+	}
 	resolved, ok := c.resolveName(stmt.Target.Value)
 	if !ok {
 		return fmt.Errorf("del: unknown identifier %q", stmt.Target.Value)
@@ -1523,6 +1582,10 @@ func (c *Compiler) compileDelStatement(stmt *ast.DelStatement) error {
 		return fmt.Errorf("del: unsupported binding kind for %q", stmt.Target.Value)
 	}
 	return nil
+}
+
+func (c *Compiler) isDeclaredNonVariable(name string) bool {
+	return c.declaredDecls[name]
 }
 
 func (c *Compiler) compileDeferStatement(stmt *ast.SimpleStatement) error {
@@ -5896,6 +5959,32 @@ func (c *Compiler) globalSlot(name string) int64 {
 	slot := int64(len(c.globals))
 	c.globals[name] = slot
 	return slot
+}
+
+type globalDecl struct {
+	kind      string
+	canonical string // module path; lets idempotent re-import of one module pass
+}
+
+// Mirrors the evaluator's Environment.Define/DefineFunction: only func+func
+// (overloads) and re-import of the same module pass; every other same-name
+// top-level declaration is a redeclaration. Type aliases use a separate
+// namespace and never call this.
+func (c *Compiler) claimGlobalKind(name, kind, canonical string) string {
+	if c.deletedGlobals[name] {
+		return ""
+	}
+	if existing, ok := c.globalDeclKinds[name]; ok {
+		if existing.kind == "func" && kind == "func" {
+			return ""
+		}
+		if existing.kind == "import" && kind == "import" && existing.canonical == canonical {
+			return ""
+		}
+		return fmt.Sprintf("%q is already declared in this scope", name)
+	}
+	c.globalDeclKinds[name] = globalDecl{kind: kind, canonical: canonical}
+	return ""
 }
 
 func selectorName(expr ast.Expression) (string, string, bool) {

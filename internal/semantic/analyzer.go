@@ -535,8 +535,13 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		if stmt.Target == nil {
 			return
 		}
-		if _, ok := a.lookup(stmt.Target.Value); !ok {
+		info, ok := a.lookup(stmt.Target.Value)
+		if !ok {
 			a.errorAt(stmt.Target.Token, "del: unknown identifier %q", stmt.Target.Value)
+			return
+		}
+		if a.isDeclarationName(stmt.Target.Value, info) {
+			a.errorAt(stmt.Target.Token, "cannot del %q: del operates on variables, not declarations", stmt.Target.Value)
 			return
 		}
 		a.markBindingDestroyed(stmt.Target.Value)
@@ -798,7 +803,7 @@ func (a *Analyzer) checkTypedCollectionMethodCall(call *ast.CallExpression) {
 			a.validateArgs(call.Arguments, []typeInfo{receiverType.args[0]},
 				fmt.Sprintf("list<%s>.%s element", receiverType.args[0].display(), selector.Name.Value), receiver.Value)
 		case "insert":
-			// insert(index, value) — second arg is the element.
+			// insert(index, value) - second arg is the element.
 			if len(call.Arguments) >= 2 {
 				a.validateArgAt(call.Arguments[1], receiverType.args[0],
 					fmt.Sprintf("list<%s>.insert element", receiverType.args[0].display()), receiver.Value)
@@ -1193,6 +1198,22 @@ func (a *Analyzer) checkBindingNotDestroyed(ident *ast.Identifier) {
 // markBindingDestroyed walks scopes inner-to-outer to find the
 // binding for `name` and flips its destroyed flag. Called by the
 // `del x` statement's analyzer hook.
+// isDeclarationName reports whether name binds a class, function, enum, or
+// interface declaration (vs a variable). Class/enum/interface declarations
+// bind a typeInfo whose name equals the declared name.
+func (a *Analyzer) isDeclarationName(name string, info typeInfo) bool {
+	if _, ok := a.functions[name]; ok {
+		return true
+	}
+	if _, ok := a.classes[name]; ok {
+		return true
+	}
+	if _, ok := a.interfaces[name]; ok {
+		return true
+	}
+	return info.name == name
+}
+
 func (a *Analyzer) markBindingDestroyed(name string) bool {
 	for i := len(a.scopes) - 1; i >= 0; i-- {
 		if entry, ok := a.scopes[i][name]; ok {
@@ -1647,7 +1668,7 @@ func (a *Analyzer) typeInfoFromRef(ref *ast.TypeRef) typeInfo {
 		}
 	}
 	if ref.ListAlias {
-		// `T[]` is shorthand for `list<T>` — record the element type so element
+		// `T[]` is shorthand for `list<T>` - record the element type so element
 		// checks downstream behave identically to `list<T>`.
 		var elemArgs []typeInfo
 		if args == nil {

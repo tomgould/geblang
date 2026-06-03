@@ -379,7 +379,7 @@ run();
 		t.Fatalf("output: got %q", out.String())
 	}
 	if strings.Join(fake.calls, ",") != "metrics.inc,metrics.inc" {
-		t.Fatalf("calls: got %#v — expected body call first, deferred call second", fake.calls)
+		t.Fatalf("calls: got %#v - expected body call first, deferred call second", fake.calls)
 	}
 }
 
@@ -717,9 +717,9 @@ io.println(parsed["ok"]);
 io.println(json.stringify({"b": 2, "a": [true, null]}));
 io.println(json.validate("{\"ok\":true}"));
 io.println(json.validate("{\"ok\":"));
-let parsed = json.tryParse("{\"ok\": true}");
-io.println(parsed["ok"]);
-io.println(parsed["value"]["ok"]);
+let reparsed = json.tryParse("{\"ok\": true}");
+io.println(reparsed["ok"]);
+io.println(reparsed["value"]["ok"]);
 let failed = json.tryParse("{\"ok\":");
 io.println(failed["ok"]);
 io.println(failed["error"]["line"] > 0);

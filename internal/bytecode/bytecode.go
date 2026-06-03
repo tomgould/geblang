@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(64)
+	Version = uint16(65)
 )
 
 type Op byte

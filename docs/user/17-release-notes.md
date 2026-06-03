@@ -16,6 +16,31 @@ Path parameters are no longer present on the request dict at the time
 middleware runs; reading parameters is a routing concern that belongs
 in a route-bound layer.
 
+### Top-level redeclaration is now consistently rejected
+
+Declaring the same top-level name twice - an `import` and a `func`,
+two `let`s, an `enum` and a `class`, an `interface` and a `func`, and
+so on - is a compile-time error on both backends. The evaluator already
+rejected these; the bytecode compiler used to silently let the later
+declaration shadow the earlier binding, so a program could run under
+one backend and misbehave under the other. Three cases stay allowed and
+behave identically on both backends: function overloads (two `func`s
+with the same name and different signatures), re-importing the same
+module, and re-binding a name after `del`. Type aliases live in a
+separate namespace and never collide with values. A name brought in by
+`from M import X;` is immutable: it cannot be locally redeclared or
+overloaded (import the module and use `M.X`, or alias with `as`). Use
+`import X as Y;` when the local name is taken.
+
+### `del` operates on variables only
+
+`del` now applies only to variable bindings and the instances they hold
+(whose destructor still fires). Deleting a class, function, enum, or
+interface declaration is a compile-time error on both backends.
+Previously the evaluator removed such a binding while the bytecode
+backend handled it inconsistently, so the two could disagree. Re-binding
+a variable after `del` (`del x; let x = ...;`) is unchanged.
+
 ### Subclass constructor across modules no longer crashes
 
 A subclass whose name matches its parent's (`class X extends mod.X`)

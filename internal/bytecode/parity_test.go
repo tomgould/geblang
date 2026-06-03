@@ -38,14 +38,14 @@ import (
 // imported source module to bytecode on demand, and caches the result
 // inside the loader struct.
 type stdlibModuleLoader struct {
-	stdout     io.Writer
-	stateful   bytecode.StatefulNativeCaller
+	stdout      io.Writer
+	stateful    bytecode.StatefulNativeCaller
 	modulePaths []string
-	modules    map[string]*runtime.Module
-	chunks     map[string]bytecode.Chunk
-	globals    map[string][]runtime.Value
-	decorators map[string]bytecode.FunctionDecoratorState
-	loading    map[string]bool
+	modules     map[string]*runtime.Module
+	chunks      map[string]bytecode.Chunk
+	globals     map[string][]runtime.Value
+	decorators  map[string]bytecode.FunctionDecoratorState
+	loading     map[string]bool
 	// mainChunk lets sub-VMs (stdlib modules) call back into the
 	// entry chunk when a foreign instance's method needs dispatch,
 	// e.g. streams.copy invoking __read on a user-defined class.
@@ -5307,7 +5307,7 @@ io.println(nums.length());
 io.println(strs.length());
 `, "3\n2\n")
 
-	// Wrong element type in list declaration — error names the offending element.
+	// Wrong element type in list declaration - error names the offending element.
 	runErrorParity(t, `
 list<int> bad = ["a", "b", "c"];
 `, "cannot assign", "list<int>", "element at index 0 is string")
@@ -7712,6 +7712,7 @@ io.println(ur.describe());
 //   - it carries @abstract on the class itself, or
 //   - it (or an ancestor) has a method decorated @abstract and no
 //     more-derived class provides a concrete override.
+//
 // Direct instantiation of an abstract class throws RuntimeError;
 // concrete subclasses instantiate normally.
 func TestParityAbstractDecorator(t *testing.T) {
@@ -8270,7 +8271,6 @@ io.println(p.x == q.x);
 io.println(p.y == q.y);
 `, "10\n20\ntrue\ntrue\n")
 }
-
 
 // TestParityExplicitGenericCallSyntax verifies that the call form
 // `Identifier<Type>(args)` is recognised by the parser, threaded through the
@@ -10959,5 +10959,123 @@ io.println(u.label);
 	}
 	if vmOut.String() != "acme\nBeta Co\n" {
 		t.Fatalf("vm output: %q", vmOut.String())
+	}
+}
+
+// Regression: both backends must reject `import X; func X(...)`.
+func TestParityImportNameCollisionWithFunction(t *testing.T) {
+	source := `import secrets;
+func secrets(): string { return "x"; }
+`
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+	_, vmErr := bytecode.Compile(program, []byte(source), "parity")
+	if vmErr == nil {
+		t.Fatalf("vm compile: expected name-collision error")
+	}
+	if !strings.Contains(vmErr.Error(), "already declared") {
+		t.Fatalf("vm compile error should mention already-declared: %q", vmErr.Error())
+	}
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgs(&evOut, nil)
+	_, evErr := ev.Eval(program)
+	if evErr == nil {
+		t.Fatalf("evaluator: expected name-collision error")
+	}
+	if !strings.Contains(evErr.Error(), "already declared") {
+		t.Fatalf("evaluator error should mention already-declared: %q", evErr.Error())
+	}
+}
+
+// Both backends must agree on top-level redeclaration: only func+func
+// (overloads), idempotent re-import of one module, and re-bind after `del`
+// are allowed; every other same-name declaration is rejected. Mirrors the
+// evaluator's Environment.Define/DefineFunction. Reject cases are tested at
+// the imported-module level (the evaluator gates a main program's value
+// redeclarations through the semantic analyzer, but module loading on both
+// backends goes straight to Define/the compiler - the surface gebweb hit).
+func TestParityGlobalRedeclarationRule(t *testing.T) {
+	reject := map[string]string{
+		"var_var":               "let x = 1;\nlet x = 2;\n",
+		"const_func":            "const C = 5;\nexport func C(): int { return 1; }\n",
+		"enum_class":            "export enum E { A }\nexport class E {}\n",
+		"enum_enum":             "export enum E { A }\nexport enum E { B }\n",
+		"interface_func":        "export interface I { func a(): int; }\nexport func I(): int { return 1; }\n",
+		"import_class":          "import secrets;\nexport class secrets {}\n",
+		"import_var":            "import secrets;\nlet secrets = 5;\n",
+		"fromimport_var":        "from math import abs;\nlet abs = 5;\n",
+		"fromimport_func":       "from math import abs;\nexport func abs(): int { return 1; }\n",
+		"fromimport_func_first": "export func abs(): int { return 1; }\nfrom math import abs;\n",
+	}
+	for name, body := range reject {
+		t.Run("reject_"+name, func(t *testing.T) {
+			assertImportedModuleRejected(t, body)
+		})
+	}
+	accept := map[string]struct{ src, want string }{
+		"func_overload":         {"import io;\nfunc f(int x): int { return x; }\nfunc f(string s): int { return s.length(); }\nio.println(f(3));\nio.println(f(\"ab\"));\n", "3\n2\n"},
+		"idempotent_reimport":   {"import io;\nimport math;\nimport math;\nio.println(math.abs(-2));\n", "2\n"},
+		"del_then_rebind":       {"import io;\nlet x = 1;\ndel x;\nlet x = 2;\nio.println(x);\n", "2\n"},
+		"fromimport_used":       {"import io;\nfrom math import abs;\nio.println(abs(-3));\n", "3\n"},
+		"fromimport_idempotent": {"import io;\nfrom math import abs;\nfrom math import abs;\nio.println(abs(-4));\n", "4\n"},
+	}
+	for name, tc := range accept {
+		t.Run("accept_"+name, func(t *testing.T) {
+			runParity(t, tc.src, tc.want)
+		})
+	}
+}
+
+// del operates on variables; deleting a class/func/enum/interface
+// declaration is rejected identically on both backends. (Variable and
+// instance del, and del+rebind, are covered by TestParityDelClearsBinding
+// and TestParityDelFiresDestructor.)
+func TestParityDelRejectsDeclarations(t *testing.T) {
+	cases := map[string]string{
+		"class":     "export class C {}\ndel C;\n",
+		"func":      "export func f(): int { return 1; }\ndel f;\n",
+		"enum":      "export enum E { A }\ndel E;\n",
+		"interface": "export interface I { func a(): int; }\ndel I;\n",
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) { assertImportedModuleRejected(t, body) })
+	}
+}
+
+// assertImportedModuleRejected writes moduleBody as module `lib`, imports it
+// from a main program, and asserts both backends fail to load it.
+func assertImportedModuleRejected(t *testing.T, moduleBody string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lib.gb"), []byte("module lib;\n"+moduleBody), 0o644); err != nil {
+		t.Fatalf("write lib: %v", err)
+	}
+	source := "import io;\nimport lib;\nio.println(\"loaded\");\n"
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err == nil {
+		t.Fatalf("evaluator accepted a colliding module: %q", evOut.String())
+	}
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("main compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err == nil {
+		t.Fatalf("vm accepted a colliding module: %q", vmOut.String())
 	}
 }

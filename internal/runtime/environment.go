@@ -9,6 +9,11 @@ import (
 type Binding struct {
 	Value    Value
 	Constant bool
+	// Imported marks a name brought in by `from M import X`. Such a name is
+	// immutable: it cannot be locally redeclared or overloaded. ImportSource
+	// is "module.symbol", so re-importing the same symbol is idempotent.
+	Imported     bool
+	ImportSource string
 }
 
 // Environment is the evaluator's lexical scope. The mutex guards
@@ -42,10 +47,25 @@ func (e *Environment) Define(name string, value Value, constant bool) error {
 	return nil
 }
 
+// DefineImported binds a from-imported name. Re-importing the same symbol is
+// idempotent; any other existing binding (or a different import) is a clash.
+func (e *Environment) DefineImported(name string, value Value, source string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if existing, exists := e.store[name]; exists && !(existing.Imported && existing.ImportSource == source) {
+		return fmt.Errorf("%q is already declared in this scope", name)
+	}
+	e.store[name] = Binding{Value: ShallowFreeze(value), Constant: true, Imported: true, ImportSource: source}
+	return nil
+}
+
 func (e *Environment) DefineFunction(name string, fn Function) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if binding, exists := e.store[name]; exists {
+		if binding.Imported {
+			return fmt.Errorf("%q is already declared in this scope", name)
+		}
 		switch value := binding.Value.(type) {
 		case Function:
 			e.store[name] = Binding{Value: OverloadedFunction{Name: name, Overloads: []Function{value, fn}}, Constant: true}
