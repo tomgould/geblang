@@ -8514,7 +8514,7 @@ func (vm *VM) collectionsNativeCall(fn string, args []runtime.Value) (runtime.Va
 		"minBy", "maxBy", "sortBy", "topBy", "sumBy", "averageBy",
 		"topK", "bottomK", "frequencies", "mode",
 		"difference", "intersection", "differenceBy", "intersectionBy", "zipWith",
-		"flatMap", "uniqueBy", "takeWhile", "dropWhile", "windowed", "unzip", "scan":
+		"flatMap", "uniqueBy", "takeWhile", "dropWhile", "windowed", "unzip", "scan", "enumerate":
 		if len(args) == 0 {
 			return nil, fmt.Errorf("collections.%s expects at least a collection argument", fn)
 		}
@@ -9521,6 +9521,15 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			&runtime.List{Elements: yes},
 			&runtime.List{Elements: no},
 		}}, true, nil
+	case "enumerate":
+		if len(args) != 0 {
+			return nil, true, fmt.Errorf("list.enumerate expects no arguments")
+		}
+		result := make([]runtime.Value, len(list.Elements))
+		for i, el := range list.Elements {
+			result[i] = &runtime.List{Elements: []runtime.Value{runtime.NewInt64(int64(i)), el}}
+		}
+		return &runtime.List{Elements: result}, true, nil
 	case "flatMap":
 		if len(args) != 1 {
 			return nil, true, fmt.Errorf("list.flatMap expects one argument (function)")

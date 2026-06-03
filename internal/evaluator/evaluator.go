@@ -7948,6 +7948,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"windowed":        e.collectionsMethod("windowed", -1),
 			"unzip":           e.collectionsMethod("unzip", 1),
 			"scan":            e.collectionsMethod("scan", 3),
+			"enumerate":       e.collectionsMethod("enumerate", 1),
 			"bfs":             e.collectionsGraphMethod("bfs", 1),
 			"dfs":             e.collectionsGraphMethod("dfs", 1),
 			"topologicalSort": e.collectionsGraphMethod("topologicalSort", 0),
@@ -22878,6 +22879,15 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				&runtime.List{Elements: yes},
 				&runtime.List{Elements: no},
 			}}, nil
+		case "enumerate":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("list.enumerate expects no arguments")
+			}
+			result := make([]runtime.Value, len(value.Elements))
+			for i, el := range value.Elements {
+				result[i] = &runtime.List{Elements: []runtime.Value{runtime.NewInt64(int64(i)), el}}
+			}
+			return &runtime.List{Elements: result}, nil
 		case "flatMap":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.flatMap expects one argument (function)")

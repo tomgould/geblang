@@ -2,6 +2,13 @@
 
 ## 1.7.2
 
+### Indexed iteration
+
+- `enumerate()` (list method and `collections.enumerate`) pairs each element
+  with its index, so you can iterate with the index in hand:
+  `for i, v in xs.enumerate()`. Lists previously had no indexed-iteration form
+  (dicts already support `for k, v in d`).
+
 ### Multiple return values
 
 - A function can return several values with `return a, b`, and the caller

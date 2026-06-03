@@ -237,7 +237,8 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"topK": {}, "bottomK": {}, "frequencies": {}, "mode": {},
 		"difference": {}, "intersection": {}, "differenceBy": {}, "intersectionBy": {}, "zipWith": {},
 		"flatMap": {}, "uniqueBy": {}, "takeWhile": {}, "dropWhile": {}, "windowed": {}, "unzip": {}, "scan": {},
-		"range": {}, "take": {}, "lazyMap": {}, "lazyFilter": {},
+		"enumerate": {},
+		"range":     {}, "take": {}, "lazyMap": {}, "lazyFilter": {},
 		"bfs": {}, "dfs": {}, "topologicalSort": {}, "shortestPath": {},
 	},
 	"profiler": {

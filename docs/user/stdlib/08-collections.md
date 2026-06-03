@@ -284,6 +284,7 @@ points.
 | `any(fn)` | `bool` | `true` when at least one element matches `fn` |
 | `all(fn)` | `bool` | `true` when every element matches `fn` |
 | `count(fn)` | `int` | Count of elements matching `fn` |
+| `enumerate()` | `list<list<any>>` | Pair each element with its index: `[[0, x0], [1, x1], ...]` |
 | `flatMap(fn)` | `list<U>` | Map each element to a list, then concatenate (`fn` must return a list) |
 | `takeWhile(fn)` | `list<T>` | Leading elements while `fn` holds; stops at the first failure |
 | `dropWhile(fn)` | `list<T>` | Remaining elements after the leading run where `fn` holds |
@@ -318,6 +319,11 @@ io.println(nums.dropWhile(func(int x): bool { return x < 4; }));  # [4, 5, 6]
 
 let running = nums.scan(0, func(int acc, int x): int { return acc + x; });
 io.println(running);  # [0, 1, 3, 6, 10, 15, 21]
+
+# enumerate pairs each element with its index, for indexed iteration:
+for (i, v in ["a", "b", "c"].enumerate()) {
+    io.println("${i}: ${v}");   # 0: a / 1: b / 2: c
+}
 ```
 
 ### Keyed Functional Helpers
@@ -581,7 +587,7 @@ Size and membership:
 
 Transformations:
 
-- `map`, `filter`, `reduce`, `flatMap`, `scan`
+- `map`, `filter`, `reduce`, `flatMap`, `scan`, `enumerate`
 - `reverse`, `sort`, `sorted`, `join`
 - `flatten`, `unique`, `uniqueBy`, `groupBy`, `indexBy`
 - `chunk`, `windowed`, `partition`

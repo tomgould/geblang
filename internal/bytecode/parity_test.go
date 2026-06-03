@@ -11158,6 +11158,17 @@ io.println("${c.v} ${c.xs}");
 `, "1 [1, 2]\n99 [1, 2, 3]\n")
 }
 
+// enumerate() pairs each element with its index, enabling indexed for-in;
+// identical on both backends.
+func TestParityEnumerate(t *testing.T) {
+	runParity(t, `import io;
+import collections;
+let xs = ["a", "b", "c"];
+for (i, v in xs.enumerate()) { io.println("${i}:${v}"); }
+io.println(collections.enumerate([10, 20]));
+`, "0:a\n1:b\n2:c\n[[0, 10], [1, 20]]\n")
+}
+
 // New string ergonomics methods behave identically on both backends.
 func TestParityStringErgonomics(t *testing.T) {
 	runParity(t, `import io;
