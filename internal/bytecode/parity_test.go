@@ -11049,6 +11049,24 @@ func TestParityGlobalRedeclarationRule(t *testing.T) {
 	}
 }
 
+// Sorting/searching ergonomics: dual-mode sort callbacks, sort(string.compare),
+// sortBy descending, binarySearchBy, type statics as values, and slicing -
+// identical on both backends.
+func TestParitySortingAndSearching(t *testing.T) {
+	runParity(t, `import io;
+io.println([3,1,2].sort(func(int a, int b): bool { return a < b; }));
+io.println([3,1,2].sort(func(int a, int b): int { return b - a; }));
+io.println(["banana","apple","cherry"].sort(string.compare));
+io.println([{"n":3},{"n":1},{"n":2}].sortBy(func(dict<string,any> x): any { return x["n"]; }, true));
+io.println([1,3,5,7].binarySearch(5));
+io.println([{"n":1},{"n":3},{"n":5}].binarySearchBy(func(dict<string,any> x): any { return x["n"]; }, 3));
+io.println([1,2,3,4,5][::-1]);
+io.println([1,2,3,4,5][::2]);
+let cmp = string.compare;
+io.println(cmp("a","b"));
+`, "[1, 2, 3]\n[3, 2, 1]\n[\"apple\", \"banana\", \"cherry\"]\n[{\"n\": 3}, {\"n\": 2}, {\"n\": 1}]\n2\n1\n[5, 4, 3, 2, 1]\n[1, 3, 5]\n-1\n")
+}
+
 // Escape sequences (\n, \t, \u{...}) are decoded inside interpolated
 // strings, identically on both backends.
 func TestParityInterpolatedStringEscapes(t *testing.T) {

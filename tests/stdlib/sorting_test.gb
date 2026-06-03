@@ -1,0 +1,51 @@
+import test;
+
+class SortingTest extends test.Test {
+
+    @test
+    func sortAcceptsBoolPredicate(): void {
+        this.assertEquals([1, 2, 3], [3, 1, 2].sort(func(int a, int b): bool { return a < b; }));
+        this.assertEquals([3, 2, 1], [3, 1, 2].sort(func(int a, int b): bool { return a > b; }));
+    }
+
+    @test
+    func sortAcceptsThreeWayComparator(): void {
+        this.assertEquals([1, 2, 3], [3, 1, 2].sort(func(int a, int b): int { return a - b; }));
+        this.assertEquals([3, 2, 1], [3, 1, 2].sort(func(int a, int b): int { return b - a; }));
+    }
+
+    @test
+    func sortAcceptsStringCompareAsValue(): void {
+        /* string.compare is a first-class value and a three-way comparator */
+        this.assertEquals(["apple", "banana"], ["banana", "apple"].sort(string.compare));
+    }
+
+    @test
+    func sortByDescending(): void {
+        let users = [{"age": 36}, {"age": 85}, {"age": 50}];
+        let oldest = users.sortBy(func(dict<string, any> u): any { return u["age"]; }, true);
+        this.assertEquals(85, oldest[0]["age"] as int);
+    }
+
+    @test
+    func binarySearchByKey(): void {
+        let xs = [{"n": 1}, {"n": 3}, {"n": 5}, {"n": 7}];
+        let key = func(dict<string, any> x): any { return x["n"]; };
+        this.assertEquals(2, xs.binarySearchBy(key, 5));
+        this.assertEquals(-1, xs.binarySearchBy(key, 4));
+    }
+
+    @test
+    func sliceStepAndReverse(): void {
+        this.assertEquals([5, 4, 3, 2, 1], [1, 2, 3, 4, 5][::-1]);
+        this.assertEquals([1, 3, 5], [1, 2, 3, 4, 5][::2]);
+        this.assertEquals("gnalbeg", "geblang"[::-1]);
+    }
+
+    @test
+    func invalidSortCallbackReturnThrows(): void {
+        this.assertThrows(func(): void {
+            [3, 1, 2].sort(func(int a, int b): string { return "x"; });
+        });
+    }
+}

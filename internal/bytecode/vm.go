@@ -3049,6 +3049,23 @@ func (vm *VM) importFrom(instruction Instruction) error {
 // wrapStatefulNativeImport bridges from-imports of stateful native
 // modules (http, db, etc.) by routing each call back through the
 // statefulNative caller exposed on the VM.
+// builtinValue wraps a pure native builtin (canonical.name) as a first-class
+// callable value, matching the evaluator's nativeBuiltinValue. Gated on the
+// pure-native registry so both backends resolve the identical set.
+func (vm *VM) builtinValue(canonical, name string) (runtime.Value, bool) {
+	fn := vm.natives.LookupKey(native.Key(canonical, name))
+	if fn == nil {
+		return nil, false
+	}
+	captured := fn
+	return runtime.Function{
+		Name: canonical + "." + name,
+		Native: func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+			return captured(args)
+		},
+	}, true
+}
+
 func (vm *VM) wrapStatefulNativeImport(canonical, name string) (runtime.Value, error) {
 	caller := vm.statefulNative
 	if caller == nil {
@@ -6298,6 +6315,13 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 			vm.push(value)
 			return ip, nil
 		}
+		if typeVal, ok := receiver.(runtime.Type); ok {
+			if v, ok := vm.builtinValue(typeVal.Name, name); ok {
+				vm.push(v)
+				return ip, nil
+			}
+			return 0, vm.runtimeError(instruction, "%s has no static member %s", typeVal.Name, name)
+		}
 		if errValue, ok := receiver.(runtime.Error); ok {
 			switch name {
 			case "class", "name":
@@ -9294,8 +9318,12 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 					sortErr = err
 					return false
 				}
-				b, ok := result.(runtime.Bool)
-				return ok && b.Value
+				less, err := native.SortLess(result)
+				if err != nil {
+					sortErr = err
+					return false
+				}
+				return less
 			}
 			cmp, err := valuesCompare(newElements[i], newElements[j])
 			if err != nil {
@@ -9514,6 +9542,31 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			}
 		}
 		return runtime.NewInt64(-1), true, nil
+	case "binarySearchBy":
+		if len(args) != 2 {
+			return nil, true, fmt.Errorf("list.binarySearchBy expects a selector and a target key")
+		}
+		target := args[1]
+		lo, hi := 0, len(list.Elements)
+		for lo < hi {
+			mid := (lo + hi) / 2
+			key, err := vm.callCallable(args[0], []runtime.Value{list.Elements[mid]})
+			if err != nil {
+				return nil, true, err
+			}
+			cmp, err := valuesCompare(key, target)
+			if err != nil {
+				return nil, true, err
+			}
+			if cmp == 0 {
+				return runtime.NewInt64(int64(mid)), true, nil
+			} else if cmp < 0 {
+				lo = mid + 1
+			} else {
+				hi = mid
+			}
+		}
+		return runtime.NewInt64(-1), true, nil
 	case "lowerBound":
 		if len(args) != 1 {
 			return nil, true, fmt.Errorf("list.lowerBound expects one argument (value)")
@@ -9605,8 +9658,16 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		}
 		return best, true, nil
 	case "sortBy":
-		if len(args) != 1 {
-			return nil, true, fmt.Errorf("list.sortBy expects one argument (function)")
+		if len(args) != 1 && len(args) != 2 {
+			return nil, true, fmt.Errorf("list.sortBy expects a selector and an optional descending flag")
+		}
+		descending := false
+		if len(args) == 2 {
+			b, ok := args[1].(runtime.Bool)
+			if !ok {
+				return nil, true, fmt.Errorf("list.sortBy descending flag must be a bool")
+			}
+			descending = b.Value
 		}
 		type keyedEl struct {
 			key runtime.Value
@@ -9629,6 +9690,9 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			if err != nil {
 				sortErr = err
 				return false
+			}
+			if descending {
+				return cmp > 0
 			}
 			return cmp < 0
 		})

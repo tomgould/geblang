@@ -22,7 +22,7 @@ var PrimitiveMethods = map[string][]string{
 		"trimStart", "upper",
 	},
 	"list": {
-		"all", "any", "append", "averageBy", "binarySearch", "bottomK", "chunk",
+		"all", "any", "append", "averageBy", "binarySearch", "binarySearchBy", "bottomK", "chunk",
 		"clear", "concat", "contains", "containsBy", "copy", "count", "difference",
 		"differenceBy", "extend", "filter", "find", "findLast", "first", "flatten",
 		"frequencies", "get", "groupBy", "indexBy", "indexOf", "insert",

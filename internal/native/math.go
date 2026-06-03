@@ -118,6 +118,23 @@ func IsInt(v runtime.Value) bool {
 // between two runtime.String values (the evaluator's compareValues
 // has the same coverage; this is the VM-side path - they should
 // stay in sync).
+// SortLess interprets a sort callback's return value. A Bool is a less-than
+// predicate (true => a sorts before b); an Int is a three-way comparator
+// (negative => a sorts before b). Both styles are accepted so callbacks like
+// string.compare (-1/0/1) and a plain a<b predicate both work.
+func SortLess(result runtime.Value) (bool, error) {
+	switch v := result.(type) {
+	case runtime.Bool:
+		return v.Value, nil
+	case runtime.SmallInt:
+		return v.Value < 0, nil
+	case runtime.Int:
+		return v.Value.Sign() < 0, nil
+	default:
+		return false, fmt.Errorf("sort callback must return bool (less-than) or int (three-way), got %s", result.TypeName())
+	}
+}
+
 func NumericCompare(left runtime.Value, right runtime.Value) (int, error) {
 	// Fast path: both SmallInt
 	if l, ok := left.(runtime.SmallInt); ok {

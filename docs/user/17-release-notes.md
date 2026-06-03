@@ -2,6 +2,21 @@
 
 ## 1.7.2
 
+### Clearer sorting and searching
+
+Sort callbacks are now consistent and more flexible. `xs.sort(cb)` /
+`xs.sorted(cb)` accept either a less-than predicate `(a, b) -> bool` or a
+three-way comparator `(a, b) -> int`, so a comparator like `string.compare`
+can be passed directly (`names.sort(string.compare)`). Previously only a bool
+predicate worked and the docs wrongly described a -1/0/1 comparator.
+`xs.sortBy(selector)` takes an optional `descending` flag, and a new
+`xs.binarySearchBy(selector, key)` searches a list sorted by a key. Builtin
+type statics (`string.compare`, `string.fromCodePoint`, `bytes.fromString`,
+...) are now first-class values, so they can be passed straight to sort, map,
+and other higher-order methods without a wrapper. The collections guide now
+documents Python-style slicing, including the step form (`xs[::2]`) and
+reverse (`xs[::-1]`).
+
 ### Escape sequences are decoded inside interpolated strings
 
 Escape sequences in a double-quoted string that also contains `${...}`

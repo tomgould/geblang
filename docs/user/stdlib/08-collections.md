@@ -118,6 +118,17 @@ io.println(a[:]);    # [1, 2, 3, 4, 5]
 io.println("hello"[1:4]); # ell
 ```
 
+A third bound is the step: `x[start:end:step]`. A negative step walks
+backwards, so `x[::-1]` reverses (on both lists and strings):
+
+```gb
+list<int> a = [1, 2, 3, 4, 5];
+io.println(a[::2]);    # [1, 3, 5]   (every second element)
+io.println(a[::-1]);   # [5, 4, 3, 2, 1]   (reversed)
+io.println(a[1:5:2]);  # [2, 4]
+io.println("geblang"[::-1]); # gnalbeg
+```
+
 ### Mutation
 
 **In-place** (mutate the receiver, return `null`):
@@ -184,8 +195,11 @@ io.println(words);          # []
 |--------|---------|-------------|
 | `reverse()` | `list<T>` | New list with elements in reverse order |
 | `reversed()` | `list<T>` | Alias for `reverse` |
-| `sort([comparator])` | `list<T>` | New list sorted in ascending order |
-| `sorted([comparator])` | `list<T>` | Alias for `sort` |
+| `sort([callback])` | `list<T>` | Sorted copy; optional `(a,b)->bool` less-than or `(a,b)->int` comparator |
+| `sorted([callback])` | `list<T>` | Alias for `sort` |
+| `sortBy(selector[, descending])` | `list<T>` | Sorted copy by selector key; `true` for descending |
+| `binarySearch(value)` | `int` | Index of `value` in a sorted list, or -1 |
+| `binarySearchBy(selector, key)` | `int` | Index whose selector key equals `key` in a list sorted by it, or -1 |
 | `concat(other)` | `list<T>` | New list with `other` appended |
 | `join(sep)` | `string` | Elements joined into a string with separator `sep` |
 | `flatten()` | `list<any>` | Recursively flatten nested lists |
@@ -211,36 +225,51 @@ let nested = [[1, 2], [3, [4, 5]]];
 io.println(nested.flatten());   # [1, 2, 3, 4, 5]
 ```
 
-`sort` and `sorted` accept an optional comparator `func(a, b): bool` that
-returns `true` when `a` should sort before `b`. Without a comparator, the
-natural order is used (numeric ascending, lexicographic for strings).
+`sort` and `sorted` accept an optional callback. It may be either a
+**less-than predicate** `func(a, b): bool` (returns `true` when `a` sorts
+before `b`) or a **three-way comparator** `func(a, b): int` (negative when
+`a` sorts before `b`, like `string.compare`). Without a callback, the natural
+order is used (numeric ascending, lexicographic for strings). The sort is
+stable.
 
 ```gb
 import io;
 
 list<int> nums = [3, 1, 4, 1, 5];
 
-# Descending: comparator that says "a comes before b when a is larger".
-let desc = nums.sorted(func(int a, int b): bool { return a > b; });
-io.println(desc);                 # [5, 4, 3, 1, 1]
+# Less-than predicate, descending: "a comes before b when a is larger".
+io.println(nums.sorted(func(int a, int b): bool { return a > b; }));  # [5, 4, 3, 1, 1]
 
-# Equivalent: sort ascending, then reverse.
-io.println(nums.sorted().reverse());  # [5, 4, 3, 1, 1]
+# Three-way comparator: pass string.compare straight in.
+list<string> names = ["banana", "apple", "cherry"];
+io.println(names.sort(string.compare));   # [apple, banana, cherry]
 
-# Sort by a key.
+# Equivalent descending: sort ascending, then reverse (or names[::-1]).
+io.println(nums.sorted().reverse());      # [5, 4, 3, 1, 1]
+```
+
+For key-driven sorting prefer `sortBy(selector)`: it computes each key once
+per element rather than on every comparison. Pass `true` as a second argument
+to sort descending.
+
+```gb
+import io;
+
 list<dict<string, any>> users = [
     {"name": "Grace", "age": 85},
     {"name": "Ada", "age": 36}
 ];
-let byAge = users.sorted(func(dict<string, any> a, dict<string, any> b): bool {
-    return (a["age"] as int) < (b["age"] as int);
-});
-io.println(byAge[0]["name"]);     # Ada
+let byAge = users.sortBy(func(dict<string, any> u): any { return u["age"]; });
+io.println(byAge[0]["name"]);                 # Ada
+
+let oldest = users.sortBy(func(dict<string, any> u): any { return u["age"]; }, true);
+io.println(oldest[0]["name"]);                # Grace
 ```
 
-For key-driven sorting prefer `sortBy(fn)` (see Keyed Functional Helpers
-below): it computes each key once per element rather than on every
-comparison.
+To search a sorted list, `binarySearch(value)` returns the index of `value`
+(or -1), and `binarySearchBy(selector, targetKey)` does the same for a list
+sorted by a key. `lowerBound(value)` / `upperBound(value)` give insertion
+points.
 
 ### Functional Operations
 

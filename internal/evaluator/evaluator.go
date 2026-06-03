@@ -701,6 +701,16 @@ func (e *Evaluator) HandleDirectPrint() bool {
 	return true
 }
 
+// nativeBuiltinValue wraps a pure native builtin (canonical.name) as a
+// first-class callable value, or returns false if no such native exists.
+// Gated on the pure-native registry so the VM resolves the identical set.
+func (e *Evaluator) nativeBuiltinValue(canonical, name string) (runtime.Value, bool) {
+	if e.natives.LookupKey(native.Key(canonical, name)) == nil {
+		return nil, false
+	}
+	return e.wrapBuiltinAsFunction(canonical, name, e.registryBuiltin(canonical, name)), true
+}
+
 func (e *Evaluator) registryBuiltin(module, name string) builtinFunc {
 	key := native.Key(module, name)
 	return func(_ *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -7500,6 +7510,14 @@ func (e *Evaluator) evalSelectorExpression(expr *ast.SelectorExpression, env *ru
 			return nil, fmt.Errorf("module %s has no export %s", module.Name, expr.Name.Value)
 		}
 		return value, nil
+	}
+	if typeVal, ok := object.(runtime.Type); ok {
+		// Builtin type statics as first-class values (no import):
+		// string.compare, bytes.fromString, ...
+		if v, ok := e.nativeBuiltinValue(typeVal.Name, expr.Name.Value); ok {
+			return v, nil
+		}
+		return nil, fmt.Errorf("%s has no static member %s", typeVal.Name, expr.Name.Value)
 	}
 	if errValue, ok := object.(runtime.Error); ok {
 		switch expr.Name.Value {
@@ -22656,7 +22674,12 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 						sortErr = err
 						return false
 					}
-					return isTruthy(result)
+					less, err := native.SortLess(result)
+					if err != nil {
+						sortErr = err
+						return false
+					}
+					return less
 				}
 				cmp, err := e.compareValues(newElements[i], newElements[j])
 				if err != nil {
@@ -22886,6 +22909,31 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				}
 			}
 			return runtime.NewInt64(-1), nil
+		case "binarySearchBy":
+			if len(args) != 2 {
+				return nil, fmt.Errorf("list.binarySearchBy expects a selector and a target key")
+			}
+			target := args[1]
+			lo, hi := 0, len(value.Elements)
+			for lo < hi {
+				mid := (lo + hi) / 2
+				key, err := e.callValue(args[0], []runtime.Value{value.Elements[mid]})
+				if err != nil {
+					return nil, err
+				}
+				cmp, err := compareValues(key, target)
+				if err != nil {
+					return nil, err
+				}
+				if cmp == 0 {
+					return runtime.NewInt64(int64(mid)), nil
+				} else if cmp < 0 {
+					lo = mid + 1
+				} else {
+					hi = mid
+				}
+			}
+			return runtime.NewInt64(-1), nil
 		case "lowerBound":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.lowerBound expects one argument (value)")
@@ -22977,8 +23025,16 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			return best, nil
 		case "sortBy":
-			if len(args) != 1 {
-				return nil, fmt.Errorf("list.sortBy expects one argument (function)")
+			if len(args) != 1 && len(args) != 2 {
+				return nil, fmt.Errorf("list.sortBy expects a selector and an optional descending flag")
+			}
+			descending := false
+			if len(args) == 2 {
+				b, ok := args[1].(runtime.Bool)
+				if !ok {
+					return nil, fmt.Errorf("list.sortBy descending flag must be a bool")
+				}
+				descending = b.Value
 			}
 			type keyedEl struct {
 				key runtime.Value
@@ -23001,6 +23057,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				if err != nil {
 					sortErr = err
 					return false
+				}
+				if descending {
+					return cmp > 0
 				}
 				return cmp < 0
 			})

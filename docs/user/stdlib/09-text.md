@@ -144,7 +144,7 @@ Import `string`. The module is a small namespace for static / factory functions 
 |----------|---------|-------------|
 | `fromCodePoint(n)` | `string` | Single-character string for the Unicode codepoint `n` (this is "chr"). Rejects negative values, values above U+10FFFF, and the UTF-16 surrogate range U+D800..U+DFFF. |
 | `fromCodePoints(list<int>)` | `string` | Multi-character string built from a list of codepoints. Same validation per element. |
-| `compare(a, b)` | `int` | Three-way comparison returning -1 / 0 / +1. Useful as a sort key (`xs.sortBy(string.compare)`). Compares the underlying UTF-8 bytes, which agrees with codepoint order. |
+| `compare(a, b)` | `int` | Three-way comparison returning -1 / 0 / +1. Pass it straight to `xs.sort(string.compare)` (sort accepts a three-way comparator). Compares the underlying UTF-8 bytes, which agrees with codepoint order. |
 | `equalsFold(a, b)` | `bool` | Case-insensitive equality respecting Unicode case folding. `string.equalsFold("CafÉ", "café")` is `true`. |
 
 ```gb
