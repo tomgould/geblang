@@ -468,6 +468,7 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		a.analyzeDeclaration(stmt)
 	case *ast.ExpressionStatement:
 		a.analyzeExpression(stmt.Expression)
+		a.validateCallStatementArgs(stmt.Expression)
 	case *ast.ExportStatement:
 		a.analyzeStatement(stmt.Statement, fn)
 	case *ast.FunctionStatement:
@@ -1004,6 +1005,80 @@ func (a *Analyzer) validateCallExpression(expr ast.Expression, expected typeInfo
 	}
 }
 
+// validateCallStatementArgs flags collection element-type mismatches on bare
+// statement calls (e.g. `wantStrings(ints);`) that the bytecode compiler cannot
+// see, since it strips collection element args. Scalar / arity / base-type
+// mismatches are left to the bytecode compiler to avoid duplicate diagnostics:
+// an error is raised only when some overload matches on base types but none
+// matches once element types are checked.
+func (a *Analyzer) validateCallStatementArgs(expr ast.Expression) {
+	call, ok := expr.(*ast.CallExpression)
+	if !ok {
+		return
+	}
+	ident, ok := call.Callee.(*ast.Identifier)
+	if !ok {
+		return
+	}
+	if _, ok := a.classes[ident.Value]; ok {
+		return
+	}
+	overloads := a.functions[strings.ToLower(ident.Value)]
+	if len(overloads) == 0 {
+		return
+	}
+	args := make([]typeInfo, 0, len(call.Arguments))
+	for _, arg := range call.Arguments {
+		if arg.Name != nil || arg.Spread {
+			return
+		}
+		argType := a.expressionTypeName(arg.Value)
+		if !argType.known {
+			return
+		}
+		args = append(args, argType)
+	}
+	baseMatch := false
+	for _, overload := range overloads {
+		if a.callArgumentsCompatible(args, overload.parameters, overload.minArgs) {
+			return
+		}
+		if a.callArgumentsBaseCompatible(args, overload.parameters, overload.minArgs) {
+			baseMatch = true
+		}
+	}
+	if baseMatch {
+		a.errorf("no matching overload for %s with the given argument types", ident.Value)
+	}
+}
+
+// callArgumentsBaseCompatible mirrors callArgumentsCompatible but compares only
+// the base type names (ignoring collection element args), matching what the
+// bytecode compiler resolves at compile time.
+func (a *Analyzer) callArgumentsBaseCompatible(args, parameters []typeInfo, minArgs int) bool {
+	if len(args) < minArgs || len(args) > len(parameters) {
+		return false
+	}
+	for i, arg := range args {
+		if !parameters[i].known || !arg.known {
+			return false
+		}
+		if arg.name == "null" {
+			if !parameters[i].nullable {
+				return false
+			}
+			continue
+		}
+		if !parameters[i].nullable && arg.nullable {
+			return false
+		}
+		if parameters[i].name != "any" && !a.isAssignableType(parameters[i].name, arg.name) {
+			return false
+		}
+	}
+	return true
+}
+
 // checkGenericCallInference walks each overload, infers the binding of every
 // type parameter T from the argument types, and verifies (a) T is bound to a
 // single type across multiple argument positions and (b) the inferred binding
@@ -1387,11 +1462,11 @@ func (a *Analyzer) expressionTypeName(expr ast.Expression) typeInfo {
 	case *ast.StringLiteral:
 		return typeInfo{name: "string", known: true}
 	case *ast.ListLiteral:
-		return typeInfo{name: "list", known: true}
-	case *ast.DictLiteral:
-		return typeInfo{name: "dict", known: true}
+		return a.collectionLiteralType("list", expr.Elements)
 	case *ast.SetLiteral:
-		return typeInfo{name: "set", known: true}
+		return a.collectionLiteralType("set", expr.Elements)
+	case *ast.DictLiteral:
+		return a.dictLiteralType(expr)
 	case *ast.Identifier:
 		if value, ok := a.lookup(expr.Value); ok {
 			return value
@@ -1624,36 +1699,155 @@ func sameTypeInfo(left, right typeInfo) bool {
 	return true
 }
 
-// isAssignable extends isAssignableType with generic-argument invariance.
-// When the target carries explicit type arguments (e.g. `Box<Base>` or
-// `list<int>`), each argument position must be the *exact* same type as
-// the actual's corresponding argument - not a subtype. This is the standard
-// invariance rule for generics: it prevents the classic unsoundness where
-// a `Box<Sub>` is passed where a `Box<Base>` is expected and a sibling
-// `Base` subtype then gets written into the box.
+// isAssignable extends isAssignableType with generic-argument checking. The
+// element rule matches the runtime: built-in collections (list/set/dict) are
+// COVARIANT in their element types (`list<Dog>` is assignable to `list<Animal>`,
+// `list<int>` to `list<any>`), while user generic classes stay INVARIANT (each
+// argument must be the exact same type). Covariant collections are technically
+// unsound with mutation, but the runtime allows it, so the analyzer matches to
+// avoid false positives.
 //
-// When the actual value has no type arguments (e.g. a raw class instance whose
-// reified bindings are still polymorphic), the check passes - invariance only
+// When either side carries no type arguments (a raw instance whose reified
+// bindings are still polymorphic), the check passes - argument checking only
 // applies when both sides explicitly carry args.
 func (a *Analyzer) isAssignable(target, actual typeInfo) bool {
 	if !a.isAssignableType(target.name, actual.name) {
 		return false
 	}
-	if len(target.args) == 0 {
-		return true
-	}
-	if len(actual.args) == 0 {
+	if len(target.args) == 0 || len(actual.args) == 0 {
 		return true
 	}
 	if len(target.args) != len(actual.args) {
 		return false
 	}
+	covariant := isCollectionTypeName(target.name)
 	for i := range target.args {
-		if !sameTypeInfo(target.args[i], actual.args[i]) {
+		if covariant {
+			if !a.elementAssignable(target.args[i], actual.args[i]) {
+				return false
+			}
+		} else if !sameTypeInfo(target.args[i], actual.args[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+func isCollectionTypeName(name string) bool {
+	switch name {
+	case "list", "set", "dict":
+		return true
+	}
+	return false
+}
+
+// elementAssignable is the covariant rule for collection element/value types:
+// `any` on either side is permissive, a subtype is assignable to its supertype,
+// nested collections recurse covariantly, but two unrelated concrete types
+// (including numeric widening like int->float) are rejected. An unresolved type
+// parameter stays permissive so generic code does not false-positive.
+func (a *Analyzer) elementAssignable(target, actual typeInfo) bool {
+	if !target.known || !actual.known {
+		return true
+	}
+	if target.name == "any" || actual.name == "any" {
+		return true
+	}
+	if target.name == actual.name {
+		if len(target.args) == 0 || len(actual.args) == 0 {
+			return true
+		}
+		if len(target.args) != len(actual.args) {
+			return false
+		}
+		covariant := isCollectionTypeName(target.name)
+		for i := range target.args {
+			if covariant {
+				if !a.elementAssignable(target.args[i], actual.args[i]) {
+					return false
+				}
+			} else if !sameTypeInfo(target.args[i], actual.args[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	if a.isAssignableType(target.name, actual.name) {
+		return true
+	}
+	if a.isConcreteTypeName(target.name) && a.isConcreteTypeName(actual.name) {
+		return false
+	}
+	return true
+}
+
+func (a *Analyzer) isConcreteTypeName(name string) bool {
+	switch name {
+	case "int", "float", "decimal", "string", "bool", "bytes", "list", "set", "dict":
+		return true
+	}
+	if _, ok := a.classes[name]; ok {
+		return true
+	}
+	if _, ok := a.interfaces[name]; ok {
+		return true
+	}
+	return false
+}
+
+// collectionLiteralType infers list<T>/set<T> when every element shares one
+// known type; otherwise the bare collection type so element checks stay lenient.
+func (a *Analyzer) collectionLiteralType(name string, elements []ast.Expression) typeInfo {
+	elem, ok := a.homogeneousElementType(elements)
+	if !ok {
+		return typeInfo{name: name, known: true}
+	}
+	return typeInfo{name: name, known: true, args: []typeInfo{elem}}
+}
+
+func (a *Analyzer) dictLiteralType(lit *ast.DictLiteral) typeInfo {
+	if len(lit.Entries) == 0 {
+		return typeInfo{name: "dict", known: true}
+	}
+	keys := make([]ast.Expression, 0, len(lit.Entries))
+	vals := make([]ast.Expression, 0, len(lit.Entries))
+	for _, entry := range lit.Entries {
+		if entry.Spread {
+			return typeInfo{name: "dict", known: true}
+		}
+		keys = append(keys, entry.Key)
+		vals = append(vals, entry.Value)
+	}
+	k, kok := a.homogeneousElementType(keys)
+	v, vok := a.homogeneousElementType(vals)
+	if !kok || !vok {
+		return typeInfo{name: "dict", known: true}
+	}
+	return typeInfo{name: "dict", known: true, args: []typeInfo{k, v}}
+}
+
+// homogeneousElementType returns the common element type when every element is
+// known and shares the exact same type; otherwise (empty, mixed, or any
+// unknown) it reports not-ok so downstream element checks stay lenient.
+func (a *Analyzer) homogeneousElementType(elements []ast.Expression) (typeInfo, bool) {
+	if len(elements) == 0 {
+		return typeInfo{}, false
+	}
+	var common typeInfo
+	for i, el := range elements {
+		t := a.expressionTypeName(el)
+		if !t.known {
+			return typeInfo{}, false
+		}
+		if i == 0 {
+			common = t
+			continue
+		}
+		if !sameTypeInfo(common, t) {
+			return typeInfo{}, false
+		}
+	}
+	return common, true
 }
 
 func (a *Analyzer) typeInfoFromRef(ref *ast.TypeRef) typeInfo {

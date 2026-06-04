@@ -2,7 +2,6 @@ module proc;
 
 import procnative;
 import streams;
-import io;
 
 ## Process represents a running child process started by
 ## `proc.spawn`. `stdin`, `stdout`, and `stderr` are stream

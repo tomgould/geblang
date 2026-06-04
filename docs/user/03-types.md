@@ -668,6 +668,43 @@ When the value is constructed without explicit type arguments (so its
 reified bindings are inferred rather than pinned), the runtime accepts
 the call - the bindings inherit from the parameter type at that point.
 
+### Covariance for built-in collections
+
+Built-in collections (`list<T>`, `set<T>`, `dict<K,V>`) are **covariant**
+in their element types, unlike the user-defined generics above. A
+`list<Dog>` is accepted where a `list<Animal>` is expected, and any
+collection is accepted where the element type is `any`:
+
+```gb
+class Animal {}
+class Dog extends Animal {}
+
+func count(list<Animal> xs): int { return xs.length(); }
+
+list<Dog> dogs = [Dog(), Dog()];
+count(dogs);            # ok - Dog is an Animal
+
+func countAny(list<any> xs): int { return xs.length(); }
+countAny([1, 2, 3]);   # ok - any element type satisfies list<any>
+```
+
+An *unrelated* element type is rejected, both by `geblang check`
+statically and at the runtime boundary. There is no numeric widening:
+a `list<int>` does not satisfy `list<float>` or `list<string>`.
+
+```gb
+func countStrings(list<string> xs): int { return xs.length(); }
+
+list<int> ints = [1, 2, 3];
+countStrings(ints);    # static + runtime error: list<int> is not list<string>
+```
+
+Covariance is convenient but, combined with mutation, is not fully
+sound: a function that takes `list<Animal>` could insert a `Cat` into a
+list the caller declared as `list<Dog>`. Re-validate at the next typed
+boundary, or copy, when a collection is both shared and mutated across a
+covariant boundary.
+
 ### Container types
 
 Generic collection type hints document and enforce call/declaration boundaries.

@@ -334,6 +334,44 @@ func TestSourceAllowsDefinedAndImportedCalls(t *testing.T) {
 	}
 }
 
+// TestSourceFlagsCollectionElementMismatch verifies check reports a list<int>
+// argument passed where list<string> is expected, in a bare statement call -
+// the gap the bytecode compiler cannot see because it strips element args.
+func TestSourceFlagsCollectionElementMismatch(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "func count(list<string> xs): int { return xs.length(); }\n" +
+		"let list<int> ints = [1, 2, 3];\n" +
+		"count(ints);\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	found := false
+	for _, d := range diags {
+		if d.Severity == SeverityError && strings.Contains(d.Message, "no matching overload for count") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected collection element-mismatch error, got %+v", diags)
+	}
+}
+
+// TestSourceAllowsCovariantCollectionArgument verifies check does NOT
+// false-positive on a covariant collection argument (list<Dog> -> list<Animal>).
+func TestSourceAllowsCovariantCollectionArgument(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "class Animal {}\nclass Dog extends Animal {}\n" +
+		"func count(list<Animal> xs): int { return xs.length(); }\n" +
+		"let list<Dog> dogs = [Dog(), Dog()];\n" +
+		"count(dogs);\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	for _, d := range diags {
+		if d.Severity == SeverityError {
+			t.Fatalf("covariant collection arg should not error: %+v", d)
+		}
+	}
+}
+
 func TestSourceReturnsParseDiagnostics(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.gb")

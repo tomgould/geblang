@@ -1,7 +1,6 @@
 module ffi;
 
 import ffinative;
-import io;
 
 /**
  * Type codes mirror internal/ffi/ffi.go's Type enum. Geblang code

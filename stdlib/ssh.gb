@@ -2,7 +2,6 @@ module ssh;
 
 import sshnative;
 import streams;
-import io;
 
 ## ExecResult is the structured outcome of `client.exec(cmd)`:
 ## the command's stdout, stderr, and exit code.

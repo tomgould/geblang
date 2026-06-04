@@ -3607,6 +3607,31 @@ io.println(n.get());
 `, "hello\nworld\n42\n")
 }
 
+// TestParityCovariantCollectionArgument pins the covariant collection contract
+// on both backends: a list<Dog> flows into a list<Animal> parameter and an
+// element-mismatched call (list<int> into list<string>) raises an identical
+// runtime error on each backend.
+func TestParityCovariantCollectionArgument(t *testing.T) {
+	runParity(t, `import io;
+
+class Animal { func name(): string { return "animal"; } }
+class Dog extends Animal { func name(): string { return "dog"; } }
+
+func countAnimals(list<Animal> xs): int { return xs.length(); }
+func countStrings(list<string> xs): int { return xs.length(); }
+
+let list<Dog> dogs = [Dog(), Dog()];
+io.println(countAnimals(dogs));
+
+let list<int> ints = [1, 2, 3];
+try {
+    countStrings(ints);
+} catch (RuntimeError e) {
+    io.println("rejected");
+}
+`, "2\nrejected\n")
+}
+
 func TestParityGenericClassMultipleTypeParams(t *testing.T) {
 	runParity(t, `import io;
 

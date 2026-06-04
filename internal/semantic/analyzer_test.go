@@ -758,3 +758,110 @@ func TestAnalyzerDeclareInjectsSessionBinding(t *testing.T) {
 		}
 	}
 }
+
+// TestAnalyzerAcceptsCovariantCollectionArgument verifies the analyzer treats
+// built-in collections as COVARIANT in their element types, matching the
+// runtime: list<Dog> is accepted where list<Animal> is expected.
+func TestAnalyzerAcceptsCovariantCollectionArgument(t *testing.T) {
+	input := `class Animal {}
+class Dog extends Animal {}
+func count(list<Animal> xs): int { return xs.length(); }
+let list<Dog> dogs = [Dog(), Dog()];
+let int n = count(dogs);
+`
+	diagnostics := analyzeInput(t, input)
+	if len(diagnostics) != 0 {
+		t.Fatalf("expected no diagnostics for covariant collection arg, got: %v", diagnostics)
+	}
+}
+
+// TestAnalyzerAcceptsCollectionToAnyElement verifies list<int> is assignable to
+// list<any> (element widening to any is allowed, matching the runtime).
+func TestAnalyzerAcceptsCollectionToAnyElement(t *testing.T) {
+	input := `func count(list<any> xs): int { return xs.length(); }
+let list<int> ints = [1, 2, 3];
+let int n = count(ints);
+`
+	diagnostics := analyzeInput(t, input)
+	if len(diagnostics) != 0 {
+		t.Fatalf("expected no diagnostics for list<int> -> list<any>, got: %v", diagnostics)
+	}
+}
+
+// TestAnalyzerRejectsUnrelatedCollectionElement verifies the analyzer flags an
+// element-type mismatch the runtime also rejects (list<int> -> list<string>),
+// in a value (declaration) context.
+func TestAnalyzerRejectsUnrelatedCollectionElement(t *testing.T) {
+	input := `func count(list<string> xs): int { return xs.length(); }
+let list<int> ints = [1, 2, 3];
+let int n = count(ints);
+`
+	diagnostics := analyzeInput(t, input)
+	found := false
+	for _, d := range diagnostics {
+		if strings.Contains(d.Message, "no matching overload for count") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected element-mismatch diagnostic, got: %v", diagnostics)
+	}
+}
+
+// TestAnalyzerRejectsCollectionElementInStatement verifies the element-mismatch
+// check also fires for bare statement calls, which the bytecode compiler cannot
+// see (it strips collection element args).
+func TestAnalyzerRejectsCollectionElementInStatement(t *testing.T) {
+	input := `func count(list<string> xs): int { return xs.length(); }
+let list<int> ints = [1, 2, 3];
+count(ints);
+`
+	diagnostics := analyzeInput(t, input)
+	found := false
+	for _, d := range diagnostics {
+		if strings.Contains(d.Message, "no matching overload for count with the given argument types") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected statement-context element-mismatch diagnostic, got: %v", diagnostics)
+	}
+}
+
+// TestAnalyzerNoFalsePositiveOnScalarStatement verifies the statement-context
+// check does NOT duplicate the bytecode compiler's scalar diagnostic: a plain
+// scalar mismatch produces no analyzer (semantic) diagnostic here.
+func TestAnalyzerNoFalsePositiveOnScalarStatement(t *testing.T) {
+	input := `func want(int n): int { return n; }
+want("hello");
+`
+	diagnostics := analyzeInput(t, input)
+	for _, d := range diagnostics {
+		if strings.Contains(d.Message, "no matching overload for want") {
+			t.Fatalf("scalar mismatch should be left to the bytecode compiler, got: %v", diagnostics)
+		}
+	}
+}
+
+// TestAnalyzerKeepsUserGenericInvariantInCalls verifies covariance is limited to
+// built-in collections: a user generic Box<Dog> is NOT accepted where Box<Animal>
+// is expected (invariance preserved).
+func TestAnalyzerKeepsUserGenericInvariantInCalls(t *testing.T) {
+	input := `class Animal {}
+class Dog extends Animal {}
+class Box<T> { func Box() {} }
+func take(Box<Animal> b): int { return 0; }
+let Box<Dog> b = Box<Dog>();
+let int n = take(b);
+`
+	diagnostics := analyzeInput(t, input)
+	found := false
+	for _, d := range diagnostics {
+		if strings.Contains(d.Message, "no matching overload for take") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected user-generic invariance to reject Box<Dog> -> Box<Animal>, got: %v", diagnostics)
+	}
+}

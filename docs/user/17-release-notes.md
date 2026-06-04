@@ -108,6 +108,11 @@
   distributed binary stays licence-compliant. It is a sidecar file, not a
   built-in flag, so it never clashes with a `licenses` argument the built
   program may define.
+- `geblang check` now flags collection element-type mismatches that only the
+  runtime caught before, e.g. passing a `list<int>` where a `list<string>` is
+  expected. Built-in collections stay covariant, so a `list<Dog>` into a
+  `list<Animal>` parameter and any collection into `list<any>` remain clean;
+  only genuinely unrelated element types are reported.
 
 ### Fixes
 
