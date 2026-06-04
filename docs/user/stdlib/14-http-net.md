@@ -474,6 +474,12 @@ A handler receives a plain request dict by default. To opt into a rich
 else stays the same. The handler may return a `Response` (from
 `http.response`, `http.jsonResponse`, or `http.redirect`) or a plain dict.
 
+The dict form carries `method`, `path`, `query`, `headers`, `body`, and
+`remoteAddr`, plus the proxy-aware `scheme`, `host`, and `clientIp` keys
+(resolved exactly as the `Request` accessors below, honoring
+`trustedProxies`). A verified mTLS peer certificate appears under
+`_clientCert`.
+
 ```gb
 import http;
 

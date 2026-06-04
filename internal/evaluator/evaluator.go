@@ -17233,8 +17233,23 @@ func (e *Evaluator) callbackEvaluator(handler runtime.Function) (*Evaluator, run
 	return child, runtime.CloneFunction(handler)
 }
 
-func httpRequestValue(request *http.Request, body []byte) runtime.Value {
-	return runtime.Dict{Entries: httpRequestEntries(request, body)}
+// httpRequestDict builds the dict-form server request. It mirrors the rich
+// Request instance: proxy-aware scheme/host/clientIp (honouring trustedProxies)
+// and _clientCert when a verified peer certificate is present.
+func httpRequestDict(request *http.Request, body []byte, tp *trustedProxies) runtime.Value {
+	entries := httpRequestEntries(request, body)
+	scheme, host, clientIP := resolveRequestMeta(request, tp)
+	put := func(key string, value runtime.Value) {
+		kv := runtime.String{Value: key}
+		entries[dictKey(kv)] = runtime.DictEntry{Key: kv, Value: value}
+	}
+	put("scheme", runtime.String{Value: scheme})
+	put("host", runtime.String{Value: host})
+	put("clientIp", runtime.String{Value: clientIP})
+	if request.TLS != nil && len(request.TLS.PeerCertificates) > 0 {
+		put("_clientCert", clientCertDict(request.TLS.PeerCertificates[0]))
+	}
+	return runtime.Dict{Entries: entries}
 }
 
 func httpRequestEntries(request *http.Request, body []byte) map[string]runtime.DictEntry {
@@ -17591,7 +17606,7 @@ func nativeRequestQueryAll(this *runtime.Instance, args []runtime.Value) (runtim
 
 func (e *Evaluator) httpRequestArgument(handler runtime.Function, request *http.Request, body []byte, tp *trustedProxies) (runtime.Value, error) {
 	if !handlerWantsRequestObject(handler) {
-		return httpRequestValue(request, body), nil
+		return httpRequestDict(request, body, tp), nil
 	}
 	class := e.httpRequestClass
 	if class == nil && e.parent != nil {

@@ -9,6 +9,7 @@
  */
 import test;
 import http;
+import json;
 
 class HttpRequestObjectTest extends test.Test {
     @tag("integration")
@@ -63,6 +64,32 @@ class HttpRequestObjectTest extends test.Test {
         /* Peer is loopback but not trusted, so forwarded headers are ignored. */
         this.assertEquals("127.0.0.1", body["clientIp"] as string);
         this.assertEquals("http", body["scheme"] as string);
+    }
+
+    @tag("integration")
+    @test
+    func dictFormRequestProxyMeta(): void {
+        /* A func(dict) handler also receives proxy-aware
+         * scheme/host/clientIp + clientIp gated by trustedProxies. */
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            return {"status": 200, "headers": {"Content-Type": "application/json"},
+                "body": json.stringify({
+                    "scheme": req["scheme"],
+                    "host": req["host"],
+                    "clientIp": req["clientIp"]
+                })};
+        }, {"trustedProxies": ["private"]});
+        let url = "http://" + http.serverAddr(server) + "/";
+        let body = http.request(url)
+            .withHeader("X-Forwarded-For", "198.51.100.9")
+            .withHeader("X-Forwarded-Proto", "https")
+            .withHeader("X-Forwarded-Host", "api.example.com")
+            .send().json();
+        http.close(server);
+
+        this.assertEquals("https", body["scheme"] as string);
+        this.assertEquals("api.example.com", body["host"] as string);
+        this.assertEquals("198.51.100.9", body["clientIp"] as string);
     }
 
     @test

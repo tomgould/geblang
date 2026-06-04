@@ -5360,6 +5360,34 @@ io.println(rd.isRedirect());
 `, "127.0.0.1\nhttp\n301\n/login\ntrue\n")
 }
 
+// TestParityHTTPServerDictRequestMeta verifies the dict-form server request
+// (func(dict) handler) carries proxy-aware scheme/host/clientIp, honouring the
+// trustedProxies list, on both backends.
+func TestParityHTTPServerDictRequestMeta(t *testing.T) {
+	runParityStateful(t, `
+import http;
+import io;
+import json;
+let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+    return {"status": 200, "headers": {"Content-Type": "application/json"}, "body": json.stringify({
+        "scheme": req["scheme"],
+        "host": req["host"],
+        "clientIp": req["clientIp"]
+    })};
+}, {"trustedProxies": ["127.0.0.1"]});
+let url = "http://" + http.serverAddr(server) + "/";
+let body = http.request(url)
+    .withHeader("X-Forwarded-For", "203.0.113.7")
+    .withHeader("X-Forwarded-Proto", "https")
+    .withHeader("X-Forwarded-Host", "example.com")
+    .send().json();
+io.println(body["scheme"]);
+io.println(body["host"]);
+io.println(body["clientIp"]);
+http.close(server);
+`, "https\nexample.com\n203.0.113.7\n")
+}
+
 // TestParityHTTPMutualTLS exercises server-side client-certificate
 // verification (tls.clientCa + clientAuth) and req.clientCert() on both
 // backends: a presented cert is verified and surfaced; a request without a

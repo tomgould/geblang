@@ -52,6 +52,9 @@
   bytecode VM, not just the evaluator.
 - New `http.redirect(url, status=302)` builder returns a `Response` with the
   `Location` header set; it shares the status predicates with all responses.
+- Plain request-dict handlers now also receive the proxy-aware `scheme`,
+  `host`, and `clientIp` keys (resolved like the `Request` accessors,
+  honoring `trustedProxies`), plus `_clientCert` for a verified mTLS peer.
 - New `trustedProxies` server option (a list of IPs/CIDRs, or the keyword
   `"private"`). When the immediate peer is trusted, `clientIp()` is taken
   from `X-Forwarded-For`, `scheme()`/`isSecure()` from `X-Forwarded-Proto`,
