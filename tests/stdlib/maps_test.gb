@@ -1,0 +1,59 @@
+/**
+ * @title maps.DictInterface
+ * @summary Implementing maps.DictInterface (__index + keys, optional
+ * __setIndex) yields the dict method surface (contains/get/values/length/
+ * isEmpty) and `in` via interface defaults.
+ */
+import test;
+import maps;
+
+class Store implements maps.DictInterface {
+    dict<string, any> data;
+    func Store() { this.data = {}; }
+    func __index(any key): any { return this.data.get(key as string); }
+    func __setIndex(any key, any value): void { this.data.set(key as string, value); }
+    func keys(): list<any> { return this.data.keys(); }
+}
+
+/* A read-only map omits __setIndex; the interface does not require it. */
+class ReadOnly implements maps.DictInterface {
+    dict<string, any> data;
+    func ReadOnly(dict<string, any> seed) { this.data = seed; }
+    func __index(any key): any { return this.data.get(key as string); }
+    func keys(): list<any> { return this.data.keys(); }
+}
+
+class MapsTest extends test.Test {
+    @test
+    func subscriptAndContains(): void {
+        let s = Store();
+        s["a"] = 1;
+        s["b"] = 2;
+        this.assertEquals(1, s["a"]);
+        this.assertTrue(s.contains("a"));
+        this.assertTrue("b" in s);
+        this.assertFalse("z" in s);
+    }
+
+    @test
+    func defaultMethods(): void {
+        let s = Store();
+        s["x"] = 10;
+        this.assertEquals(10, s.get("x", 0));
+        this.assertEquals(0, s.get("missing", 0));
+        this.assertEquals(1, s.length());
+        this.assertFalse(s.isEmpty());
+        this.assertEquals([10], s.values());
+    }
+
+    @test
+    func readOnlyMap(): void {
+        let r = ReadOnly({"k": 9});
+        this.assertEquals(9, r["k"]);
+        this.assertTrue("k" in r);
+        this.assertEquals(1, r.length());
+        let threw = false;
+        try { r["new"] = 1; } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+    }
+}

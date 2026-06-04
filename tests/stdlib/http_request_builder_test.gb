@@ -1,0 +1,67 @@
+/**
+ * @title HTTP request builder + batch test
+ * @summary The immutable withX request builder (http.request(url)),
+ * parallel http.getAll, and fetchAll accepting request Builders.
+ *
+ * Tagged "integration" so CI can skip on hosts without local
+ * port-binding permission.
+ */
+import test;
+import http;
+
+class HttpRequestBuilderTest extends test.Test {
+    @tag("integration")
+    @test
+    func builderIsImmutable(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            let tag = "-";
+            if ("X-Tag" in req["headers"]) { tag = req["headers"]["X-Tag"] as string; }
+            return {"status": 200, "body": (req["method"] as string) + " " + tag + " " + (req["body"] as string), "headers": {}};
+        });
+        let url = "http://" + http.serverAddr(server) + "/";
+        let base = http.request(url).withMethod("POST").withJson({"k": 1});
+        let a = base.withHeader("X-Tag", "AAA");
+        let b = base.withHeader("X-Tag", "BBB");
+        let ra = a.send();
+        let rb = b.send();
+        http.close(server);
+
+        this.assertEquals("POST AAA {\"k\":1}", ra.text());
+        this.assertEquals("POST BBB {\"k\":1}", rb.text());
+    }
+
+    @tag("integration")
+    @test
+    func getAllAndFetchAll(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            return {"status": 200, "body": "ok:" + (req["path"] as string), "headers": {}};
+        });
+        let base = "http://" + http.serverAddr(server);
+
+        let rs = await http.getAll([base + "/a", base + "/b", base + "/c"], {"limit": 2});
+        let viaFetch = await http.fetchAll([http.request(base + "/x"), http.request(base + "/y")]);
+        http.close(server);
+
+        this.assertEquals(3, rs.length());
+        this.assertEquals("ok:/a", rs[0].text());
+        this.assertEquals(200, rs[1].status());
+        this.assertEquals("ok:/x", viaFetch[0].text());
+        this.assertEquals("ok:/y", viaFetch[1].text());
+    }
+
+    @tag("integration")
+    @test
+    func transportFailureIsErrorResponse(): void {
+        /* Nothing listening on port 1: a transport failure, not an HTTP status. */
+        let results = await http.getAll(["http://127.0.0.1:1/nope"]);
+        let r = results[0];
+
+        this.assertTrue(r instanceof Response);
+        this.assertTrue(r.isError());
+        this.assertFalse(r.ok());
+        this.assertEquals(0, r.status());
+        this.assertTrue(r.error() != null);
+        /* Back-compat: the message is also reachable via ["error"]. */
+        this.assertTrue(r["error"] != null);
+    }
+}

@@ -3045,6 +3045,7 @@ func (e *Evaluator) installBuiltinTypes(env *runtime.Environment) error {
 		if strings.EqualFold(class.Name, "Response") {
 			class.Module = "http"
 			e.httpResponseClass = class
+			httpResponseResultClassOnce.Do(func() { httpResponseResultClass = class })
 		}
 	}
 	for _, class := range e.processObjectClasses() {
@@ -3320,11 +3321,26 @@ func httpObjectClasses(env *runtime.Environment) []*runtime.Class {
 			{Name: "headers"},
 		},
 		Methods: map[string][]runtime.Function{
-			"withheader": []runtime.Function{{Name: "withHeader", Native: nativeResponseWithHeader}},
-			"withbody":   []runtime.Function{{Name: "withBody", Native: nativeResponseWithBody}},
-			"withstatus": []runtime.Function{{Name: "withStatus", Native: nativeResponseWithStatus}},
-			"todict":     []runtime.Function{{Name: "toDict", Native: nativeResponseToDict}},
-			"inspect":    []runtime.Function{{Name: "inspect", Native: nativeResponseInspect}},
+			"withheader":    []runtime.Function{{Name: "withHeader", Native: nativeResponseWithHeader}},
+			"withbody":      []runtime.Function{{Name: "withBody", Native: nativeResponseWithBody}},
+			"withstatus":    []runtime.Function{{Name: "withStatus", Native: nativeResponseWithStatus}},
+			"todict":        []runtime.Function{{Name: "toDict", Native: nativeResponseToDict}},
+			"inspect":       []runtime.Function{{Name: "inspect", Native: nativeResponseInspect}},
+			"status":        []runtime.Function{{Name: "status", Native: nativeResponseStatus}},
+			"ok":            []runtime.Function{{Name: "ok", Native: responseStatusPredicate("ok", 200, 299)}},
+			"issuccessful":  []runtime.Function{{Name: "isSuccessful", Native: responseStatusPredicate("isSuccessful", 200, 299)}},
+			"isredirect":    []runtime.Function{{Name: "isRedirect", Native: responseStatusPredicate("isRedirect", 300, 399)}},
+			"isclienterror": []runtime.Function{{Name: "isClientError", Native: responseStatusPredicate("isClientError", 400, 499)}},
+			"isservererror": []runtime.Function{{Name: "isServerError", Native: responseStatusPredicate("isServerError", 500, 599)}},
+			"isnotfound":    []runtime.Function{{Name: "isNotFound", Native: nativeResponseIsNotFound}},
+			"iserror":       []runtime.Function{{Name: "isError", Native: nativeResponseIsError}},
+			"error":         []runtime.Function{{Name: "error", Native: nativeResponseError}},
+			"text":          []runtime.Function{{Name: "text", Native: nativeResponseText}},
+			"bytes":         []runtime.Function{{Name: "bytes", Native: nativeResponseBytes}},
+			"json":          []runtime.Function{{Name: "json", Native: nativeResponseJSON}},
+			"header":        []runtime.Function{{Name: "header", Native: nativeResponseHeader}},
+			"headers":       []runtime.Function{{Name: "headers", Native: nativeResponseHeaders}},
+			"__index":       []runtime.Function{{Name: "__index", Native: nativeResponseIndex}},
 		},
 		Constructors: []runtime.Function{{Name: "Response", Native: nativeResponseConstructor}},
 		Env:          env,
@@ -3501,6 +3517,170 @@ func nativeResponseToDict(this *runtime.Instance, args []runtime.Value) (runtime
 		return nil, fmt.Errorf("Response.toDict expects no arguments")
 	}
 	return responseInstanceDict(this), nil
+}
+
+func responseStatusInt64(this *runtime.Instance) int64 {
+	if v, ok := toInt64(this.Fields["status"]); ok {
+		return v
+	}
+	return 0
+}
+
+func nativeResponseStatus(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Response.status expects no arguments")
+	}
+	return runtime.NewInt64(responseStatusInt64(this)), nil
+}
+
+func responseStatusPredicate(name string, lo, hi int64) func(*runtime.Instance, []runtime.Value) (runtime.Value, error) {
+	return func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("Response.%s expects no arguments", name)
+		}
+		s := responseStatusInt64(this)
+		return runtime.Bool{Value: s >= lo && s <= hi}, nil
+	}
+}
+
+func nativeResponseIsNotFound(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Response.isNotFound expects no arguments")
+	}
+	return runtime.Bool{Value: responseStatusInt64(this) == http.StatusNotFound}, nil
+}
+
+func responseBodyText(this *runtime.Instance) string {
+	switch v := this.Fields["body"].(type) {
+	case runtime.String:
+		return v.Value
+	case *runtime.Bytes:
+		return string(v.Value)
+	}
+	return ""
+}
+
+func nativeResponseText(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Response.text expects no arguments")
+	}
+	return runtime.String{Value: responseBodyText(this)}, nil
+}
+
+func nativeResponseBytes(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Response.bytes expects no arguments")
+	}
+	if b, ok := this.Fields["body"].(*runtime.Bytes); ok {
+		return b, nil
+	}
+	return &runtime.Bytes{Value: []byte(responseBodyText(this))}, nil
+}
+
+func nativeResponseJSON(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Response.json expects no arguments")
+	}
+	value, parseErr := native.ParseJSONText(responseBodyText(this))
+	if parseErr != nil {
+		return nil, fmt.Errorf("%s", parseErr.Message)
+	}
+	return value, nil
+}
+
+func nativeResponseHeaders(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Response.headers expects no arguments")
+	}
+	if headers := this.Fields["headers"]; headers != nil {
+		return headers, nil
+	}
+	return runtime.Dict{Entries: map[string]runtime.DictEntry{}}, nil
+}
+
+func nativeResponseHeader(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("Response.header expects one argument")
+	}
+	name, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("Response.header name must be string")
+	}
+	if headers, ok := httpHeaderValue(this.Fields["headers"]); ok {
+		values := headers.Values[http.CanonicalHeaderKey(name.Value)]
+		if len(values) == 0 {
+			return runtime.Null{}, nil
+		}
+		return runtime.String{Value: values[0]}, nil
+	}
+	if dict, ok := this.Fields["headers"].(runtime.Dict); ok {
+		canonical := http.CanonicalHeaderKey(name.Value)
+		for _, entry := range dict.Entries {
+			if key, ok := entry.Key.(runtime.String); ok && http.CanonicalHeaderKey(key.Value) == canonical {
+				return entry.Value, nil
+			}
+		}
+	}
+	return runtime.Null{}, nil
+}
+
+func nativeResponseIndex(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("Response.__index expects one argument")
+	}
+	key, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("Response index key must be string")
+	}
+	switch key.Value {
+	case "status", "body", "headers":
+		if v := this.Fields[key.Value]; v != nil {
+			return v, nil
+		}
+		return runtime.Null{}, nil
+	case "error":
+		if v := this.Fields["_error"]; v != nil {
+			return v, nil
+		}
+		return runtime.Null{}, nil
+	case "index", "url":
+		// Set by fetchStream to correlate a streamed result to its input.
+		if v := this.Fields["_"+key.Value]; v != nil {
+			return v, nil
+		}
+		return runtime.Null{}, nil
+	}
+	return runtime.Null{}, nil
+}
+
+func nativeResponseIsError(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Response.isError expects no arguments")
+	}
+	_, ok := this.Fields["_error"].(runtime.String)
+	return runtime.Bool{Value: ok}, nil
+}
+
+func nativeResponseError(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Response.error expects no arguments")
+	}
+	if v, ok := this.Fields["_error"].(runtime.String); ok {
+		return v, nil
+	}
+	return runtime.Null{}, nil
+}
+
+// newErrorResponseInstance builds a Response that represents a request that
+// never completed a round trip. isError() is true and error() carries the
+// message; status() is 0 and ok() is false.
+func newErrorResponseInstance(class *runtime.Class, message string) *runtime.Instance {
+	return &runtime.Instance{Class: class, Fields: map[string]runtime.Value{
+		"status":  runtime.NewInt64(0),
+		"body":    runtime.String{},
+		"headers": runtime.Dict{Entries: map[string]runtime.DictEntry{}},
+		"_error":  runtime.String{Value: message},
+	}}
 }
 
 func nativeResponseInspect(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -4606,6 +4786,20 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		return runtime.Bool{Value: sh.read >= sh.total}, nil
 	}}}
 
+	buildClientStreamRequest := func(h *httpClientHandle, el runtime.Value) (*http.Request, error) {
+		switch v := el.(type) {
+		case runtime.Dict:
+			req, _, err := buildRequestFromSpec(h, v)
+			return req, err
+		case *runtime.Instance:
+			if v.Class != nil && strings.EqualFold(v.Class.Name, "Builder") {
+				req, _, err := httpRequestFromBuilder(v)
+				return req, err
+			}
+		}
+		return nil, fmt.Errorf("request must be a dict spec or a request Builder")
+	}
+
 	spawnFetchStream := func(h *httpClientHandle, specs []runtime.Value) (*runtime.Instance, error) {
 		ch := make(chan runtime.Value, len(specs))
 		sh := &httpFetchStreamHandle{ch: ch, total: len(specs)}
@@ -4616,21 +4810,13 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		e.httpFetchStreamMu.Unlock()
 		for i, specVal := range specs {
 			go func(idx int, sv runtime.Value) {
-				d, ok := sv.(runtime.Dict)
-				if !ok {
-					entries := map[string]runtime.DictEntry{}
-					putDict(entries, "error", runtime.String{Value: "request spec must be a dict"})
-					putDict(entries, "index", runtime.NewInt64(int64(idx)))
-					ch <- runtime.Dict{Entries: entries}
-					return
+				req, reqErr := buildClientStreamRequest(h, sv)
+				resolvedURL := ""
+				if req != nil {
+					resolvedURL = req.URL.String()
 				}
-				req, resolvedURL, reqErr := buildRequestFromSpec(h, d)
 				if reqErr != nil {
-					entries := map[string]runtime.DictEntry{}
-					putDict(entries, "error", runtime.String{Value: reqErr.Error()})
-					putDict(entries, "index", runtime.NewInt64(int64(idx)))
-					putDict(entries, "url", runtime.String{Value: resolvedURL})
-					ch <- runtime.Dict{Entries: entries}
+					ch <- httpStreamResult(httpErrorResult(reqErr), idx, resolvedURL)
 					return
 				}
 				var client *http.Client
@@ -4641,28 +4827,18 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 				}
 				result, doErr := doHTTPRequest(client, req)
 				if doErr != nil {
-					entries := map[string]runtime.DictEntry{}
-					putDict(entries, "error", runtime.String{Value: doErr.Error()})
-					putDict(entries, "index", runtime.NewInt64(int64(idx)))
-					putDict(entries, "url", runtime.String{Value: resolvedURL})
-					ch <- runtime.Dict{Entries: entries}
+					ch <- httpStreamResult(httpErrorResult(doErr), idx, resolvedURL)
 					return
 				}
-				if dict, ok := result.(runtime.Dict); ok {
-					putDict(dict.Entries, "index", runtime.NewInt64(int64(idx)))
-					putDict(dict.Entries, "url", runtime.String{Value: resolvedURL})
-					ch <- dict
-				} else {
-					ch <- result
-				}
+				ch <- httpStreamResult(result, idx, resolvedURL)
 			}(i, specVal)
 		}
 		return &runtime.Instance{Class: fetchStreamClass, Fields: map[string]runtime.Value{"handle": runtime.NewInt64(id)}}, nil
 	}
 
 	clientClass.Methods["fetchall"] = []runtime.Function{{Name: "fetchAll", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 1 {
-			return nil, fmt.Errorf("Client.fetchAll expects a list of request specs")
+		if len(args) < 1 || len(args) > 2 {
+			return nil, fmt.Errorf("Client.fetchAll expects a list of requests and optional options")
 		}
 		list, ok := args[0].(*runtime.List)
 		if !ok {
@@ -4672,43 +4848,20 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		if err != nil {
 			return nil, err
 		}
-		specs := list.Elements
-		task := runtime.NewTask()
-		go func() {
-			results := make([]runtime.Value, len(specs))
-			var wg sync.WaitGroup
-			for i, sv := range specs {
-				wg.Add(1)
-				go func(idx int, specVal runtime.Value) {
-					defer wg.Done()
-					d, ok := specVal.(runtime.Dict)
-					if !ok {
-						entries := map[string]runtime.DictEntry{}
-						putDict(entries, "error", runtime.String{Value: "request spec must be a dict"})
-						results[idx] = runtime.Dict{Entries: entries}
-						return
-					}
-					req, _, reqErr := buildRequestFromSpec(h, d)
-					if reqErr != nil {
-						entries := map[string]runtime.DictEntry{}
-						putDict(entries, "error", runtime.String{Value: reqErr.Error()})
-						results[idx] = runtime.Dict{Entries: entries}
-						return
-					}
-					result, doErr := doHTTPRequest(h.client, req)
-					if doErr != nil {
-						entries := map[string]runtime.DictEntry{}
-						putDict(entries, "error", runtime.String{Value: doErr.Error()})
-						results[idx] = runtime.Dict{Entries: entries}
-						return
-					}
-					results[idx] = result
-				}(i, sv)
+		prepare := func(el runtime.Value) (*http.Request, *http.Client, error) {
+			switch v := el.(type) {
+			case runtime.Dict:
+				req, _, reqErr := buildRequestFromSpec(h, v)
+				return req, h.client, reqErr
+			case *runtime.Instance:
+				if v.Class != nil && strings.EqualFold(v.Class.Name, "Builder") {
+					req, _, reqErr := httpRequestFromBuilder(v)
+					return req, h.client, reqErr
+				}
 			}
-			wg.Wait()
-			task.Complete(&runtime.List{Elements: results}, nil)
-		}()
-		return task, nil
+			return nil, nil, fmt.Errorf("request must be a dict spec or a request Builder")
+		}
+		return httpRunBatch(list.Elements, httpBatchLimit(args, 1), prepare), nil
 	}}}
 	clientClass.Methods["fetchstream"] = []runtime.Function{{Name: "fetchStream", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {
@@ -4730,7 +4883,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		Name: "Builder",
 		Fields: []runtime.Field{
 			{Name: "_url"}, {Name: "_method"}, {Name: "_body"},
-			{Name: "_timeoutMs"}, {Name: "_headers"},
+			{Name: "_timeoutMs"}, {Name: "_headers"}, {Name: "_query"},
 		},
 		Methods: map[string][]runtime.Function{},
 	}
@@ -4789,43 +4942,246 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		return this, nil
 	}}}
 	builderClass.Methods["send"] = []runtime.Function{{Name: "send", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
-		urlVal, ok := this.Fields["_url"].(runtime.String)
-		if !ok {
-			return nil, fmt.Errorf("Builder.send: url is not set")
-		}
-		method := "GET"
-		if m, ok := this.Fields["_method"].(runtime.String); ok {
-			method = m.Value
-		}
-		body := ""
-		if b, ok := this.Fields["_body"].(runtime.String); ok {
-			body = b.Value
-		}
-		req, err := http.NewRequest(method, urlVal.Value, strings.NewReader(body))
+		req, client, err := httpRequestFromBuilder(this)
 		if err != nil {
 			return nil, err
-		}
-		if hdrs, ok := this.Fields["_headers"].(runtime.HTTPHeaders); ok {
-			for key, vals := range hdrs.Values {
-				for i, v := range vals {
-					if i == 0 {
-						req.Header.Set(key, v)
-					} else {
-						req.Header.Add(key, v)
-					}
-				}
-			}
-		}
-		client := http.DefaultClient
-		if msField, ok := this.Fields["_timeoutMs"]; ok {
-			if ms, ok := native.AsInt64(msField); ok {
-				client = &http.Client{Timeout: time.Duration(ms) * time.Millisecond}
-			}
 		}
 		return doHTTPRequest(client, req)
 	}}}
 
+	cloneBuilder := func(this *runtime.Instance) *runtime.Instance {
+		fields := make(map[string]runtime.Value, len(this.Fields))
+		for k, v := range this.Fields {
+			fields[k] = v
+		}
+		if h, ok := this.Fields["_headers"].(runtime.HTTPHeaders); ok {
+			nh := runtime.HTTPHeaders{Values: map[string][]string{}}
+			for k, vs := range h.Values {
+				nh.Values[k] = append([]string(nil), vs...)
+			}
+			fields["_headers"] = nh
+		}
+		if q, ok := this.Fields["_query"].(*runtime.List); ok {
+			fields["_query"] = &runtime.List{Elements: append([]runtime.Value(nil), q.Elements...)}
+		}
+		return &runtime.Instance{Class: this.Class, Fields: fields}
+	}
+	setBuilderHeader := func(this *runtime.Instance, name, value string) {
+		hdrs, ok := this.Fields["_headers"].(runtime.HTTPHeaders)
+		if !ok {
+			hdrs = runtime.HTTPHeaders{Values: map[string][]string{}}
+			this.Fields["_headers"] = hdrs
+		}
+		hdrs.Values[http.CanonicalHeaderKey(name)] = []string{value}
+	}
+
+	builderClass.Methods["withmethod"] = []runtime.Function{{Name: "withMethod", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("Builder.withMethod expects one argument")
+		}
+		m, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("Builder.withMethod argument must be string")
+		}
+		next := cloneBuilder(this)
+		next.Fields["_method"] = m
+		return next, nil
+	}}}
+	builderClass.Methods["withheader"] = []runtime.Function{{Name: "withHeader", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("Builder.withHeader expects name and value arguments")
+		}
+		name, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("Builder.withHeader name must be string")
+		}
+		val, ok := args[1].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("Builder.withHeader value must be string")
+		}
+		next := cloneBuilder(this)
+		setBuilderHeader(next, name.Value, val.Value)
+		return next, nil
+	}}}
+	builderClass.Methods["withheaders"] = []runtime.Function{{Name: "withHeaders", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("Builder.withHeaders expects a dict argument")
+		}
+		dict, ok := args[0].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("Builder.withHeaders argument must be a dict")
+		}
+		next := cloneBuilder(this)
+		for _, entry := range dict.Entries {
+			name, ok := entry.Key.(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("Builder.withHeaders keys must be strings")
+			}
+			val, ok := entry.Value.(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("Builder.withHeaders values must be strings")
+			}
+			setBuilderHeader(next, name.Value, val.Value)
+		}
+		return next, nil
+	}}}
+	builderClass.Methods["withquery"] = []runtime.Function{{Name: "withQuery", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("Builder.withQuery expects name and value arguments")
+		}
+		name, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("Builder.withQuery name must be string")
+		}
+		val, ok := args[1].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("Builder.withQuery value must be string")
+		}
+		next := cloneBuilder(this)
+		list, ok := next.Fields["_query"].(*runtime.List)
+		if !ok {
+			list = &runtime.List{}
+		}
+		pair := &runtime.List{Elements: []runtime.Value{name, val}}
+		next.Fields["_query"] = &runtime.List{Elements: append(append([]runtime.Value(nil), list.Elements...), pair)}
+		return next, nil
+	}}}
+	builderClass.Methods["withbody"] = []runtime.Function{{Name: "withBody", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("Builder.withBody expects one argument")
+		}
+		b, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("Builder.withBody argument must be string")
+		}
+		next := cloneBuilder(this)
+		next.Fields["_body"] = b
+		return next, nil
+	}}}
+	builderClass.Methods["withjson"] = []runtime.Function{{Name: "withJson", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("Builder.withJson expects one argument")
+		}
+		encoded, err := native.EncodeJSONValue(args[0])
+		if err != nil {
+			return nil, err
+		}
+		next := cloneBuilder(this)
+		next.Fields["_body"] = runtime.String{Value: encoded}
+		setBuilderHeader(next, "Content-Type", "application/json")
+		return next, nil
+	}}}
+	builderClass.Methods["withbearer"] = []runtime.Function{{Name: "withBearer", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("Builder.withBearer expects a token argument")
+		}
+		token, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("Builder.withBearer token must be string")
+		}
+		next := cloneBuilder(this)
+		setBuilderHeader(next, "Authorization", "Bearer "+token.Value)
+		return next, nil
+	}}}
+	builderClass.Methods["withbasicauth"] = []runtime.Function{{Name: "withBasicAuth", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("Builder.withBasicAuth expects user and password arguments")
+		}
+		user, ok := args[0].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("Builder.withBasicAuth user must be string")
+		}
+		pass, ok := args[1].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("Builder.withBasicAuth password must be string")
+		}
+		next := cloneBuilder(this)
+		creds := base64.StdEncoding.EncodeToString([]byte(user.Value + ":" + pass.Value))
+		setBuilderHeader(next, "Authorization", "Basic "+creds)
+		return next, nil
+	}}}
+	builderClass.Methods["withtimeout"] = []runtime.Function{{Name: "withTimeout", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("Builder.withTimeout expects milliseconds argument")
+		}
+		if !native.IsInt(args[0]) {
+			return nil, fmt.Errorf("Builder.withTimeout argument must be int")
+		}
+		next := cloneBuilder(this)
+		next.Fields["_timeoutMs"] = args[0]
+		return next, nil
+	}}}
+
 	return []*runtime.Class{cookieJarClass, clientClass, builderClass, fetchStreamClass}
+}
+
+// httpRequestFromBuilder materialises an *http.Request and the client to
+// run it from a Builder instance's fields. Shared by Builder.send and the
+// batch helpers so a Builder can be passed directly to fetchAll.
+func httpRequestFromBuilder(this *runtime.Instance) (*http.Request, *http.Client, error) {
+	urlVal, ok := this.Fields["_url"].(runtime.String)
+	if !ok {
+		return nil, nil, fmt.Errorf("Builder: url is not set")
+	}
+	method := "GET"
+	if m, ok := this.Fields["_method"].(runtime.String); ok {
+		method = m.Value
+	}
+	body := ""
+	if b, ok := this.Fields["_body"].(runtime.String); ok {
+		body = b.Value
+	}
+	finalURL, err := applyBuilderQuery(urlVal.Value, this.Fields["_query"])
+	if err != nil {
+		return nil, nil, err
+	}
+	req, err := http.NewRequest(method, finalURL, strings.NewReader(body))
+	if err != nil {
+		return nil, nil, err
+	}
+	if hdrs, ok := this.Fields["_headers"].(runtime.HTTPHeaders); ok {
+		for key, vals := range hdrs.Values {
+			for i, v := range vals {
+				if i == 0 {
+					req.Header.Set(key, v)
+				} else {
+					req.Header.Add(key, v)
+				}
+			}
+		}
+	}
+	client := http.DefaultClient
+	if msField, ok := this.Fields["_timeoutMs"]; ok {
+		if ms, ok := native.AsInt64(msField); ok {
+			client = &http.Client{Timeout: time.Duration(ms) * time.Millisecond}
+		}
+	}
+	return req, client, nil
+}
+
+// applyBuilderQuery appends builder query pairs to a URL. The query value
+// is a list of [name, value] pairs captured by Builder.withQuery.
+func applyBuilderQuery(rawURL string, queryVal runtime.Value) (string, error) {
+	list, ok := queryVal.(*runtime.List)
+	if !ok || len(list.Elements) == 0 {
+		return rawURL, nil
+	}
+	parsed, err := neturl.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	q := parsed.Query()
+	for _, el := range list.Elements {
+		pair, ok := el.(*runtime.List)
+		if !ok || len(pair.Elements) != 2 {
+			continue
+		}
+		name, _ := pair.Elements[0].(runtime.String)
+		val, _ := pair.Elements[1].(runtime.String)
+		q.Add(name.Value, val.Value)
+	}
+	parsed.RawQuery = q.Encode()
+	return parsed.String(), nil
 }
 
 func streamInterfaces() []*runtime.Interface {
@@ -8261,6 +8617,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"newCookieJar":       e.httpNewCookieJar,
 			"build":              e.httpBuild,
 			"fetchAll":           e.httpFetchAll,
+			"getAll":             e.httpGetAll,
 			"fetchStream":        e.httpFetchStream,
 		},
 		"websocket": {
@@ -15236,8 +15593,13 @@ func (e *Evaluator) httpBodyReader(value runtime.Value, label string) (io.Reader
 }
 
 func (e *Evaluator) httpRequest(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	// One-arg form starts a fluent request builder; the three/four-arg
+	// form issues a request directly.
+	if len(args) == 1 {
+		return e.httpBuild(call, args)
+	}
 	if len(args) != 3 && len(args) != 4 {
-		return nil, fmt.Errorf("%s expects three or four arguments", call.Callee.String())
+		return nil, fmt.Errorf("%s expects a url, or method, url, body and optional headers", call.Callee.String())
 	}
 	method, ok := args[0].(runtime.String)
 	if !ok {
@@ -15260,30 +15622,7 @@ func (e *Evaluator) httpRequest(call *ast.CallExpression, args []runtime.Value) 
 			return nil, err
 		}
 	}
-	applyDefaultUserAgent(req)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	headers := map[string]runtime.DictEntry{}
-	for name, values := range resp.Header {
-		key := runtime.String{Value: name}
-		headers[dictKey(key)] = runtime.DictEntry{Key: key, Value: runtime.String{Value: strings.Join(values, ",")}}
-	}
-	entries := map[string]runtime.DictEntry{}
-	put := func(key string, value runtime.Value) {
-		keyValue := runtime.String{Value: key}
-		entries[dictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: value}
-	}
-	put("status", runtime.NewInt64(int64(resp.StatusCode)))
-	put("body", runtime.String{Value: string(responseBody)})
-	put("headers", runtime.Dict{Entries: headers})
-	return runtime.Dict{Entries: entries}, nil
+	return doHTTPRequest(http.DefaultClient, req)
 }
 
 func httpGet(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -15365,13 +15704,18 @@ func httpParseJSON(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects response dict", call.Callee.String())
 	}
-	response, ok := args[0].(runtime.Dict)
-	if !ok {
-		return nil, fmt.Errorf("%s response must be dict", call.Callee.String())
-	}
-	body, ok := dictStringField(response, "body")
-	if !ok {
-		return nil, fmt.Errorf("%s response.body must be string", call.Callee.String())
+	var body string
+	switch response := args[0].(type) {
+	case runtime.Dict:
+		text, ok := dictStringField(response, "body")
+		if !ok {
+			return nil, fmt.Errorf("%s response.body must be string", call.Callee.String())
+		}
+		body = text
+	case *runtime.Instance:
+		body = responseBodyText(response)
+	default:
+		return nil, fmt.Errorf("%s response must be a Response or dict", call.Callee.String())
 	}
 	value, parseErr := native.ParseJSONText(body)
 	if parseErr != nil {
@@ -15464,6 +15808,14 @@ func applyDefaultUserAgent(req *http.Request) {
 	req.Header.Set("User-Agent", DefaultHTTPUserAgent)
 }
 
+// httpResponseResultClass is the shared Response class used to build
+// client results. Captured once at evaluator setup; child evaluators
+// share the same pointer so dispatch is identity-safe.
+var (
+	httpResponseResultClass     *runtime.Class
+	httpResponseResultClassOnce sync.Once
+)
+
 func doHTTPRequest(client *http.Client, req *http.Request) (runtime.Value, error) {
 	applyDefaultUserAgent(req)
 	return doHTTPRequestWithRetries(client, req, httpRetryOptions{})
@@ -15548,10 +15900,16 @@ func doHTTPRequestWithRetries(client *http.Client, req *http.Request, opts httpR
 			key := runtime.String{Value: name}
 			headers[dictKey(key)] = runtime.DictEntry{Key: key, Value: runtime.String{Value: strings.Join(values, ",")}}
 		}
+		status := runtime.NewInt64(int64(resp.StatusCode))
+		body := runtime.String{Value: string(responseBody)}
+		headerDict := runtime.Dict{Entries: headers}
+		if httpResponseResultClass != nil {
+			return newResponseInstance(httpResponseResultClass, status, body, headerDict), nil
+		}
 		entries := map[string]runtime.DictEntry{}
-		putDict(entries, "status", runtime.NewInt64(int64(resp.StatusCode)))
-		putDict(entries, "body", runtime.String{Value: string(responseBody)})
-		putDict(entries, "headers", runtime.Dict{Entries: headers})
+		putDict(entries, "status", status)
+		putDict(entries, "body", body)
+		putDict(entries, "headers", headerDict)
 		return runtime.Dict{Entries: entries}, nil
 	}
 	if lastErr != nil {
@@ -17325,6 +17683,7 @@ func (e *Evaluator) httpBuild(call *ast.CallExpression, args []runtime.Value) (r
 			"_body":      runtime.Null{},
 			"_timeoutMs": runtime.Null{},
 			"_headers":   runtime.Null{},
+			"_query":     runtime.Null{},
 		},
 	}, nil
 }
@@ -17354,51 +17713,132 @@ func httpBuildReqFromSpec(spec runtime.Dict) (*http.Request, string, error) {
 	return req, urlStr, nil
 }
 
+func httpErrorResult(err error) runtime.Value {
+	if httpResponseResultClass != nil {
+		return newErrorResponseInstance(httpResponseResultClass, err.Error())
+	}
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "error", runtime.String{Value: err.Error()})
+	return runtime.Dict{Entries: entries}
+}
+
+// httpStreamResult annotates a fetchStream result with its input index and
+// resolved URL so out-of-order streamed results can be correlated. Exposed
+// on a Response via resp["index"] / resp["url"].
+func httpStreamResult(result runtime.Value, idx int, url string) runtime.Value {
+	switch v := result.(type) {
+	case *runtime.Instance:
+		v.Fields["_index"] = runtime.NewInt64(int64(idx))
+		if url != "" {
+			v.Fields["_url"] = runtime.String{Value: url}
+		}
+	case runtime.Dict:
+		putDict(v.Entries, "index", runtime.NewInt64(int64(idx)))
+		if url != "" {
+			putDict(v.Entries, "url", runtime.String{Value: url})
+		}
+	}
+	return result
+}
+
+// httpPrepareElement materialises a request from a batch element, which may
+// be a request-spec dict or a Builder instance.
+func httpPrepareElement(el runtime.Value) (*http.Request, *http.Client, error) {
+	switch v := el.(type) {
+	case runtime.Dict:
+		req, _, err := httpBuildReqFromSpec(v)
+		return req, http.DefaultClient, err
+	case *runtime.Instance:
+		if v.Class != nil && strings.EqualFold(v.Class.Name, "Builder") {
+			return httpRequestFromBuilder(v)
+		}
+	}
+	return nil, nil, fmt.Errorf("request must be a dict spec or a request Builder")
+}
+
+// httpBatchLimit reads an optional {limit} concurrency cap from a trailing
+// options dict. Zero means unbounded.
+func httpBatchLimit(args []runtime.Value, from int) int {
+	if len(args) <= from {
+		return 0
+	}
+	if opts, ok := args[from].(runtime.Dict); ok {
+		if v, ok := dictField(opts, "limit"); ok {
+			if n, ok := toInt64(v); ok && n > 0 {
+				return int(n)
+			}
+		}
+	}
+	return 0
+}
+
+// httpRunBatch runs prepare+request for each element concurrently, capped at
+// limit (0 = unbounded), preserving input order. Returns a Task resolving to
+// a list where each element is a Response or an {error} dict.
+func httpRunBatch(items []runtime.Value, limit int, prepare func(runtime.Value) (*http.Request, *http.Client, error)) *runtime.Task {
+	task := runtime.NewTask()
+	go func() {
+		results := make([]runtime.Value, len(items))
+		var sem chan struct{}
+		if limit > 0 {
+			sem = make(chan struct{}, limit)
+		}
+		var wg sync.WaitGroup
+		for i, item := range items {
+			wg.Add(1)
+			go func(idx int, it runtime.Value) {
+				defer wg.Done()
+				if sem != nil {
+					sem <- struct{}{}
+					defer func() { <-sem }()
+				}
+				req, client, err := prepare(it)
+				if err != nil {
+					results[idx] = httpErrorResult(err)
+					return
+				}
+				result, doErr := doHTTPRequest(client, req)
+				if doErr != nil {
+					results[idx] = httpErrorResult(doErr)
+					return
+				}
+				results[idx] = result
+			}(i, item)
+		}
+		wg.Wait()
+		task.Complete(&runtime.List{Elements: results}, nil)
+	}()
+	return task
+}
+
 func (e *Evaluator) httpFetchAll(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("%s expects a list of request specs", call.Callee.String())
+	if len(args) < 1 || len(args) > 2 {
+		return nil, fmt.Errorf("%s expects a list of requests and optional options", call.Callee.String())
 	}
 	list, ok := args[0].(*runtime.List)
 	if !ok {
 		return nil, fmt.Errorf("%s argument must be a list", call.Callee.String())
 	}
-	specs := list.Elements
-	task := runtime.NewTask()
-	go func() {
-		results := make([]runtime.Value, len(specs))
-		var wg sync.WaitGroup
-		for i, sv := range specs {
-			wg.Add(1)
-			go func(idx int, specVal runtime.Value) {
-				defer wg.Done()
-				d, ok := specVal.(runtime.Dict)
-				if !ok {
-					entries := map[string]runtime.DictEntry{}
-					putDict(entries, "error", runtime.String{Value: "request spec must be a dict"})
-					results[idx] = runtime.Dict{Entries: entries}
-					return
-				}
-				req, _, reqErr := httpBuildReqFromSpec(d)
-				if reqErr != nil {
-					entries := map[string]runtime.DictEntry{}
-					putDict(entries, "error", runtime.String{Value: reqErr.Error()})
-					results[idx] = runtime.Dict{Entries: entries}
-					return
-				}
-				result, doErr := doHTTPRequest(http.DefaultClient, req)
-				if doErr != nil {
-					entries := map[string]runtime.DictEntry{}
-					putDict(entries, "error", runtime.String{Value: doErr.Error()})
-					results[idx] = runtime.Dict{Entries: entries}
-					return
-				}
-				results[idx] = result
-			}(i, sv)
+	return httpRunBatch(list.Elements, httpBatchLimit(args, 1), httpPrepareElement), nil
+}
+
+func (e *Evaluator) httpGetAll(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 1 || len(args) > 2 {
+		return nil, fmt.Errorf("%s expects a list of urls and optional options", call.Callee.String())
+	}
+	list, ok := args[0].(*runtime.List)
+	if !ok {
+		return nil, fmt.Errorf("%s argument must be a list of urls", call.Callee.String())
+	}
+	prepare := func(el runtime.Value) (*http.Request, *http.Client, error) {
+		url, ok := el.(runtime.String)
+		if !ok {
+			return nil, nil, fmt.Errorf("getAll urls must be strings")
 		}
-		wg.Wait()
-		task.Complete(&runtime.List{Elements: results}, nil)
-	}()
-	return task, nil
+		req, err := http.NewRequest(http.MethodGet, url.Value, nil)
+		return req, http.DefaultClient, err
+	}
+	return httpRunBatch(list.Elements, httpBatchLimit(args, 1), prepare), nil
 }
 
 func (e *Evaluator) httpFetchStream(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -17422,39 +17862,21 @@ func (e *Evaluator) httpFetchStream(call *ast.CallExpression, args []runtime.Val
 	e.httpFetchStreamMu.Unlock()
 	for i, specVal := range specs {
 		go func(idx int, sv runtime.Value) {
-			d, ok := sv.(runtime.Dict)
-			if !ok {
-				entries := map[string]runtime.DictEntry{}
-				putDict(entries, "error", runtime.String{Value: "request spec must be a dict"})
-				putDict(entries, "index", runtime.NewInt64(int64(idx)))
-				ch <- runtime.Dict{Entries: entries}
+			req, client, prepErr := httpPrepareElement(sv)
+			resolvedURL := ""
+			if req != nil {
+				resolvedURL = req.URL.String()
+			}
+			if prepErr != nil {
+				ch <- httpStreamResult(httpErrorResult(prepErr), idx, resolvedURL)
 				return
 			}
-			req, resolvedURL, reqErr := httpBuildReqFromSpec(d)
-			if reqErr != nil {
-				entries := map[string]runtime.DictEntry{}
-				putDict(entries, "error", runtime.String{Value: reqErr.Error()})
-				putDict(entries, "index", runtime.NewInt64(int64(idx)))
-				putDict(entries, "url", runtime.String{Value: resolvedURL})
-				ch <- runtime.Dict{Entries: entries}
-				return
-			}
-			result, doErr := doHTTPRequest(http.DefaultClient, req)
+			result, doErr := doHTTPRequest(client, req)
 			if doErr != nil {
-				entries := map[string]runtime.DictEntry{}
-				putDict(entries, "error", runtime.String{Value: doErr.Error()})
-				putDict(entries, "index", runtime.NewInt64(int64(idx)))
-				putDict(entries, "url", runtime.String{Value: resolvedURL})
-				ch <- runtime.Dict{Entries: entries}
+				ch <- httpStreamResult(httpErrorResult(doErr), idx, resolvedURL)
 				return
 			}
-			if dict, ok := result.(runtime.Dict); ok {
-				putDict(dict.Entries, "index", runtime.NewInt64(int64(idx)))
-				putDict(dict.Entries, "url", runtime.String{Value: resolvedURL})
-				ch <- dict
-			} else {
-				ch <- result
-			}
+			ch <- httpStreamResult(result, idx, resolvedURL)
 		}(i, specVal)
 	}
 	return &runtime.Instance{
@@ -24659,6 +25081,13 @@ func (e *Evaluator) evalIndexExpression(expr *ast.IndexExpression, env *runtime.
 			return nil, err
 		}
 		return bytesElement(value, i)
+	case *runtime.Instance:
+		if method, ok := lookupMethod(value.Class, "__index"); ok {
+			bound := method
+			bound.Env = bindThis(method.Env, value)
+			return e.applyFunctionWithThis(bound, []runtime.Value{index}, value)
+		}
+		return nil, fmt.Errorf("%s is not indexable", left.TypeName())
 	default:
 		return nil, fmt.Errorf("%s is not indexable", left.TypeName())
 	}
@@ -24901,6 +25330,14 @@ func (e *Evaluator) assignIndex(expr *ast.IndexExpression, newValue runtime.Valu
 		}
 		value.PutEntry(dictKey(index), runtime.DictEntry{Key: index, Value: newValue})
 		return nil
+	case *runtime.Instance:
+		if method, ok := lookupMethod(value.Class, "__setIndex"); ok {
+			bound := method
+			bound.Env = bindThis(method.Env, value)
+			_, err := e.applyFunctionWithThis(bound, []runtime.Value{index, newValue}, value)
+			return err
+		}
+		return fmt.Errorf("%s does not support index assignment", left.TypeName())
 	default:
 		return fmt.Errorf("%s does not support index assignment", left.TypeName())
 	}
@@ -26697,6 +27134,9 @@ func (e *Evaluator) evalInfix(operator string, left runtime.Value, right runtime
 		}
 		return runtime.Bool{Value: same}, nil
 	}
+	if operator == "in" {
+		return e.evalContains(left, right)
+	}
 	if value, ok, err := e.evalOperatorMethod(operator, left, right); ok || err != nil {
 		return value, err
 	}
@@ -26707,6 +27147,52 @@ func (e *Evaluator) evalInfix(operator string, left runtime.Value, right runtime
 		return evalComparison(operator, left, right)
 	}
 	return evalNumericInfix(operator, left, right)
+}
+
+// evalContains implements `needle in container` membership: element for
+// lists, key for dicts, member for sets, substring for strings, range
+// membership, and `__contains` dispatch for user objects.
+func (e *Evaluator) evalContains(needle, container runtime.Value) (runtime.Value, error) {
+	switch c := container.(type) {
+	case *runtime.List:
+		for _, el := range c.Elements {
+			eq, err := e.valuesEqual(needle, el)
+			if err != nil {
+				return nil, err
+			}
+			if eq {
+				return runtime.Bool{Value: true}, nil
+			}
+		}
+		return runtime.Bool{Value: false}, nil
+	case runtime.Dict:
+		_, ok := c.Entries[dictKey(needle)]
+		return runtime.Bool{Value: ok}, nil
+	case runtime.Set:
+		_, ok := c.Elements[dictKey(needle)]
+		return runtime.Bool{Value: ok}, nil
+	case runtime.String:
+		s, ok := needle.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("in: left operand must be a string when the right operand is a string")
+		}
+		return runtime.Bool{Value: strings.Contains(c.Value, s.Value)}, nil
+	case runtime.Range:
+		n, ok := native.IntValueToBigInt(needle)
+		if !ok {
+			return runtime.Bool{Value: false}, nil
+		}
+		return runtime.Bool{Value: c.ContainsInt(n)}, nil
+	case *runtime.Instance:
+		if method, ok := lookupMethod(c.Class, "__contains"); ok {
+			bound := method
+			bound.Env = bindThis(method.Env, c)
+			return e.applyFunctionWithThis(bound, []runtime.Value{needle}, c)
+		}
+		return nil, fmt.Errorf("%s does not support 'in' (define __contains)", c.TypeName())
+	default:
+		return nil, fmt.Errorf("'in' requires a list, dict, set, string, range, or an object with __contains, got %s", container.TypeName())
+	}
 }
 
 func (e *Evaluator) evalOperatorMethod(operator string, left runtime.Value, right runtime.Value) (runtime.Value, bool, error) {
@@ -26875,8 +27361,15 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 		rightValue, ok := right.(runtime.Float)
 		return ok && leftValue.Value == rightValue.Value
 	case runtime.String:
-		rightValue, ok := right.(runtime.String)
-		return ok && leftValue.Value == rightValue.Value
+		if rightValue, ok := right.(runtime.String); ok {
+			return leftValue.Value == rightValue.Value
+		}
+		// Symmetry with `typeof(x) == "name"`: a Type compares equal to
+		// the string of its name.
+		if rightType, ok := right.(runtime.Type); ok {
+			return leftValue.Value == rightType.Name
+		}
+		return false
 	case runtime.Bytes:
 		rightValue, ok := right.(runtime.Bytes)
 		return ok && bytes.Equal(leftValue.Value, rightValue.Value)
@@ -26980,6 +27473,8 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 			return leftValue.Name == rv.Name
 		case runtime.BytecodeClass:
 			return leftValue.Name == rv.Name
+		case runtime.String:
+			return leftValue.Name == rv.Value
 		}
 		return false
 	case *runtime.Module:

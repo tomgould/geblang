@@ -1,0 +1,50 @@
+/**
+ * @title HTTP Response object test
+ * @summary Client calls return a rich Response with reader methods and
+ * status predicates, while staying index-compatible with the legacy
+ * dict shape via __index.
+ *
+ * Tagged "integration" so CI can skip on hosts without local
+ * port-binding permission.
+ */
+import test;
+import http;
+
+class HttpResponseTest extends test.Test {
+    @tag("integration")
+    @test
+    func readersAndPredicates(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            return {"status": 201, "body": "{\"id\": 7}", "headers": {"X-Test": "yes"}};
+        });
+        let url = "http://" + http.serverAddr(server) + "/";
+        let r = http.get(url);
+        http.close(server);
+
+        this.assertEquals(201, r.status());
+        this.assertTrue(r.ok());
+        this.assertTrue(r.isSuccessful());
+        this.assertFalse(r.isClientError());
+        this.assertFalse(r.isRedirect());
+        this.assertEquals("{\"id\": 7}", r.text());
+        this.assertEquals(7, r.json()["id"]);
+        this.assertEquals("yes", r.header("x-test"));
+    }
+
+    @tag("integration")
+    @test
+    func indexBackCompat(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            return {"status": 404, "body": "nope", "headers": {}};
+        });
+        let url = "http://" + http.serverAddr(server) + "/";
+        let r = http.get(url);
+        http.close(server);
+
+        /* Legacy dict-style access still works via __index. */
+        this.assertEquals(404, r["status"]);
+        this.assertEquals("nope", r["body"]);
+        this.assertTrue(r.isNotFound());
+        this.assertTrue(r.isClientError());
+    }
+}

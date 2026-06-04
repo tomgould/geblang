@@ -1,0 +1,67 @@
+/**
+ * @title `in` membership operator
+ * @summary `x in collection` for lists (element), dicts (key), sets,
+ * strings (substring), ranges, and user objects via __contains.
+ */
+import test;
+
+class Bag {
+    dict<string, any> d;
+    func Bag() { this.d = {}; }
+    func __setIndex(any k, any v): void { this.d.set(k as string, v); }
+    func __contains(any k): bool { return this.d.hasKey(k as string); }
+}
+
+class InOperatorTest extends test.Test {
+    @test
+    func listMembership(): void {
+        this.assertTrue(2 in [1, 2, 3]);
+        this.assertFalse(9 in [1, 2, 3]);
+    }
+
+    @test
+    func dictKeyMembership(): void {
+        this.assertTrue("a" in {"a": 1, "b": 2});
+        this.assertFalse("z" in {"a": 1});
+    }
+
+    @test
+    func setMembership(): void {
+        let s = ([1, 2, 3] as set);
+        this.assertTrue(2 in s);
+        this.assertFalse(9 in s);
+    }
+
+    @test
+    func stringSubstring(): void {
+        this.assertTrue("ell" in "hello");
+        this.assertFalse("xyz" in "hello");
+    }
+
+    @test
+    func rangeMembership(): void {
+        this.assertTrue(3 in (1..5));
+        this.assertFalse(9 in (1..5));
+    }
+
+    @test
+    func negationWithBang(): void {
+        this.assertTrue(!(9 in [1, 2, 3]));
+    }
+
+    @test
+    func userObjectContains(): void {
+        let b = Bag();
+        b["k"] = 1;
+        this.assertTrue("k" in b);
+        this.assertFalse("nope" in b);
+    }
+
+    @test
+    func forInStillWorks(): void {
+        /* the in operator must not break for-in loops */
+        let sum = 0;
+        for (x in [1, 2, 3]) { sum = sum + x; }
+        this.assertEquals(6, sum);
+    }
+}

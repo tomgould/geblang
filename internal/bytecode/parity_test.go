@@ -5185,6 +5185,114 @@ http.close(server);
 `, "true\nsecure\nsecure\nstrict-rejected\n")
 }
 
+// TestParityHTTPResponseObject verifies client calls return a rich
+// Response object (reader methods + status predicates) that is also
+// index-compatible with the legacy dict shape via __index.
+func TestParityHTTPResponseObject(t *testing.T) {
+	runParityStateful(t, `
+import http;
+import io;
+let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+    return {"status": 404, "body": "{\"ok\": false}", "headers": {"X-Test": "yes"}};
+}, {});
+let url = "http://" + http.serverAddr(server) + "/";
+let r = http.get(url);
+io.println(typeof(r));
+io.println(r.status());
+io.println(r.ok());
+io.println(r.isNotFound());
+io.println(r.isClientError());
+io.println(r.text());
+io.println(r.json()["ok"]);
+io.println(r.header("x-test"));
+io.println(r["status"]);
+io.println(r["body"]);
+http.close(server);
+`, "Response\n404\nfalse\ntrue\ntrue\n{\"ok\": false}\nfalse\nyes\n404\n{\"ok\": false}\n")
+}
+
+// TestParityHTTPRequestBuilder exercises the immutable withX request
+// builder (http.request(url) one-arg form) on both backends, including
+// that withX returns a fresh builder (sibling requests don't leak).
+func TestParityHTTPRequestBuilder(t *testing.T) {
+	runParityStateful(t, `
+import http;
+import io;
+let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+    let tag = "-";
+    if ("X-Tag" in req["headers"]) { tag = req["headers"]["X-Tag"] as string; }
+    let auth = "-";
+    if ("Authorization" in req["headers"]) { auth = req["headers"]["Authorization"] as string; }
+    return {"status": 200, "body": (req["method"] as string) + " " + tag + " " + auth + " " + (req["body"] as string), "headers": {}};
+}, {});
+let url = "http://" + http.serverAddr(server) + "/";
+let base = http.request(url).withMethod("POST").withJson({"k": 1});
+let a = base.withHeader("X-Tag", "AAA").withBearer("t");
+let b = base.withHeader("X-Tag", "BBB");
+io.println(a.send().text());
+io.println(b.send().text());
+http.close(server);
+`, "POST AAA Bearer t {\"k\":1}\nPOST BBB - {\"k\":1}\n")
+}
+
+// TestParityHTTPGetAllAndBatch verifies http.getAll(urls) and fetchAll
+// accepting request Builders, with a concurrency limit, on both backends.
+func TestParityHTTPGetAllAndBatch(t *testing.T) {
+	runParityStateful(t, `
+import http;
+import io;
+import async;
+let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+    return {"status": 200, "body": "ok:" + (req["path"] as string), "headers": {}};
+}, {});
+let base = "http://" + http.serverAddr(server);
+let rs = await http.getAll([base + "/a", base + "/b"], {"limit": 1});
+io.println(rs.length());
+io.println(rs[0].text());
+io.println(rs[1].text());
+let rs2 = await http.fetchAll([
+    http.request(base + "/x"),
+    http.request(base + "/y").withMethod("GET")
+]);
+io.println(rs2[0].text() + "," + rs2[1].text());
+http.close(server);
+`, "2\nok:/a\nok:/b\nok:/x,ok:/y\n")
+}
+
+// TestParityTypeofStringComparison verifies typeof(x) compares equal to a
+// type-name string on both backends, while still comparing to a type value.
+func TestParityTypeofStringComparison(t *testing.T) {
+	runParity(t, `
+import io;
+class Foo { int x; func Foo() { this.x = 1; } }
+io.println(typeof(5) == "int");
+io.println(typeof("hi") == "string");
+io.println(typeof([1]) == "list");
+io.println(typeof(true) == "bool");
+io.println(typeof(Foo()) == "Foo");
+io.println("int" == typeof(5));
+io.println(typeof(5) != "string");
+io.println(typeof(5) == int);
+`, "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n")
+}
+
+// TestParityHTTPBatchErrorResponse verifies a transport failure in a batch
+// is reported as a Response with isError() rather than throwing.
+func TestParityHTTPBatchErrorResponse(t *testing.T) {
+	runParityStateful(t, `
+import http;
+import io;
+import async;
+let results = await http.getAll(["http://127.0.0.1:1/nope"]);
+let r = results[0];
+io.println(r instanceof Response);
+io.println(r.isError());
+io.println(r.status());
+io.println(r.ok());
+io.println(r.error() != null);
+`, "true\ntrue\n0\nfalse\ntrue\n")
+}
+
 func TestParityHTTPClientNewOptions(t *testing.T) {
 	runParityStateful(t, `
 import http;
@@ -11156,6 +11264,75 @@ c.xs.append(3);
 io.println("${b.v} ${b.xs}");
 io.println("${c.v} ${c.xs}");
 `, "1 [1, 2]\n99 [1, 2, 3]\n")
+}
+
+// The `in` membership operator: list/dict/set/string/range + __contains,
+// identical on both backends.
+func TestParityInOperator(t *testing.T) {
+	runParity(t, `import io;
+io.println(2 in [1, 2, 3]);
+io.println(9 in [1, 2, 3]);
+io.println("m" in {"m": 1, "n": 2});
+io.println("x" in {"m": 1});
+io.println("ell" in "hello");
+io.println(3 in (1..5));
+io.println(!(9 in [1, 2, 3]));
+class Bag {
+    dict<string, any> d;
+    func Bag() { this.d = {}; }
+    func __setIndex(string k, any v): void { this.d.set(k, v); }
+    func __contains(string k): bool { return this.d.hasKey(k); }
+}
+let b = Bag();
+b["a"] = 1;
+io.println("a" in b);
+io.println("z" in b);
+`, "true\nfalse\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\n")
+}
+
+// A class implementing the cross-module maps.DictInterface gets the dict
+// method surface (and `in`) via interface defaults that call sibling defaults
+// across the module boundary - identical on both backends.
+func TestParityDictInterface(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import maps;
+class M implements maps.DictInterface {
+    dict<string, any> store;
+    func M() { this.store = {}; }
+    func __index(any key): any { return this.store.get(key as string); }
+    func __setIndex(any key, any value): void { this.store.set(key as string, value); }
+    func keys(): list<any> { return this.store.keys(); }
+}
+let m = M();
+m["a"] = 1;
+m["b"] = 2;
+io.println(m["a"]);
+io.println(m.contains("a"));
+io.println(m.get("z", "fallback"));
+io.println("a" in m);
+io.println("z" in m);
+io.println(m.length());
+io.println(m.isEmpty());
+`, "1\ntrue\nfallback\ntrue\nfalse\n2\nfalse\n")
+}
+
+// Subscript dunders: a class with __index/__setIndex is index-able with
+// [], identically on both backends.
+func TestParitySubscriptDunders(t *testing.T) {
+	runParity(t, `import io;
+class Bag {
+    dict<string, any> data;
+    func Bag() { this.data = {}; }
+    func __index(string k): any { return this.data.get(k); }
+    func __setIndex(string k, any v): void { this.data.set(k, v); }
+}
+let b = Bag();
+b["x"] = 10;
+b["y"] = 20;
+io.println(b["x"]);
+io.println(b["y"]);
+io.println(b["z"]);
+`, "10\n20\nnull\n")
 }
 
 // enumerate() pairs each element with its index, enabling indexed for-in;

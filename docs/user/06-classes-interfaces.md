@@ -739,6 +739,42 @@ Dynamic access is useful at framework boundaries, but normal declared fields and
 methods should be preferred for domain code because they are easier to type
 check and document.
 
+### Subscript access (`__index`, `__setIndex`)
+
+`__get`/`__set` handle dot access (`obj.name`). To make a class usable with
+`[]` subscript syntax (like a dict or list), implement `__index` for reads and
+`__setIndex` for writes:
+
+```gb
+class Headers {
+    dict<string, string> values;
+
+    func Headers() { this.values = {}; }
+
+    func __index(string key): ?string {
+        return this.values.get(key);
+    }
+
+    func __setIndex(string key, string value): void {
+        this.values.set(key, value);
+    }
+}
+
+let h = Headers();
+h["Content-Type"] = "application/json";
+io.println(h["Content-Type"]);   # application/json
+io.println(h["missing"]);        # null
+```
+
+A class without `__index` is not subscriptable (`obj[key]` raises "not
+indexable"), so subscript behaviour is fully opt-in.
+
+Implement `__contains(key)` to support the `in` membership operator
+(`key in obj`). For a full dict-like object, implement the `maps.DictInterface`
+stdlib interface (`__index` + `keys`, optional `__setIndex`) and inherit
+`contains`/`get`/`values`/`length`/`isEmpty` and `__contains` as defaults (see
+the utilities chapter).
+
 ## Callable Objects
 
 Implement `__invoke` when an object should be usable like a function. This is

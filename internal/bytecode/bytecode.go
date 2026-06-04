@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(68)
+	Version = uint16(69)
 )
 
 type Op byte
@@ -295,6 +295,9 @@ const (
 	// OpCheckUnpackLen errors when a list is too short to destructure.
 	// Operands: [tempSlot, expectedCount].
 	OpCheckUnpackLen
+	// OpContains implements the `in` operator: pops container then needle,
+	// pushes a Bool. Dispatches to __contains for user objects.
+	OpContains
 )
 
 type Instruction struct {

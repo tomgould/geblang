@@ -1,0 +1,33 @@
+/**
+ * @title typeof string comparison test
+ * @summary typeof(x) compares equal to a type-name string, while still
+ * comparing to a type value and stringifying via `as string`.
+ */
+import test;
+
+class Widget {}
+
+class TypeofStringTest extends test.Test {
+    @test
+    func comparesToTypeNameString(): void {
+        this.assertTrue(typeof(5) == "int");
+        this.assertTrue(typeof("hi") == "string");
+        this.assertTrue(typeof([1]) == "list");
+        this.assertTrue(typeof(true) == "bool");
+        this.assertTrue(typeof(Widget()) == "Widget");
+        this.assertTrue("int" == typeof(5));
+        this.assertTrue(typeof(5) != "string");
+    }
+
+    @test
+    func stillComparesToTypeValue(): void {
+        this.assertTrue(typeof(5) == int);
+        this.assertTrue(5 instanceof int);
+    }
+
+    @test
+    func stringifies(): void {
+        this.assertEquals("int", typeof(5) as string);
+        this.assertEquals("a Widget", "a ${typeof(Widget())}");
+    }
+}

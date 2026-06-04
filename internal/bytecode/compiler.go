@@ -2658,6 +2658,8 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			return err
 		}
 		switch expr.Operator {
+		case "in":
+			c.emitAt(OpContains, expr.Token.Line, expr.Token.Column)
 		case "+":
 			if bothInt {
 				c.emitAt(OpAddInt, expr.Token.Line, expr.Token.Column)

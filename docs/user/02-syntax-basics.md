@@ -466,6 +466,22 @@ let text = value as string;
 let label = count > 0 ? "items" : "empty";
 ```
 
+The `in` operator tests membership and returns a `bool`: element for lists,
+key for dicts, member for sets, substring for strings, and value-in-range for
+ranges. Negate with `!`. (A range literal needs parentheses because `..` binds
+looser than `in`: `x in (1..10)`.)
+
+```gb
+io.println(2 in [1, 2, 3]);        # true
+io.println("id" in {"id": 1});     # true (key membership)
+io.println("ell" in "hello");      # true (substring)
+io.println(5 in (1..10));          # true
+io.println(!(9 in [1, 2, 3]));     # true
+```
+
+User classes can support `in` by implementing `__contains` (see the classes
+chapter); `for x in collection` loops are unaffected by the operator.
+
 The ternary operator `condition ? then_expr : else_expr` is a compact inline
 conditional. The condition must be a `bool` - values are never implicitly
 treated as truthy or falsy:

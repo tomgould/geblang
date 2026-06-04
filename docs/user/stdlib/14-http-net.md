@@ -17,6 +17,51 @@ let response = http.get("https://example.com");
 io.println(response["status"]);
 ```
 
+### The Response object
+
+Client calls (`get`, `post`, `postJson`, `request`, the request builder's
+`send`, the client methods, and `fetchAll`) return a `Response` object with
+reader methods:
+
+```gb
+let r = http.get("https://api.example.com/users/7");
+
+r.status();         # 200 (int)
+r.ok();             # true for any 2xx
+r.text();           # body as a string
+r.bytes();          # body as raw bytes
+r.json();           # body parsed as JSON
+r.header("ETag");   # first value of a header, or null
+r.headers();        # all response headers
+
+r.isSuccessful();   # 2xx
+r.isRedirect();     # 3xx
+r.isClientError();  # 4xx
+r.isServerError();  # 5xx
+r.isNotFound();     # 404
+```
+
+For a single call like `http.get`, a request that never reaches the server
+(DNS failure, connection refused, timeout) is raised as an `IOError` (catch
+it with `try { ... } catch (IOError e) { ... }`). In a parallel batch
+(`getAll` / `fetchAll`) the same failure is reported on the Response instead,
+so one bad request does not abort the batch:
+
+```gb
+r.isError();   # true only for a transport-level failure
+r.error();     # the failure message, or null when isError() is false
+```
+
+The `Response` is also index-compatible with the plain dict shape used in
+earlier versions, so existing code keeps working:
+
+```gb
+r["status"];        # same as r.status()
+r["body"];          # same as r.text()
+r["headers"];       # same as r.headers()
+let plain = r.toDict();   # a plain dict<string, any> snapshot
+```
+
 Recoverable HTTP transport and server I/O failures are surfaced as Geblang
 exceptions. Server bind failures, including port conflicts, are `IOError`
 values:
@@ -32,6 +77,103 @@ try {
 HTTP response statuses are not exceptions. A `404`, `422` or `500` response is
 returned as a normal response value; inspect `response["status"]` and decide how
 your application should handle it.
+
+### The request builder
+
+`http.request(url)` with a single argument starts an immutable, fluent
+request builder. Each `withX` method returns a new builder, so a base
+builder can be safely reused for several requests:
+
+```gb
+let r = http.request("https://api.example.com/users")
+    .withMethod("POST")
+    .withQuery("page", "2")
+    .withHeader("X-Trace", "abc")
+    .withHeaders({"X-A": "1", "X-B": "2"})
+    .withJson({"name": "ada"})       # sets the body and Content-Type
+    .withBearer(token)               # Authorization: Bearer <token>
+    .withTimeout(2000)               # per-request timeout in ms
+    .send();                         # returns a Response
+
+io.println(r.status());
+```
+
+Available builder methods: `withMethod`, `withHeader`, `withHeaders`,
+`withQuery`, `withBody`, `withJson`, `withBearer`, `withBasicAuth`,
+`withTimeout`, and `send`. Because each step is immutable, sibling
+requests never leak each other's headers:
+
+```gb
+let base = http.request(url).withMethod("POST").withJson(payload);
+let withAuth = base.withBearer(token);   # base is unchanged
+```
+
+The older mutating builder from `http.build(url)` (`.method`, `.header`,
+`.body`, `.timeout`) still works.
+
+### Parallel requests
+
+`http.getAll(urls)` issues parallel GETs and returns a list of Responses
+in the same order as the input. `http.fetchAll(requests)` is the general
+form: each element may be a request builder or a request-spec dict. Both
+accept an options dict whose `limit` caps how many run at once (0 or
+omitted means unbounded), and both are awaitable.
+
+When every request is a plain GET, pass the URLs directly:
+
+```gb
+import async;
+
+let pages = await http.getAll([
+    "https://example.com/page/1",
+    "https://example.com/page/2",
+    "https://example.com/page/3"
+], {"limit": 4});
+```
+
+When the requests differ, build each one with the request builder, bind it
+to a name, and hand the list to `fetchAll`. Because each builder is an
+immutable value, this reads as a set of described requests sent together:
+
+```gb
+let createUser = http.request(usersUrl)
+    .withMethod("POST")
+    .withBearer(token)
+    .withJson({"name": "ada"});
+
+let listTeams = http.request(teamsUrl).withBearer(token);
+
+let responses = await http.fetchAll([createUser, listTeams]);
+
+for (response in responses) {
+    if (response.isError()) {
+        /* The request never reached the server (see below). */
+        io.println("request failed: " + response.error());
+    } else if (response.ok()) {
+        io.println(response.json());
+    } else {
+        io.println("server returned status " + (response.status() as string));
+    }
+}
+```
+
+**Reading the results.** Every entry is a `Response`, in the same order as
+the input, so the list is uniform and you never have to type-check it. There
+are three cases to tell apart:
+
+- A request that succeeded: `response.ok()` is true (a 2xx status).
+- A request that reached the server but came back with an HTTP error status:
+  `response.ok()` is false, but `response.isError()` is *also* false. A
+  `404` or `500` is a normal `Response`; check `response.status()` or the
+  `isClientError()` / `isServerError()` predicates.
+- A request that never completed a round trip at all (DNS lookup failed,
+  connection refused, the timeout elapsed): `response.isError()` is true and
+  `response.error()` holds the failure message. Its `status()` is `0`.
+
+The batch never throws because one request failed, so a single bad entry
+does not lose the others; check `response.isError()` first, as above.
+
+A configured client exposes the same `fetchAll` for connection-pool reuse.
 
 ### Client configuration
 

@@ -1,0 +1,48 @@
+/**
+ * @title Subscript magic methods
+ * @summary A class that defines __index / __setIndex becomes usable with []
+ * subscript syntax for reads and writes; classes without them are not
+ * subscriptable.
+ */
+import test;
+
+class Bag {
+    dict<string, any> data;
+    func Bag() { this.data = {}; }
+    func __index(string k): any { return this.data.get(k); }
+    func __setIndex(string k, any v): void { this.data.set(k, v); }
+}
+
+class Plain {
+    int x;
+    func Plain() { this.x = 1; }
+}
+
+class SubscriptDundersTest extends test.Test {
+    @test
+    func readAndWrite(): void {
+        let b = Bag();
+        b["name"] = "ada";
+        b["age"] = 36;
+        this.assertEquals("ada", b["name"]);
+        this.assertEquals(36, b["age"]);
+    }
+
+    @test
+    func missingKeyReturnsNull(): void {
+        let b = Bag();
+        this.assertEquals(null, b["nope"]);
+    }
+
+    @test
+    func nonIndexableClassRaises(): void {
+        let p = Plain();
+        let threw = false;
+        try {
+            let v = p["x"];
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+}

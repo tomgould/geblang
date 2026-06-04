@@ -1,5 +1,61 @@
 # Release Notes
 
+## 1.8.0
+
+### Dict-like objects
+
+- Classes can opt into subscript syntax with the `__index(key)` and
+  `__setIndex(key, value)` magic methods, so `obj[key]` and `obj[key] = value`
+  dispatch to the class.
+- New `in` membership operator: `key in collection` returns a bool for lists
+  (element), dicts (key), sets, strings (substring), and ranges, and dispatches
+  to `__contains(key)` on user objects. Negate with `!`; a range literal needs
+  parentheses (`x in (1..10)`). The `for x in collection` loop is unchanged.
+- New `maps.DictInterface` stdlib interface: implement `__index` + `keys`
+  (and optional `__setIndex`) to inherit `contains`, `get`, `values`,
+  `length`, `isEmpty`, and `__contains` (so `in` works) as defaults.
+
+### HTTP client
+
+- HTTP client calls (`http.get`, `http.post`, `http.request`, the request
+  builder's `send`, the client methods, and `fetchAll`) now return a rich
+  `Response` object with reader methods: `status()`, `ok()`, `text()`,
+  `bytes()`, `json()`, `header(name)`, `headers()`, plus the status
+  predicates `isSuccessful()`, `isRedirect()`, `isClientError()`,
+  `isServerError()`, and `isNotFound()`.
+- The `Response` object stays index-compatible with the previous dict shape:
+  `resp["status"]`, `resp["body"]`, and `resp["headers"]` still work, and
+  `resp.toDict()` returns the plain dict. Existing code keeps working
+  unchanged.
+- New immutable request builder: `http.request(url)` (one argument) starts a
+  fluent builder with `withMethod`, `withHeader`, `withHeaders`, `withQuery`,
+  `withBody`, `withJson`, `withBearer`, `withBasicAuth`, `withTimeout`, and
+  `send`. Each `withX` returns a fresh builder, so a base builder can be
+  reused for several requests without leaking state.
+- New `http.getAll(urls, {limit})` performs parallel GETs and returns a list
+  of Responses in input order. `http.fetchAll` now accepts request builders
+  as well as spec dicts, and both take an optional `{limit}` to cap
+  concurrency. A configured client's `fetchAll` gains the same options.
+- In a parallel batch, a request that never completes a round trip (DNS
+  failure, connection refused, timeout) is reported as a `Response` with
+  `isError()` true and the message in `error()` (status `0`), so the result
+  list is uniform and one failure does not abort the batch. `resp["error"]`
+  still returns the message.
+
+### Other
+
+- `typeof(x)` can now be compared to a type name string: `typeof(x) ==
+  "int"` and `typeof(obj) == "Response"` work as expected. `typeof` still
+  returns a type value, so `typeof(x) == int` keeps working too.
+
+### Fixes
+
+- Interface default methods now resolve correctly when invoked outside the
+  method-call path (the `in` operator, subscript access, serialization,
+  reflection) and across module boundaries: a cross-module interface default
+  can call sibling default methods on `this`. Previously these silently failed
+  to find interface-default implementations.
+
 ## 1.7.2
 
 ### Indexed iteration

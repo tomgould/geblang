@@ -1,0 +1,66 @@
+module maps;
+
+/**
+ * A dict-like contract for user classes. Implement the two abstract
+ * methods - `__index(key)` for `obj[key]` reads and `keys()` for the key
+ * set - and inherit `contains`, `get`, `values`, `length`, `isEmpty`, and
+ * `__contains` (so `key in obj` works) as defaults.
+ *
+ * For a mutable map, also define `__setIndex(key, value)` on the class (it
+ * is intentionally not part of the interface, so read-only maps can omit
+ * it); the engine routes `obj[key] = value` to it.
+ *
+ * ```gb
+ * import maps;
+ *
+ * class Headers implements maps.DictInterface {
+ *     dict<string, string> store;
+ *     func Headers() { this.store = {}; }
+ *     func __index(any key): any { return this.store.get(key as string); }
+ *     func __setIndex(any key, any value): void { this.store.set(key as string, value as string); }
+ *     func keys(): list<any> { return this.store.keys(); }
+ * }
+ *
+ * let h = Headers();
+ * h["Accept"] = "application/json";
+ * io.println(h["Accept"]);            # application/json
+ * io.println("Accept" in h);          # true
+ * io.println(h.contains("Accept"));   # true
+ * io.println(h.length());             # 1
+ * ```
+ */
+export interface DictInterface {
+    func __index(any key): any;
+    func keys(): list<any>;
+
+    func contains(any key): bool {
+        return this.keys().contains(key);
+    }
+
+    func get(any key, any fallback): any {
+        if (this.contains(key)) {
+            return this.__index(key);
+        }
+        return fallback;
+    }
+
+    func values(): list<any> {
+        let out = ([] as list<any>);
+        for (k in this.keys()) {
+            out.append(this.__index(k));
+        }
+        return out;
+    }
+
+    func length(): int {
+        return this.keys().length();
+    }
+
+    func isEmpty(): bool {
+        return this.length() == 0;
+    }
+
+    func __contains(any key): bool {
+        return this.contains(key);
+    }
+}

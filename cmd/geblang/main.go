@@ -1160,6 +1160,7 @@ func runScript(sourcePath string, scriptArgs []string, source []byte, program *a
 			loader.stateful = stateful
 			vm := bytecode.NewVMWithModuleLoader(chunk, stdout, loader)
 			defer vm.Cleanup()
+			loader.mainVM = vm
 			vm.SetModulePaths([]string{filepath.Dir(sourcePath)})
 			vm.SetStatefulNativeCaller(stateful)
 			stateful.SetMethodDispatcher(vm)
@@ -1714,7 +1715,13 @@ type bytecodeModuleLoader struct {
 	chunks      map[string]bytecode.Chunk
 	globals     map[string][]runtime.Value
 	decorators  map[string]bytecode.FunctionDecoratorState
-	loading     map[string]bool
+	// ifaceFallbacks holds each sub-module's interface-default tables so
+	// cross-module-spawned VMs can resolve interface defaults. The main
+	// program's tables are read live from mainVM (they are built during its
+	// run, when cross-module callbacks can occur).
+	ifaceFallbacks map[string]bytecode.InterfaceFallbackState
+	mainVM         *bytecode.VM
+	loading        map[string]bool
 	// mainChunk holds the entry-point chunk so cross-module reflect
 	// lookups (e.g. a stdlib module calling reflect.class("UserDTO"))
 	// can resolve classes declared in the user script.
@@ -1722,15 +1729,26 @@ type bytecodeModuleLoader struct {
 	hasMainChunk bool
 }
 
+// ifaceFallbackStateFor returns the interface-default tables for a module:
+// live from the main VM for the entry chunk (module ""), else the snapshot
+// captured when the sub-module loaded.
+func (l *bytecodeModuleLoader) ifaceFallbackStateFor(module string) bytecode.InterfaceFallbackState {
+	if module == "" && l.mainVM != nil {
+		return l.mainVM.InterfaceFallbackState()
+	}
+	return l.ifaceFallbacks[module]
+}
+
 func newBytecodeModuleLoader(stdout io.Writer, modulePaths []string) *bytecodeModuleLoader {
 	return &bytecodeModuleLoader{
-		stdout:      stdout,
-		modulePaths: append([]string(nil), modulePaths...),
-		modules:     map[string]*runtime.Module{},
-		chunks:      map[string]bytecode.Chunk{},
-		globals:     map[string][]runtime.Value{},
-		decorators:  map[string]bytecode.FunctionDecoratorState{},
-		loading:     map[string]bool{},
+		stdout:         stdout,
+		modulePaths:    append([]string(nil), modulePaths...),
+		modules:        map[string]*runtime.Module{},
+		chunks:         map[string]bytecode.Chunk{},
+		globals:        map[string][]runtime.Value{},
+		decorators:     map[string]bytecode.FunctionDecoratorState{},
+		ifaceFallbacks: map[string]bytecode.InterfaceFallbackState{},
+		loading:        map[string]bool{},
 	}
 }
 
@@ -1818,6 +1836,7 @@ func (l *bytecodeModuleLoader) LoadModule(canonical string, alias string) (*runt
 	l.chunks[canonical] = chunk
 	l.globals[canonical] = vm.GlobalsSnapshot()
 	l.decorators[canonical] = vm.FunctionDecoratorState()
+	l.ifaceFallbacks[canonical] = vm.InterfaceFallbackState()
 	return module, nil
 }
 
@@ -1841,6 +1860,7 @@ func (l *bytecodeModuleLoader) CallModuleFunction(function runtime.BytecodeFunct
 	vm.SetStatefulNativeCaller(l.stateful)
 	vm.RestoreGlobals(l.globals[function.Module])
 	vm.RestoreFunctionDecoratorState(l.decorators[function.Module])
+	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(function.Module))
 	return vm.CallFunction(function.Index, args)
 }
 
@@ -1868,6 +1888,7 @@ func (l *bytecodeModuleLoader) CallModuleClosure(closure runtime.BytecodeClosure
 	vm.SetStatefulNativeCaller(l.stateful)
 	vm.RestoreGlobals(l.globals[closure.Module])
 	vm.RestoreFunctionDecoratorState(l.decorators[closure.Module])
+	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(closure.Module))
 	return vm.CallClosure(closure, args)
 }
 
@@ -1891,6 +1912,7 @@ func (l *bytecodeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass,
 	vm.SetStatefulNativeCaller(l.stateful)
 	vm.RestoreGlobals(l.globals[class.Module])
 	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
+	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(class.Module))
 	return vm.ConstructClass(class.Index, args)
 }
 
@@ -1916,6 +1938,7 @@ func (l *bytecodeModuleLoader) ConstructorsForModuleClass(class runtime.Bytecode
 	vm.SetStatefulNativeCaller(l.stateful)
 	vm.RestoreGlobals(l.globals[class.Module])
 	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
+	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(class.Module))
 	return vm.ReflectConstructorsForChunkClass(class)
 }
 
@@ -1939,6 +1962,7 @@ func (l *bytecodeModuleLoader) FieldsForModuleClass(class runtime.BytecodeClass)
 	vm.SetStatefulNativeCaller(l.stateful)
 	vm.RestoreGlobals(l.globals[class.Module])
 	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
+	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(class.Module))
 	return vm.ReflectFieldsForChunkClass(class)
 }
 
@@ -1965,6 +1989,7 @@ func (l *bytecodeModuleLoader) DeserializeModuleClass(class runtime.BytecodeClas
 	vm.SetStatefulNativeCaller(l.stateful)
 	vm.RestoreGlobals(l.globals[class.Module])
 	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
+	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(class.Module))
 	return vm.DeserializeIntoChunkClass(class, value)
 }
 
@@ -1979,6 +2004,7 @@ func (l *bytecodeModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClas
 	vm.SetStatefulNativeCaller(l.stateful)
 	vm.RestoreGlobals(l.globals[class.Module])
 	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
+	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(class.Module))
 	return vm.CallStaticMethod(class.Index, methodName, args)
 }
 
@@ -2002,6 +2028,7 @@ func (l *bytecodeModuleLoader) CallParentInModule(module string, className strin
 	vm.SetStatefulNativeCaller(l.stateful)
 	vm.RestoreGlobals(l.globals[module])
 	vm.RestoreFunctionDecoratorState(l.decorators[module])
+	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(module))
 	return vm.CallMethodAs(className, instance, methodName, args)
 }
 
@@ -2030,6 +2057,7 @@ func (l *bytecodeModuleLoader) CallModuleMethod(module string, className string,
 	vm.SetStatefulNativeCaller(l.stateful)
 	vm.RestoreGlobals(l.globals[module])
 	vm.RestoreFunctionDecoratorState(l.decorators[module])
+	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(module))
 	return vm.CallMethod(instance, methodName, args)
 }
 

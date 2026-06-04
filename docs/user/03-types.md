@@ -218,14 +218,16 @@ class name, or `.type` selector for exact runtime type equality; use
 `instanceof` when subclasses or interface implementations should match:
 
 ```gb
-io.println(typeof("x"));           # string
-io.println(typeof(typeof("x")));   # Type
-io.println(typeof("x") == string); # true
-io.println("x" instanceof string); # true
+io.println(typeof("x"));             # string
+io.println(typeof(typeof("x")));     # Type
+io.println(typeof("x") == string);   # true
+io.println(typeof("x") == "string"); # true (compare to a type-name string)
+io.println("x" instanceof string);   # true
 
 class User {}
 User u = User();
 io.println(typeof(u) == User);     # true
+io.println(typeof(u) == "User");   # true
 io.println(u.type == User);        # true (shorthand for typeof)
 io.println("x".type == string);    # true
 io.println(string.type);           # string
@@ -234,6 +236,16 @@ io.println(string.type);           # string
 The `.type` selector is a shorthand for `typeof` - `expr.type` is equivalent to
 `typeof(expr)`. Primitive type names (`string`, `int`, `bool`, `decimal`, etc.)
 and class names can be used directly as type values in comparisons.
+
+A `Type` is its own value, not a string, so it does not concatenate with
+`+` directly. Compare it to a type or a type-name string (both shown above);
+to build a message from it, convert with `as string` or interpolate it:
+
+```gb
+io.println(typeof(u) as string);   # "User"
+io.println("got a ${typeof(u)}");  # "got a User"
+# "got a " + typeof(u)             # error: a Type is not a string
+```
 
 ### Conversion methods
 

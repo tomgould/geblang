@@ -502,6 +502,28 @@ func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value
 // bytecode VM. Returns (result, true, nil) when the method exists
 // and was called, (nil, false, nil) when the class has no such
 // method, (nil, false, err) on call error.
+// hasInstanceMethod reports whether the instance's class defines method
+// (native or bytecode). Used to detect subscript dunders (__index, __setIndex).
+func (vm *VM) hasInstanceMethod(instance *runtime.Instance, name string) bool {
+	if instance == nil || instance.Class == nil {
+		return false
+	}
+	if m := instance.Class.Methods[strings.ToLower(name)]; len(m) > 0 {
+		return true
+	}
+	if classInfo, ok := vm.classInfo(instance.Class.Name); ok {
+		if _, ok := vm.lookupMethod(classInfo, name); ok {
+			return true
+		}
+	}
+	if idx, ok := vm.classIndex[strings.ToLower(instance.Class.Name)]; ok {
+		if _, ok := vm.interfaceFallbacks[int64(idx)][strings.ToLower(name)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (vm *VM) invokeInstanceMethod(instance *runtime.Instance, method string, args []runtime.Value) (runtime.Value, bool, error) {
 	if instance == nil || instance.Class == nil {
 		return nil, false, nil
@@ -605,6 +627,40 @@ func (vm *VM) RestoreFunctionDecoratorState(state FunctionDecoratorState) {
 	vm.decoratorsApplied = state.applied
 	if state.methodReceiverFuncs != nil {
 		vm.methodReceiverFuncs = copyBoolMap(state.methodReceiverFuncs)
+	}
+}
+
+// InterfaceFallbackState carries a module's runtime interface-default tables
+// (built at OpDefineClass) so cross-module-spawned VMs can resolve interface
+// default methods and interface-provided fields, mirroring globals/decorator
+// state restoration.
+type InterfaceFallbackState struct {
+	fallbacks   map[int64]map[string]crossModuleDefault
+	extraFields map[int64][]extraField
+}
+
+func (vm *VM) InterfaceFallbackState() InterfaceFallbackState {
+	fallbacks := make(map[int64]map[string]crossModuleDefault, len(vm.interfaceFallbacks))
+	for idx, methods := range vm.interfaceFallbacks {
+		inner := make(map[string]crossModuleDefault, len(methods))
+		for name, def := range methods {
+			inner[name] = def
+		}
+		fallbacks[idx] = inner
+	}
+	extras := make(map[int64][]extraField, len(vm.interfaceExtraFields))
+	for idx, fields := range vm.interfaceExtraFields {
+		extras[idx] = append([]extraField(nil), fields...)
+	}
+	return InterfaceFallbackState{fallbacks: fallbacks, extraFields: extras}
+}
+
+func (vm *VM) RestoreInterfaceFallbackState(state InterfaceFallbackState) {
+	if state.fallbacks != nil {
+		vm.interfaceFallbacks = state.fallbacks
+	}
+	if state.extraFields != nil {
+		vm.interfaceExtraFields = state.extraFields
 	}
 }
 
@@ -1489,6 +1545,20 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err := vm.index(instruction); err != nil {
 				return err
 			}
+		case OpContains:
+			container, err := vm.pop()
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
+			needle, err := vm.pop()
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
+			result, err := vm.contains(needle, container)
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
+			vm.push(result)
 		case OpSetIndex:
 			nextIP, err := vm.setIndex(instruction, ip)
 			if err != nil {
@@ -4058,6 +4128,44 @@ func (vm *VM) add(instruction Instruction, ip int) (int, error) {
 	return ip, nil
 }
 
+// contains implements `needle in container` for the OpContains opcode.
+func (vm *VM) contains(needle, container runtime.Value) (runtime.Value, error) {
+	switch c := container.(type) {
+	case *runtime.List:
+		for _, el := range c.Elements {
+			if valuesEqual(needle, el) {
+				return runtime.Bool{Value: true}, nil
+			}
+		}
+		return runtime.Bool{Value: false}, nil
+	case runtime.Dict:
+		_, ok := c.Entries[dictKeyFor(needle)]
+		return runtime.Bool{Value: ok}, nil
+	case runtime.Set:
+		_, ok := c.Elements[dictKeyFor(needle)]
+		return runtime.Bool{Value: ok}, nil
+	case runtime.String:
+		s, ok := needle.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("in: left operand must be a string when the right operand is a string")
+		}
+		return runtime.Bool{Value: strings.Contains(c.Value, s.Value)}, nil
+	case runtime.Range:
+		n, ok := native.IntValueToBigInt(needle)
+		if !ok {
+			return runtime.Bool{Value: false}, nil
+		}
+		return runtime.Bool{Value: c.ContainsInt(n)}, nil
+	case *runtime.Instance:
+		if vm.hasInstanceMethod(c, "__contains") {
+			return vm.CallMethod(c, "__contains", []runtime.Value{needle})
+		}
+		return nil, fmt.Errorf("%s does not support 'in' (define __contains)", c.TypeName())
+	default:
+		return nil, fmt.Errorf("'in' requires a list, dict, set, string, range, or an object with __contains, got %s", container.TypeName())
+	}
+}
+
 func (vm *VM) index(instruction Instruction) error {
 	index, err := vm.pop()
 	if err != nil {
@@ -4112,6 +4220,16 @@ func (vm *VM) index(instruction Instruction) error {
 			return nil
 		}
 		vm.push(entry.Value)
+	case *runtime.Instance:
+		if vm.hasInstanceMethod(value, "__index") {
+			result, err := vm.CallMethod(value, "__index", []runtime.Value{index})
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
+			vm.push(result)
+			return nil
+		}
+		return vm.runtimeError(instruction, "%s is not indexable", left.TypeName())
 	default:
 		return vm.runtimeError(instruction, "%s is not indexable", left.TypeName())
 	}
@@ -4152,6 +4270,15 @@ func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 			return vm.throwTyped(instruction, ip, "ImmutableError", "cannot modify frozen dict")
 		}
 		value.PutEntry(dictKeyFor(index), runtime.DictEntry{Key: index, Value: newValue})
+	case *runtime.Instance:
+		if vm.hasInstanceMethod(value, "__setIndex") {
+			if _, err := vm.CallMethod(value, "__setIndex", []runtime.Value{index, newValue}); err != nil {
+				return 0, vm.runtimeError(instruction, "%s", err.Error())
+			}
+			vm.push(newValue)
+			return ip, nil
+		}
+		return 0, vm.runtimeError(instruction, "%s does not support index assignment", left.TypeName())
 	default:
 		return 0, vm.runtimeError(instruction, "%s does not support index assignment", left.TypeName())
 	}
@@ -10481,6 +10608,9 @@ func (vm *VM) CallMethod(instance *runtime.Instance, name string, args []runtime
 				}
 			}
 		}
+		if result, handled, derr := vm.callInterfaceDefaultValue(instance, strings.ToLower(name), args); handled {
+			return result, derr
+		}
 		return nil, &runtime.MethodNotFoundError{Class: instance.Class.Name, Method: name}
 	}
 	functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 1)
@@ -12467,6 +12597,23 @@ func (vm *VM) callInterfaceDefault(instruction Instruction, ip int, instance *ru
 	}
 	vm.push(result)
 	return ip, nil, true
+}
+
+// callInterfaceDefaultValue invokes an interface default method and returns
+// its value (the value-returning twin of callInterfaceDefault, for callers
+// outside the method-call opcode flow such as the `in` operator).
+func (vm *VM) callInterfaceDefaultValue(instance *runtime.Instance, methodName string, args []runtime.Value) (runtime.Value, bool, error) {
+	idx, ok := vm.classIndex[strings.ToLower(instance.Class.Name)]
+	if !ok {
+		return nil, false, nil
+	}
+	fallback, ok := vm.interfaceFallbacks[int64(idx)][methodName]
+	if !ok || vm.moduleLoader == nil {
+		return nil, false, nil
+	}
+	fn := runtime.BytecodeFunction{Module: fallback.module, Index: fallback.index}
+	result, err := vm.moduleLoader.CallModuleFunction(fn, append([]runtime.Value{instance}, args...))
+	return result, true, err
 }
 
 func (vm *VM) propagateModuleErrorReturn(instruction Instruction, ip int, err error) (int, error, bool) {
@@ -15379,8 +15526,15 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 		rightValue, ok := right.(runtime.Float)
 		return ok && leftValue.Value == rightValue.Value
 	case runtime.String:
-		rightValue, ok := right.(runtime.String)
-		return ok && leftValue.Value == rightValue.Value
+		if rightValue, ok := right.(runtime.String); ok {
+			return leftValue.Value == rightValue.Value
+		}
+		// Symmetry with `typeof(x) == "name"`: a Type compares equal to
+		// the string of its name.
+		if rightType, ok := right.(runtime.Type); ok {
+			return leftValue.Value == rightType.Name
+		}
+		return false
 	case runtime.Bytes:
 		rightValue, ok := right.(runtime.Bytes)
 		return ok && bytes.Equal(leftValue.Value, rightValue.Value)
@@ -15466,6 +15620,8 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 			return leftValue.Name == rv.Name
 		case *runtime.Class:
 			return leftValue.Name == rv.Name
+		case runtime.String:
+			return leftValue.Name == rv.Value
 		}
 		return false
 	case *runtime.Module:

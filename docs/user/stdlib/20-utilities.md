@@ -156,6 +156,43 @@ identically on the evaluator and the VM.
 
 ---
 
+## maps - Dict-Like Objects
+
+Import: `import maps;`
+
+Implement the `maps.DictInterface` interface to give a class dict-like
+behaviour. You provide two abstract methods - `__index(key)` (backs `obj[key]`)
+and `keys()` (the key set) - and inherit `contains`, `get`, `values`,
+`length`, `isEmpty`, and `__contains` (so `key in obj` works) as default
+implementations. For a mutable map, also define `__setIndex(key, value)` on the
+class; it is intentionally not part of the interface, so read-only maps can omit
+it.
+
+```geblang
+import maps;
+
+class CaseInsensitiveHeaders implements maps.DictInterface {
+    dict<string, string> store;
+    func CaseInsensitiveHeaders() { this.store = {}; }
+    func __index(any key): any { return this.store.get((key as string).lower()); }
+    func __setIndex(any key, any value): void { this.store.set((key as string).lower(), value as string); }
+    func keys(): list<any> { return this.store.keys(); }
+}
+
+let h = CaseInsensitiveHeaders();
+h["Content-Type"] = "application/json";
+io.println(h["content-type"]);        # application/json
+io.println("CONTENT-TYPE" in h);      # true
+io.println(h.length());               # 1
+io.println(h.get("missing", "n/a"));  # n/a
+```
+
+The default methods call only the abstract `keys()` / `__index()` you provide,
+so an implementer needs just those two (plus `__setIndex` for writes). Works
+identically on the evaluator and the VM.
+
+---
+
 ## result - Explicit Success/Failure Values
 
 Import: `import result;`

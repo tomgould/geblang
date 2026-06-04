@@ -60,6 +60,7 @@ var precedences = map[token.Type]int{
 	token.NotEq:              equality,
 	token.Is:                 equality,
 	token.InstanceOf:         equality,
+	token.In:                 compare,
 	token.LT:                 compare,
 	token.LTE:                compare,
 	token.GT:                 compare,
