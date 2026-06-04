@@ -50,6 +50,25 @@ func TestSourceUnusedImportWarning(t *testing.T) {
 	}
 }
 
+func TestSourceUnusedImportCountsCastAndInstanceof(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	// http is referenced only via `instanceof http.Response` and `as
+	// http.Response` - both must count as usage.
+	source := "import http;\n" +
+		"func handle(any r): int {\n" +
+		"    if (r instanceof http.Response) { return (r as http.Response).status(); }\n" +
+		"    return 0;\n" +
+		"}\n"
+	opts := Options{Lint: true, Resolver: modules.NewResolver([]string{dir})}
+	_, diags := Source(file, source, opts)
+	for _, d := range diags {
+		if d.Rule == "unused-import" && strings.Contains(d.Message, "http") {
+			t.Fatalf("http used via cast/instanceof must not be flagged unused: %+v", d)
+		}
+	}
+}
+
 func TestSourceCrossModuleFlagsMissingNativeSymbol(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.gb")

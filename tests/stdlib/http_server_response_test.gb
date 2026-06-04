@@ -1,0 +1,46 @@
+/**
+ * @title HTTP server Response builder test
+ * @summary http.response builds a Response body-first (body, status=200,
+ * headers={}), matching http.jsonResponse(value, status) and
+ * http.redirect(url, status). A single dict argument is the keyed form.
+ */
+import test;
+import http;
+
+class HttpServerResponseTest extends test.Test {
+    @test
+    func bodyFirstPositional(): void {
+        let r = http.response("hi", 201, {"X-Test": "y"});
+        this.assertEquals(201, r.status());
+        this.assertEquals("hi", r.text());
+        this.assertEquals("y", r.header("X-Test") as string);
+    }
+
+    @test
+    func statusDefaults200(): void {
+        let r = http.response("ok");
+        this.assertEquals(200, r.status());
+        this.assertTrue(r.ok());
+    }
+
+    @test
+    func keyedDictForm(): void {
+        let r = http.response({"status": 404, "body": "nope"});
+        this.assertEquals(404, r.status());
+        this.assertTrue(r.isNotFound());
+        this.assertEquals("nope", r.text());
+    }
+
+    @test
+    func siblingsArePayloadFirst(): void {
+        this.assertEquals(201, http.jsonResponse({"ok": true}, 201).status());
+        this.assertEquals(301, http.redirect("/x", 301).status());
+    }
+
+    @test
+    func bytesReturnsValueBytes(): void {
+        /* bytes() returns a value bytes usable with .length / as bytes. */
+        bytes b = http.response("hello", 200).bytes() as bytes;
+        this.assertEquals(5, b.length);
+    }
+}

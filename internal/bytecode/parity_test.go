@@ -5415,6 +5415,66 @@ http.close(server);
 `, "CN=svc-a\nrejected\n")
 }
 
+// TestParityHTTPResponseBuilder verifies the body-first http.response builder
+// (body, status, headers) and the keyed single-dict form, on both backends.
+func TestParityHTTPResponseBuilder(t *testing.T) {
+	runParityStateful(t, `
+import http;
+import io;
+let a = http.response("hi", 201, {"X-T": "y"});
+io.println(a.status());
+io.println(a.text());
+io.println(a.header("X-T"));
+let b = http.response("plain");
+io.println(b.status());
+let c = http.response({"status": 404, "body": "nope"});
+io.println(c.status());
+io.println(c.isNotFound());
+let body = http.response("hello", 200).bytes() as bytes;
+io.println(body.length);
+`, "201\nhi\ny\n200\n404\ntrue\n5\n")
+}
+
+// TestParityEncodingBase64AndSanitize covers the text-oriented base64 returns
+// (base64UrlDecode -> string), base64Encode accepting bytes, and the HTML
+// sanitizer, identically on both backends.
+func TestParityEncodingBase64AndSanitize(t *testing.T) {
+	runParity(t, `
+import encoding;
+import bytes;
+import io;
+io.println(encoding.base64UrlDecode("YW55IGNhcm5hbCBwbGVhc3VyZS4"));
+io.println(encoding.base64Encode(bytes.fromHex("6869")));
+io.println(encoding.base64Decode("aGk="));
+let clean = encoding.sanitizeHtml("<p>ok</p><script>x</script><a href=\"/y\" onclick=\"e()\">go</a>");
+io.println(clean.contains("script"));
+io.println(clean.contains("onclick"));
+io.println(clean.contains("<p>ok</p>"));
+io.println(encoding.htmlEscape("<b>x</b>"));
+`, "any carnal pleasure.\naGk=\nhi\nfalse\nfalse\ntrue\n&lt;b&gt;x&lt;/b&gt;\n")
+}
+
+// TestParityWebRouterRealServe verifies a web.router app served over a real
+// socket resolves through the callback child evaluator: the HTTP handler runs in
+// a child and must find the web app registered on the parent at setup. Before
+// the parent-walk fix this failed with "unknown web app handle". Both backends.
+func TestParityWebRouterRealServe(t *testing.T) {
+	runParityWithStdlib(t, `
+import web.router as router;
+import http;
+import io;
+let app = router.newRouter();
+router.get(app, "/hi", func(dict<string, any> req): dict<string, any> {
+    return {"status": 200, "body": "ok:" + (req["path"] as string)};
+});
+let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+    return router.handle(app, request);
+}, {});
+io.println(http.get("http://" + http.serverAddr(server) + "/hi").text());
+http.close(server);
+`, "ok:/hi\n")
+}
+
 // TestParityWebRouterRequestResponse verifies native web passes a rich Request
 // (and Response to after-middleware) when a handler/middleware opts in by
 // declaring those param types, while plain func(dict) handlers still work and a

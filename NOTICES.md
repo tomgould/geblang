@@ -14,6 +14,7 @@ module cache.
 The following components are licensed under the MIT license or an
 Expat-style MIT license:
 
+- `github.com/aymerick/douceur` v0.2.0 - Copyright (c) 2015 Aymerick JEHANNE.
 - `github.com/BurntSushi/toml` v1.6.0 - Copyright (c) 2013 TOML authors.
 - `github.com/creack/pty` v1.1.24 - Copyright (c) 2011 Keith Rarick.
 - `github.com/dlclark/regexp2` v1.12.0 - Copyright (c) Doug Clark.
@@ -100,10 +101,14 @@ The following components are licensed under the BSD 3-Clause License:
   Copyright (c) fsnotify Authors. All rights reserved.
 - `github.com/google/uuid` v1.6.0 - Copyright (c) 2009, 2014 Google Inc. All
   rights reserved.
+- `github.com/gorilla/css` v1.0.1 - Copyright (c) 2023 The Gorilla Authors.
+  All rights reserved.
 - `github.com/klauspost/compress` v1.15.9 - Copyright (c) 2012 The Go
   Authors; Copyright (c) 2019 Klaus Post. All rights reserved.
 - `github.com/kr/fs` v0.1.0 - Copyright (c) 2012 The Go Authors. All rights
   reserved.
+- `github.com/microcosm-cc/bluemonday` v1.0.27 - Copyright (c) 2014 David
+  Kitchen. All rights reserved.
 - `github.com/pierrec/lz4/v4` v4.1.15 - Copyright (c) 2015, Pierre Curto.
   All rights reserved.
 - `github.com/remyoudompheng/bigfft`

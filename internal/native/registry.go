@@ -281,7 +281,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"base58Encode": {}, "base58Decode": {},
 		"base64UrlEncode": {}, "base64UrlDecode": {},
 		"urlEncode": {}, "urlDecode": {},
-		"htmlEscape": {}, "htmlUnescape": {},
+		"htmlEscape": {}, "htmlUnescape": {}, "sanitizeHtml": {},
 	},
 	"url": {
 		"URL": {}, "parse": {}, "stringify": {}, "encode": {}, "decode": {}, "joinPath": {},

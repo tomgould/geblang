@@ -775,7 +775,47 @@ func (e *Evaluator) childForCallback() *Evaluator {
 	child.dbStatementClass = e.dbStatementClass
 	child.dbRowsClass = e.dbRowsClass
 	child.streamIfaces = maps.Clone(e.streamIfaces)
+	// App-global handles (web apps, db connections, loggers, http clients,
+	// cookie jars) are created on the parent at setup and resolved here via the
+	// parent chain during request handling. Continue the parent's id counters
+	// so a handle the child creates can never shadow a parent handle's id.
+	child.nextWebID = e.nextWebID
+	child.nextDBID = e.nextDBID
+	child.nextLogID = e.nextLogID
+	child.nextHTTPClientID = e.nextHTTPClientID
+	child.nextCookieJarID = e.nextCookieJarID
 	return child
+}
+
+// Handle lookups for app-global native state walk the parent chain so a handler
+// running in a callback child evaluator (e.g. an HTTP request) resolves
+// connections/apps/loggers/clients created on the parent at setup. Per-request
+// handles created in the child shadow the parent (checked first).
+func (e *Evaluator) lookupWebApp(id int64) (*webApp, bool) {
+	for ev := e; ev != nil; ev = ev.parent {
+		if v, ok := ev.webApps[id]; ok {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+func (e *Evaluator) lookupHTTPClient(id int64) (*httpClientHandle, bool) {
+	for ev := e; ev != nil; ev = ev.parent {
+		if v, ok := ev.httpClientHandles[id]; ok {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+func (e *Evaluator) lookupCookieJar(id int64) (http.CookieJar, bool) {
+	for ev := e; ev != nil; ev = ev.parent {
+		if v, ok := ev.httpCookieJars[id]; ok {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 func (e *Evaluator) Eval(program *ast.Program) (result Result, err error) {
@@ -3585,10 +3625,13 @@ func nativeResponseBytes(this *runtime.Instance, args []runtime.Value) (runtime.
 	if len(args) != 0 {
 		return nil, fmt.Errorf("Response.bytes expects no arguments")
 	}
-	if b, ok := this.Fields["body"].(*runtime.Bytes); ok {
-		return b, nil
+	switch body := this.Fields["body"].(type) {
+	case runtime.Bytes:
+		return body, nil
+	case *runtime.Bytes:
+		return *body, nil
 	}
-	return &runtime.Bytes{Value: []byte(responseBodyText(this))}, nil
+	return runtime.Bytes{Value: []byte(responseBodyText(this))}, nil
 }
 
 func nativeResponseJSON(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -4286,7 +4329,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		}
 		e.httpClientMu.Lock()
 		defer e.httpClientMu.Unlock()
-		h, ok := e.httpClientHandles[id.Value.Int64()]
+		h, ok := e.lookupHTTPClient(id.Value.Int64())
 		if !ok {
 			return nil, fmt.Errorf("client handle not found")
 		}
@@ -4319,7 +4362,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 			return nil, fmt.Errorf("invalid jar handle")
 		}
 		e.httpCookieJarMu.Lock()
-		jar, ok := e.httpCookieJars[id.Value.Int64()]
+		jar, ok := e.lookupCookieJar(id.Value.Int64())
 		e.httpCookieJarMu.Unlock()
 		if !ok {
 			return nil, fmt.Errorf("jar handle not found")
@@ -4359,7 +4402,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 			return nil, fmt.Errorf("invalid jar handle")
 		}
 		e.httpCookieJarMu.Lock()
-		jar, found := e.httpCookieJars[id.Value.Int64()]
+		jar, found := e.lookupCookieJar(id.Value.Int64())
 		e.httpCookieJarMu.Unlock()
 		if !found {
 			return nil, fmt.Errorf("jar handle not found")
@@ -4579,7 +4622,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 			return nil, fmt.Errorf("Client.attachCookieJar invalid jar instance")
 		}
 		e.httpCookieJarMu.Lock()
-		jar, ok := e.httpCookieJars[jarIDVal.Value.Int64()]
+		jar, ok := e.lookupCookieJar(jarIDVal.Value.Int64())
 		e.httpCookieJarMu.Unlock()
 		if !ok {
 			return nil, fmt.Errorf("Client.attachCookieJar jar not found")
@@ -8483,6 +8526,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"urlDecode":       e.registryBuiltin("encoding", "urlDecode"),
 			"htmlEscape":      e.registryBuiltin("encoding", "htmlEscape"),
 			"htmlUnescape":    e.registryBuiltin("encoding", "htmlUnescape"),
+			"sanitizeHtml":    e.registryBuiltin("encoding", "sanitizeHtml"),
 		},
 		"compress": {
 			"gzip":   e.registryBuiltin("compress", "gzip"),
@@ -11697,7 +11741,7 @@ func (e *Evaluator) webApp(value runtime.Value) (*webApp, error) {
 	}
 	e.webMu.Lock()
 	defer e.webMu.Unlock()
-	app, ok := e.webApps[id.Value.Int64()]
+	app, ok := e.lookupWebApp(id.Value.Int64())
 	if !ok {
 		return nil, fmt.Errorf("unknown web app handle %d", id.Value.Int64())
 	}
@@ -18166,7 +18210,7 @@ func (e *Evaluator) cookieJarFromValue(v runtime.Value, label string) (http.Cook
 		return nil, fmt.Errorf("%s cookieJar handle invalid", label)
 	}
 	e.httpCookieJarMu.Lock()
-	jar, found := e.httpCookieJars[id.Value.Int64()]
+	jar, found := e.lookupCookieJar(id.Value.Int64())
 	e.httpCookieJarMu.Unlock()
 	if !found {
 		return nil, fmt.Errorf("%s cookieJar handle not found", label)
@@ -18432,24 +18476,27 @@ func buildResponseInstance(class *runtime.Class, label string, args []runtime.Va
 		}
 	}
 	if len(args) > 3 {
-		return nil, fmt.Errorf("%s expects optional status, body, and headers", label)
+		return nil, fmt.Errorf("%s expects optional body, status, and headers", label)
 	}
 	var status runtime.Value = runtime.NewInt64(http.StatusOK)
 	var body runtime.Value = runtime.String{}
 	var headers runtime.Value = runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	// Positional order is body-first (body, status, headers), matching
+	// http.jsonResponse(value, status) / http.redirect(url, status). The
+	// single-dict form above stays keyed.
 	if len(args) >= 1 {
-		if _, ok := toInt64(args[0]); !ok {
-			return nil, fmt.Errorf("%s status must be int", label)
+		switch args[0].(type) {
+		case runtime.String, runtime.Bytes, runtime.Int, runtime.NativeObject:
+			body = args[0]
+		default:
+			body = runtime.String{Value: args[0].Inspect()}
 		}
-		status = args[0]
 	}
 	if len(args) >= 2 {
-		switch args[1].(type) {
-		case runtime.String, runtime.Bytes, runtime.Int, runtime.NativeObject:
-			body = args[1]
-		default:
-			body = runtime.String{Value: args[1].Inspect()}
+		if _, ok := toInt64(args[1]); !ok {
+			return nil, fmt.Errorf("%s status must be int", label)
 		}
+		status = args[1]
 	}
 	if len(args) >= 3 {
 		if _, ok := httpHeaderValue(args[2]); !ok {

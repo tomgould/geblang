@@ -3667,7 +3667,7 @@ io.println(req.bodyBytes().length() as string);
 let parsed = req.json();
 io.println(parsed["name"]);
 
-let res = http.Response(201, "created", {"X-Test": "yes"}).withHeader("Content-Type", "text/plain");
+let res = http.Response("created", 201, {"X-Test": "yes"}).withHeader("Content-Type", "text/plain");
 io.println(res.status as string);
 io.println(res.headers["X-Test"]);
 io.println(res.headers["Content-Type"]);
@@ -3677,12 +3677,12 @@ io.println(dict["body"]);
 let res2 = http.response({"status": 202, "body": "accepted"});
 io.println(res2.status as string);
 
-let binaryRes = http.Response(204, bytes.fromString("binary"));
+let binaryRes = http.Response(bytes.fromString("binary"), 204);
 io.println(binaryRes.body.length() as string);
 
 let buffer = io.buffer();
 io.write(buffer, "buffered");
-let streamRes = http.Response(205, buffer);
+let streamRes = http.Response(buffer, 205);
 io.println(typeof(streamRes.body));
 io.close(buffer);
 
@@ -3731,7 +3731,7 @@ io.println(req.header("content-type"));
 let reqDict = req.toDict();
 io.println(reqDict["headers"]["Set-Cookie"].length() as string);
 
-let res = http.Response(200, "ok", updated);
+let res = http.Response("ok", 200, updated);
 let resDict = res.toDict();
 io.println(resDict["headers"]["Content-Type"]);
 `
@@ -3826,7 +3826,7 @@ io.println(dir(http).contains("Response"));
 io.println(dir(test).contains("Test"));
 io.println(dir(json).contains("JsonStreamInterface"));
 
-let response = http.Response(200, "ok");
+let response = http.Response("ok", 200);
 io.println(response instanceof http.Response);
 `
 
@@ -3858,7 +3858,7 @@ func TestEvaluatorRunsHTTPServerLifecycle(t *testing.T) {
 import http;
 
 func handle(http.Request request): http.Response {
-    return http.Response(200, "ok:" + request.path, {"Content-Type": "text/plain"});
+    return http.Response("ok:" + request.path, 200, {"Content-Type": "text/plain"});
 }
 
 let server = http.listen("127.0.0.1:0", handle);

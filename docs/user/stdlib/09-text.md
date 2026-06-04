@@ -487,15 +487,63 @@ that, but normalising at least makes equality reliable).
 
 ## Templates: `template`
 
-Import `template`:
+The `template` module is backed by Go's `html/template`: a full templating
+engine with data binding, conditionals, loops, and pipelines, plus
+**contextual auto-escaping** - interpolated values are HTML-escaped for the
+position they appear in (element text, attribute, URL, script), so the engine
+is XSS-safe by default. (For escaping a single string outside a template, see
+`encoding.htmlEscape`; for sanitizing untrusted HTML, `encoding.sanitizeHtml`.)
 
-- `renderString(source, data)`
-- `Template(source)`
-- `load(path)`
-- `Engine(options)`
+Module functions:
+
+- `renderString(source, data)` - render a template string against `data`,
+  returning the result string.
+- `Template(source[, name])` - compile a reusable `Template` value.
+- `load(path)` - read and compile a template from a file.
+- `Engine(dir)` - a `TemplateEngine` rooted at a directory; accepts a string
+  path or an options dict (`{"dir": ...}`).
+
+`Template` methods: `render(data)`, `name()`, `path()`, `toString()`.
+`TemplateEngine` methods: `render(name, data)` (loads `<dir>/<name>` and
+renders), `load(name)` (returns a `Template`), `dir()`.
+
+### Syntax
+
+Data is supplied as a dict (or any value); fields are referenced with a leading
+dot:
 
 ```gb
 import template;
+import io;
 
 io.println(template.renderString("Hello {{.name}}", {"name": "Ada"}));
+io.println(template.renderString("{{.user.email}}",
+    {"user": {"email": "ada@example.com"}}));
+```
+
+Common actions:
+
+- Conditionals: `{{if .admin}}Admin{{else}}Guest{{end}}`
+- Iteration: `{{range .items}}<li>{{.}}</li>{{end}}` (inside `range`, `.` is the
+  current element; `{{range $i, $v := .items}}` binds index and value).
+- Scoping: `{{with .profile}}{{.bio}}{{end}}`
+- Pipelines: `{{.price | printf "%.2f"}}`
+- Comments: `{{/* not rendered */}}`
+
+```gb
+let tmpl = template.Template(
+    "<ul>{{range .todos}}<li>{{.title}}</li>{{end}}</ul>");
+io.println(tmpl.render({"todos": [{"title": "ship"}, {"title": "rest"}]}));
+```
+
+Auto-escaping means untrusted data is safe to interpolate directly; the engine
+escapes `<`, `>`, `&`, quotes, and URL/script context as needed. To emit
+pre-trusted HTML verbatim, mark it with the engine's standard mechanisms rather
+than disabling escaping.
+
+A directory-backed engine keeps templates on disk:
+
+```gb
+let engine = template.Engine("templates");
+io.println(engine.render("welcome.html", {"name": "Ada"}));
 ```

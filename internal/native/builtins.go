@@ -41,6 +41,7 @@ import (
 
 	tomllib "github.com/BurntSushi/toml"
 	googleuuid "github.com/google/uuid"
+	"github.com/microcosm-cc/bluemonday"
 	"github.com/yuin/goldmark"
 	goldast "github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
@@ -2644,13 +2645,18 @@ func registerCompress(r *Registry) {
 	})
 }
 
+// htmlSanitizePolicy is a reusable UGC allow-list (safe formatting tags,
+// strips scripts/styles/event handlers). bluemonday policies are immutable and
+// safe for concurrent Sanitize calls.
+var htmlSanitizePolicy = bluemonday.UGCPolicy()
+
 func registerEncoding(r *Registry) {
 	r.Register("encoding", "base64Encode", func(args []runtime.Value) (runtime.Value, error) {
-		s, err := singleString(args, "encoding.base64Encode")
+		data, err := encodingInputBytes(args, "encoding.base64Encode")
 		if err != nil {
 			return nil, err
 		}
-		return runtime.String{Value: base64.StdEncoding.EncodeToString([]byte(s))}, nil
+		return runtime.String{Value: base64.StdEncoding.EncodeToString(data)}, nil
 	})
 	r.Register("encoding", "base64Decode", func(args []runtime.Value) (runtime.Value, error) {
 		s, err := singleString(args, "encoding.base64Decode")
@@ -2695,6 +2701,13 @@ func registerEncoding(r *Registry) {
 		}
 		return runtime.String{Value: html.UnescapeString(s)}, nil
 	})
+	r.Register("encoding", "sanitizeHtml", func(args []runtime.Value) (runtime.Value, error) {
+		s, err := singleString(args, "encoding.sanitizeHtml")
+		if err != nil {
+			return nil, err
+		}
+		return runtime.String{Value: htmlSanitizePolicy.Sanitize(s)}, nil
+	})
 	r.Register("encoding", "base32Encode", base32EncodeFn)
 	r.Register("encoding", "base32Decode", base32DecodeFn)
 	r.Register("encoding", "base58Encode", base58EncodeFn)
@@ -2715,7 +2728,7 @@ func registerEncoding(r *Registry) {
 		if err != nil {
 			return nil, fmt.Errorf("encoding.base64UrlDecode: %v", err)
 		}
-		return runtime.Bytes{Value: decoded}, nil
+		return runtime.String{Value: string(decoded)}, nil
 	})
 }
 

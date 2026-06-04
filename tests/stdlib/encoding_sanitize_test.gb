@@ -1,0 +1,31 @@
+/**
+ * @title HTML sanitize + escape test
+ * @summary encoding.sanitizeHtml strips dangerous markup against a safe
+ * allow-list (for rendering user-submitted HTML), distinct from
+ * encoding.htmlEscape which neutralizes all markup.
+ */
+import test;
+import encoding;
+
+class EncodingSanitizeTest extends test.Test {
+    @test
+    func stripsScript(): void {
+        let clean = encoding.sanitizeHtml("<p>hi</p><script>alert('x')</script>");
+        this.assertFalse(clean.contains("<script"));
+        this.assertTrue(clean.contains("<p>hi</p>"));
+    }
+
+    @test
+    func stripsEventHandlers(): void {
+        let clean = encoding.sanitizeHtml("<a href=\"/x\" onclick=\"evil()\">go</a>");
+        this.assertFalse(clean.contains("onclick"));
+        this.assertTrue(clean.contains("href"));
+    }
+
+    @test
+    func escapeNeutralizesAllMarkup(): void {
+        /* htmlEscape turns markup into inert text; sanitizeHtml keeps safe tags. */
+        this.assertEquals("&lt;b&gt;bold&lt;/b&gt;", encoding.htmlEscape("<b>bold</b>"));
+        this.assertEquals("<b>bold</b>", encoding.sanitizeHtml("<b>bold</b>"));
+    }
+}

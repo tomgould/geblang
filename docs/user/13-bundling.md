@@ -132,6 +132,16 @@ directly:
 ./dist/myapp
 ```
 
+### Third-party notices
+
+Alongside the binary, `geblang build` writes a `<output-path>.NOTICES.txt`
+file containing the third-party attribution notices for the components the
+binary embeds (the Geblang runtime and its dependencies). Ship this file with
+the binary to keep the distribution licence-compliant. It is a sidecar file
+rather than a built-in flag, so it never clashes with a `licenses`
+subcommand or argument your own program might define. The same applies to
+binaries produced by `gebweb build`, which delegates to `geblang build`.
+
 Pass arguments to the bundled program the same way you would any other binary:
 
 ```sh

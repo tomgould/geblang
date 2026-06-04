@@ -82,11 +82,32 @@
   This is opt-in by type; `dict<string, any>` handlers and middleware are
   unchanged.
 
+### Encoding and templates
+
+- New `encoding.sanitizeHtml(html)` sanitizes untrusted HTML against a safe
+  allow-list (keeps common formatting tags, strips scripts/styles and `on*`
+  event handlers) - for rendering user-submitted HTML. This complements
+  `encoding.htmlEscape`, which neutralizes all markup.
+- `encoding.base64Encode` now accepts a `string` or `bytes` (matching the
+  other base encoders).
+- Breaking: `encoding.base64UrlDecode` now returns a `string` (consistent with
+  `encoding.base64Decode`), so URL-safe Base64 round-trips strings without a
+  manual conversion. For binary, decode with `bytes.fromBase64Url` (or
+  `bytes.fromBase64`), which return `bytes`.
+- The `template` module reference now documents the full engine (data binding,
+  `if`/`range`/`with`, pipelines, `Engine`/`load`/`Template.render`) and its
+  contextual auto-escaping.
+
 ### Other
 
 - `typeof(x)` can now be compared to a type name string: `typeof(x) ==
   "int"` and `typeof(obj) == "Response"` work as expected. `typeof` still
   returns a type value, so `typeof(x) == int` keeps working too.
+- `geblang build` now writes a `<output-path>.NOTICES.txt` sidecar with the
+  third-party attribution notices for the components the binary embeds, so a
+  distributed binary stays licence-compliant. It is a sidecar file, not a
+  built-in flag, so it never clashes with a `licenses` argument the built
+  program may define.
 
 ### Fixes
 
@@ -95,6 +116,12 @@
   reflection) and across module boundaries: a cross-module interface default
   can call sibling default methods on `this`. Previously these silently failed
   to find interface-default implementations.
+- HTTP handlers can now use app-global handles created at setup. A handler runs
+  in a callback evaluator, and web-app, http-client, and cookie-jar lookups now
+  resolve through the parent (db and logger handles already did), so an app
+  with routes registered up front serves correctly over a real socket instead
+  of failing with "unknown web app handle". Handle ids created inside a handler
+  stay isolated to that request.
 
 ## 1.7.2
 

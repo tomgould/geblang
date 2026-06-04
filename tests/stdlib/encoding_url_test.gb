@@ -26,14 +26,16 @@ class EncodingUrlTest extends test.Test {
 
     @test
     func decodeAcceptsUnpadded(): void {
+        /* base64UrlDecode returns a string (encoding.* is text-oriented);
+         * for binary use bytes.fromBase64Url. */
         let decoded = encoding.base64UrlDecode("YW55IGNhcm5hbCBwbGVhc3VyZS4");
-        this.assertEquals("any carnal pleasure.", bytes.toString(decoded));
+        this.assertEquals("any carnal pleasure.", decoded);
     }
 
     @test
     func decodeAcceptsPadded(): void {
         let decoded = encoding.base64UrlDecode("YW55IGNhcm5hbCBwbGVhc3VyZS4=");
-        this.assertEquals("any carnal pleasure.", bytes.toString(decoded));
+        this.assertEquals("any carnal pleasure.", decoded);
     }
 
     @test
@@ -41,7 +43,15 @@ class EncodingUrlTest extends test.Test {
         let payload = "{\"sub\":\"1234567890\",\"name\":\"John Doe\",\"iat\":1516239022}";
         let encoded = encoding.base64UrlEncode(payload);
         let decoded = encoding.base64UrlDecode(encoded);
-        this.assertEquals(payload, bytes.toString(decoded));
+        this.assertEquals(payload, decoded);
+    }
+
+    @test
+    func binaryUrlSafeRoundTripsViaBytes(): void {
+        /* Binary stays in the bytes module. */
+        let raw = bytes.fromHex("fbff00");
+        let encoded = encoding.base64UrlEncode(raw);
+        this.assertEquals(raw, bytes.fromBase64Url(encoded));
     }
 
     @test

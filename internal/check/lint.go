@@ -206,7 +206,14 @@ func lintMarkExpressionIdentifiers(expr ast.Expression, imports map[string]*lint
 	}
 	switch e := expr.(type) {
 	case *ast.Identifier:
-		if imp, ok := imports[strings.ToLower(e.Value)]; ok {
+		// `instanceof Mod.Type` is parsed as an Identifier holding the
+		// stringified type ("Mod.Type"); strip to the module alias so the
+		// import counts as used.
+		name := e.Value
+		if dot := strings.IndexByte(name, '.'); dot >= 0 {
+			name = name[:dot]
+		}
+		if imp, ok := imports[strings.ToLower(name)]; ok {
 			imp.used = true
 		}
 	case *ast.SpreadExpression:
@@ -271,6 +278,7 @@ func lintMarkExpressionIdentifiers(expr ast.Expression, imports map[string]*lint
 		lintMarkExpressionIdentifiers(e.Value, imports)
 	case *ast.CastExpression:
 		lintMarkExpressionIdentifiers(e.Value, imports)
+		lintMarkTypeRef(e.Type, imports)
 	case *ast.TernaryExpression:
 		lintMarkExpressionIdentifiers(e.Condition, imports)
 		lintMarkExpressionIdentifiers(e.ThenExpr, imports)

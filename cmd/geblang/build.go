@@ -11,6 +11,7 @@ import (
 	"geblang/internal/check"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
+	"geblang/internal/notices"
 	"geblang/internal/parser"
 )
 
@@ -183,7 +184,16 @@ func runBuild(args []string) {
 		os.Exit(1)
 	}
 
+	// Write the third-party NOTICES alongside the binary so the distribution
+	// stays licence-compliant. A sidecar file (not a binary flag) avoids
+	// clashing with any `licenses` arg the built program defines itself.
+	noticesPath := absOut + ".NOTICES.txt"
+	if err := os.WriteFile(noticesPath, []byte(notices.Text), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "geblang build: warn: write notices: %v\n", err)
+	}
+
 	fmt.Fprintf(os.Stdout, "built %s\n", absOut)
+	fmt.Fprintf(os.Stdout, "wrote %s\n", noticesPath)
 }
 
 func runBundled(b *bundle.Bundle) int {
