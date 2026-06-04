@@ -5415,6 +5415,76 @@ http.close(server);
 `, "CN=svc-a\nrejected\n")
 }
 
+// TestParityWebRouterRequestResponse verifies native web passes a rich Request
+// (and Response to after-middleware) when a handler/middleware opts in by
+// declaring those param types, while plain func(dict) handlers still work and a
+// returned Response is serialized rather than mangled. Runs on both backends.
+func TestParityWebRouterRequestResponse(t *testing.T) {
+	runParityWithStdlib(t, `
+import web.router as router;
+import http;
+import json;
+import io;
+let app = router.newRouter();
+router.before(app, func(Request req): ?dict<string, any> {
+    if (req.path == "/blocked") { return {"status": 403, "body": "no"}; }
+    return null;
+});
+router.get(app, "/hi", func(Request req): Response {
+    return http.jsonResponse({"path": req.path, "get": req.isMethod("GET")});
+});
+router.get(app, "/dict", func(dict<string, any> req): dict<string, any> {
+    return {"status": 200, "body": "dictok"};
+});
+router.after(app, func(Request req, Response resp): Response {
+    return resp.withHeader("X-Path", req.path);
+});
+let r1 = router.handle(app, {"method": "GET", "path": "/hi", "headers": {}, "body": ""});
+let p1 = json.parse(r1["body"] as string);
+io.println(r1["status"]);
+io.println((r1["headers"] as dict<string, any>)["X-Path"]);
+io.println(p1["path"]);
+io.println(p1["get"]);
+let r2 = router.handle(app, {"method": "GET", "path": "/dict", "headers": {}, "body": ""});
+io.println(r2["status"]);
+io.println(r2["body"]);
+io.println((r2["headers"] as dict<string, any>)["X-Path"]);
+let r3 = router.handle(app, {"method": "GET", "path": "/blocked", "headers": {}, "body": ""});
+io.println(r3["status"]);
+io.println(r3["body"]);
+`, "200\n/hi\n/hi\ntrue\n200\ndictok\n/dict\n403\nno\n")
+}
+
+// TestParityHTTPServerOnError verifies the onError server callback captures
+// connection-level failures (here an mTLS handshake with no client cert) on
+// both backends, and that a non-function onError is rejected. The callback
+// fires on a background connection, so a buffered channel + blocking recv()
+// keeps the test deterministic; runParityWithStdlib wires the module loader
+// (for async.channel) and the evaluator->VM callback dispatcher.
+func TestParityHTTPServerOnError(t *testing.T) {
+	runParityWithStdlib(t, `
+import http;
+import io;
+import crypt;
+import async.channel as chan;
+try {
+    http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> { return {"status": 200, "body": ""}; }, {"onError": 5});
+    io.println("accepted");
+} catch (Error e) { io.println("rejected-bad-onError"); }
+let caKey = crypt.generateEcKey("P-256");
+let caBundle = crypt.generateSelfSignedCert({"subject": {"commonName": "GeblangCA"}, "key": caKey});
+let errs = chan.Channel<string>(16);
+let server = http.listen("127.0.0.1:0", func(Request req): Response {
+    return http.jsonResponse({"ok": true});
+}, {"tls": {"selfSigned": true, "clientCa": caBundle["cert"], "clientAuth": "require"},
+   "onError": func(string msg): void { errs.send("captured"); }});
+let url = "https://" + http.serverAddr(server) + "/";
+try { http.newClient({"tls": {"verify": false}}).get(url); } catch (Error e) {}
+io.println(errs.recv());
+http.close(server);
+`, "rejected-bad-onError\ncaptured\n")
+}
+
 // TestParityHTTPAutoCertConfig is an acceptance test for the ACME autocert
 // option: a server configured with tls.autoCert starts (and rejects mixing
 // autoCert with cert/key/selfSigned) on both backends. The live ACME path

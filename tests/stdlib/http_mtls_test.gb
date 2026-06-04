@@ -10,6 +10,7 @@
 import test;
 import http;
 import crypt;
+import async.channel as chan;
 
 class HttpMutualTlsTest extends test.Test {
     func makeClientCert(): dict<string, any> {
@@ -56,6 +57,30 @@ class HttpMutualTlsTest extends test.Test {
         }
         http.close(server);
         this.assertTrue(rejected);
+    }
+
+    @tag("integration")
+    @test
+    func onErrorCapturesHandshakeFailure(): void {
+        /* Connection-level errors (here an mTLS handshake with no client
+         * cert) are quiet by default; an onError callback captures them.
+         * recv() blocks until the callback fires, so this is deterministic. */
+        let id = this.makeClientCert();
+        let errs = chan.Channel<string>(16);
+        let server = http.listen("127.0.0.1:0", func(Request req): Response {
+            return http.jsonResponse({"ok": true});
+        }, {
+            "tls": {"selfSigned": true, "clientCa": id["ca"] as string, "clientAuth": "require"},
+            "onError": func(string msg): void { errs.send(msg); }
+        });
+        let url = "https://" + http.serverAddr(server) + "/";
+        try {
+            http.newClient({"tls": {"verify": false}}).get(url);
+        } catch (Error e) {}
+        let msg = errs.recv() as string;
+        http.close(server);
+
+        this.assertTrue(msg.contains("tls") || msg.contains("certificate"));
     }
 
     @tag("integration")

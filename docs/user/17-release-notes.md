@@ -66,11 +66,21 @@
   (`subject`, `issuer`, `serialNumber`, `notBefore`, `notAfter`, `dnsNames`,
   or null). Outbound client certificates (`tls.clientCert`/`clientKey`) were
   already supported.
+- Connection-level server errors (TLS handshake failures, malformed requests)
+  are now quiet by default instead of being written to standard error. Pass an
+  `onError` callback in the server options to observe them; it receives one
+  message string per failure. These happen before any handler and cannot be
+  caught as Geblang errors, so the callback is the way to log or count them.
 - Automatic certificates: a server `tls` block accepts `autoCert` (a host or
   list of hosts), with optional `autoCertCacheDir` and `autoCertEmail`, to
   obtain and renew ACME (Let's Encrypt) certificates via the TLS-ALPN-01
   challenge on the same listener. HTTPS servers also negotiate HTTP/2
   automatically.
+- `web.router` handlers and middleware can opt into the rich `Request` and
+  `Response` objects by declaring those parameter types (an after-middleware's
+  second parameter typed `Response` receives one), and may return a `Response`.
+  This is opt-in by type; `dict<string, any>` handlers and middleware are
+  unchanged.
 
 ### Other
 

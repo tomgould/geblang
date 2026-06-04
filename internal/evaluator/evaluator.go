@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"maps"
 	"math"
 	"math/big"
@@ -11408,6 +11409,88 @@ func (e *Evaluator) registerWebRoute(call *ast.CallExpression, appValue runtime.
 	return runtime.Null{}, nil
 }
 
+// webCallableParamIsType reports whether the callable's param at index declares
+// the given bare type name (e.g. "Request", "Response"). Native functions carry
+// no parameter metadata and so default to false (dict).
+func webCallableParamIsType(fn runtime.Value, index int, name string) bool {
+	function, ok := fn.(runtime.Function)
+	if !ok {
+		return false
+	}
+	if len(function.Parameters) <= index || function.Parameters[index].Type == nil {
+		return false
+	}
+	typ := function.Parameters[index].Type
+	return typ.Operator == "" && !typ.ListAlias && typeNamesEqual(typ.Name, name)
+}
+
+// webRequestArg returns a rich Request instance when the callable opts in by
+// typing its first parameter `Request`; otherwise the request dict unchanged.
+func (e *Evaluator) webRequestArg(fn runtime.Value, request runtime.Dict) runtime.Value {
+	if !webCallableParamIsType(fn, 0, "Request") {
+		return request
+	}
+	class := e.httpRequestClass
+	if class == nil && e.parent != nil {
+		class = e.parent.httpRequestClass
+	}
+	if class == nil {
+		return request
+	}
+	return &runtime.Instance{Class: class, Fields: fieldsFromEntries(request.Entries)}
+}
+
+// webResponseArg returns a rich Response instance when the callable's parameter
+// at index is typed `Response`; otherwise the response dict unchanged.
+func (e *Evaluator) webResponseArg(fn runtime.Value, index int, response runtime.Value) runtime.Value {
+	if !webCallableParamIsType(fn, index, "Response") {
+		return response
+	}
+	if instance, ok := response.(*runtime.Instance); ok && strings.EqualFold(instance.Class.Name, "Response") {
+		return instance
+	}
+	dict, ok := response.(runtime.Dict)
+	if !ok {
+		return response
+	}
+	class := e.httpResponseClass
+	if class == nil && e.parent != nil {
+		class = e.parent.httpResponseClass
+	}
+	if class == nil {
+		return response
+	}
+	status, _ := dictField(dict, "status")
+	if status == nil {
+		status = runtime.NewInt64(200)
+	}
+	body, _ := dictField(dict, "body")
+	if body == nil {
+		body = runtime.String{}
+	}
+	headers, _ := dictField(dict, "headers")
+	if headers == nil {
+		headers = runtime.Dict{Entries: map[string]runtime.DictEntry{}}
+	}
+	return newResponseInstance(class, status, body, headers)
+}
+
+// runWebAfterMiddlewares runs the response-phase chain (last-registered first).
+// Each middleware receives request + response as objects or dicts per its own
+// parameter types; the result is normalized back to a dict between hops so the
+// chain stays uniform and the final value is always a response dict.
+func (e *Evaluator) runWebAfterMiddlewares(middlewares []runtime.Value, request runtime.Dict, response runtime.Value) (runtime.Value, error) {
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		mw := middlewares[i]
+		result, err := e.callValue(mw, []runtime.Value{e.webRequestArg(mw, request), e.webResponseArg(mw, 1, response)})
+		if err != nil {
+			return nil, err
+		}
+		response = normalizeWebResponse(result)
+	}
+	return response, nil
+}
+
 func (e *Evaluator) webHandle(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("%s expects app and request", call.Callee.String())
@@ -11426,19 +11509,13 @@ func (e *Evaluator) webHandle(call *ast.CallExpression, args []runtime.Value) (r
 	middlewares := append([]runtime.Value(nil), app.middlewares...)
 	e.webMu.Unlock()
 	for _, middleware := range beforeMiddlewares {
-		result, err := e.callValue(middleware, []runtime.Value{request})
+		result, err := e.callValue(middleware, []runtime.Value{e.webRequestArg(middleware, request)})
 		if err != nil {
 			return nil, err
 		}
 		if _, ok := result.(runtime.Null); !ok {
 			response := normalizeWebResponse(result)
-			for i := len(middlewares) - 1; i >= 0; i-- {
-				response, err = e.callValue(middlewares[i], []runtime.Value{request, response})
-				if err != nil {
-					return nil, err
-				}
-			}
-			return response, nil
+			return e.runWebAfterMiddlewares(middlewares, request, response)
 		}
 	}
 	method, _ := dictStringField(request, "method")
@@ -11450,18 +11527,12 @@ func (e *Evaluator) webHandle(call *ast.CallExpression, args []runtime.Value) (r
 		}
 		requestWithParams := copyDict(request)
 		putDict(requestWithParams.Entries, "params", params)
-		response, err := e.callValue(route.handler, []runtime.Value{requestWithParams})
+		response, err := e.callValue(route.handler, []runtime.Value{e.webRequestArg(route.handler, requestWithParams)})
 		if err != nil {
 			return nil, err
 		}
 		response = normalizeWebResponse(response)
-		for i := len(middlewares) - 1; i >= 0; i-- {
-			response, err = e.callValue(middlewares[i], []runtime.Value{requestWithParams, response})
-			if err != nil {
-				return nil, err
-			}
-		}
-		return response, nil
+		return e.runWebAfterMiddlewares(middlewares, requestWithParams, response)
 	}
 	entries := map[string]runtime.DictEntry{}
 	putDict(entries, "status", runtime.NewInt64(404))
@@ -11470,6 +11541,9 @@ func (e *Evaluator) webHandle(call *ast.CallExpression, args []runtime.Value) (r
 }
 
 func normalizeWebResponse(response runtime.Value) runtime.Value {
+	if instance, ok := response.(*runtime.Instance); ok && strings.EqualFold(instance.Class.Name, "Response") {
+		return responseInstanceDict(instance)
+	}
 	if _, ok := response.(runtime.Dict); ok {
 		return response
 	}
@@ -16860,6 +16934,46 @@ func (e *Evaluator) kafkaClose(call *ast.CallExpression, args []runtime.Value) (
 	return runtime.Null{}, nil
 }
 
+// serverErrorLog builds the *log.Logger assigned to http.Server.ErrorLog.
+// net/http logs connection-level failures (TLS handshakes, malformed
+// requests) there; these happen before any handler and cannot be turned into
+// catchable Geblang errors. Default is quiet (discarded). When opts carries an
+// onError callable, each message is forwarded to it instead.
+func (e *Evaluator) serverErrorLog(opts runtime.Value, label string) (*log.Logger, error) {
+	dict, ok := opts.(runtime.Dict)
+	if !ok {
+		return log.New(io.Discard, "", 0), nil
+	}
+	v, ok := dictField(dict, "onError")
+	if !ok {
+		return log.New(io.Discard, "", 0), nil
+	}
+	fn, ok := v.(runtime.Function)
+	if !ok {
+		return nil, fmt.Errorf("%s opts.onError must be a function", label)
+	}
+	return log.New(&serverErrorWriter{e: e, fn: fn}, "", 0), nil
+}
+
+// serverErrorWriter forwards each net/http ErrorLog line to a Geblang
+// callback. Callback failures are swallowed: this is a logging sink, not a
+// request path, and a panic here would otherwise take down the server.
+type serverErrorWriter struct {
+	e  *Evaluator
+	fn runtime.Function
+}
+
+func (w *serverErrorWriter) Write(p []byte) (int, error) {
+	msg := strings.TrimRight(string(p), "\n")
+	defer func() { _ = recover() }()
+	ev, fn := w.e.callbackEvaluator(w.fn)
+	if ev != w.e {
+		defer ev.Cleanup()
+	}
+	_, _ = ev.applyFunction(fn, []runtime.Value{runtime.String{Value: msg}})
+	return len(p), nil
+}
+
 func (e *Evaluator) httpServe(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 2 && len(args) != 3 {
 		return nil, fmt.Errorf("%s expects address, handler, and optional opts", call.Callee.String())
@@ -16888,9 +17002,14 @@ func (e *Evaluator) httpServe(call *ast.CallExpression, args []runtime.Value) (r
 	if err != nil {
 		return nil, err
 	}
+	errLog, err := e.serverErrorLog(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	server := &http.Server{
-		Addr:    addr.Value,
-		Handler: e.httpHandler(handler, pool, tp),
+		Addr:     addr.Value,
+		Handler:  e.httpHandler(handler, pool, tp),
+		ErrorLog: errLog,
 	}
 	if tlsCfg != nil {
 		server.TLSConfig = tlsCfg
@@ -16933,11 +17052,15 @@ func (e *Evaluator) httpListen(call *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
+	errLog, err := e.serverErrorLog(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	listener, err := net.Listen("tcp", addr.Value)
 	if err != nil {
 		return nil, err
 	}
-	server := &http.Server{Handler: e.httpHandler(handler, pool, tp)}
+	server := &http.Server{Handler: e.httpHandler(handler, pool, tp), ErrorLog: errLog}
 	handle := &httpServerHandle{server: server, listener: listener, done: make(chan error, 1), pool: pool, certPEM: certPEM}
 	e.httpServerMu.Lock()
 	e.nextHTTPServerID++

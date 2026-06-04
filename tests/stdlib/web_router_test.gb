@@ -1,0 +1,60 @@
+/**
+ * @title Web router rich Request/Response test
+ * @summary web.router handlers and middleware can opt into the rich Request
+ * and Response objects by declaring those parameter types; plain func(dict)
+ * handlers keep working and a returned Response is serialized, not mangled.
+ */
+import test;
+import web.router as router;
+import http;
+import json;
+
+class WebRouterObjectTest extends test.Test {
+    func buildApp(): dict<string, any> {
+        let app = router.newRouter();
+        router.before(app, func(Request req): ?dict<string, any> {
+            if (req.path == "/blocked") { return {"status": 403, "body": "no"}; }
+            return null;
+        });
+        router.get(app, "/hi", func(Request req): Response {
+            return http.jsonResponse({"path": req.path, "get": req.isMethod("GET")});
+        });
+        router.get(app, "/dict", func(dict<string, any> req): dict<string, any> {
+            return {"status": 200, "body": "dictok"};
+        });
+        router.after(app, func(Request req, Response resp): Response {
+            return resp.withHeader("X-Path", req.path);
+        });
+        return app;
+    }
+
+    @test
+    func requestHandlerReturnsResponse(): void {
+        let app = this.buildApp();
+        let r = router.handle(app, {"method": "GET", "path": "/hi", "headers": {}, "body": ""});
+        this.assertEquals(200, r["status"]);
+        this.assertEquals("/hi", (r["headers"] as dict<string, any>)["X-Path"] as string);
+        let body = json.parse(r["body"] as string);
+        this.assertEquals("/hi", body["path"] as string);
+        this.assertTrue(body["get"] as bool);
+    }
+
+    @test
+    func dictHandlerStillWorks(): void {
+        let app = this.buildApp();
+        let r = router.handle(app, {"method": "GET", "path": "/dict", "headers": {}, "body": ""});
+        this.assertEquals(200, r["status"]);
+        this.assertEquals("dictok", r["body"] as string);
+        /* after-middleware (typed Request/Response) still runs over a dict
+         * handler's response. */
+        this.assertEquals("/dict", (r["headers"] as dict<string, any>)["X-Path"] as string);
+    }
+
+    @test
+    func beforeMiddlewareShortCircuits(): void {
+        let app = this.buildApp();
+        let r = router.handle(app, {"method": "GET", "path": "/blocked", "headers": {}, "body": ""});
+        this.assertEquals(403, r["status"]);
+        this.assertEquals("no", r["body"] as string);
+    }
+}

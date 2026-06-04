@@ -550,6 +550,27 @@ not itself a trusted proxy), `scheme()`/`isSecure()` from
 `X-Forwarded-Proto`, and `host()` from `X-Forwarded-Host`. From an
 untrusted peer the socket values win, so a client cannot spoof its IP.
 
+#### Server error logging
+
+Connection-level failures (TLS handshake errors, malformed requests) happen
+before any handler runs, so they cannot be caught as Geblang errors. By
+default they are silent rather than being written to the process's standard
+error. Pass an `onError` callback in the server options to observe them (for
+logging, metrics, or alerting):
+
+```gb
+http.listen(":8080", handler, {
+    "onError": func(string msg): void {
+        io.println("server error: " + msg);
+    }
+});
+```
+
+The callback receives one message string per failure and runs on the
+connection's goroutine; its return value is ignored. Errors from genuine
+listener startup (bad address, missing certificate) are still returned from
+`http.serve` / `http.listen` and surface as ordinary catchable Geblang errors.
+
 ## Net
 
 Import `net` for DNS, TCP, and UDP:
