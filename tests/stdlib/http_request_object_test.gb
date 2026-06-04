@@ -1,0 +1,78 @@
+/**
+ * @title HTTP server Request object test
+ * @summary A func(Request) handler receives a rich Request with typed
+ * query getters, cookie, isMethod/isJson, and proxy-aware
+ * scheme/host/clientIp gated by a trustedProxies list. Plus http.redirect.
+ *
+ * Tagged "integration" so CI can skip on hosts without local
+ * port-binding permission.
+ */
+import test;
+import http;
+
+class HttpRequestObjectTest extends test.Test {
+    @tag("integration")
+    @test
+    func richRequestBehindTrustedProxy(): void {
+        let server = http.listen("127.0.0.1:0", func(Request req): Response {
+            return http.jsonResponse({
+                "isPost": req.isMethod("POST"),
+                "scheme": req.scheme(),
+                "secure": req.isSecure(),
+                "host": req.host(),
+                "clientIp": req.clientIp(),
+                "page": req.queryInt("page"),
+                "debug": req.queryBool("debug"),
+                "tagCount": req.queryAll("tag").length(),
+                "cookie": req.cookie("sid")
+            });
+        }, {"trustedProxies": ["private"]});
+        let url = "http://" + http.serverAddr(server) + "/s?page=7&debug=true&tag=a&tag=b";
+        let body = http.request(url)
+            .withHeader("X-Forwarded-For", "198.51.100.9")
+            .withHeader("X-Forwarded-Proto", "https")
+            .withHeader("X-Forwarded-Host", "api.example.com")
+            .withHeader("Cookie", "sid=abc123")
+            .send().json();
+        http.close(server);
+
+        this.assertFalse(body["isPost"] as bool);
+        this.assertEquals("https", body["scheme"] as string);
+        this.assertTrue(body["secure"] as bool);
+        this.assertEquals("api.example.com", body["host"] as string);
+        this.assertEquals("198.51.100.9", body["clientIp"] as string);
+        this.assertEquals(7, body["page"]);
+        this.assertTrue(body["debug"] as bool);
+        this.assertEquals(2, body["tagCount"]);
+        this.assertEquals("abc123", body["cookie"] as string);
+    }
+
+    @tag("integration")
+    @test
+    func forwardedHeadersIgnoredWhenUntrusted(): void {
+        let server = http.listen("127.0.0.1:0", func(Request req): Response {
+            return http.jsonResponse({"clientIp": req.clientIp(), "scheme": req.scheme()});
+        }, {});
+        let url = "http://" + http.serverAddr(server) + "/";
+        let body = http.request(url)
+            .withHeader("X-Forwarded-For", "198.51.100.9")
+            .withHeader("X-Forwarded-Proto", "https")
+            .send().json();
+        http.close(server);
+
+        /* Peer is loopback but not trusted, so forwarded headers are ignored. */
+        this.assertEquals("127.0.0.1", body["clientIp"] as string);
+        this.assertEquals("http", body["scheme"] as string);
+    }
+
+    @test
+    func redirectBuilder(): void {
+        let r = http.redirect("/login", 301);
+        this.assertEquals(301, r.status());
+        this.assertEquals("/login", r.header("Location"));
+        this.assertTrue(r.isRedirect());
+
+        let d = http.redirect("/home");
+        this.assertEquals(302, d.status());
+    }
+}

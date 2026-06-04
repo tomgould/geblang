@@ -34,7 +34,7 @@ func TestHTTPHandlerUpgradesWebSocket(t *testing.T) {
 		return gruntime.Dict{Entries: entries}, nil
 	}}
 
-	server := newLocalHTTPTestServer(t, e.httpHandler(handler, nil))
+	server := newLocalHTTPTestServer(t, e.httpHandler(handler, nil, nil))
 	defer server.Close()
 
 	conn, _, err := gorillawebsocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
@@ -79,7 +79,7 @@ func TestWebSocketWritesAreSerialisedAcrossGoroutines(t *testing.T) {
 		return gruntime.Dict{Entries: entries}, nil
 	}}
 
-	server := newLocalHTTPTestServer(t, e.httpHandler(handler, nil))
+	server := newLocalHTTPTestServer(t, e.httpHandler(handler, nil, nil))
 	defer server.Close()
 
 	conn, _, err := gorillawebsocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)

@@ -405,6 +405,82 @@ time a slow handler or a memory ceiling matters, and don't reach for a
 custom reactor until you have measurements proving the Go scheduler is
 the bottleneck (it usually isn't).
 
+### Server request and response objects
+
+A handler receives a plain request dict by default. To opt into a rich
+`Request` object, declare the handler parameter as `Request`; everything
+else stays the same. The handler may return a `Response` (from
+`http.response`, `http.jsonResponse`, or `http.redirect`) or a plain dict.
+
+```gb
+import http;
+
+let id = http.listen(":8080", func(Request req): Response {
+    if (!req.isMethod("GET")) {
+        return http.response("method not allowed", 405);
+    }
+    if (req.path == "/old") {
+        return http.redirect("/new");          # 302 by default
+    }
+    let page = req.queryInt("page");           # ?int, null when absent
+    return http.jsonResponse({
+        "path": req.path,
+        "page": page,
+        "user": req.cookie("user"),            # ?string
+        "secure": req.isSecure()
+    });
+});
+```
+
+`Request` accessors:
+
+```gb
+req.method          # field: "GET", "POST", ...
+req.path            # field: the URL path
+req.isMethod("POST")
+req.scheme()        # "http" or "https"
+req.isSecure()      # scheme is https
+req.host()          # request host
+req.clientIp()      # client IP (no port)
+req.header("Accept")    # ?string, first value
+req.isJson()        # Content-Type is JSON
+req.text()          # body as a string
+req.json()          # body parsed as JSON
+req.cookie("sid")   # ?string
+req.query("q")      # ?string (first value)
+req.queryInt("page")    # ?int
+req.queryBool("debug")  # ?bool
+req.queryAll("tag")     # list<string> (all values)
+```
+
+Server Response builders all return a `Response` (the same object the
+client returns, with the `status()` / `ok()` / status-predicate methods):
+`http.response(body, status=200)`, `http.jsonResponse(payload, status=200)`,
+and `http.redirect(url, status=302)`.
+
+#### Trusted proxies
+
+By default `scheme()`, `isSecure()`, `host()`, and `clientIp()` come from
+the connection itself, and `X-Forwarded-*` headers are ignored (they are
+trivially spoofable). When the server runs behind a reverse proxy or load
+balancer, list the proxy addresses in `trustedProxies` so the forwarded
+headers are honored only for connections coming from those addresses:
+
+```gb
+http.listen(":8080", handler, {
+    "trustedProxies": ["10.0.0.0/8", "127.0.0.1"]
+});
+# common shorthand for any private / loopback peer:
+http.listen(":8080", handler, { "trustedProxies": ["private"] });
+```
+
+Entries are IPs or CIDRs; the keyword `"private"` expands to loopback,
+link-local, and RFC 1918 / ULA ranges. When the immediate peer is trusted,
+`clientIp()` is taken from `X-Forwarded-For` (the rightmost address that is
+not itself a trusted proxy), `scheme()`/`isSecure()` from
+`X-Forwarded-Proto`, and `host()` from `X-Forwarded-Host`. From an
+untrusted peer the socket values win, so a client cannot spoof its IP.
+
 ## Net
 
 Import `net` for DNS, TCP, and UDP:

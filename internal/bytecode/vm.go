@@ -8427,7 +8427,8 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value) runtime.Value {
 		// the parent's setGlobalVM, so flip bridgeActive monotonically.
 		vm.bridgeActive.Store(true)
 		return runtime.Function{
-			Name: callable.Name,
+			Name:       callable.Name,
+			Parameters: bridgedParameters(callable.Parameters),
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 				return vm.callCallableSlow(callable, args)
 			},
@@ -8435,7 +8436,8 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value) runtime.Value {
 	case runtime.BytecodeClosure:
 		vm.bridgeActive.Store(true)
 		return runtime.Function{
-			Name: callable.Name,
+			Name:       callable.Name,
+			Parameters: bridgedParameters(vm.closureParameters(callable)),
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 				return vm.callCallableSlow(callable, args)
 			},
@@ -8455,6 +8457,34 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value) runtime.Value {
 	default:
 		return value
 	}
+}
+
+// closureParameters resolves a bridged closure's parameter metadata from
+// the function table so a callback's declared parameter types survive the
+// stateful-native boundary (e.g. an http.serve handler typed func(Request)).
+func (vm *VM) closureParameters(closure runtime.BytecodeClosure) []runtime.ParameterMetadata {
+	idx := int(closure.FunctionIndex)
+	if idx < 0 || idx >= len(vm.chunk.Functions) {
+		return nil
+	}
+	return parameterMetadataFromFunctionInfo(vm.chunk.Functions[idx], 0)
+}
+
+// bridgedParameters reconstructs ast.Parameter entries (with a type name)
+// from runtime parameter metadata so introspection that reads a Function's
+// declared parameter types keeps working across the bridge.
+func bridgedParameters(params []runtime.ParameterMetadata) []ast.Parameter {
+	if len(params) == 0 {
+		return nil
+	}
+	out := make([]ast.Parameter, len(params))
+	for i, p := range params {
+		out[i] = ast.Parameter{Name: &ast.Identifier{Value: p.Name}, Variadic: p.Variadic}
+		if p.Type != "" {
+			out[i].Type = &ast.TypeRef{Name: p.Type}
+		}
+	}
+	return out
 }
 
 func isStatefulNativeModule(module string) bool {

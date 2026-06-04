@@ -5293,6 +5293,73 @@ io.println(r.error() != null);
 `, "true\ntrue\n0\nfalse\ntrue\n")
 }
 
+// TestParityHTTPServerRequestObject exercises the rich server Request
+// object (opt-in via a func(Request) handler) including proxy-aware
+// scheme/host/clientIp when behind a trusted proxy. This also guards the
+// callback bridge that carries parameter types across the stateful-native
+// boundary so the object handler works on both backends.
+func TestParityHTTPServerRequestObject(t *testing.T) {
+	runParityStateful(t, `
+import http;
+import io;
+let server = http.listen("127.0.0.1:0", func(Request req): Response {
+    return http.jsonResponse({
+        "isPost": req.isMethod("POST"),
+        "scheme": req.scheme(),
+        "secure": req.isSecure(),
+        "host": req.host(),
+        "clientIp": req.clientIp(),
+        "isJson": req.isJson(),
+        "page": req.queryInt("page"),
+        "debug": req.queryBool("debug"),
+        "tag0": req.queryAll("tag")[0],
+        "tags": req.queryAll("tag").length(),
+        "cookie": req.cookie("sid")
+    });
+}, {"trustedProxies": ["127.0.0.1"]});
+let url = "http://" + http.serverAddr(server) + "/s?page=3&debug=yes&tag=a&tag=b";
+let body = http.request(url)
+    .withHeader("X-Forwarded-For", "203.0.113.7")
+    .withHeader("X-Forwarded-Proto", "https")
+    .withHeader("X-Forwarded-Host", "example.com")
+    .withHeader("Cookie", "sid=xyz")
+    .send().json();
+io.println(body["clientIp"]);
+io.println(body["scheme"]);
+io.println(body["secure"]);
+io.println(body["host"]);
+io.println(body["page"]);
+io.println(body["debug"]);
+io.println(body["tag0"]);
+io.println(body["tags"]);
+io.println(body["cookie"]);
+io.println(body["isPost"]);
+http.close(server);
+`, "203.0.113.7\nhttps\ntrue\nexample.com\n3\ntrue\na\n2\nxyz\nfalse\n")
+}
+
+// TestParityHTTPServerUntrustedProxy verifies forwarded headers are ignored
+// when the peer is not a trusted proxy (anti-spoofing), and the redirect
+// builder, on both backends.
+func TestParityHTTPServerUntrustedProxy(t *testing.T) {
+	runParityStateful(t, `
+import http;
+import io;
+let server = http.listen("127.0.0.1:0", func(Request req): Response {
+    return http.jsonResponse({"clientIp": req.clientIp(), "scheme": req.scheme()});
+}, {});
+let url = "http://" + http.serverAddr(server) + "/";
+let body = http.request(url).withHeader("X-Forwarded-For", "203.0.113.7").withHeader("X-Forwarded-Proto", "https").send().json();
+io.println(body["clientIp"]);
+io.println(body["scheme"]);
+http.close(server);
+let rd = http.redirect("/login", 301);
+io.println(rd.status());
+io.println(rd.header("Location"));
+io.println(rd.isRedirect());
+`, "127.0.0.1\nhttp\n301\n/login\ntrue\n")
+}
+
 func TestParityHTTPClientNewOptions(t *testing.T) {
 	runParityStateful(t, `
 import http;

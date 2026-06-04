@@ -42,6 +42,22 @@
   list is uniform and one failure does not abort the batch. `resp["error"]`
   still returns the message.
 
+### HTTP server
+
+- Handlers can opt into a rich `Request` object by declaring the parameter as
+  `Request` (the plain request-dict handler stays the default). The object
+  adds `scheme()`, `isSecure()`, `host()`, `clientIp()`, `isMethod(name)`,
+  `isJson()`, `text()`, `cookie(name)`, and typed query getters `query`,
+  `queryInt`, `queryBool`, `queryAll`. Object handlers now also work under the
+  bytecode VM, not just the evaluator.
+- New `http.redirect(url, status=302)` builder returns a `Response` with the
+  `Location` header set; it shares the status predicates with all responses.
+- New `trustedProxies` server option (a list of IPs/CIDRs, or the keyword
+  `"private"`). When the immediate peer is trusted, `clientIp()` is taken
+  from `X-Forwarded-For`, `scheme()`/`isSecure()` from `X-Forwarded-Proto`,
+  and `host()` from `X-Forwarded-Host`. Otherwise the forwarded headers are
+  ignored so a client cannot spoof its address.
+
 ### Other
 
 - `typeof(x)` can now be compared to a type name string: `typeof(x) ==

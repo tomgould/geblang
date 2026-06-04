@@ -3309,6 +3309,18 @@ func httpObjectClasses(env *runtime.Environment) []*runtime.Class {
 			"bodybytes": []runtime.Function{{Name: "bodyBytes", Native: nativeRequestBodyBytes}},
 			"todict":    []runtime.Function{{Name: "toDict", Native: nativeRequestToDict}},
 			"inspect":   []runtime.Function{{Name: "inspect", Native: nativeRequestInspect}},
+			"scheme":    []runtime.Function{{Name: "scheme", Native: nativeRequestScheme}},
+			"issecure":  []runtime.Function{{Name: "isSecure", Native: nativeRequestIsSecure}},
+			"host":      []runtime.Function{{Name: "host", Native: nativeRequestHost}},
+			"clientip":  []runtime.Function{{Name: "clientIp", Native: nativeRequestClientIP}},
+			"text":      []runtime.Function{{Name: "text", Native: nativeRequestText}},
+			"ismethod":  []runtime.Function{{Name: "isMethod", Native: nativeRequestIsMethod}},
+			"isjson":    []runtime.Function{{Name: "isJson", Native: nativeRequestIsJSON}},
+			"cookie":    []runtime.Function{{Name: "cookie", Native: nativeRequestCookie}},
+			"query":     []runtime.Function{{Name: "query", Native: nativeRequestQuery}},
+			"queryint":  []runtime.Function{{Name: "queryInt", Native: nativeRequestQueryInt}},
+			"querybool": []runtime.Function{{Name: "queryBool", Native: nativeRequestQueryBool}},
+			"queryall":  []runtime.Function{{Name: "queryAll", Native: nativeRequestQueryAll}},
 		},
 		Constructors: []runtime.Function{{Name: "Request", Native: nativeRequestConstructor}},
 		Env:          env,
@@ -8613,6 +8625,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"Cookie":             httpCookieObject,
 			"response":           e.httpResponseObject,
 			"jsonResponse":       e.httpJSONResponseObject,
+			"redirect":           e.httpRedirectObject,
 			"newClient":          e.httpNewClient,
 			"newCookieJar":       e.httpNewCookieJar,
 			"build":              e.httpBuild,
@@ -16870,9 +16883,13 @@ func (e *Evaluator) httpServe(call *ast.CallExpression, args []runtime.Value) (r
 	if err != nil {
 		return nil, err
 	}
+	tp, err := parseTrustedProxies(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	server := &http.Server{
 		Addr:    addr.Value,
-		Handler: e.httpHandler(handler, pool),
+		Handler: e.httpHandler(handler, pool, tp),
 	}
 	if tlsCfg != nil {
 		server.TLSConfig = tlsCfg
@@ -16911,11 +16928,15 @@ func (e *Evaluator) httpListen(call *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
+	tp, err := parseTrustedProxies(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	listener, err := net.Listen("tcp", addr.Value)
 	if err != nil {
 		return nil, err
 	}
-	server := &http.Server{Handler: e.httpHandler(handler, pool)}
+	server := &http.Server{Handler: e.httpHandler(handler, pool, tp)}
 	handle := &httpServerHandle{server: server, listener: listener, done: make(chan error, 1), pool: pool, certPEM: certPEM}
 	e.httpServerMu.Lock()
 	e.nextHTTPServerID++
@@ -17157,7 +17178,7 @@ func waitHTTPServerDone(handle *httpServerHandle) error {
 	return err
 }
 
-func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool) http.Handler {
+func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool, tp *trustedProxies) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if pool != nil && !pool.IsUnbounded() {
 			if err := pool.Acquire(r.Context()); err != nil {
@@ -17182,7 +17203,7 @@ func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		response, err := e.callHTTPHandler(handler, r, body)
+		response, err := e.callHTTPHandler(handler, r, body, tp)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -17191,12 +17212,12 @@ func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool)
 	})
 }
 
-func (e *Evaluator) callHTTPHandler(handler runtime.Function, request *http.Request, body []byte) (runtime.Value, error) {
+func (e *Evaluator) callHTTPHandler(handler runtime.Function, request *http.Request, body []byte, tp *trustedProxies) (runtime.Value, error) {
 	callbackEval, callbackHandler := e.callbackEvaluator(handler)
 	if callbackEval != e {
 		defer callbackEval.Cleanup()
 	}
-	requestArg, err := callbackEval.httpRequestArgument(callbackHandler, request, body)
+	requestArg, err := callbackEval.httpRequestArgument(callbackHandler, request, body, tp)
 	if err != nil {
 		return nil, err
 	}
@@ -17235,7 +17256,329 @@ func httpRequestEntries(request *http.Request, body []byte) map[string]runtime.D
 	return entries
 }
 
-func (e *Evaluator) httpRequestArgument(handler runtime.Function, request *http.Request, body []byte) (runtime.Value, error) {
+// trustedProxies matches peer IPs allowed to set X-Forwarded-* headers.
+type trustedProxies struct {
+	nets []*net.IPNet
+}
+
+func (tp *trustedProxies) trusts(ip net.IP) bool {
+	if tp == nil || ip == nil {
+		return false
+	}
+	for _, n := range tp.nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// privateProxyCIDRs backs the "private" trustedProxies keyword: loopback,
+// link-local, and RFC 1918 / ULA ranges.
+var privateProxyCIDRs = []string{
+	"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12",
+	"192.168.0.0/16", "169.254.0.0/16", "fc00::/7", "fe80::/10",
+}
+
+func parseTrustedProxies(opts runtime.Value, label string) (*trustedProxies, error) {
+	dict, ok := opts.(runtime.Dict)
+	if !ok {
+		return nil, nil
+	}
+	v, ok := dictField(dict, "trustedProxies")
+	if !ok {
+		return nil, nil
+	}
+	list, ok := v.(*runtime.List)
+	if !ok {
+		return nil, fmt.Errorf("%s opts.trustedProxies must be a list of strings", label)
+	}
+	tp := &trustedProxies{}
+	for _, el := range list.Elements {
+		s, ok := el.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s opts.trustedProxies entries must be strings", label)
+		}
+		entry := strings.TrimSpace(s.Value)
+		if strings.EqualFold(entry, "private") {
+			for _, c := range privateProxyCIDRs {
+				if _, n, err := net.ParseCIDR(c); err == nil {
+					tp.nets = append(tp.nets, n)
+				}
+			}
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			_, n, err := net.ParseCIDR(entry)
+			if err != nil {
+				return nil, fmt.Errorf("%s invalid trustedProxies CIDR %q", label, entry)
+			}
+			tp.nets = append(tp.nets, n)
+			continue
+		}
+		ip := net.ParseIP(entry)
+		if ip == nil {
+			return nil, fmt.Errorf("%s invalid trustedProxies IP %q", label, entry)
+		}
+		bits := 32
+		if ip.To4() == nil {
+			bits = 128
+		}
+		tp.nets = append(tp.nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+	}
+	return tp, nil
+}
+
+func ipFromRemoteAddr(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
+}
+
+func firstForwardedValue(v string) string {
+	if i := strings.IndexByte(v, ','); i >= 0 {
+		return strings.TrimSpace(v[:i])
+	}
+	return strings.TrimSpace(v)
+}
+
+// resolveRequestMeta returns scheme, host, and client IP, honouring
+// X-Forwarded-{Proto,Host,For} only when the immediate peer is a trusted
+// proxy. Otherwise the socket values are authoritative (anti-spoofing).
+func resolveRequestMeta(request *http.Request, tp *trustedProxies) (scheme, host, clientIP string) {
+	scheme = "http"
+	if request.TLS != nil {
+		scheme = "https"
+	}
+	host = request.Host
+	clientIP = ipFromRemoteAddr(request.RemoteAddr)
+	if !tp.trusts(net.ParseIP(clientIP)) {
+		return scheme, host, clientIP
+	}
+	if xfp := firstForwardedValue(request.Header.Get("X-Forwarded-Proto")); xfp != "" {
+		scheme = strings.ToLower(xfp)
+	}
+	if xfh := firstForwardedValue(request.Header.Get("X-Forwarded-Host")); xfh != "" {
+		host = xfh
+	}
+	if xff := request.Header.Get("X-Forwarded-For"); xff != "" {
+		clientIP = clientIPFromForwarded(xff, clientIP, tp)
+	}
+	return scheme, host, clientIP
+}
+
+// clientIPFromForwarded walks X-Forwarded-For from the right (closest proxy
+// first) and returns the first address that is not itself a trusted proxy.
+func clientIPFromForwarded(xff, fallback string, tp *trustedProxies) string {
+	parts := strings.Split(xff, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		candidate := strings.TrimSpace(parts[i])
+		ip := net.ParseIP(candidate)
+		if ip == nil {
+			continue
+		}
+		if !tp.trusts(ip) {
+			return candidate
+		}
+	}
+	if first := strings.TrimSpace(parts[0]); first != "" {
+		return first
+	}
+	return fallback
+}
+
+func requestStringField(this *runtime.Instance, name string) string {
+	if v, ok := this.Fields[name].(runtime.String); ok {
+		return v.Value
+	}
+	return ""
+}
+
+func requestHeaderValue(this *runtime.Instance, name string) string {
+	if hv, ok := httpHeaderValue(this.Fields["headers"]); ok {
+		if vals := hv.Values[http.CanonicalHeaderKey(name)]; len(vals) > 0 {
+			return vals[0]
+		}
+		return ""
+	}
+	if dict, ok := this.Fields["headers"].(runtime.Dict); ok {
+		canonical := http.CanonicalHeaderKey(name)
+		for _, entry := range dict.Entries {
+			if k, ok := entry.Key.(runtime.String); ok && http.CanonicalHeaderKey(k.Value) == canonical {
+				if val, ok := entry.Value.(runtime.String); ok {
+					return val.Value
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func requestQueryValues(this *runtime.Instance) neturl.Values {
+	values, _ := neturl.ParseQuery(requestStringField(this, "query"))
+	return values
+}
+
+func nativeRequestScheme(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Request.scheme expects no arguments")
+	}
+	scheme := requestStringField(this, "scheme")
+	if scheme == "" {
+		scheme = "http"
+	}
+	return runtime.String{Value: scheme}, nil
+}
+
+func nativeRequestIsSecure(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Request.isSecure expects no arguments")
+	}
+	return runtime.Bool{Value: requestStringField(this, "scheme") == "https"}, nil
+}
+
+func nativeRequestHost(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Request.host expects no arguments")
+	}
+	return runtime.String{Value: requestStringField(this, "host")}, nil
+}
+
+func nativeRequestClientIP(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Request.clientIp expects no arguments")
+	}
+	if ip := requestStringField(this, "clientIp"); ip != "" {
+		return runtime.String{Value: ip}, nil
+	}
+	return runtime.String{Value: ipFromRemoteAddr(requestStringField(this, "remoteAddr"))}, nil
+}
+
+func nativeRequestText(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Request.text expects no arguments")
+	}
+	body, err := requestBodyText(this)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.String{Value: body}, nil
+}
+
+func nativeRequestIsMethod(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("Request.isMethod expects one argument")
+	}
+	name, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("Request.isMethod argument must be string")
+	}
+	return runtime.Bool{Value: strings.EqualFold(requestStringField(this, "method"), name.Value)}, nil
+}
+
+func nativeRequestIsJSON(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Request.isJson expects no arguments")
+	}
+	ct := strings.ToLower(requestHeaderValue(this, "Content-Type"))
+	return runtime.Bool{Value: strings.Contains(ct, "json")}, nil
+}
+
+func nativeRequestCookie(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("Request.cookie expects one argument")
+	}
+	name, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("Request.cookie name must be string")
+	}
+	cookieHeader := requestHeaderValue(this, "Cookie")
+	if cookieHeader == "" {
+		return runtime.Null{}, nil
+	}
+	header := http.Header{}
+	header.Set("Cookie", cookieHeader)
+	dummy := &http.Request{Header: header}
+	c, err := dummy.Cookie(name.Value)
+	if err != nil {
+		return runtime.Null{}, nil
+	}
+	return runtime.String{Value: c.Value}, nil
+}
+
+func nativeRequestQuery(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("Request.query expects one argument")
+	}
+	name, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("Request.query name must be string")
+	}
+	values := requestQueryValues(this)
+	if !values.Has(name.Value) {
+		return runtime.Null{}, nil
+	}
+	return runtime.String{Value: values.Get(name.Value)}, nil
+}
+
+func nativeRequestQueryInt(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("Request.queryInt expects one argument")
+	}
+	name, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("Request.queryInt name must be string")
+	}
+	values := requestQueryValues(this)
+	if !values.Has(name.Value) {
+		return runtime.Null{}, nil
+	}
+	n, ok := new(big.Int).SetString(strings.TrimSpace(values.Get(name.Value)), 10)
+	if !ok {
+		return runtime.Null{}, nil
+	}
+	return runtime.Int{Value: n}, nil
+}
+
+func nativeRequestQueryBool(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("Request.queryBool expects one argument")
+	}
+	name, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("Request.queryBool name must be string")
+	}
+	values := requestQueryValues(this)
+	if !values.Has(name.Value) {
+		return runtime.Null{}, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(values.Get(name.Value))) {
+	case "1", "true", "yes", "on":
+		return runtime.Bool{Value: true}, nil
+	case "0", "false", "no", "off", "":
+		return runtime.Bool{Value: false}, nil
+	}
+	return runtime.Null{}, nil
+}
+
+func nativeRequestQueryAll(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("Request.queryAll expects one argument")
+	}
+	name, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("Request.queryAll name must be string")
+	}
+	values := requestQueryValues(this)[name.Value]
+	elements := make([]runtime.Value, len(values))
+	for i, v := range values {
+		elements[i] = runtime.String{Value: v}
+	}
+	return &runtime.List{Elements: elements}, nil
+}
+
+func (e *Evaluator) httpRequestArgument(handler runtime.Function, request *http.Request, body []byte, tp *trustedProxies) (runtime.Value, error) {
 	if !handlerWantsRequestObject(handler) {
 		return httpRequestValue(request, body), nil
 	}
@@ -17246,7 +17589,12 @@ func (e *Evaluator) httpRequestArgument(handler runtime.Function, request *http.
 	if class == nil {
 		return nil, fmt.Errorf("Request class is not available")
 	}
-	return &runtime.Instance{Class: class, Fields: fieldsFromEntries(httpRequestEntries(request, body))}, nil
+	fields := fieldsFromEntries(httpRequestEntries(request, body))
+	scheme, host, clientIP := resolveRequestMeta(request, tp)
+	fields["scheme"] = runtime.String{Value: scheme}
+	fields["host"] = runtime.String{Value: host}
+	fields["clientIp"] = runtime.String{Value: clientIP}
+	return &runtime.Instance{Class: class, Fields: fields}, nil
 }
 
 func handlerWantsRequestObject(handler runtime.Function) bool {
@@ -17535,6 +17883,29 @@ func (e *Evaluator) httpJSONResponseObject(call *ast.CallExpression, args []runt
 	headers := map[string]runtime.DictEntry{}
 	putDict(headers, "Content-Type", runtime.String{Value: "application/json"})
 	return newResponseInstance(e.httpResponseClass, status, runtime.String{Value: body}, runtime.Dict{Entries: headers}), nil
+}
+
+func (e *Evaluator) httpRedirectObject(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 && len(args) != 2 {
+		return nil, fmt.Errorf("%s expects url and optional status", call.Callee.String())
+	}
+	url, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s url must be string", call.Callee.String())
+	}
+	status := runtime.Value(runtime.NewInt64(http.StatusFound))
+	if len(args) == 2 {
+		if _, ok := toInt64(args[1]); !ok {
+			return nil, fmt.Errorf("%s status must be int", call.Callee.String())
+		}
+		status = args[1]
+	}
+	if e.httpResponseClass == nil {
+		return nil, fmt.Errorf("Response class is not available")
+	}
+	headers := map[string]runtime.DictEntry{}
+	putDict(headers, "Location", runtime.String{Value: url.Value})
+	return newResponseInstance(e.httpResponseClass, status, runtime.String{}, runtime.Dict{Entries: headers}), nil
 }
 
 func (e *Evaluator) httpNewClient(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
