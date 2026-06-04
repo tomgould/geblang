@@ -192,10 +192,15 @@ for (i, n in nums.enumerate()) {
 }
 
 # Functional pipeline: flatMap, sliding windows, running scan.
-list<int> spread = [1, 2, 3].flatMap(func(int x): list<int> { return [x, x * 10]; });
-io.println("${spread}");                  # [1, 10, 2, 20, 3, 30]
-io.println("${nums.windowed(3)}");        # 3-wide sliding windows
-io.println("${[1, 2, 3, 4].scan(0, func(int acc, int x): int { return acc + x; })}");
+list<int> spread = [1, 2, 3].flatMap(func(int x): list<int> {
+    return [x, x * 10];
+});
+list<int> sums = [1, 2, 3, 4].scan(0, func(int acc, int x): int {
+    return acc + x;
+});
+io.println("${spread}");           # [1, 10, 2, 20, 3, 30]
+io.println("${nums.windowed(3)}"); # 3-wide sliding windows
+io.println("${sums}");             # [0, 1, 3, 6, 10]
 
 # String helpers.
 io.println("the quick brown fox".title());   # The Quick Brown Fox
@@ -243,11 +248,22 @@ io.println(7 in (1..10));                           # true (a range literal need
 # A class becomes dict-like by implementing the subscript magic methods.
 class Headers {
     dict<string, string> values;
-    func Headers() { this.values = {}; }
 
-    func __setIndex(string key, string value): void { this.values[key.lower()] = value; }
-    func __index(string key): ?string { return this.values.get(key.lower()); }
-    func __contains(string key): bool { return this.values.contains(key.lower()); }
+    func Headers() {
+        this.values = {};
+    }
+
+    func __setIndex(string key, string value): void {
+        this.values[key.lower()] = value;
+    }
+
+    func __index(string key): ?string {
+        return this.values.get(key.lower());
+    }
+
+    func __contains(string key): bool {
+        return this.values.contains(key.lower());
+    }
 }
 
 Headers h = Headers();
