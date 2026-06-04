@@ -57,6 +57,12 @@
   from `X-Forwarded-For`, `scheme()`/`isSecure()` from `X-Forwarded-Proto`,
   and `host()` from `X-Forwarded-Host`. Otherwise the forwarded headers are
   ignored so a client cannot spoof its address.
+- Mutual TLS: a server `tls` block accepts `clientCa` (PEM CA pool) and
+  `clientAuth` (`"require"` or `"optional"`) to verify client certificates.
+  A rich `Request` exposes the verified peer certificate via `clientCert()`
+  (`subject`, `issuer`, `serialNumber`, `notBefore`, `notAfter`, `dnsNames`,
+  or null). Outbound client certificates (`tls.clientCert`/`clientKey`) were
+  already supported.
 
 ### Other
 

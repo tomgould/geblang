@@ -241,6 +241,36 @@ io.println(client.get(url)["body"]);   # secure
 http.close(server);
 ```
 
+#### Mutual TLS (server-side client certificates)
+
+A server verifies client certificates by adding `clientCa` (the CA pool to
+check presented certs against) and `clientAuth` to its `tls` block:
+
+| Key          | Type           | Meaning |
+|--------------|----------------|---------|
+| `clientCa`   | string / bytes | PEM CA certificate(s) that signed acceptable client certs |
+| `clientAuth` | string         | `"require"` (default when `clientCa` is set) presents and verifies; `"optional"` verifies only if a cert is offered |
+
+A handler that received a rich `Request` reads the verified peer certificate
+with `req.clientCert()` - `null` when no client certificate was presented,
+otherwise a dict with `subject`, `issuer`, `serialNumber`, `notBefore`,
+`notAfter`, and `dnsNames`:
+
+```gb
+let server = http.listen("127.0.0.1:0", func(Request req): Response {
+    let cert = req.clientCert();
+    if (cert == null) {
+        return http.response("client certificate required", 401);
+    }
+    return http.jsonResponse({"caller": cert["subject"]});
+}, {"tls": {"selfSigned": true, "clientCa": caPem, "clientAuth": "require"}});
+```
+
+The client presents its certificate with the `clientCert` / `clientKey`
+options shown in the table above. Under `"require"` a request without a
+valid certificate fails the TLS handshake (surfaced as an `IOError` on the
+client).
+
 ### Cookie jars
 
 A cookie jar persists `Set-Cookie` responses and replays them on subsequent
@@ -442,6 +472,7 @@ req.scheme()        # "http" or "https"
 req.isSecure()      # scheme is https
 req.host()          # request host
 req.clientIp()      # client IP (no port)
+req.clientCert()    # ?dict: verified client cert (mTLS), or null
 req.header("Accept")    # ?string, first value
 req.isJson()        # Content-Type is JSON
 req.text()          # body as a string

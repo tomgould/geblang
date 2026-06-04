@@ -1,0 +1,75 @@
+/**
+ * @title HTTP mutual TLS test
+ * @summary Server-side client-certificate verification via
+ * tls.clientCa + tls.clientAuth, and Request.clientCert() exposing the
+ * verified peer certificate. Covers require + optional modes.
+ *
+ * Tagged "integration" so CI can skip on hosts without local
+ * port-binding permission.
+ */
+import test;
+import http;
+import crypt;
+
+class HttpMutualTlsTest extends test.Test {
+    func makeClientCert(): dict<string, any> {
+        let caKey = crypt.generateEcKey("P-256");
+        let caBundle = crypt.generateSelfSignedCert({"subject": {"commonName": "TestCA"}, "key": caKey});
+        let clientKey = crypt.generateEcKey("P-256");
+        let csr = crypt.generateCsr({"key": clientKey, "subject": {"commonName": "client-1"}});
+        let clientCert = crypt.signCertificate({"csr": csr, "caCert": caBundle["cert"], "caKey": caKey});
+        return {"ca": caBundle["cert"], "cert": clientCert, "key": clientKey};
+    }
+
+    @tag("integration")
+    @test
+    func requireVerifiesAndExposesCert(): void {
+        let id = this.makeClientCert();
+        let server = http.listen("127.0.0.1:0", func(Request req): Response {
+            let c = req.clientCert();
+            if (c == null) { return http.jsonResponse({"subject": "none"}); }
+            return http.jsonResponse({"subject": c["subject"], "issuer": c["issuer"]});
+        }, {"tls": {"selfSigned": true, "clientCa": id["ca"] as string, "clientAuth": "require"}});
+        let url = "https://" + http.serverAddr(server) + "/";
+        let resp = http.newClient({"tls": {"verify": false, "clientCert": id["cert"] as string, "clientKey": id["key"] as string}}).get(url);
+        http.close(server);
+
+        let body = resp.json() as dict<string, any>;
+        this.assertEquals("CN=client-1", body["subject"] as string);
+        this.assertEquals("CN=TestCA", body["issuer"] as string);
+    }
+
+    @tag("integration")
+    @test
+    func requireRejectsMissingCert(): void {
+        let id = this.makeClientCert();
+        let server = http.listen("127.0.0.1:0", func(Request req): Response {
+            return http.jsonResponse({"ok": true});
+        }, {"tls": {"selfSigned": true, "clientCa": id["ca"] as string, "clientAuth": "require"}});
+        let url = "https://" + http.serverAddr(server) + "/";
+
+        let rejected = false;
+        try {
+            http.newClient({"tls": {"verify": false}}).get(url);
+        } catch (Error e) {
+            rejected = true;
+        }
+        http.close(server);
+        this.assertTrue(rejected);
+    }
+
+    @tag("integration")
+    @test
+    func optionalAllowsMissingCert(): void {
+        let id = this.makeClientCert();
+        let server = http.listen("127.0.0.1:0", func(Request req): Response {
+            let c = req.clientCert();
+            return http.jsonResponse({"hasCert": c != null});
+        }, {"tls": {"selfSigned": true, "clientCa": id["ca"] as string, "clientAuth": "optional"}});
+        let url = "https://" + http.serverAddr(server) + "/";
+        let resp = http.newClient({"tls": {"verify": false}}).get(url);
+        http.close(server);
+
+        this.assertFalse(resp.json()["hasCert"] as bool);
+    }
+}

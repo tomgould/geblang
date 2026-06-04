@@ -94,26 +94,91 @@ func buildHTTPServerTLSConfig(optsVal runtime.Value, addr, label string) (*tls.C
 	if (hasCert || hasKey) && hasSelf {
 		return nil, nil, fmt.Errorf("%s tls: use either cert/key or selfSigned, not both", label)
 	}
-	if hasCert || hasKey {
+	var cfg *tls.Config
+	var certPEM []byte
+	switch {
+	case hasCert || hasKey:
 		cert, err := tlsKeyPairFromOpts(tlsOpts, "cert", "key", label)
 		if err != nil {
 			return nil, nil, err
 		}
-		certPEM, _ := pemBytesFromValue(mustField(tlsOpts, "cert"), label)
-		return &tls.Config{Certificates: []tls.Certificate{*cert}}, certPEM, nil
-	}
-	if hasSelf {
+		certPEM, _ = pemBytesFromValue(mustField(tlsOpts, "cert"), label)
+		cfg = &tls.Config{Certificates: []tls.Certificate{*cert}}
+	case hasSelf:
 		hosts, err := selfSignedHosts(selfVal, addr, label)
 		if err != nil {
 			return nil, nil, err
 		}
-		cert, certPEM, err := generateSelfSignedTLSCert(hosts)
+		cert, pem, err := generateSelfSignedTLSCert(hosts)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s tls.selfSigned: %v", label, err)
 		}
-		return &tls.Config{Certificates: []tls.Certificate{cert}}, certPEM, nil
+		cfg, certPEM = &tls.Config{Certificates: []tls.Certificate{cert}}, pem
+	default:
+		return nil, nil, fmt.Errorf("%s tls: provide cert/key or selfSigned: true", label)
 	}
-	return nil, nil, fmt.Errorf("%s tls: provide cert/key or selfSigned: true", label)
+	if err := applyServerClientAuth(cfg, tlsOpts, label); err != nil {
+		return nil, nil, err
+	}
+	return cfg, certPEM, nil
+}
+
+// applyServerClientAuth wires mutual-TLS client-certificate verification
+// from the tls block: clientCa is the CA pool presented certs are checked
+// against; clientAuth selects "require" (present-and-verify) or "optional"
+// (verify only if offered). Absent clientCa leaves client auth off.
+func applyServerClientAuth(cfg *tls.Config, tlsOpts runtime.Dict, label string) error {
+	caVal, hasCa := dictField(tlsOpts, "clientCa")
+	modeVal, hasMode := dictField(tlsOpts, "clientAuth")
+	if !hasCa && !hasMode {
+		return nil
+	}
+	if !hasCa {
+		return fmt.Errorf("%s tls.clientAuth requires tls.clientCa", label)
+	}
+	caPEM, err := pemBytesFromValue(caVal, label+" tls.clientCa")
+	if err != nil {
+		return err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return fmt.Errorf("%s tls.clientCa: no valid certificate found", label)
+	}
+	cfg.ClientCAs = pool
+	mode := "require"
+	if hasMode {
+		s, ok := modeVal.(runtime.String)
+		if !ok {
+			return fmt.Errorf("%s tls.clientAuth must be a string", label)
+		}
+		mode = s.Value
+	}
+	switch mode {
+	case "require":
+		cfg.ClientAuth = tls.RequireAndVerifyClientCert
+	case "optional":
+		cfg.ClientAuth = tls.VerifyClientCertIfGiven
+	default:
+		return fmt.Errorf("%s tls.clientAuth must be \"require\" or \"optional\"", label)
+	}
+	return nil
+}
+
+// clientCertDict renders a verified peer certificate as a Geblang dict for
+// Request.clientCert(). Time fields are RFC 3339 UTC strings.
+func clientCertDict(cert *x509.Certificate) runtime.Dict {
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "subject", runtime.String{Value: cert.Subject.String()})
+	putDict(entries, "issuer", runtime.String{Value: cert.Issuer.String()})
+	putDict(entries, "serialNumber", runtime.String{Value: cert.SerialNumber.String()})
+	putDict(entries, "notBefore", runtime.String{Value: cert.NotBefore.UTC().Format(time.RFC3339)})
+	putDict(entries, "notAfter", runtime.String{Value: cert.NotAfter.UTC().Format(time.RFC3339)})
+	dns := make([]runtime.Value, len(cert.DNSNames))
+	for i, n := range cert.DNSNames {
+		dns[i] = runtime.String{Value: n}
+	}
+	putDict(entries, "dnsNames", &runtime.List{Elements: dns})
+	return runtime.Dict{Entries: entries}
 }
 
 func mustField(opts runtime.Dict, key string) runtime.Value {

@@ -3303,24 +3303,25 @@ func httpObjectClasses(env *runtime.Environment) []*runtime.Class {
 			{Name: "headers"},
 		},
 		Methods: map[string][]runtime.Function{
-			"header":    []runtime.Function{{Name: "header", Native: nativeRequestHeader}},
-			"json":      []runtime.Function{{Name: "json", Native: nativeRequestJSON}},
-			"bodytext":  []runtime.Function{{Name: "bodyText", Native: nativeRequestBodyText}},
-			"bodybytes": []runtime.Function{{Name: "bodyBytes", Native: nativeRequestBodyBytes}},
-			"todict":    []runtime.Function{{Name: "toDict", Native: nativeRequestToDict}},
-			"inspect":   []runtime.Function{{Name: "inspect", Native: nativeRequestInspect}},
-			"scheme":    []runtime.Function{{Name: "scheme", Native: nativeRequestScheme}},
-			"issecure":  []runtime.Function{{Name: "isSecure", Native: nativeRequestIsSecure}},
-			"host":      []runtime.Function{{Name: "host", Native: nativeRequestHost}},
-			"clientip":  []runtime.Function{{Name: "clientIp", Native: nativeRequestClientIP}},
-			"text":      []runtime.Function{{Name: "text", Native: nativeRequestText}},
-			"ismethod":  []runtime.Function{{Name: "isMethod", Native: nativeRequestIsMethod}},
-			"isjson":    []runtime.Function{{Name: "isJson", Native: nativeRequestIsJSON}},
-			"cookie":    []runtime.Function{{Name: "cookie", Native: nativeRequestCookie}},
-			"query":     []runtime.Function{{Name: "query", Native: nativeRequestQuery}},
-			"queryint":  []runtime.Function{{Name: "queryInt", Native: nativeRequestQueryInt}},
-			"querybool": []runtime.Function{{Name: "queryBool", Native: nativeRequestQueryBool}},
-			"queryall":  []runtime.Function{{Name: "queryAll", Native: nativeRequestQueryAll}},
+			"header":     []runtime.Function{{Name: "header", Native: nativeRequestHeader}},
+			"json":       []runtime.Function{{Name: "json", Native: nativeRequestJSON}},
+			"bodytext":   []runtime.Function{{Name: "bodyText", Native: nativeRequestBodyText}},
+			"bodybytes":  []runtime.Function{{Name: "bodyBytes", Native: nativeRequestBodyBytes}},
+			"todict":     []runtime.Function{{Name: "toDict", Native: nativeRequestToDict}},
+			"inspect":    []runtime.Function{{Name: "inspect", Native: nativeRequestInspect}},
+			"scheme":     []runtime.Function{{Name: "scheme", Native: nativeRequestScheme}},
+			"issecure":   []runtime.Function{{Name: "isSecure", Native: nativeRequestIsSecure}},
+			"host":       []runtime.Function{{Name: "host", Native: nativeRequestHost}},
+			"clientip":   []runtime.Function{{Name: "clientIp", Native: nativeRequestClientIP}},
+			"clientcert": []runtime.Function{{Name: "clientCert", Native: nativeRequestClientCert}},
+			"text":       []runtime.Function{{Name: "text", Native: nativeRequestText}},
+			"ismethod":   []runtime.Function{{Name: "isMethod", Native: nativeRequestIsMethod}},
+			"isjson":     []runtime.Function{{Name: "isJson", Native: nativeRequestIsJSON}},
+			"cookie":     []runtime.Function{{Name: "cookie", Native: nativeRequestCookie}},
+			"query":      []runtime.Function{{Name: "query", Native: nativeRequestQuery}},
+			"queryint":   []runtime.Function{{Name: "queryInt", Native: nativeRequestQueryInt}},
+			"querybool":  []runtime.Function{{Name: "queryBool", Native: nativeRequestQueryBool}},
+			"queryall":   []runtime.Function{{Name: "queryAll", Native: nativeRequestQueryAll}},
 		},
 		Constructors: []runtime.Function{{Name: "Request", Native: nativeRequestConstructor}},
 		Env:          env,
@@ -17455,6 +17456,16 @@ func nativeRequestClientIP(this *runtime.Instance, args []runtime.Value) (runtim
 	return runtime.String{Value: ipFromRemoteAddr(requestStringField(this, "remoteAddr"))}, nil
 }
 
+func nativeRequestClientCert(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Request.clientCert expects no arguments")
+	}
+	if v := this.Fields["_clientCert"]; v != nil {
+		return v, nil
+	}
+	return runtime.Null{}, nil
+}
+
 func nativeRequestText(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("Request.text expects no arguments")
@@ -17594,6 +17605,9 @@ func (e *Evaluator) httpRequestArgument(handler runtime.Function, request *http.
 	fields["scheme"] = runtime.String{Value: scheme}
 	fields["host"] = runtime.String{Value: host}
 	fields["clientIp"] = runtime.String{Value: clientIP}
+	if request.TLS != nil && len(request.TLS.PeerCertificates) > 0 {
+		fields["_clientCert"] = clientCertDict(request.TLS.PeerCertificates[0])
+	}
 	return &runtime.Instance{Class: class, Fields: fields}, nil
 }
 

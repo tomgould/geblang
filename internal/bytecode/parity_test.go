@@ -5360,6 +5360,33 @@ io.println(rd.isRedirect());
 `, "127.0.0.1\nhttp\n301\n/login\ntrue\n")
 }
 
+// TestParityHTTPMutualTLS exercises server-side client-certificate
+// verification (tls.clientCa + clientAuth) and req.clientCert() on both
+// backends: a presented cert is verified and surfaced; a request without a
+// cert is rejected under "require".
+func TestParityHTTPMutualTLS(t *testing.T) {
+	runParityStateful(t, `
+import http;
+import io;
+import crypt;
+let caKey = crypt.generateEcKey("P-256");
+let caBundle = crypt.generateSelfSignedCert({"subject": {"commonName": "GeblangCA"}, "key": caKey});
+let clientKey = crypt.generateEcKey("P-256");
+let csr = crypt.generateCsr({"key": clientKey, "subject": {"commonName": "svc-a"}});
+let clientCert = crypt.signCertificate({"csr": csr, "caCert": caBundle["cert"], "caKey": caKey});
+let server = http.listen("127.0.0.1:0", func(Request req): Response {
+    let c = req.clientCert();
+    if (c == null) { return http.jsonResponse({"who": "anon"}); }
+    return http.jsonResponse({"who": c["subject"]});
+}, {"tls": {"selfSigned": true, "clientCa": caBundle["cert"], "clientAuth": "require"}});
+let url = "https://" + http.serverAddr(server) + "/";
+let mtls = http.newClient({"tls": {"verify": false, "clientCert": clientCert, "clientKey": clientKey}});
+io.println(mtls.get(url).json()["who"]);
+try { http.newClient({"tls": {"verify": false}}).get(url); io.println("accepted"); } catch (Error e) { io.println("rejected"); }
+http.close(server);
+`, "CN=svc-a\nrejected\n")
+}
+
 func TestParityHTTPClientNewOptions(t *testing.T) {
 	runParityStateful(t, `
 import http;
