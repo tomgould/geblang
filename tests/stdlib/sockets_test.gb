@@ -26,16 +26,13 @@ class SocketsTest extends test.Test {
     @test
     func dialEchoRoundTrip(): void {
         this.resetState();
-        let server = sockets.serve("127.0.0.1", 0, func(dict<string, any> raw): void {
+        let server = sockets.serve("127.0.0.1", 0, func(sockets.Socket conn): void {
             sockHandlerCalls = sockHandlerCalls + 1;
-            let stream = streams.IOStream(raw["stream"]);
-            while (true) {
-                let line = stream.readLine();
-                if (line == null) { break; }
+            for (line in conn) {
                 sockReceived = sockReceived.push(line as string);
-                stream.writeln("echo: " + (line as string));
+                conn.writeln("echo: " + (line as string));
             }
-            stream.close();
+            conn.close();
         });
         let port = (server.localAddr().split(":")[1] as string) as int;
 
@@ -54,10 +51,9 @@ class SocketsTest extends test.Test {
     @test
     func socketImplementsStreamProtocol(): void {
         this.resetState();
-        let server = sockets.serve("127.0.0.1", 0, func(dict<string, any> raw): void {
-            let stream = streams.IOStream(raw["stream"]);
-            stream.writeln("payload");
-            stream.close();
+        let server = sockets.serve("127.0.0.1", 0, func(sockets.Socket conn): void {
+            conn.writeln("payload");
+            conn.close();
         });
         let port = (server.localAddr().split(":")[1] as string) as int;
 
@@ -74,7 +70,7 @@ class SocketsTest extends test.Test {
     @test
     func serverCloseStopsAcceptLoop(): void {
         this.resetState();
-        let server = sockets.serve("127.0.0.1", 0, func(dict<string, any> raw): void {
+        let server = sockets.serve("127.0.0.1", 0, func(sockets.Socket conn): void {
             sockHandlerCalls = sockHandlerCalls + 1;
         });
         let before = sockHandlerCalls;

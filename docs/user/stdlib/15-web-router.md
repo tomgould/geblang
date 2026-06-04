@@ -92,15 +92,17 @@ responses, and `null` becomes `204`.
 
 A handler or middleware can receive the rich `Request` object (the same one
 `http.serve` builds, with `scheme()`, `host()`, `clientIp()`, `header()`,
-`cookie()`, typed `query*` getters, `isMethod`, `text`, `json`) simply by
-declaring its parameter type as `Request` instead of `dict<string, any>`. An
-after-middleware whose second parameter is typed `Response` receives a rich
-`Response` (status predicates, `header()`, immutable `withStatus`/`withHeader`/
-`withBody`). Either form may return a `Response`; the router serializes it.
+`cookie()`, typed `query*` getters, `routeParam()` / `routeParams()`,
+`isMethod`, `text`, `json`) simply by declaring its parameter type as `Request`
+instead of `dict<string, any>`. An after-middleware whose second parameter is
+typed `Response` receives a rich `Response` (status predicates, `header()`,
+immutable `withStatus`/`withHeader`/`withBody`). Either form may return a
+`Response`; the router serializes it.
 
 ```gb
-router.get(app, "/me", func(Request req): Response {
-    return http.jsonResponse({"ip": req.clientIp(), "ua": req.header("User-Agent")});
+router.get(app, "/users/:id", func(Request req): Response {
+    string id = req.routeParam("id") as string;
+    return http.jsonResponse({"id": id, "ua": req.header("User-Agent")});
 });
 
 router.after(app, func(Request req, Response resp): Response {
@@ -110,9 +112,9 @@ router.after(app, func(Request req, Response resp): Response {
 
 This is opt-in by parameter type: handlers and middleware typed
 `dict<string, any>` keep receiving and returning dictionaries unchanged.
-Matched path parameters are available on the request `params` field
-(`req.params`); a handler that needs them by name can read that dict or use the
-`dict<string, any>` form.
+Matched path parameters are read by name with `req.routeParam("id")` (null when
+absent) or all at once with `req.routeParams()`; the `dict<string, any>` form
+reads the same values from the request `params` field.
 
 ## Validation
 

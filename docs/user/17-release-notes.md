@@ -47,9 +47,11 @@
 - Handlers can opt into a rich `Request` object by declaring the parameter as
   `Request` (the plain request-dict handler stays the default). The object
   adds `scheme()`, `isSecure()`, `host()`, `clientIp()`, `isMethod(name)`,
-  `isJson()`, `text()`, `cookie(name)`, and typed query getters `query`,
-  `queryInt`, `queryBool`, `queryAll`. Object handlers now also work under the
-  bytecode VM, not just the evaluator.
+  `isJson()`, `text()`, `cookie(name)`, typed query getters `query`,
+  `queryInt`, `queryBool`, `queryAll`, and route-parameter accessors
+  `routeParam(name)` / `routeParams()` (route params also appear in
+  `toDict()`). Object handlers now also work under the bytecode VM, not just
+  the evaluator.
 - New `http.redirect(url, status=302)` builder returns a `Response` with the
   `Location` header set; it shares the status predicates with all responses.
 - Plain request-dict handlers now also receive the proxy-aware `scheme`,
@@ -113,9 +115,20 @@
   expected. Built-in collections stay covariant, so a `list<Dog>` into a
   `list<Animal>` parameter and any collection into `list<any>` remain clean;
   only genuinely unrelated element types are reported.
+- `sockets.serve(host, port, handler)` now hands the callback a typed `Socket`
+  (the same type `sockets.dial` returns: `for (line in conn)`, `readLine`,
+  `writeln`, `close`, `localAddr`/`remoteAddr`) instead of a raw
+  `{handle, stream, ...}` dict. Breaking: a handler typed `dict<string, any>`
+  that read `raw["stream"]` should now take a `sockets.Socket` and use it
+  directly.
 
 ### Fixes
 
+- `for (x in obj)` where `obj.__iter()` returns another object that itself
+  needs iterator resolution (for example an object whose `__iter` returns a
+  second iterable object, or a stream) now follows the chain on the
+  tree-walking evaluator, matching the bytecode VM. Previously the evaluator
+  stopped at the first hop and reported the inner object as "not iterable".
 - Interface default methods now resolve correctly when invoked outside the
   method-call path (the `in` operator, subscript access, serialization,
   reflection) and across module boundaries: a cross-module interface default

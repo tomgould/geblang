@@ -56,6 +56,27 @@ class SelfIter {
     }
 }
 
+/* __iter that returns another object needing resolution: a list, and a
+ * nested user object whose own __iter yields a generator. The loop must
+ * follow the chain. */
+class ListWrap {
+    func ListWrap() {}
+    func __iter(): any { return [10, 20, 30]; }
+}
+
+class GenSource {
+    func GenSource() {}
+    func __iter(): any {
+        return (func(): generator<int> { yield 1; yield 2; yield 3; })();
+    }
+}
+
+class ChainOuter {
+    GenSource src;
+    func ChainOuter() { this.src = GenSource(); }
+    func __iter(): any { return this.src; }
+}
+
 class UserIteratorTest extends test.Test {
     @test
     func iterDoneNextLoop(): void {
@@ -84,6 +105,24 @@ class UserIteratorTest extends test.Test {
     func selfIteratorWithoutIterMethod(): void {
         list<int> collected = [];
         for (n in SelfIter(3)) {
+            collected = collected.push(n);
+        }
+        this.assertEquals([1, 2, 3], collected);
+    }
+
+    @test
+    func iterFollowsChainToList(): void {
+        list<int> collected = [];
+        for (n in ListWrap()) {
+            collected = collected.push(n);
+        }
+        this.assertEquals([10, 20, 30], collected);
+    }
+
+    @test
+    func iterFollowsChainThroughNestedObject(): void {
+        list<int> collected = [];
+        for (n in ChainOuter()) {
             collected = collected.push(n);
         }
         this.assertEquals([1, 2, 3], collected);

@@ -57,4 +57,25 @@ class WebRouterObjectTest extends test.Test {
         this.assertEquals(403, r["status"]);
         this.assertEquals("no", r["body"] as string);
     }
+
+    @test
+    func richRequestReadsRouteParams(): void {
+        let app = router.newRouter();
+        router.get(app, "/users/:id/posts/:slug", func(Request req): Response {
+            return http.jsonResponse({
+                "id": req.routeParam("id"),
+                "slug": req.routeParam("slug"),
+                "missing": req.routeParam("nope") == null,
+                "all": req.routeParams(),
+            });
+        });
+        let r = router.handle(app,
+            {"method": "GET", "path": "/users/42/posts/hello", "headers": {}, "body": ""});
+        this.assertEquals(200, r["status"]);
+        let body = json.parse(r["body"] as string) as dict<string, any>;
+        this.assertEquals("42", body["id"] as string);
+        this.assertEquals("hello", body["slug"] as string);
+        this.assertTrue(body["missing"] as bool);
+        this.assertEquals("42", (body["all"] as dict<string, any>)["id"] as string);
+    }
 }

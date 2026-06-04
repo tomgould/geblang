@@ -265,7 +265,7 @@ interface supplies `get`, `keys`, `values`, and friends as defaults.
 ### File I/O with typed streams
 
 ```gb
-import io;
+import datetime;
 import streams;
 
 streams.IOStream src = streams.open("/etc/hostname", "r");
@@ -274,7 +274,7 @@ src.close();
 
 streams.IOStream out = streams.open("/tmp/report.txt", "w");
 out.writeln("hostname: " + hostname);
-out.writeln("processed at: " + io.timestamp());
+out.writeln("processed at: " + datetime.nowInstant().formatRFC3339());
 out.close();
 ```
 
@@ -325,18 +325,14 @@ cases.
 ```gb
 import io;
 import sockets;
-import streams;
 import sys;
 
-sockets.Server server = sockets.serve("127.0.0.1", 9000,
-    func(dict<string, any> raw): void {
-        streams.IOStream stream = streams.IOStream(raw["stream"]);
-        while (true) {
-            ?string line = stream.readLine();
-            if (line == null) { break; }
-            stream.writeln("echo: " + (line as string));
+sockets.Listener server = sockets.serve("127.0.0.1", 9000,
+    func(sockets.Socket conn): void {
+        for (line in conn) {
+            conn.writeln("echo: " + (line as string));
         }
-        stream.close();
+        conn.close();
     });
 
 io.println("listening on " + server.localAddr());
@@ -344,9 +340,9 @@ sys.sleep(60000);   /* serve for one minute */
 server.close();
 ```
 
-`sockets.Server` and the per-connection `streams.IOStream` are
-typed; the inbound `raw["stream"]` boundary is the only `any`
-crossing in the example.
+The handler receives a typed `sockets.Socket`: `for (line in conn)`
+yields inbound lines, and `writeln` / `readLine` / `close` round out
+the connection. No `dict<string, any>` boundary in sight.
 
 ### FFI: calling C-ABI shared libraries
 
@@ -403,15 +399,15 @@ single argument, `http.request(url)` starts an immutable builder whose
 reused without leaking state. `http.getAll` and `http.fetchAll` run a
 batch of requests in parallel.
 
-### HTTP server (web boundary)
+### HTTP server (rich Request / Response)
 
-The web stack is the one common place `dict<string, any>` shows up
-in user code, since HTTP requests and responses are inherently
-dynamic over the wire:
+A route handler opts into the typed `Request` and `Response` objects
+just by declaring those parameter types. `Request` has clean accessors
+(`routeParam`, `query`, `header`, `cookie`, `json`, `clientIp`, ...) and
+`http.jsonResponse` / `http.response` build a `Response`:
 
 ```gb
 import http;
-import json;
 import web.router as router;
 
 class User {
@@ -427,18 +423,13 @@ dict<int, User> store = {1: User(1, "Ada"), 2: User(2, "Carla")};
 
 let app = router.newRouter();
 
-router.get(app, "/users/:id", func(dict<string, any> req): dict<string, any> {
-    dict<string, any> params = req["params"] as dict<string, any>;
-    int id = (params["id"] as string).toInt();
+router.get(app, "/users/:id", func(Request req): Response {
+    int id = (req.routeParam("id") as string).toInt();
     if (!store.contains(id)) {
-        return {"status": 404, "body": "not found"};
+        return http.jsonResponse({"error": "not found"}, 404);
     }
     User u = store[id];
-    return {
-        "status": 200,
-        "headers": {"Content-Type": "application/json"},
-        "body": json.stringify({"id": u.id, "name": u.name}),
-    };
+    return http.jsonResponse({"id": u.id, "name": u.name});
 });
 
 http.serve("127.0.0.1:8080", func(dict<string, any> req): dict<string, any> {
@@ -446,10 +437,10 @@ http.serve("127.0.0.1:8080", func(dict<string, any> req): dict<string, any> {
 });
 ```
 
-The handler keeps `dict<string, any>` to the framework boundary
-and uses typed locals (`User u`, `int id`) inside. For larger
-typed-binding apps with controllers, validation, and DI, see the
-WebSocket and `web.middleware` chapters in the manual.
+Handlers typed `dict<string, any>` still work, so adoption is
+incremental. For larger typed-binding apps with controllers,
+validation, and DI, see the `web.router` and `web.middleware`
+chapters in the manual.
 
 ## CLI
 

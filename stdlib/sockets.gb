@@ -83,7 +83,10 @@ export class Listener {
 ## `{tls: true}` to wrap with TLS and `{timeoutMs: int}` to bound
 ## the connect time.
 export func dial(string host, int port, dict<string, any> opts = {}): Socket {
-    let raw = net.dial(host, port, opts);
+    return socketFromDict(net.dial(host, port, opts));
+}
+
+func socketFromDict(dict<string, any> raw): Socket {
     return Socket(
         raw["handle"] as int,
         streams.IOStream(raw["stream"]),
@@ -95,10 +98,14 @@ export func dial(string host, int port, dict<string, any> opts = {}): Socket {
 ## Starts an accept loop on the given (host, port). For each
 ## incoming connection, `handler(socket)` runs in a child evaluator
 ## with the original closure (mutations to module-level globals
-## propagate). `close()` on the returned Listener stops the loop and
-## waits for the current handler invocation to finish.
+## propagate). The handler receives a typed `Socket`. `close()` on the
+## returned Listener stops the loop and waits for the current handler
+## invocation to finish.
 export func serve(string host, int port, any handler): Listener {
-    let raw = net.serve(host, port, handler);
+    let wrapped = func(dict<string, any> raw): any {
+        return handler(socketFromDict(raw));
+    };
+    let raw = net.serve(host, port, wrapped);
     return Listener(
         raw["handle"] as int,
         raw["localAddr"] as string

@@ -3344,25 +3344,27 @@ func httpObjectClasses(env *runtime.Environment) []*runtime.Class {
 			{Name: "headers"},
 		},
 		Methods: map[string][]runtime.Function{
-			"header":     []runtime.Function{{Name: "header", Native: nativeRequestHeader}},
-			"json":       []runtime.Function{{Name: "json", Native: nativeRequestJSON}},
-			"bodytext":   []runtime.Function{{Name: "bodyText", Native: nativeRequestBodyText}},
-			"bodybytes":  []runtime.Function{{Name: "bodyBytes", Native: nativeRequestBodyBytes}},
-			"todict":     []runtime.Function{{Name: "toDict", Native: nativeRequestToDict}},
-			"inspect":    []runtime.Function{{Name: "inspect", Native: nativeRequestInspect}},
-			"scheme":     []runtime.Function{{Name: "scheme", Native: nativeRequestScheme}},
-			"issecure":   []runtime.Function{{Name: "isSecure", Native: nativeRequestIsSecure}},
-			"host":       []runtime.Function{{Name: "host", Native: nativeRequestHost}},
-			"clientip":   []runtime.Function{{Name: "clientIp", Native: nativeRequestClientIP}},
-			"clientcert": []runtime.Function{{Name: "clientCert", Native: nativeRequestClientCert}},
-			"text":       []runtime.Function{{Name: "text", Native: nativeRequestText}},
-			"ismethod":   []runtime.Function{{Name: "isMethod", Native: nativeRequestIsMethod}},
-			"isjson":     []runtime.Function{{Name: "isJson", Native: nativeRequestIsJSON}},
-			"cookie":     []runtime.Function{{Name: "cookie", Native: nativeRequestCookie}},
-			"query":      []runtime.Function{{Name: "query", Native: nativeRequestQuery}},
-			"queryint":   []runtime.Function{{Name: "queryInt", Native: nativeRequestQueryInt}},
-			"querybool":  []runtime.Function{{Name: "queryBool", Native: nativeRequestQueryBool}},
-			"queryall":   []runtime.Function{{Name: "queryAll", Native: nativeRequestQueryAll}},
+			"header":      []runtime.Function{{Name: "header", Native: nativeRequestHeader}},
+			"json":        []runtime.Function{{Name: "json", Native: nativeRequestJSON}},
+			"bodytext":    []runtime.Function{{Name: "bodyText", Native: nativeRequestBodyText}},
+			"bodybytes":   []runtime.Function{{Name: "bodyBytes", Native: nativeRequestBodyBytes}},
+			"todict":      []runtime.Function{{Name: "toDict", Native: nativeRequestToDict}},
+			"inspect":     []runtime.Function{{Name: "inspect", Native: nativeRequestInspect}},
+			"scheme":      []runtime.Function{{Name: "scheme", Native: nativeRequestScheme}},
+			"issecure":    []runtime.Function{{Name: "isSecure", Native: nativeRequestIsSecure}},
+			"host":        []runtime.Function{{Name: "host", Native: nativeRequestHost}},
+			"clientip":    []runtime.Function{{Name: "clientIp", Native: nativeRequestClientIP}},
+			"clientcert":  []runtime.Function{{Name: "clientCert", Native: nativeRequestClientCert}},
+			"text":        []runtime.Function{{Name: "text", Native: nativeRequestText}},
+			"ismethod":    []runtime.Function{{Name: "isMethod", Native: nativeRequestIsMethod}},
+			"isjson":      []runtime.Function{{Name: "isJson", Native: nativeRequestIsJSON}},
+			"cookie":      []runtime.Function{{Name: "cookie", Native: nativeRequestCookie}},
+			"query":       []runtime.Function{{Name: "query", Native: nativeRequestQuery}},
+			"queryint":    []runtime.Function{{Name: "queryInt", Native: nativeRequestQueryInt}},
+			"querybool":   []runtime.Function{{Name: "queryBool", Native: nativeRequestQueryBool}},
+			"queryall":    []runtime.Function{{Name: "queryAll", Native: nativeRequestQueryAll}},
+			"routeparam":  []runtime.Function{{Name: "routeParam", Native: nativeRequestRouteParam}},
+			"routeparams": []runtime.Function{{Name: "routeParams", Native: nativeRequestRouteParams}},
 		},
 		Constructors: []runtime.Function{{Name: "Request", Native: nativeRequestConstructor}},
 		Env:          env,
@@ -3509,6 +3511,9 @@ func nativeRequestToDict(this *runtime.Instance, args []runtime.Value) (runtime.
 			}
 		}
 		putDict(entries, name, value)
+	}
+	if params, ok := this.Fields["params"].(runtime.Dict); ok {
+		putDict(entries, "params", params)
 	}
 	return runtime.Dict{Entries: entries}, nil
 }
@@ -7199,28 +7204,42 @@ func (e *Evaluator) resolveUserIterator(instance *runtime.Instance) (*runtime.In
 	if instance == nil || instance.Class == nil {
 		return nil, nil, false, nil
 	}
-	if iterFn, ok := lookupMethod(instance.Class, "__iter"); ok {
-		result, err := e.applyFunctionWithThis(iterFn, nil, instance)
+	// Follow the __iter chain: __iter may return another object that itself
+	// needs resolving (e.g. a Socket whose __iter returns an IOStream whose
+	// __iter returns a generator). The VM resolves this recursively; match it.
+	// Bounded so a pathological self-cycle cannot spin forever.
+	current := instance
+	for depth := 0; depth <= 100; depth++ {
+		iterFn, ok := lookupMethod(current.Class, "__iter")
+		if !ok {
+			if _, hasNext := lookupMethod(current.Class, "__next"); hasNext {
+				return current, nil, true, nil
+			}
+			if current == instance {
+				return nil, nil, false, nil
+			}
+			return nil, current, true, nil
+		}
+		result, err := e.applyFunctionWithThis(iterFn, nil, current)
 		if err != nil {
 			return nil, nil, true, err
 		}
-		if inst, ok := result.(*runtime.Instance); ok {
-			if inst == instance {
-				if _, hasNext := lookupMethod(instance.Class, "__next"); hasNext {
-					return instance, nil, true, nil
-				}
-			}
-			if _, hasNext := lookupMethod(inst.Class, "__next"); hasNext {
-				return inst, nil, true, nil
+		inst, ok := result.(*runtime.Instance)
+		if !ok {
+			return nil, result, true, nil
+		}
+		if inst == current {
+			if _, hasNext := lookupMethod(current.Class, "__next"); hasNext {
+				return current, nil, true, nil
 			}
 			return nil, inst, true, nil
 		}
-		return nil, result, true, nil
+		if _, hasNext := lookupMethod(inst.Class, "__next"); hasNext {
+			return inst, nil, true, nil
+		}
+		current = inst
 	}
-	if _, ok := lookupMethod(instance.Class, "__next"); ok {
-		return instance, nil, true, nil
-	}
-	return nil, nil, false, nil
+	return nil, nil, true, fmt.Errorf("__iter chain too deep")
 }
 
 func (e *Evaluator) iterableValues(value runtime.Value) ([]runtime.Value, error) {
@@ -17769,6 +17788,35 @@ func nativeRequestQueryAll(this *runtime.Instance, args []runtime.Value) (runtim
 		elements[i] = runtime.String{Value: v}
 	}
 	return &runtime.List{Elements: elements}, nil
+}
+
+func nativeRequestRouteParam(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("Request.routeParam expects one argument")
+	}
+	name, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("Request.routeParam name must be string")
+	}
+	params, ok := this.Fields["params"].(runtime.Dict)
+	if !ok {
+		return runtime.Null{}, nil
+	}
+	value, ok := dictField(params, name.Value)
+	if !ok {
+		return runtime.Null{}, nil
+	}
+	return value, nil
+}
+
+func nativeRequestRouteParams(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Request.routeParams expects no arguments")
+	}
+	if params, ok := this.Fields["params"].(runtime.Dict); ok {
+		return params, nil
+	}
+	return runtime.Dict{Entries: map[string]runtime.DictEntry{}}, nil
 }
 
 func (e *Evaluator) httpRequestArgument(handler runtime.Function, request *http.Request, body []byte, tp *trustedProxies) (runtime.Value, error) {

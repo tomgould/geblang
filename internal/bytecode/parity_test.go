@@ -5540,6 +5540,30 @@ io.println(r3["body"]);
 `, "200\n/hi\n/hi\ntrue\n200\ndictok\n/dict\n403\nno\n")
 }
 
+// TestParityRequestRouteParam verifies the rich Request route-param accessors
+// (routeParam / routeParams) and that toDict includes route params, identically
+// on both backends.
+func TestParityRequestRouteParam(t *testing.T) {
+	runParityWithStdlib(t, `
+import web.router as router;
+import http;
+import io;
+let app = router.newRouter();
+router.get(app, "/users/:id/posts/:slug", func(Request req): Response {
+    io.println(req.routeParam("id"));
+    io.println(req.routeParam("slug"));
+    io.println(req.routeParam("missing") == null);
+    io.println(req.routeParams());
+    let d = req.toDict();
+    let key = "params";
+    io.println(d.contains(key));
+    return http.jsonResponse({"ok": true});
+});
+let r = router.handle(app, {"method": "GET", "path": "/users/42/posts/hello", "headers": {}, "body": ""});
+io.println(r["status"]);
+`, "42\nhello\ntrue\n{\"id\": \"42\", \"slug\": \"hello\"}\ntrue\n200\n")
+}
+
 // TestParityHTTPServerOnError verifies the onError server callback captures
 // connection-level failures (here an mTLS handshake with no client cert) on
 // both backends, and that a non-function onError is rejected. The callback
@@ -9129,6 +9153,37 @@ for (n in Steps(3)) {
 `, "2\n3\n4\n10\n20\n30\n")
 }
 
+// TestParityChainedIter verifies `for (x in obj)` when obj.__iter() returns
+// another object that itself needs resolving: a list, a generator, and a
+// second user object whose __iter yields a generator. Both backends must
+// follow the chain to the same sequence (the evaluator previously stopped at
+// the first hop and reported "not iterable").
+func TestParityChainedIter(t *testing.T) {
+	runParity(t, `import io;
+
+class WrapList {
+    func WrapList() {}
+    func __iter(): any { return [10, 20, 30]; }
+}
+
+class Inner {
+    func Inner() {}
+    func __iter(): any {
+        return (func(): generator<int> { yield 1; yield 2; yield 3; })();
+    }
+}
+
+class Outer {
+    Inner inner;
+    func Outer() { this.inner = Inner(); }
+    func __iter(): any { return this.inner; }
+}
+
+for (x in WrapList()) { io.println(x); }
+for (x in Outer()) { io.println(x); }
+`, "10\n20\n30\n1\n2\n3\n")
+}
+
 // TestParityNestedGenericInference pins the 1.0.6 fix where both
 // backends walk parameter type-spec trees recursively to bind type
 // params nested inside `list<dict<K, V>>` (etc). Previously only the
@@ -10753,19 +10808,15 @@ io.println(code);
 func TestParitySocketsEchoRoundTrip(t *testing.T) {
 	runParityWithStdlib(t, `import io;
 import sockets;
-import streams;
 import sys;
 
 list<string> received = [];
-let server = sockets.serve("127.0.0.1", 0, func(dict<string, any> raw): void {
-    let stream = streams.IOStream(raw["stream"]);
-    while (true) {
-        let line = stream.readLine();
-        if (line == null) { break; }
+let server = sockets.serve("127.0.0.1", 0, func(sockets.Socket conn): void {
+    for (line in conn) {
         received = received.push(line as string);
-        stream.writeln("echo: " + (line as string));
+        conn.writeln("echo: " + (line as string));
     }
-    stream.close();
+    conn.close();
 });
 
 let port = (server.localAddr().split(":")[1] as string) as int;

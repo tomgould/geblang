@@ -8,22 +8,18 @@
  */
 import io;
 import sockets;
-import streams;
 import sys;
 
 # Echo server. Use module-level state so the callback's writes are
 # visible after server.close() drains the accept goroutine.
 list<string> received = [];
 
-let server = sockets.serve("127.0.0.1", 0, func(dict<string, any> raw): void {
-    let stream = streams.IOStream(raw["stream"]);
-    while (true) {
-        let line = stream.readLine();
-        if (line == null) { break; }
+let server = sockets.serve("127.0.0.1", 0, func(sockets.Socket conn): void {
+    for (line in conn) {
         received = received.push(line as string);
-        stream.writeln("echo: " + (line as string));
+        conn.writeln("echo: " + (line as string));
     }
-    stream.close();
+    conn.close();
 });
 
 io.println("listening at " + server.localAddr());

@@ -42,12 +42,12 @@ Returns a `Socket` with:
 
 ```gb
 import sockets;
-import streams;
 
-let server = sockets.serve("0.0.0.0", 8080, func(dict<string, any> raw): void {
-    let stream = streams.IOStream(raw["stream"]);
-    stream.writeln("hello from sockets");
-    stream.close();
+let server = sockets.serve("0.0.0.0", 8080, func(sockets.Socket conn): void {
+    for (line in conn) {
+        conn.writeln("echo: " + (line as string));
+    }
+    conn.close();
 });
 
 # ...
@@ -60,9 +60,9 @@ each accepted connection to `handler(socket)`. The handler runs in a
 child evaluator with the original closure (mutations to module-level
 globals propagate; local captures don't, same caveat as `watch.start`).
 
-The handler argument is a dict `{handle, stream, localAddr,
-remoteAddr}`. Wrap `raw["stream"]` in `streams.IOStream` for the
-fluent surface.
+The handler receives a typed `Socket` (the same type `sockets.dial`
+returns): `read` / `readLine` / `write` / `writeln` / `close`, the
+`for (line in conn)` line iterator, plus `localAddr()` / `remoteAddr()`.
 
 `server.close()` stops accepting and joins the goroutine so the next
 read of module-level state from the parent happens-after the last
