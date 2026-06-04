@@ -11,17 +11,13 @@ import (
 // TestBuildWritesNoticesSidecar verifies `geblang build` writes the
 // third-party NOTICES alongside the output binary (a sidecar file, not a
 // binary flag, so it cannot clash with a `licenses` arg the built program may
-// define). Skipped when the geblang binary isn't available.
+// define).
 func TestBuildWritesNoticesSidecar(t *testing.T) {
-	// Prefer the freshly-built repo binary; a stale geblang on PATH would not
-	// reflect this build's behaviour.
-	bin, _ := filepath.Abs("../../geblang")
-	if _, statErr := os.Stat(bin); statErr != nil {
-		resolved, lookErr := exec.LookPath("geblang")
-		if lookErr != nil {
-			t.Skip("geblang binary not available")
-		}
-		bin = resolved
+	// Build from source so the test always reflects the current code, never a
+	// stale binary on PATH or in the repo root.
+	bin := filepath.Join(t.TempDir(), "geblang")
+	if buildOut, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build geblang: %v\n%s", err, buildOut)
 	}
 
 	dir := t.TempDir()

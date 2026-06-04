@@ -179,6 +179,89 @@ for (User u in users.items) {
 naturally. `dict<K, V>` and `set<T>` are generic in the same way.
 Pass a `callable` parameter for predicate / mapper functions.
 
+### Collection and string ergonomics
+
+```gb
+import io;
+
+list<int> nums = [3, 1, 4, 1, 5, 9, 2, 6];
+
+# enumerate() pairs each element with its index.
+for (i, n in nums.enumerate()) {
+    io.println((i as string) + " -> " + (n as string));
+}
+
+# Functional pipeline: flatMap, sliding windows, running scan.
+list<int> spread = [1, 2, 3].flatMap(func(int x): list<int> { return [x, x * 10]; });
+io.println("${spread}");                  # [1, 10, 2, 20, 3, 30]
+io.println("${nums.windowed(3)}");        # 3-wide sliding windows
+io.println("${[1, 2, 3, 4].scan(0, func(int acc, int x): int { return acc + x; })}");
+
+# String helpers.
+io.println("the quick brown fox".title());   # The Quick Brown Fox
+io.println("  ".isBlank() as string);        # true
+```
+
+Lists carry a functional toolkit (`map`, `filter`, `flatMap`,
+`windowed`, `scan`, `takeWhile`, `uniqueBy`, ...) available both as
+methods and `collections` module functions. Strings gain `title`,
+`capitalize`, `lines`, `removePrefix` / `removeSuffix`, and
+case-insensitive comparisons. `enumerate()` gives lists the same
+indexed iteration that dicts already have with `for k, v in d`.
+
+### Multiple return values
+
+```gb
+import io;
+
+func divmod(int a, int b): list<int> {
+    return a // b, a % b;
+}
+
+let q, r = divmod(17, 5);
+io.println("17 = 5 * " + (q as string) + " + " + (r as string));   # 17 = 5 * 3 + 2
+
+int x = 1;
+int y = 2;
+x, y = y, x;   # swap, no temporary
+```
+
+A function returns several values with `return a, b`, and the caller
+unpacks them with `let a, b = f()` or `a, b = f()`. The values travel
+as a `list`, so the declared return type is `list<T>`, and the swap
+idiom `a, b = b, a` needs no temporary.
+
+### Dict-like objects and the `in` operator
+
+```gb
+import io;
+
+# `in` tests membership across lists, dicts, sets, strings, and ranges.
+io.println("pear" in ["apple", "pear", "plum"]);   # true
+io.println(7 in (1..10));                           # true (a range literal needs parentheses)
+
+# A class becomes dict-like by implementing the subscript magic methods.
+class Headers {
+    dict<string, string> values;
+    func Headers() { this.values = {}; }
+
+    func __setIndex(string key, string value): void { this.values[key.lower()] = value; }
+    func __index(string key): ?string { return this.values.get(key.lower()); }
+    func __contains(string key): bool { return this.values.contains(key.lower()); }
+}
+
+Headers h = Headers();
+h["Content-Type"] = "application/json";
+io.println(h["content-type"] as string);   # application/json (case-insensitive)
+io.println("Content-Type" in h);           # true
+```
+
+The `in` operator works for every built-in container and dispatches to
+`__contains` on user types. Implementing `__index` / `__setIndex` /
+`__contains` lets a class support `obj[key]`, `obj[key] = value`, and
+`key in obj` like a native dict; the `maps.DictInterface` stdlib
+interface supplies `get`, `keys`, `values`, and friends as defaults.
+
 ### File I/O with typed streams
 
 ```gb
@@ -286,6 +369,39 @@ dispatch is in-process - no IPC overhead - and covers primitive
 integers, floats, pointers, C strings, and bytes. Use it for
 numeric kernels and library bindings; for sandboxed extensions,
 the subprocess `ext` protocol is the better fit.
+
+### HTTP client
+
+```gb
+import http;
+import io;
+
+# A single typed request: the Response carries readers and status predicates.
+let res = http.get("https://api.example.com/status");
+if (res.ok()) {
+    dict<string, any> body = res.json() as dict<string, any>;
+    io.println("ok: ${body.keys()}");
+} else if (res.isNotFound()) {
+    io.println("not found");
+}
+
+# The immutable request builder composes a call without leaking state.
+let api = http.request("https://api.example.com/me")
+    .withBearer("token-123")
+    .withHeader("Accept", "application/json")
+    .withTimeout(5000);
+
+let me = api.send();
+io.println("status: " + (me.status() as string));
+```
+
+`http.get` / `http.post` / `http.request(url, spec)` return a rich
+`Response` with `status()`, `ok()`, `text()`, `json()`, `header(name)`,
+and predicates like `isSuccessful()` / `isNotFound()`. Called with a
+single argument, `http.request(url)` starts an immutable builder whose
+`withX` methods each return a fresh builder, so a base request can be
+reused without leaking state. `http.getAll` and `http.fetchAll` run a
+batch of requests in parallel.
 
 ### HTTP server (web boundary)
 
