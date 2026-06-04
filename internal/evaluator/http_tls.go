@@ -10,7 +10,11 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"os"
+	"path/filepath"
 	"time"
+
+	"golang.org/x/crypto/acme/autocert"
 
 	"geblang/internal/runtime"
 )
@@ -91,8 +95,23 @@ func buildHTTPServerTLSConfig(optsVal runtime.Value, addr, label string) (*tls.C
 	_, hasCert := dictField(tlsOpts, "cert")
 	_, hasKey := dictField(tlsOpts, "key")
 	selfVal, hasSelf := dictField(tlsOpts, "selfSigned")
+	autoCertVal, hasAutoCert := dictField(tlsOpts, "autoCert")
 	if (hasCert || hasKey) && hasSelf {
 		return nil, nil, fmt.Errorf("%s tls: use either cert/key or selfSigned, not both", label)
+	}
+	if hasAutoCert && (hasCert || hasKey || hasSelf) {
+		return nil, nil, fmt.Errorf("%s tls: use either autoCert or cert/key/selfSigned, not both", label)
+	}
+	if hasAutoCert {
+		mgr, err := autocertManager(tlsOpts, autoCertVal, label)
+		if err != nil {
+			return nil, nil, err
+		}
+		cfg := mgr.TLSConfig()
+		if err := applyServerClientAuth(cfg, tlsOpts, label); err != nil {
+			return nil, nil, err
+		}
+		return cfg, nil, nil
 	}
 	var cfg *tls.Config
 	var certPEM []byte
@@ -121,6 +140,49 @@ func buildHTTPServerTLSConfig(optsVal runtime.Value, addr, label string) (*tls.C
 		return nil, nil, err
 	}
 	return cfg, certPEM, nil
+}
+
+// autocertManager builds an ACME (Let's Encrypt) certificate manager from
+// the tls block. autoCert is a host string or list of hosts (the allowlist);
+// autoCertCacheDir persists issued certs (defaults to a per-user cache dir);
+// autoCertEmail sets the ACME account contact. Certificates are obtained via
+// TLS-ALPN-01 on the served listener.
+func autocertManager(tlsOpts runtime.Dict, autoCertVal runtime.Value, label string) (*autocert.Manager, error) {
+	var hosts []string
+	switch v := autoCertVal.(type) {
+	case runtime.String:
+		hosts = []string{v.Value}
+	case *runtime.List:
+		for i, el := range v.Elements {
+			s, ok := el.(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("%s tls.autoCert[%d] must be a string host", label, i)
+			}
+			hosts = append(hosts, s.Value)
+		}
+	default:
+		return nil, fmt.Errorf("%s tls.autoCert must be a host string or list of hosts", label)
+	}
+	if len(hosts) == 0 {
+		return nil, fmt.Errorf("%s tls.autoCert needs at least one host", label)
+	}
+	m := &autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(hosts...),
+	}
+	if dir, ok := dictStringField(tlsOpts, "autoCertCacheDir"); ok && dir != "" {
+		m.Cache = autocert.DirCache(dir)
+	} else {
+		base, err := os.UserCacheDir()
+		if err != nil || base == "" {
+			base = os.TempDir()
+		}
+		m.Cache = autocert.DirCache(filepath.Join(base, "geblang-autocert"))
+	}
+	if email, ok := dictStringField(tlsOpts, "autoCertEmail"); ok {
+		m.Email = email
+	}
+	return m, nil
 }
 
 // applyServerClientAuth wires mutual-TLS client-certificate verification

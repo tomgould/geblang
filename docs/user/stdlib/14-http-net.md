@@ -271,6 +271,38 @@ options shown in the table above. Under `"require"` a request without a
 valid certificate fails the TLS handshake (surfaced as an `IOError` on the
 client).
 
+#### Automatic certificates (ACME / Let's Encrypt)
+
+Instead of supplying `cert`/`key`, a public server can obtain and renew
+certificates automatically with `autoCert`:
+
+| Key                | Type           | Meaning |
+|--------------------|----------------|---------|
+| `autoCert`         | string / list  | The host (or hosts) to obtain certificates for; this is the allowlist |
+| `autoCertCacheDir` | string         | Directory to persist issued certs (defaults to a per-user cache dir); use a writable, persistent path in production |
+| `autoCertEmail`    | string         | ACME account contact address (optional) |
+
+```gb
+http.serve(":443", handler, {"tls": {"autoCert": "example.com"}});
+
+http.serve(":443", handler, {"tls": {
+    "autoCert": ["example.com", "www.example.com"],
+    "autoCertCacheDir": "/var/lib/geblang/acme",
+    "autoCertEmail": "ops@example.com"
+}});
+```
+
+Certificates are issued on the first TLS connection for an allowlisted host
+via the TLS-ALPN-01 challenge on the same `:443` listener, so no separate
+port-80 challenge server is needed. The host must be publicly resolvable to
+the server for issuance to succeed. `autoCert` cannot be combined with
+`cert`/`key` or `selfSigned`.
+
+#### HTTP/2
+
+HTTPS servers negotiate HTTP/2 automatically (Go's `net/http`); no option is
+required. Plain-text HTTP/1.1 is used for non-TLS servers.
+
 ### Cookie jars
 
 A cookie jar persists `Set-Cookie` responses and replays them on subsequent

@@ -5387,6 +5387,28 @@ http.close(server);
 `, "CN=svc-a\nrejected\n")
 }
 
+// TestParityHTTPAutoCertConfig is an acceptance test for the ACME autocert
+// option: a server configured with tls.autoCert starts (and rejects mixing
+// autoCert with cert/key/selfSigned) on both backends. The live ACME path
+// needs a public host and is verified manually, not in CI.
+func TestParityHTTPAutoCertConfig(t *testing.T) {
+	runParityStateful(t, `
+import http;
+import io;
+let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+    return {"status": 200, "body": "ok"};
+}, {"tls": {"autoCert": ["example.com", "www.example.com"], "autoCertCacheDir": "/tmp/geblang-acme-parity", "autoCertEmail": "ops@example.com"}});
+io.println(server > 0);
+http.close(server);
+try {
+    http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> { return {"status": 200, "body": ""}; }, {"tls": {"autoCert": "x.com", "selfSigned": true}});
+    io.println("accepted");
+} catch (Error e) {
+    io.println("rejected");
+}
+`, "true\nrejected\n")
+}
+
 func TestParityHTTPClientNewOptions(t *testing.T) {
 	runParityStateful(t, `
 import http;

@@ -63,6 +63,11 @@
   (`subject`, `issuer`, `serialNumber`, `notBefore`, `notAfter`, `dnsNames`,
   or null). Outbound client certificates (`tls.clientCert`/`clientKey`) were
   already supported.
+- Automatic certificates: a server `tls` block accepts `autoCert` (a host or
+  list of hosts), with optional `autoCertCacheDir` and `autoCertEmail`, to
+  obtain and renew ACME (Let's Encrypt) certificates via the TLS-ALPN-01
+  challenge on the same listener. HTTPS servers also negotiate HTTP/2
+  automatically.
 
 ### Other
 
