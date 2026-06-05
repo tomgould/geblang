@@ -168,6 +168,11 @@
 - Calling a method that does not exist on a native class instance (for example a
   `Response`) now raises a clear "unknown method" error on the bytecode VM,
   matching the evaluator, instead of the misleading "module ... is not loaded".
+- `reflect.class(instance)` now includes the class's own decorators on the
+  bytecode VM when the class is declared in another module, matching the
+  evaluator. Previously class-level decorators were dropped across a module
+  boundary on the VM, so code reflecting over a class from a different module
+  (the pattern frameworks use to read class annotations) saw none of them.
 
 ## 1.7.2
 

@@ -309,7 +309,16 @@ func (l *stdlibModuleLoader) FindFunctionByName(name string) (runtime.Value, boo
 }
 
 func (l *stdlibModuleLoader) FindClassByName(name string) (runtime.Value, bool) {
+	chunks := map[string]bytecode.Chunk{}
 	for module, chunk := range l.chunks {
+		chunks[module] = chunk
+	}
+	// Mirror the production loader: the main program's classes are also
+	// resolvable by name (a sub-module reflecting a main-chunk class).
+	if l.hasMainChunk {
+		chunks[""] = l.mainChunk
+	}
+	for module, chunk := range chunks {
 		for idx, classInfo := range chunk.Classes {
 			if classInfo.Name == name {
 				return runtime.BytecodeClass{
@@ -11999,4 +12008,61 @@ let a = sys.goroutineId();
 io.println(a > 0);
 io.println(sys.goroutineId() == a);
 `, "true\ntrue\n")
+}
+
+// TestParityCrossModuleClassDecorators guards the fix for reflect.class(instance)
+// dropping class-level decorators on the VM when the class is declared in another
+// module (gebweb reads controller decorators this way). Both backends must read
+// the same class decorators AND methods for a cross-module instance.
+func TestParityCrossModuleClassDecorators(t *testing.T) {
+	dir := t.TempDir()
+	lib := "module reflectlib;\n" +
+		"import reflect;\n" +
+		"export func info(any instance): dict<string, any> {\n" +
+		"    let cls = reflect.class(instance);\n" +
+		"    list<string> decs = [];\n" +
+		"    for (dd in reflect.decorators(cls)) { decs = decs.push((dd as dict<string, any>)[\"name\"] as string); }\n" +
+		"    return {\"decorators\": decs, \"nmethods\": reflect.methods(cls).length()};\n" +
+		"}\n"
+	if err := os.WriteFile(filepath.Join(dir, "reflectlib.gb"), []byte(lib), 0o644); err != nil {
+		t.Fatalf("write lib: %v", err)
+	}
+	source := "import io;\nimport reflectlib;\n" +
+		"@Service(\"u\")\nclass C { func m(): int { return 1; } func n(): int { return 2; } }\n" +
+		"io.println(reflectlib.info(C()));\n"
+
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator error: %v", err)
+	}
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	loader.mainChunk = chunk
+	loader.hasMainChunk = true
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	stateful.SetMethodDispatcher(vm)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm error: %v", err)
+	}
+	if evOut.String() != vmOut.String() {
+		t.Errorf("cross-module reflection mismatch:\n  evaluator: %q\n  vm:        %q", evOut.String(), vmOut.String())
+	}
+	want := "{\"decorators\": [\"Service\"], \"nmethods\": 2}\n"
+	if evOut.String() != want {
+		t.Errorf("wrong output: got %q, want %q", evOut.String(), want)
+	}
 }

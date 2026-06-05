@@ -7733,7 +7733,20 @@ func (vm *VM) reflectLookupNativeCall(fn string, args []runtime.Value) (runtime.
 			classIndex, ok := vm.classIndex[strings.ToLower(value.Class.Name)]
 			if !ok {
 				if metadata, ok := runtimeClassMetadata(value.Class); ok {
-					return runtime.DecoratorTarget{Target: "class", Class: &metadata}, nil
+					target := runtime.DecoratorTarget{Target: "class", Class: &metadata}
+					// The runtime class carries methods/fields but not its
+					// class-level decorators when reflected from another module.
+					// Pull those from the declaring chunk via the loader so
+					// reflect.decorators works cross-module (the runtimeClass
+					// metadata path already covers reflect.methods/fields).
+					if vm.moduleLoader != nil {
+						if found, ok := vm.moduleLoader.FindClassByName(value.Class.Name); ok {
+							if bc, ok := found.(runtime.BytecodeClass); ok {
+								target.Decorators = bc.Decorators
+							}
+						}
+					}
+					return target, nil
 				}
 				return nil, fmt.Errorf("reflect.class unknown class %s", value.Class.Name)
 			}
