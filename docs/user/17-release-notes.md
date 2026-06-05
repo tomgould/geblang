@@ -83,6 +83,13 @@
   second parameter typed `Response` receives one), and may return a `Response`.
   This is opt-in by type; `dict<string, any>` handlers and middleware are
   unchanged.
+- Server request handlers (`http.serve`, `http.listen`, `net.serve`) now run
+  with per-request isolated state on both the evaluator and the bytecode VM: a
+  handler's mutations to captured state are private to that request and cannot
+  race a concurrent request, so a handler that touches a captured value no
+  longer risks a crash under concurrent load. Such state does not persist across
+  requests - share cross-request state through a thread-safe handle (database,
+  cache, key-value store) rather than a captured mutable container.
 
 ### Encoding and templates
 

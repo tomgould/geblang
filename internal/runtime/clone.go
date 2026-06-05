@@ -25,6 +25,24 @@ func CloneValue(value Value) Value {
 	return state.cloneValue(value)
 }
 
+// CloneVMValues deep-clones a globals snapshot for per-request server-handler
+// isolation. Boxed reference values are recursively copied (sharing structure
+// within the snapshot via one cloneState), so a handler's mutations stay in its
+// own copy and cannot reach the host or another request. Primitive kinds are
+// inline and copied trivially.
+func CloneVMValues(values []VMValue) []VMValue {
+	state := newCloneState()
+	out := make([]VMValue, len(values))
+	for i, v := range values {
+		if v.Kind == VMKindBoxed && v.Boxed != nil {
+			out[i] = VMValue{Kind: VMKindBoxed, Boxed: state.cloneValue(v.Boxed)}
+		} else {
+			out[i] = v
+		}
+	}
+	return out
+}
+
 func CloneFunction(fn Function) Function {
 	state := newCloneState()
 	return state.cloneFunction(fn)

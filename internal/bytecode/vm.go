@@ -3023,7 +3023,7 @@ func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, "__eq", instance, vm.wrapStatefulNativeArgs([]runtime.Value{right}))
+			result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, "__eq", instance, vm.wrapStatefulNativeArgs("", "", []runtime.Value{right}))
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -3866,7 +3866,7 @@ func (vm *VM) callBinaryOperatorMethod(instruction Instruction, ip int, left run
 		if vm.moduleLoader == nil {
 			return 0, true, vm.runtimeError(instruction, "bytecode module loader is not configured")
 		}
-		result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, methodName, instance, vm.wrapStatefulNativeArgs([]runtime.Value{right}))
+		result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, methodName, instance, vm.wrapStatefulNativeArgs("", "", []runtime.Value{right}))
 		if err != nil {
 			nextIP, perr := vm.propagateModuleError(instruction, ip, err)
 			return nextIP, true, perr
@@ -8396,7 +8396,7 @@ func (vm *VM) statefulNativeCall(module, function string, args []runtime.Value, 
 	if vm.statefulNative == nil {
 		return nil, fmt.Errorf("stateful native module %s is not configured for VM execution", module)
 	}
-	return vm.statefulNative.CallBuiltin(module, function, vm.wrapStatefulNativeArgs(args), names)
+	return vm.statefulNative.CallBuiltin(module, function, vm.wrapStatefulNativeArgs(module, function, args), names)
 }
 
 func (vm *VM) shouldRouteDirectPrint() bool {
@@ -8407,18 +8407,35 @@ func (vm *VM) shouldRouteDirectPrint() bool {
 	return ok && router.HandleDirectPrint()
 }
 
-func (vm *VM) wrapStatefulNativeArgs(args []runtime.Value) []runtime.Value {
+func (vm *VM) wrapStatefulNativeArgs(module, function string, args []runtime.Value) []runtime.Value {
 	if len(args) == 0 {
 		return args
 	}
 	wrapped := make([]runtime.Value, len(args))
 	for i, arg := range args {
-		wrapped[i] = vm.wrapStatefulNativeValue(arg)
+		wrapped[i] = vm.wrapStatefulNativeValue(arg, serverHandlerArg(module, function, i))
 	}
 	return wrapped
 }
 
-func (vm *VM) wrapStatefulNativeValue(value runtime.Value) runtime.Value {
+// serverHandlerArg reports whether arg i of a stateful-native call is a direct
+// server-handler closure (http.serve/listen, net.serve) that runs per-request
+// isolated so concurrent requests do not share/race handler state. Other
+// callbacks (async tasks, synchronous transaction bodies) keep write-back.
+// Framework route handlers that cross module boundaries (web.router/gebweb) are
+// not covered here - that is a separate, scoped project
+// (docs/http-concurrency-evaluation.md).
+func serverHandlerArg(module, function string, argIndex int) bool {
+	switch module {
+	case "http":
+		return (function == "serve" || function == "listen") && argIndex == 1
+	case "net":
+		return function == "serve" && argIndex == 2
+	}
+	return false
+}
+
+func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtime.Value {
 	switch callable := value.(type) {
 	case runtime.BytecodeFunction:
 		// The wrapped Native closure can be invoked later from another
@@ -8430,6 +8447,9 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value) runtime.Value {
 			Name:       callable.Name,
 			Parameters: bridgedParameters(callable.Parameters),
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+				if isolated {
+					return vm.callCallableIsolated(callable, args)
+				}
 				return vm.callCallableSlow(callable, args)
 			},
 		}
@@ -8439,19 +8459,22 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value) runtime.Value {
 			Name:       callable.Name,
 			Parameters: bridgedParameters(vm.closureParameters(callable)),
 			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+				if isolated {
+					return vm.callCallableIsolated(callable, args)
+				}
 				return vm.callCallableSlow(callable, args)
 			},
 		}
 	case *runtime.List:
 		elements := make([]runtime.Value, len(callable.Elements))
 		for i, element := range callable.Elements {
-			elements[i] = vm.wrapStatefulNativeValue(element)
+			elements[i] = vm.wrapStatefulNativeValue(element, false)
 		}
 		return &runtime.List{Elements: elements}
 	case runtime.Dict:
 		entries := make(map[string]runtime.DictEntry, len(callable.Entries))
 		for key, entry := range callable.Entries {
-			entries[key] = runtime.DictEntry{Key: entry.Key, Value: vm.wrapStatefulNativeValue(entry.Value)}
+			entries[key] = runtime.DictEntry{Key: entry.Key, Value: vm.wrapStatefulNativeValue(entry.Value, false)}
 		}
 		return runtime.Dict{Entries: entries}
 	default:
@@ -9315,6 +9338,55 @@ func (vm *VM) callCallableSlow(fn runtime.Value, args []runtime.Value) (runtime.
 	return vm.callCallable(fn, args)
 }
 
+// callCallableIsolated runs a per-request server-handler callback on a fresh
+// callVM that snapshots host globals but does NOT write them back, so handler
+// state is per-request and concurrent request goroutines do not race the shared
+// host globals. It never touches shared host-vm fields (no inDispatchLoop
+// dance), since it is invoked from external net/http goroutines, not
+// re-entrantly. Native handlers run directly; cross-module callables fall back.
+func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	switch f := fn.(type) {
+	case runtime.Function:
+		if f.Native == nil {
+			return nil, fmt.Errorf("runtime function is not callable by VM")
+		}
+		return f.Native(nil, args)
+	case runtime.BytecodeFunction:
+		if f.Module != vm.moduleName || f.Raw {
+			return vm.callCallableSlow(fn, args)
+		}
+		if err := vm.ensureCallableDecorators(); err != nil {
+			return nil, err
+		}
+		wrapper := make([]Instruction, 0, len(args)+2)
+		for i := range args {
+			wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i)}})
+		}
+		wrapper = append(wrapper, Instruction{Op: OpCall, Operands: []int64{f.Index, int64(len(args))}})
+		wrapper = append(wrapper, Instruction{Op: OpReturn})
+		return vm.runWrapperWithRawCall(args, wrapper, -1, true)
+	case runtime.BytecodeClosure:
+		if f.Module != vm.moduleName {
+			return vm.callCallableSlow(fn, args)
+		}
+		constants := make([]runtime.Value, 0, len(args)+2)
+		constants = append(constants, f)
+		constants = append(constants, args...)
+		methodNameIndex := int64(len(constants))
+		constants = append(constants, runtime.String{Value: "__invoke"})
+		wrapper := make([]Instruction, 0, len(args)+3)
+		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{0}})
+		for i := range args {
+			wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i + 1)}})
+		}
+		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
+		wrapper = append(wrapper, Instruction{Op: OpReturn})
+		return vm.runWrapperWithRawCall(constants, wrapper, -1, true)
+	default:
+		return vm.callCallableSlow(fn, args)
+	}
+}
+
 func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
 	switch f := fn.(type) {
 	case runtime.Function:
@@ -9338,7 +9410,7 @@ func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Valu
 			if vm.moduleLoader == nil {
 				return nil, fmt.Errorf("bytecode module loader is not configured")
 			}
-			return vm.moduleLoader.CallModuleFunction(f, vm.wrapStatefulNativeArgs(args))
+			return vm.moduleLoader.CallModuleFunction(f, vm.wrapStatefulNativeArgs("", "", args))
 		}
 		if f.Raw {
 			if vm.methodReceiverFuncs[f.Index] {
@@ -9364,7 +9436,7 @@ func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Valu
 			if vm.moduleLoader == nil {
 				return nil, fmt.Errorf("bytecode module loader is not configured")
 			}
-			return vm.moduleLoader.CallModuleClosure(f, vm.wrapStatefulNativeArgs(args))
+			return vm.moduleLoader.CallModuleClosure(f, vm.wrapStatefulNativeArgs("", "", args))
 		}
 		if vm.inDispatchLoop && len(f.Upvalues) == 0 && f.TypeBindings == nil && !vm.requiresCallSitePolymorphism {
 			return vm.callBytecodeInline(f.FunctionIndex, args)
@@ -10468,7 +10540,7 @@ func (vm *VM) CallFunctionRaw(index int64, args []runtime.Value) (runtime.Value,
 	}
 	wrapper = append(wrapper, Instruction{Op: OpCall, Operands: []int64{index, int64(len(args))}})
 	wrapper = append(wrapper, Instruction{Op: OpReturn})
-	return vm.runWrapperWithRawCall(args, wrapper, index)
+	return vm.runWrapperWithRawCall(args, wrapper, index, false)
 }
 
 func (vm *VM) CallClosure(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
@@ -10685,10 +10757,10 @@ func (vm *VM) CallStaticMethod(classIndex int64, name string, args []runtime.Val
 }
 
 func (vm *VM) runWrapper(args []runtime.Value, wrapper []Instruction) (runtime.Value, error) {
-	return vm.runWrapperWithRawCall(args, wrapper, -1)
+	return vm.runWrapperWithRawCall(args, wrapper, -1, false)
 }
 
-func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction, rawIndex int64) (runtime.Value, error) {
+func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction, rawIndex int64, isolated bool) (runtime.Value, error) {
 	chunk := vm.chunk
 	shift := len(wrapper)
 	chunk.Constants = append(append([]runtime.Value(nil), args...), vm.chunk.Constants...)
@@ -10736,9 +10808,21 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 	// Snapshot parent globals under the mutex so a wrap-bridge callback
 	// invoked from a worker goroutine doesn't race with the parent's
 	// setGlobal writes.
-	vm.globalsMu.Lock()
-	callVM.restoreGlobalsVM(vm.globals)
-	vm.globalsMu.Unlock()
+	if isolated {
+		// Per-request isolation: deep-clone the globals so reference values
+		// (instances, lists, dicts) are copied, not shared. Shallow-copy the
+		// slice under the lock, then clone outside it (the host is parked in
+		// the accept loop and other request goroutines only read, so the clone
+		// races nothing).
+		vm.globalsMu.Lock()
+		snapshot := append([]runtime.VMValue(nil), vm.globals...)
+		vm.globalsMu.Unlock()
+		callVM.restoreGlobalsVM(runtime.CloneVMValues(snapshot))
+	} else {
+		vm.globalsMu.Lock()
+		callVM.restoreGlobalsVM(vm.globals)
+		vm.globalsMu.Unlock()
+	}
 	callVM.SetModuleName(vm.moduleName)
 	if vm.statefulNative != nil {
 		callVM.SetStatefulNativeCaller(vm.statefulNative)
@@ -10766,21 +10850,25 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 	// state were the symptom). Write only the slots the callee touched -
 	// a slicecopy of the entire backing array would race the parent's
 	// lock-free OpGetGlobal on unrelated slots when the bridge fires on a
-	// goroutine.
-	vm.globalsMu.Lock()
-	for i, dirty := range callVM.dirtyGlobals {
-		if !dirty {
-			continue
+	// goroutine. Isolated calls (per-request server handlers) skip write-back:
+	// their state stays per-request, which is what keeps concurrent handlers
+	// from racing the shared host globals.
+	if !isolated {
+		vm.globalsMu.Lock()
+		for i, dirty := range callVM.dirtyGlobals {
+			if !dirty {
+				continue
+			}
+			if i >= len(callVM.globals) || i >= len(vm.globals) {
+				continue
+			}
+			vm.globals[i] = callVM.globals[i]
+			if i < len(vm.dirtyGlobals) {
+				vm.dirtyGlobals[i] = true
+			}
 		}
-		if i >= len(callVM.globals) || i >= len(vm.globals) {
-			continue
-		}
-		vm.globals[i] = callVM.globals[i]
-		if i < len(vm.dirtyGlobals) {
-			vm.dirtyGlobals[i] = true
-		}
+		vm.globalsMu.Unlock()
 	}
-	vm.globalsMu.Unlock()
 	if len(callVM.stack) == 0 {
 		return runtime.Null{}, nil
 	}
@@ -11997,7 +12085,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, nameValue.Value, instance, vm.wrapStatefulNativeArgs(args))
+			result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, nameValue.Value, instance, vm.wrapStatefulNativeArgs("", "", args))
 			if err != nil {
 				var notFound *runtime.MethodNotFoundError
 				if errors.As(err, &notFound) {
@@ -12206,7 +12294,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		value, ok := module.Exports[nameValue.Value]
 		if !ok {
 			if module.Canonical != "" && vm.statefulNative != nil {
-				result, err := vm.statefulNative.CallBuiltin(module.Canonical, nameValue.Value, vm.wrapStatefulNativeArgs(args), nil)
+				result, err := vm.statefulNative.CallBuiltin(module.Canonical, nameValue.Value, vm.wrapStatefulNativeArgs(module.Canonical, nameValue.Value, args), nil)
 				if err == nil {
 					vm.push(result)
 					return ip, nil
@@ -12218,7 +12306,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.CallModuleFunction(function, vm.wrapStatefulNativeArgs(args))
+			result, err := vm.moduleLoader.CallModuleFunction(function, vm.wrapStatefulNativeArgs("", "", args))
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -12229,7 +12317,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs(args))
+			result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs("", "", args))
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -12261,7 +12349,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			 * chunk. Main-chunk classes have Module="" so the check
 			 * looks at both directions. */
 			if class.Module != vm.moduleName && vm.moduleLoader != nil {
-				result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs(args))
+				result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs("", "", args))
 				if err != nil {
 					return vm.propagateModuleError(instruction, ip, err)
 				}
@@ -12282,7 +12370,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.CallModuleStaticMethod(class, nameValue.Value, vm.wrapStatefulNativeArgs(args))
+			result, err := vm.moduleLoader.CallModuleStaticMethod(class, nameValue.Value, vm.wrapStatefulNativeArgs("", "", args))
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -12326,7 +12414,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.CallModuleClosure(closure, vm.wrapStatefulNativeArgs(args))
+			result, err := vm.moduleLoader.CallModuleClosure(closure, vm.wrapStatefulNativeArgs("", "", args))
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -12447,7 +12535,7 @@ func (vm *VM) methodCallNamed(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.CallModuleClosure(closure, vm.wrapStatefulNativeArgs(args))
+			result, err := vm.moduleLoader.CallModuleClosure(closure, vm.wrapStatefulNativeArgs("", "", args))
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}

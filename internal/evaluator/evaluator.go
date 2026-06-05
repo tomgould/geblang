@@ -17400,15 +17400,21 @@ func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool,
 }
 
 func (e *Evaluator) callHTTPHandler(handler runtime.Function, request *http.Request, body []byte, tp *trustedProxies) (runtime.Value, error) {
-	callbackEval, callbackHandler := e.callbackEvaluator(handler)
-	if callbackEval != e {
-		defer callbackEval.Cleanup()
+	// Per-request isolation: always run in a child evaluator (isolates eval-side
+	// dispatch state across concurrent requests). An eval-runtime handler is
+	// deep-cloned; a VM-runtime handler is a native trampoline that isolates the
+	// VM side itself (callCallableIsolated).
+	child := e.childForCallback()
+	defer child.Cleanup()
+	callbackHandler := handler
+	if handler.Native == nil {
+		callbackHandler = runtime.CloneFunction(handler)
 	}
-	requestArg, err := callbackEval.httpRequestArgument(callbackHandler, request, body, tp)
+	requestArg, err := child.httpRequestArgument(callbackHandler, request, body, tp)
 	if err != nil {
 		return nil, err
 	}
-	return callbackEval.applyFunction(callbackHandler, []runtime.Value{requestArg})
+	return child.applyFunction(callbackHandler, []runtime.Value{requestArg})
 }
 
 func (e *Evaluator) callbackEvaluator(handler runtime.Function) (*Evaluator, runtime.Function) {
