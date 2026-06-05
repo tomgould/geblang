@@ -1,5 +1,19 @@
 # Release Notes
 
+## 1.9.0
+
+### Collections
+
+- New `seq` module: `seq.stream(source)` wraps any iterable (list, set, range,
+  generator) in a lazy, single-use fluent pipeline. Intermediate operations
+  (`map`, `filter`, `flatMap`, `take`, `drop`, `takeWhile`, `dropWhile`,
+  `distinct`, `peek`, `sorted`, `sortedBy`) build a generator chain and run
+  nothing until a terminal operation (`toList`, `toSet`, `forEach`, `count`,
+  `reduce`, `first`, `firstOr`, `find`, `any`, `all`, `none`, `sum`, `min`,
+  `max`, `join`) pulls values through once, so no intermediate lists are
+  materialised and huge or unbounded sources stay cheap. The lazy counterpart
+  to the eager `collections` module and the built-in list methods.
+
 ## 1.8.0
 
 ### Dict-like objects

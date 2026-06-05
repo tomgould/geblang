@@ -12066,3 +12066,18 @@ func TestParityCrossModuleClassDecorators(t *testing.T) {
 		t.Errorf("wrong output: got %q, want %q", evOut.String(), want)
 	}
 }
+
+func TestParitySeqStream(t *testing.T) {
+	runParityWithStdlib(t, `
+import seq;
+import io;
+io.println(seq.stream([1,2,3,4,5,6]).filter(func(any n): bool { return (n as int) % 2 == 0; }).map(func(any n): any { return (n as int)*(n as int); }).sum());
+io.println(seq.stream([1,2,3,4,5,6]).drop(1).take(3).toList());
+io.println(seq.stream([3,1,3,2,1]).distinct().toList());
+io.println(seq.stream([3,1,2]).sorted().toList());
+io.println(seq.stream([1,2,3]).map(func(any n): any { return "${n}"; }).join("-"));
+io.println(seq.stream(1..1000000).map(func(any n): any { return (n as int)*2; }).first());
+io.println(seq.stream([2,4,6]).all(func(any n): bool { return (n as int)%2==0; }));
+io.println(seq.stream([3,1,2]).min());
+`, "56\n[2, 3, 4]\n[3, 1, 2]\n[1, 2, 3]\n1-2-3\n2\ntrue\n1\n")
+}

@@ -929,3 +929,50 @@ io.println(topK([5, 2, 9, 1, 7, 3, 8, 4, 6], 3));   # [7, 8, 9]
 ```
 
 **Heap-sort** is a one-liner: push everything, then `drain()`.
+
+## `seq.Stream<T>` (1.9.0)
+
+`seq.stream(source)` wraps any iterable (list, set, range, or
+generator) in a lazy, single-use fluent pipeline. Intermediate
+operations build a generator chain and run nothing; a terminal
+operation pulls values through the whole pipeline once, so no
+intermediate lists are materialised. This makes long chains and
+huge or infinite sources cheap.
+
+```gb
+import seq;
+
+let total = seq.stream([1, 2, 3, 4, 5, 6])
+    .filter(func(any n): bool { return (n as int) % 2 == 0; })
+    .map(func(any n): any { return (n as int) * (n as int); })
+    .sum();                       # 56, no intermediate lists
+
+# Short-circuits: first() pulls a single element from a million-long range.
+let firstDoubled = seq.stream(1..1000000)
+    .map(func(any n): any { return (n as int) * 2; })
+    .first();                     # 2
+```
+
+A stream is consumed by its terminal operation; build a new stream
+(or reuse the source) to iterate again. `seq.Stream(source)` is the
+constructor behind `seq.stream`.
+
+**Intermediate** (lazy, return a new `Stream`): `map(fn)`,
+`filter(fn)`, `flatMap(fn)`, `take(n)`, `drop(n)`, `takeWhile(fn)`,
+`dropWhile(fn)`, `distinct()`, `peek(fn)`, `sorted(compare?)`,
+`sortedBy(keySelector, descending?)`. `sorted` / `sortedBy` buffer the
+pipeline (they must see every element before yielding).
+
+**Terminal** (consume the pipeline): `toList()`, `toSet()`,
+`forEach(fn)`, `count()`, `reduce(initial, fn)`, `first()`,
+`firstOr(fallback)`, `find(fn)`, `any(fn)`, `all(fn)`, `none(fn)`,
+`sum()`, `min(compare?)`, `max(compare?)`, `join(separator)`.
+
+`sorted`, `min`, and `max` take an optional comparator: omit it for
+natural order, or pass a less-than predicate `(a, b) -> bool` or a
+three-way comparator `(a, b) -> int`.
+
+This is the lazy counterpart to the eager `collections` module and the
+built-in list methods: reach for a `seq.Stream` when you are chaining
+several transformations, working with a large or unbounded source, or
+want to stop early.

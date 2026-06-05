@@ -1,0 +1,344 @@
+module seq;
+
+import collections;
+
+/**
+ * A lazy, single-use fluent pipeline over any iterable (list, set,
+ * range, or generator). Intermediate operations build a generator
+ * chain and run nothing; a terminal operation pulls values through
+ * the whole pipeline once, so no intermediate lists are materialised.
+ *
+ * ```gb
+ * import collections;
+ *
+ * let total = collections.stream([1, 2, 3, 4, 5, 6])
+ *     .filter(func(any n): bool { return (n as int) % 2 == 0; })
+ *     .map(func(any n): any { return (n as int) * (n as int); })
+ *     .sum();                       # 56, no intermediate lists
+ *
+ * let firstBig = collections.stream(1..1000000)
+ *     .map(func(any n): any { return (n as int) * 2; })
+ *     .first();                     # 2, pulls a single element
+ * ```
+ *
+ * A stream is consumed by its terminal operation; reuse the source
+ * (or build a new stream) to iterate again.
+ */
+export class Stream<T> {
+    any _source;
+
+    func Stream(any source) {
+        this._source = source;
+    }
+
+    /* ---- intermediate (lazy) ---- */
+
+    /** Transforms each element through `fn`. */
+    func map(callable fn): Stream<any> {
+        return Stream(streamMap(this._source, fn));
+    }
+
+    /** Keeps elements for which `fn` returns true. */
+    func filter(callable fn): Stream<any> {
+        return Stream(streamFilter(this._source, fn));
+    }
+
+    /** Maps each element to an iterable and flattens the results. */
+    func flatMap(callable fn): Stream<any> {
+        return Stream(streamFlatMap(this._source, fn));
+    }
+
+    /** Yields at most the first `n` elements. */
+    func take(int n): Stream<any> {
+        return Stream(streamTake(this._source, n));
+    }
+
+    /** Skips the first `n` elements. */
+    func drop(int n): Stream<any> {
+        return Stream(streamDrop(this._source, n));
+    }
+
+    /** Yields elements until `fn` first returns false. */
+    func takeWhile(callable fn): Stream<any> {
+        return Stream(streamTakeWhile(this._source, fn));
+    }
+
+    /** Skips the leading run for which `fn` returns true, then yields the rest. */
+    func dropWhile(callable fn): Stream<any> {
+        return Stream(streamDropWhile(this._source, fn));
+    }
+
+    /** Yields only the first occurrence of each distinct element. */
+    func distinct(): Stream<any> {
+        return Stream(streamDistinct(this._source));
+    }
+
+    /** Runs `fn` on each element as it passes (for side effects), unchanged. */
+    func peek(callable fn): Stream<any> {
+        return Stream(streamPeek(this._source, fn));
+    }
+
+    /** Buffers the pipeline and yields elements in sorted order. No
+     *  callback = natural order; callback is a less-than predicate
+     *  (a,b)->bool or a three-way comparator (a,b)->int. */
+    func sorted(?callable compare = null): Stream<any> {
+        if (compare == null) {
+            return Stream(collections.sorted(this.toList()));
+        }
+        return Stream(collections.sorted(this.toList(), compare));
+    }
+
+    /** Buffers the pipeline and yields elements sorted by a key. */
+    func sortedBy(callable keySelector, bool descending = false): Stream<any> {
+        let ordered = collections.sortBy(this.toList(), keySelector);
+        if (descending) {
+            ordered = collections.reverse(ordered);
+        }
+        return Stream(ordered);
+    }
+
+    /* ---- terminal ---- */
+
+    /** Collects the remaining elements into a list. */
+    func toList(): list<any> {
+        let out = [];
+        for (x in this._source) {
+            out = out.push(x);
+        }
+        return out;
+    }
+
+    /** Collects the remaining elements into a set (dropping duplicates). */
+    func toSet(): set<any> {
+        return this.toList() as set<any>;
+    }
+
+    /** Runs `fn` for each remaining element. */
+    func forEach(callable fn): void {
+        for (x in this._source) {
+            fn(x);
+        }
+    }
+
+    /** Number of remaining elements. */
+    func count(): int {
+        let n = 0;
+        for (x in this._source) {
+            n = n + 1;
+        }
+        return n;
+    }
+
+    /** Folds the elements with `fn(accumulator, element)` from `initial`. */
+    func reduce(any initial, callable fn): any {
+        let acc = initial;
+        for (x in this._source) {
+            acc = fn(acc, x);
+        }
+        return acc;
+    }
+
+    /** First element, or null if the stream is empty. */
+    func first(): any {
+        for (x in this._source) {
+            return x;
+        }
+        return null;
+    }
+
+    /** First element, or `fallback` if the stream is empty. */
+    func firstOr(any fallback): any {
+        for (x in this._source) {
+            return x;
+        }
+        return fallback;
+    }
+
+    /** First element matching `fn`, or null. */
+    func find(callable fn): any {
+        for (x in this._source) {
+            if (fn(x)) {
+                return x;
+            }
+        }
+        return null;
+    }
+
+    /** True if any element matches `fn`. */
+    func any(callable fn): bool {
+        for (x in this._source) {
+            if (fn(x)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** True if every element matches `fn` (true for an empty stream). */
+    func all(callable fn): bool {
+        for (x in this._source) {
+            if (!fn(x)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** True if no element matches `fn`. */
+    func none(callable fn): bool {
+        for (x in this._source) {
+            if (fn(x)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Sum of the elements (0 for an empty stream). */
+    func sum(): any {
+        any acc = null;
+        for (x in this._source) {
+            acc = (acc == null) ? x : acc + x;
+        }
+        return (acc == null) ? 0 : acc;
+    }
+
+    /** Smallest element, or null if empty. No callback = natural order;
+     *  callback is a less-than predicate (a,b)->bool. */
+    func min(?callable compare = null): any {
+        any best = null;
+        bool has = false;
+        for (x in this._source) {
+            if (!has) {
+                best = x;
+                has = true;
+            } else if (streamLess(x, best, compare)) {
+                best = x;
+            }
+        }
+        return best;
+    }
+
+    /** Largest element, or null if empty (less-than predicate as for `min`). */
+    func max(?callable compare = null): any {
+        any best = null;
+        bool has = false;
+        for (x in this._source) {
+            if (!has) {
+                best = x;
+                has = true;
+            } else if (streamLess(best, x, compare)) {
+                best = x;
+            }
+        }
+        return best;
+    }
+
+    /** Joins the elements into a string with `separator`. */
+    func join(string separator): string {
+        return collections.join(this.toList(), separator);
+    }
+}
+
+/** Wraps any iterable in a lazy `Stream`. */
+export func stream(any source): Stream<any> {
+    return Stream(source);
+}
+
+/* ---- lazy generator helpers (module-private) ---- */
+
+func streamMap(any src, callable fn): generator<any> {
+    for (x in src) {
+        yield fn(x);
+    }
+}
+
+func streamFilter(any src, callable fn): generator<any> {
+    for (x in src) {
+        if (fn(x)) {
+            yield x;
+        }
+    }
+}
+
+func streamFlatMap(any src, callable fn): generator<any> {
+    for (x in src) {
+        for (y in fn(x)) {
+            yield y;
+        }
+    }
+}
+
+func streamTake(any src, int n): generator<any> {
+    let i = 0;
+    for (x in src) {
+        if (i >= n) {
+            break;
+        }
+        yield x;
+        i = i + 1;
+    }
+}
+
+func streamDrop(any src, int n): generator<any> {
+    let i = 0;
+    for (x in src) {
+        if (i >= n) {
+            yield x;
+        }
+        i = i + 1;
+    }
+}
+
+func streamTakeWhile(any src, callable fn): generator<any> {
+    for (x in src) {
+        if (!fn(x)) {
+            break;
+        }
+        yield x;
+    }
+}
+
+func streamDropWhile(any src, callable fn): generator<any> {
+    bool dropping = true;
+    for (x in src) {
+        if (dropping) {
+            if (fn(x)) {
+                continue;
+            }
+            dropping = false;
+        }
+        yield x;
+    }
+}
+
+func streamDistinct(any src): generator<any> {
+    let seen = {};
+    for (x in src) {
+        if (!seen.contains(x)) {
+            seen[x] = true;
+            yield x;
+        }
+    }
+}
+
+func streamPeek(any src, callable fn): generator<any> {
+    for (x in src) {
+        fn(x);
+        yield x;
+    }
+}
+
+/* Less-than test honouring an optional predicate: no callback = natural
+ * `<`; a bool callback is a less-than predicate; an int callback is a
+ * three-way comparator (negative => a before b). */
+func streamLess(any a, any b, ?callable compare): bool {
+    if (compare == null) {
+        return a < b;
+    }
+    let r = compare(a, b);
+    if (r instanceof bool) {
+        return r as bool;
+    }
+    return (r as int) < 0;
+}
