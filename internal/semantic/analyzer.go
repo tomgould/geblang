@@ -44,6 +44,10 @@ type Analyzer struct {
 	// the check command to enable cross-module unknown-method detection;
 	// nil in the execution (test/run) path, which disables the check.
 	classSurface func(className string) (map[string]bool, bool)
+	// classMethodSigs, when set, returns a method's overload signatures (plus
+	// the declaring class's generic parameter names) for static argument
+	// validation. Injected by the check command alongside classSurface.
+	classMethodSigs func(className, methodLower string) ([]MethodSignature, []string, bool)
 	// methodChecks enables the unknown-method checks (primitive + class).
 	// Off in the execution path; turned on by the check command.
 	methodChecks bool
@@ -53,6 +57,12 @@ type Analyzer struct {
 // resolver used by the unknown-method check. Call before Analyze.
 func (a *Analyzer) SetClassSurfaceResolver(fn func(string) (map[string]bool, bool)) {
 	a.classSurface = fn
+}
+
+// SetClassMethodSignatureResolver installs the resolver used to validate
+// method-call arguments. Call before Analyze.
+func (a *Analyzer) SetClassMethodSignatureResolver(fn func(string, string) ([]MethodSignature, []string, bool)) {
+	a.classMethodSigs = fn
 }
 
 // EnableMethodChecks turns on the unknown-method diagnostics (primitive
@@ -126,7 +136,7 @@ var builtinModuleNames = map[string]bool{
 	"json": true, "xml": true, "toml": true, "yaml": true, "csv": true,
 	"collections": true, "secrets": true, "random": true,
 	"strbuilder": true,
-	"schema": true, "serde": true, "metrics": true,
+	"schema":     true, "serde": true, "metrics": true,
 	"trace": true, "profile": true, "crypt": true,
 	"encoding": true, "compress": true, "template": true,
 	"re": true, "pcre": true, "markdown": true, "datetime": true, "uuid": true,
@@ -765,22 +775,98 @@ func (a *Analyzer) checkClassMethodCall(call *ast.CallExpression) {
 	if !ok || selector.Name == nil || selector.Optional {
 		return
 	}
-	receiver, ok := selector.Object.(*ast.Identifier)
-	if !ok {
-		return
-	}
-	receiverType, ok := a.lookup(receiver.Value)
-	if !ok || !receiverType.known || receiverType.nullable {
+	receiverType := a.expressionTypeName(selector.Object)
+	if !receiverType.known || receiverType.nullable {
 		return
 	}
 	members, resolvable := a.classSurface(receiverType.name)
 	if !resolvable {
 		return
 	}
-	if members[strings.ToLower(selector.Name.Value)] {
+	if !members[strings.ToLower(selector.Name.Value)] {
+		a.errorAt(selector.Name.Token, "%s has no method %s", receiverType.name, selector.Name.Value)
 		return
 	}
-	a.errorAt(selector.Name.Token, "%s has no method %s", receiverType.name, selector.Name.Value)
+	a.checkMethodCallArgs(call, selector, receiverType)
+}
+
+// checkMethodCallArgs flags `obj.method(args)` when the method is resolvable
+// but no overload can accept the given arguments (wrong arity or argument
+// types), matching what both backends reject at runtime. Conservative: it
+// stays silent on any uncertainty (named/spread args, unknown argument types,
+// variadic overloads, or generic/untyped parameter positions) to avoid false
+// positives.
+func (a *Analyzer) checkMethodCallArgs(call *ast.CallExpression, selector *ast.SelectorExpression, receiverType typeInfo) {
+	if a.classMethodSigs == nil {
+		return
+	}
+	sigs, classTypeParams, ok := a.classMethodSigs(receiverType.name, strings.ToLower(selector.Name.Value))
+	if !ok || len(sigs) == 0 {
+		return
+	}
+	args := make([]typeInfo, 0, len(call.Arguments))
+	for _, arg := range call.Arguments {
+		if arg.Name != nil || arg.Spread {
+			return
+		}
+		argType := a.expressionTypeName(arg.Value)
+		if !argType.known {
+			return
+		}
+		args = append(args, argType)
+	}
+	for _, sig := range sigs {
+		if a.methodOverloadPossible(args, sig, classTypeParams) {
+			return
+		}
+	}
+	a.errorAt(selector.Name.Token, "no matching overload for %s.%s with the given argument types", receiverType.name, selector.Name.Value)
+}
+
+// methodOverloadPossible reports whether one overload could accept args.
+// Generic, untyped, or unresolvable parameter positions are treated as
+// wildcards, and variadic overloads are accepted outright, so the result is
+// only ever false when an overload is certainly incompatible.
+func (a *Analyzer) methodOverloadPossible(args []typeInfo, sig MethodSignature, classTypeParams []string) bool {
+	if sig.Variadic {
+		return true
+	}
+	generic := map[string]bool{}
+	for _, t := range classTypeParams {
+		generic[t] = true
+	}
+	for _, t := range sig.TypeParams {
+		generic[t] = true
+	}
+	params := make([]typeInfo, len(sig.Params))
+	for i, pref := range sig.Params {
+		if pref == nil || refMentionsTypeParam(pref, generic) {
+			params[i] = typeInfo{name: "any", known: true}
+			continue
+		}
+		params[i] = a.typeInfoFromRef(pref)
+		if !params[i].known {
+			params[i] = typeInfo{name: "any", known: true}
+		}
+	}
+	return a.callArgumentsCompatible(args, params, sig.Required)
+}
+
+// refMentionsTypeParam reports whether a type reference (anywhere in its
+// argument / union tree) names one of the given generic parameters.
+func refMentionsTypeParam(ref *ast.TypeRef, generic map[string]bool) bool {
+	if ref == nil {
+		return false
+	}
+	if generic[ref.Name] {
+		return true
+	}
+	for _, arg := range ref.Arguments {
+		if refMentionsTypeParam(arg, generic) {
+			return true
+		}
+	}
+	return refMentionsTypeParam(ref.Left, generic) || refMentionsTypeParam(ref.Right, generic)
 }
 
 func (a *Analyzer) checkTypedCollectionMethodCall(call *ast.CallExpression) {

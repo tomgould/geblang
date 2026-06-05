@@ -21,6 +21,43 @@ type ClassDecl struct {
 	// Decorated marks class-level decorators, which may inject members:
 	// callers must bail rather than risk a false positive.
 	Decorated bool
+	// MethodSigs holds the overload signatures per (lowercased) method name,
+	// for static argument validation. A name in Methods may be absent here.
+	MethodSigs map[string][]MethodSignature
+	// TypeParams are the class's declared generic parameter names.
+	TypeParams []string
+}
+
+// methodSignatureFromFunc captures a method's parameter types + arity for
+// static call validation. Geblang methods take `this` implicitly, so the
+// AST parameters are exactly the caller-supplied arguments.
+func methodSignatureFromFunc(m *ast.FunctionStatement) MethodSignature {
+	sig := MethodSignature{}
+	for _, g := range m.Generics {
+		if g != nil && g.Name != nil {
+			sig.TypeParams = append(sig.TypeParams, g.Name.Value)
+		}
+	}
+	for _, p := range m.Parameters {
+		sig.Params = append(sig.Params, p.Type)
+		if p.Variadic {
+			sig.Variadic = true
+		}
+		if p.Default == nil && !p.Variadic {
+			sig.Required++
+		}
+	}
+	return sig
+}
+
+// MethodSignature is one overload of a class method: the declared
+// parameter types plus arity, so callers can validate call arguments
+// statically. A nil Params entry marks an untyped parameter.
+type MethodSignature struct {
+	Params     []*ast.TypeRef
+	Required   int // positional args that must be supplied (no default, not variadic)
+	Variadic   bool
+	TypeParams []string // the method's own generic parameter names
 }
 
 // InterfaceDecl is the resolved shape of an interface. Methods include
@@ -61,10 +98,16 @@ func ExtractModel(program *ast.Program) ModuleModel {
 				return
 			}
 			decl := ClassDecl{
-				Name:      s.Name.Value,
-				Methods:   map[string]bool{},
-				Fields:    map[string]bool{},
-				Decorated: len(s.Decorators) > 0,
+				Name:       s.Name.Value,
+				Methods:    map[string]bool{},
+				Fields:     map[string]bool{},
+				Decorated:  len(s.Decorators) > 0,
+				MethodSigs: map[string][]MethodSignature{},
+			}
+			for _, g := range s.Generics {
+				if g != nil && g.Name != nil {
+					decl.TypeParams = append(decl.TypeParams, g.Name.Value)
+				}
 			}
 			if s.Extends != nil {
 				decl.Parent = s.Extends.Name
@@ -80,6 +123,7 @@ func ExtractModel(program *ast.Program) ModuleModel {
 					}
 					name := strings.ToLower(m.Name.Value)
 					decl.Methods[name] = true
+					decl.MethodSigs[name] = append(decl.MethodSigs[name], methodSignatureFromFunc(m))
 					if name == "__call" {
 						decl.HasCall = true
 					}

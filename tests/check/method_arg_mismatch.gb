@@ -1,0 +1,11 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag a method call whose arguments match no
+ * overload (wrong element type, scalar type, or arity), the way both backends
+ * reject it at runtime.
+ */
+class Box {
+    func take(list<string> xs): int { return xs.length(); }
+}
+let b = Box();
+b.take([1, 2, 3]);

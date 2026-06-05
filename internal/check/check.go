@@ -111,6 +111,7 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 			}
 			graph := buildClassGraph(program, opts, cache)
 			analyzer.SetClassSurfaceResolver(graph.surface)
+			analyzer.SetClassMethodSignatureResolver(graph.methodSignatures)
 		}
 	}
 	for _, sd := range analyzer.Analyze(program) {

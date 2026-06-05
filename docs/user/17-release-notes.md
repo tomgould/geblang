@@ -2,6 +2,16 @@
 
 ## 1.9.0
 
+### Tooling
+
+- `geblang check` now flags method calls whose arguments match no overload -
+  wrong argument type, wrong element type (e.g. `list<int>` into a
+  `list<string>` parameter), or wrong arity - the way both backends already
+  reject them at runtime. Previously only free-function calls were validated;
+  method calls were unchecked. The check stays conservative (silent on generic
+  parameter positions, untyped parameters, variadic overloads, or unknown
+  argument types) to avoid false positives.
+
 ### Collections
 
 - New `seq` module: `seq.stream(source)` wraps any iterable (list, set, range,

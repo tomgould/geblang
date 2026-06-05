@@ -117,6 +117,30 @@ func (g *classGraph) surface(className string) (map[string]bool, bool) {
 	return members, true
 }
 
+// methodSignatures returns the overload signatures for a method, found on the
+// class or the nearest ancestor that declares it, plus that declaring class's
+// generic parameter names (for the analyzer's type-parameter-aware checks).
+// Returns ok=false on any uncertainty (ambiguous/cyclic/__call/decorated class,
+// or the method resolves only via an interface) so callers stay silent.
+func (g *classGraph) methodSignatures(className, methodLower string) ([]semantic.MethodSignature, []string, bool) {
+	seen := map[string]bool{}
+	for name := className; name != ""; {
+		if g.ambiguous[name] || seen[name] {
+			return nil, nil, false
+		}
+		seen[name] = true
+		decl, ok := g.classes[name]
+		if !ok || decl.HasCall || decl.Decorated {
+			return nil, nil, false
+		}
+		if sigs, found := decl.MethodSigs[methodLower]; found && len(sigs) > 0 {
+			return sigs, decl.TypeParams, true
+		}
+		name = decl.Parent
+	}
+	return nil, nil, false
+}
+
 func (g *classGraph) addInterfaceMembers(name string, members, seen map[string]bool) bool {
 	if g.ambiguous[name] {
 		return false
