@@ -16,12 +16,12 @@ import web;
 
 let app = web.new();
 
-web.before(app, func(dict<string, any> request): any {
+web.before(app, func(Request req): ?Response {
     return null;
 });
 
-web.get(app, "/users/:id", func(dict<string, any> request): dict<string, any> {
-    return web.jsonStatus({"id": request["params"]["id"]}, 200);
+web.get(app, "/users/:id", func(Request req): Response {
+    return http.jsonResponse({"id": req.routeParam("id")});
 });
 
 http.serve("127.0.0.1:8080", func(dict<string, any> request): dict<string, any> {
@@ -32,26 +32,30 @@ http.serve("127.0.0.1:8080", func(dict<string, any> request): dict<string, any> 
 Middleware registered with `web.before` can short-circuit before the route
 handler. `web.use` and `web.after` transform responses after the handler.
 
-Handlers receive a request dictionary and return a response dictionary, a
-string, or `null`. Strings are normalized to `200` text responses and `null` is
-normalized to `204 No Content`. The request contains method, path, headers,
-query/body data where available, and route parameters after routing. Response
-helpers build dictionaries with `status`, `headers`, and `body` fields.
+A handler opts into the rich `Request` and `Response` objects (see the HTTP
+chapter) just by declaring those parameter types: `Request` gives typed
+accessors like `req.routeParam("id")`, `req.queryInt("page")`, and
+`req.header(name)`, and `http.jsonResponse` / `http.response` / `http.redirect`
+build a `Response`. A handler can still take a plain request `dict` and return a
+response `dict`, a string (normalized to a `200` text response), or `null`
+(normalized to `204 No Content`); both styles can be mixed across routes. The
+`web.handle` boundary itself stays dict-in / dict-out, so the serve wrapper does
+not change.
 
 Before middleware receives `(request)` and should return `null` to continue or
-a response-compatible value to stop the pipeline. Response middleware receives
+a response to stop the pipeline. Response middleware receives
 `(request, response)` and should return the transformed response:
 
 ```gb
-web.before(app, func(dict<string, any> request): any {
-    if (!request["headers"].hasKey("authorization")) {
-        return web.jsonStatus({"error": "missing token"}, 401);
+web.before(app, func(Request req): ?Response {
+    if (req.header("authorization") == null) {
+        return http.jsonResponse({"error": "missing token"}, 401);
     }
     return null;
 });
 
-web.use(app, func(dict<string, any> request, dict<string, any> response): dict<string, any> {
-    return web.withHeader(response, "X-App", "Geblang");
+web.use(app, func(Request req, Response response): Response {
+    return response.withHeader("X-App", "Geblang");
 });
 ```
 
@@ -111,6 +115,67 @@ router.use(api, func(dict<string, any> request, dict<string, any> response): dic
     return response;
 });
 ```
+
+## Concurrency And Shared State
+
+Geblang serves each request on its own lightweight goroutine, so requests run
+in parallel. This is what lets a Geblang server stay responsive under load, but
+it means you have to be deliberate about state that more than one request can
+touch at the same time.
+
+The model has two halves:
+
+- A bare server handler passed straight to `http.serve` / `http.listen` /
+  `net.serve` runs **isolated per request**. Each request gets its own fresh
+  copy of whatever the handler captured, so a counter captured in a bare
+  handler resets every request and concurrent requests cannot interfere. Simple
+  scripts are therefore safe by default; the trade-off is that captured state
+  does not persist from one request to the next.
+- When you dispatch through the framework path (`web.handle`, the source
+  `web.router`, and frameworks built on them), handlers and the application's
+  services are **shared across requests**. This is the service model you want:
+  one set of controllers, one database pool, one configuration, reused by every
+  request.
+
+Shared is the useful default for the framework path, but it comes with one
+rule: **do not mutate a plain `dict`, `list`, `set`, or object that is shared
+across requests.** Two requests writing the same container at the same instant
+can crash the process. This is the same contract Go itself has for maps, and
+the same discipline every multi-threaded web stack requires.
+
+What to do instead:
+
+- Share read-only state freely. Configuration, compiled templates, and services
+  that only read are safe to share as-is.
+- Share infrastructure through its handle. A database pool, cache backend, or
+  logger is a thread-safe handle; create it once at startup and every request
+  can use it.
+- Share **mutable** state through a `store.Store` (see the async chapter). It is
+  a thread-safe key-value store with atomic operations, built for exactly this.
+
+```gb
+import http;
+import web;
+import store;
+
+let app = web.new();
+
+/* Shared across all requests: use a Store, not a plain dict. */
+let hits = store.Store();
+
+web.get(app, "/", func(Request req): Response {
+    int n = hits.incr("home");          /* atomic; no lost updates */
+    return http.jsonResponse({"visits": n});
+});
+
+http.serve("127.0.0.1:8080", func(dict<string, any> request): dict<string, any> {
+    return web.handle(app, request);
+});
+```
+
+Per-request state, by contrast, lives in the request object and in local
+variables inside the handler. Those are never shared, so they need no
+protection.
 
 ## Request Validation
 

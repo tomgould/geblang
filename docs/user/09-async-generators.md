@@ -570,6 +570,16 @@ Make shared access explicit with the tools above:
 - **An atomic** cell for a single counter or flag (`atomic.AtomicInt`).
 - **A channel** to hand values to one owning task instead of sharing the
   object (`async.channel`).
+- **A `store.Store`** for shared mutable key-value state. It is a thread-safe
+  map that serialises every access and deep-copies values in and out, with
+  atomic `incr`, `getOrSet`, `compareAndSet`, and `update(key, fn)`. Reach for
+  it instead of guarding a plain dict by hand:
+
+  ```gb
+  import store;
+  let s = store.Store();
+  async.run(func(): void { s.incr("done"); });   # atomic, no lost updates
+  ```
 
 The concurrency primitives themselves - `async.channel`, `async.sync`,
 and `async.atomic` - are safe to share across tasks; that is their

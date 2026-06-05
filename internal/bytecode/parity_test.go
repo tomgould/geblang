@@ -246,6 +246,9 @@ func (l *stdlibModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClass,
 }
 
 func (l *stdlibModuleLoader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if _, ok := l.chunks[module]; !ok && module != "" && native.IsNativeModule(module) {
+		return nil, &runtime.MethodNotFoundError{Class: className, Method: methodName}
+	}
 	vm, err := l.newSubVM(module)
 	if err != nil {
 		return nil, err
@@ -11911,4 +11914,89 @@ func assertImportedModuleRejected(t *testing.T, moduleBody string) {
 	if err := vm.Run(); err == nil {
 		t.Fatalf("vm accepted a colliding module: %q", vmOut.String())
 	}
+}
+
+func TestParityStoreFunctional(t *testing.T) {
+	runParityWithStdlib(t, `
+import store;
+import io;
+let s = store.new();
+store.set(s, "a", 1);
+store.incr(s, "a", 5);
+io.println(store.get(s, "a"));
+io.println(store.has(s, "a"));
+io.println(store.getOrSet(s, "b", 9));
+io.println(store.compareAndSet(s, "a", 6, 10));
+io.println(store.compareAndSet(s, "a", 6, 10));
+io.println(store.len(s));
+io.println(store.keys(s));
+`, "6\ntrue\n9\ntrue\nfalse\n2\n[\"a\", \"b\"]\n")
+}
+
+func TestParityStoreClass(t *testing.T) {
+	runParityWithStdlib(t, `
+import store;
+import io;
+let s = store.Store();
+s.set("cfg", {"n": 1});
+let got = s.get("cfg") as dict<string, any>;
+got["n"] = 99;
+io.println((s.get("cfg") as dict<string, any>)["n"]);
+io.println(s.incr("hits"));
+io.println(s.incr("hits"));
+let r = s.update("total", func(any old): any { return (old == null ? 0 : old as int) + 10; });
+io.println(r);
+`, "1\n1\n2\n10\n")
+}
+
+// TestParityModuleVsClassCaseSensitivity guards the compiler fix that a
+// module-qualified call (lowercase `store`) must not bind to a same-spelled
+// class (`Store`) in scope on the VM (the evaluator was always case-sensitive).
+func TestParityModuleVsClassCaseSensitivity(t *testing.T) {
+	runParityWithStdlib(t, `
+import store;
+import io;
+let s = store.Store();
+s.set("k", 7);
+io.println(s.get("k"));
+io.println(store.has(store.new(), "k"));
+`, "7\nfalse\n")
+}
+
+func TestParityResponseBody(t *testing.T) {
+	runParityWithStdlib(t, `
+import http;
+import io;
+let r = http.response("hello", 200);
+io.println(r.body());
+io.println(r.body() == r["body"]);
+`, "hello\ntrue\n")
+}
+
+// TestParityUnknownNativeClassMethodError guards that an unresolved method on a
+// native-module class instance (Response) raises a catchable "unknown method"
+// error on both backends, not the VM's old "module http is not loaded".
+func TestParityUnknownNativeClassMethodError(t *testing.T) {
+	runParityWithStdlib(t, `
+import http;
+import io;
+let r = http.response("x", 200);
+try {
+    r.nope();
+} catch (RuntimeError e) {
+    io.println(e.getMessage());
+}
+`, "unknown method Response.nope\n")
+}
+
+// TestParityGoroutineId asserts properties (not values, which vary per run): the
+// id is positive and stable within a goroutine on both backends.
+func TestParityGoroutineId(t *testing.T) {
+	runParityWithStdlib(t, `
+import sys;
+import io;
+let a = sys.goroutineId();
+io.println(a > 0);
+io.println(sys.goroutineId() == a);
+`, "true\ntrue\n")
 }

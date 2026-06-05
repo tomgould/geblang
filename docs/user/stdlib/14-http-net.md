@@ -31,6 +31,7 @@ r.ok();             # true for any 2xx
 r.text();           # body as a string
 r.bytes();          # body as raw bytes
 r.json();           # body parsed as JSON
+r.body();           # the raw body value, untyped (same as r["body"])
 r.header("ETag");   # first value of a header, or null
 r.headers();        # all response headers
 
@@ -57,7 +58,7 @@ earlier versions, so existing code keeps working:
 
 ```gb
 r["status"];        # same as r.status()
-r["body"];          # same as r.text()
+r["body"];          # same as r.body()
 r["headers"];       # same as r.headers()
 let plain = r.toDict();   # a plain dict<string, any> snapshot
 ```
@@ -520,6 +521,10 @@ req.query("q")      # ?string (first value)
 req.queryInt("page")    # ?int
 req.queryBool("debug")  # ?bool
 req.queryAll("tag")     # list<string> (all values)
+req.routeParam("id")    # ?string: a path parameter from a "/users/:id" route
+req.routeParams()       # dict<string, string>: all path parameters
+req.bodyBytes()         # body as raw bytes (text()/bodyText() give a string)
+req.toDict()            # a plain dict<string, any> snapshot
 ```
 
 Server Response builders all return a `Response` (the same object the

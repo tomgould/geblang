@@ -47,4 +47,12 @@ class HttpResponseTest extends test.Test {
         this.assertTrue(r.isNotFound());
         this.assertTrue(r.isClientError());
     }
+
+    @test
+    func bodyReturnsRawField(): void {
+        let r = http.response("hello", 200);
+        this.assertEquals("hello", r.body());
+        /* body() is the method form of r["body"] (raw, untyped). */
+        this.assertEquals(r["body"], r.body());
+    }
 }

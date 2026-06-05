@@ -32,6 +32,7 @@ io.println(sys.cwd());
 | `arch()` | `string` | CPU architecture, such as `amd64` or `arm64` |
 | `hostname()` | `string` | Hostname |
 | `pid()` | `int` | Current process ID |
+| `goroutineId()` | `int` | Id of the current goroutine (see below) |
 | `username()` | `string` | Current OS username |
 | `homedir()` | `string` | Current user's home directory |
 | `tmpdir()` | `string` | Host temporary directory |
@@ -46,6 +47,14 @@ io.println(sys.tmpdir());
 
 Use `sys.tmpdir()` with `path.join` when you need a location, and `io.tempFile`
 or `io.tempDir` when you want Geblang to create a unique path for you.
+
+`sys.goroutineId()` returns the id of the goroutine that calls it. It is stable
+for the life of that goroutine and unique among goroutines running at the same
+time (an id may be reused only after the goroutine that held it has exited). It
+is an advanced primitive for building goroutine-local or request-scoped state:
+key a `store.Store` by the id, and clear that key when the goroutine's work
+finishes so a later goroutine reusing the id starts clean. Most code never needs
+it; prefer passing state explicitly or sharing through a `store.Store`.
 
 ## Environment Variables
 

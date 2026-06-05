@@ -3391,6 +3391,7 @@ func httpObjectClasses(env *runtime.Environment) []*runtime.Class {
 			"isnotfound":    []runtime.Function{{Name: "isNotFound", Native: nativeResponseIsNotFound}},
 			"iserror":       []runtime.Function{{Name: "isError", Native: nativeResponseIsError}},
 			"error":         []runtime.Function{{Name: "error", Native: nativeResponseError}},
+			"body":          []runtime.Function{{Name: "body", Native: nativeResponseBody}},
 			"text":          []runtime.Function{{Name: "text", Native: nativeResponseText}},
 			"bytes":         []runtime.Function{{Name: "bytes", Native: nativeResponseBytes}},
 			"json":          []runtime.Function{{Name: "json", Native: nativeResponseJSON}},
@@ -3624,6 +3625,18 @@ func nativeResponseText(this *runtime.Instance, args []runtime.Value) (runtime.V
 		return nil, fmt.Errorf("Response.text expects no arguments")
 	}
 	return runtime.String{Value: responseBodyText(this)}, nil
+}
+
+// nativeResponseBody returns the raw stored body value (the method form of
+// resp["body"]); text()/bytes()/json() give typed access instead.
+func nativeResponseBody(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Response.body expects no arguments")
+	}
+	if v := this.Fields["body"]; v != nil {
+		return v, nil
+	}
+	return runtime.Null{}, nil
 }
 
 func nativeResponseBytes(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -8144,6 +8157,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"sleep":              sysSleep,
 			"hostname":           e.registryBuiltin("sys", "hostname"),
 			"pid":                e.registryBuiltin("sys", "pid"),
+			"goroutineId":        e.registryBuiltin("sys", "goroutineId"),
 			"platform":           e.registryBuiltin("sys", "platform"),
 			"arch":               e.registryBuiltin("sys", "arch"),
 			"tmpdir":             e.registryBuiltin("sys", "tmpdir"),
@@ -8949,6 +8963,20 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"trySend":  e.registryBuiltin("async.channel", "trySend"),
 			"close":    e.registryBuiltin("async.channel", "close"),
 			"isClosed": e.registryBuiltin("async.channel", "isClosed"),
+		},
+		"store": {
+			"new":           e.registryBuiltin("store", "new"),
+			"set":           e.registryBuiltin("store", "set"),
+			"get":           e.registryBuiltin("store", "get"),
+			"has":           e.registryBuiltin("store", "has"),
+			"delete":        e.registryBuiltin("store", "delete"),
+			"clear":         e.registryBuiltin("store", "clear"),
+			"len":           e.registryBuiltin("store", "len"),
+			"keys":          e.registryBuiltin("store", "keys"),
+			"values":        e.registryBuiltin("store", "values"),
+			"incr":          e.registryBuiltin("store", "incr"),
+			"getOrSet":      e.registryBuiltin("store", "getOrSet"),
+			"compareAndSet": e.registryBuiltin("store", "compareAndSet"),
 		},
 		"errors": {
 			"new":           e.registryBuiltin("errors", "new"),

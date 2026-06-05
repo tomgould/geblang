@@ -1,0 +1,108 @@
+module store;
+
+import store;
+
+/**
+ * Thread-safe shared key-value store: the sanctioned way to share
+ * mutable state across requests / goroutines. Each request runs on
+ * its own goroutine, so sharing a plain dict across them is unsafe
+ * (concurrent access crashes the process). A Store serialises every
+ * access internally and deep-copies values in and out, so a stored
+ * value is an isolated snapshot a caller cannot mutate behind the
+ * lock.
+ *
+ * ```gb
+ * import store;
+ *
+ * let hits = store.Store();
+ * hits.incr("/home");                 # atomic counter
+ * hits.set("cfg", {"theme": "dark"});
+ * let cfg = hits.get("cfg");
+ *
+ * # atomic read-modify-write (compare-and-set retry loop):
+ * hits.update("total", func(any old): any {
+ *     return (old == null ? 0 : old as int) + 1;
+ * });
+ * ```
+ *
+ * Share infrastructure (db pools, caches) through their own handles;
+ * reach for a Store when you need a shared mutable map.
+ */
+export class Store {
+    any _handle;
+
+    func Store() {
+        this._handle = store.new();
+    }
+
+    /** Returns the value for `key`, or null if absent (a deep copy). */
+    func get(any key): any {
+        return store.get(this._handle, key);
+    }
+
+    /** Stores a deep copy of `value` under `key`. */
+    func set(any key, any value) {
+        store.set(this._handle, key, value);
+    }
+
+    /** Reports whether `key` is present. */
+    func has(any key): bool {
+        return store.has(this._handle, key);
+    }
+
+    /** Removes `key`; returns whether it was present. */
+    func delete(any key): bool {
+        return store.delete(this._handle, key);
+    }
+
+    /** Removes all entries. */
+    func clear() {
+        store.clear(this._handle);
+    }
+
+    /** Number of entries. */
+    func len(): int {
+        return store.len(this._handle);
+    }
+
+    /** Keys in a deterministic order. */
+    func keys(): list<any> {
+        return store.keys(this._handle);
+    }
+
+    /** Values in the same order as `keys()` (deep copies). */
+    func values(): list<any> {
+        return store.values(this._handle);
+    }
+
+    /** Atomically adds `delta` (default 1) to the int at `key`, treating
+     *  a missing key as 0; returns the new value. */
+    func incr(any key, int delta = 1): int {
+        return store.incr(this._handle, key, delta);
+    }
+
+    /** Returns the value at `key`, or atomically stores and returns
+     *  `value` if absent. */
+    func getOrSet(any key, any value): any {
+        return store.getOrSet(this._handle, key, value);
+    }
+
+    /** Atomically sets `key` to `next` only if its current value
+     *  equals `expected` (null matches an absent key); returns success. */
+    func compareAndSet(any key, any expected, any next): bool {
+        return store.compareAndSet(this._handle, key, expected, next);
+    }
+
+    /** Atomic read-modify-write: applies `fn` to the current value
+     *  (null if absent) and stores the result, retrying on contention.
+     *  Do NOT touch this same key non-atomically inside `fn`. */
+    func update(any key, callable fn): any {
+        while (true) {
+            let old = store.get(this._handle, key);
+            let next = fn(old);
+            if (store.compareAndSet(this._handle, key, old, next)) {
+                return next;
+            }
+        }
+    }
+}

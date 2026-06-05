@@ -20,6 +20,7 @@ import (
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
+	"geblang/internal/native"
 	"geblang/internal/parser"
 	"geblang/internal/runtime"
 	"geblang/internal/semantic"
@@ -2047,6 +2048,13 @@ func (l *bytecodeModuleLoader) CallModuleMethod(module string, className string,
 	} else {
 		c, ok := l.chunks[module]
 		if !ok {
+			// Native modules (http, process, ...) carry no Geblang chunk, so an
+			// unresolved method on one of their class instances is simply
+			// undefined, not an unloaded module; report it as such so the VM
+			// matches the evaluator's "unknown method" error.
+			if native.IsNativeModule(module) {
+				return nil, &runtime.MethodNotFoundError{Class: className, Method: methodName}
+			}
 			return nil, fmt.Errorf("module %s is not loaded", module)
 		}
 		chunk = c

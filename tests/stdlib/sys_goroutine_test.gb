@@ -1,0 +1,37 @@
+/**
+ * @title sys.goroutineId (1.8.0)
+ * @summary Current goroutine id: positive, stable within a goroutine,
+ * and distinct across concurrently running goroutines.
+ */
+import test;
+import sys;
+import async;
+import async.sync as sync;
+import async.atomic as atomic;
+
+class SysGoroutineTest extends test.Test {
+    @test
+    func positiveAndStable(): void {
+        let a = sys.goroutineId();
+        this.assertTrue(a > 0);
+        this.assertEquals(a, sys.goroutineId());
+    }
+
+    @test
+    func distinctAcrossGoroutines(): void {
+        let main = sys.goroutineId();
+        let captured = atomic.AtomicInt(0);
+        let wg = sync.WaitGroup();
+        wg.add(1);
+        async.run(func(): void {
+            try {
+                captured.store(sys.goroutineId());
+            } finally {
+                wg.done();
+            }
+        });
+        wg.wait();
+        this.assertTrue(captured.load() > 0);
+        this.assertNotEquals(main, captured.load());
+    }
+}

@@ -20,7 +20,8 @@
 - HTTP client calls (`http.get`, `http.post`, `http.request`, the request
   builder's `send`, the client methods, and `fetchAll`) now return a rich
   `Response` object with reader methods: `status()`, `ok()`, `text()`,
-  `bytes()`, `json()`, `header(name)`, `headers()`, plus the status
+  `bytes()`, `json()`, `body()` (the raw body value, the method form of
+  `resp["body"]`), `header(name)`, `headers()`, plus the status
   predicates `isSuccessful()`, `isRedirect()`, `isClientError()`,
   `isServerError()`, and `isNotFound()`.
 - The `Response` object stays index-compatible with the previous dict shape:
@@ -107,6 +108,19 @@
   `if`/`range`/`with`, pipelines, `Engine`/`load`/`Template.render`) and its
   contextual auto-escaping.
 
+### Concurrency
+
+- New `sys.goroutineId()`: returns the current goroutine's id (positive, stable
+  within a goroutine, unique among live goroutines). An advanced primitive for
+  goroutine-local / request-scoped state, e.g. keying a `store.Store` by it.
+- New `store.Store`: a thread-safe shared key-value store for state shared
+  across concurrent tasks or request handlers. Every operation is serialised
+  internally and values are deep-copied in and out (isolated snapshots), with
+  atomic `incr`, `getOrSet`, `compareAndSet`, and `update(key, fn)`. Sharing a
+  plain dict/list across goroutines is unsafe; reach for a `Store` whenever you
+  need a shared mutable map. A lower-level functional API (`store.new()`,
+  `store.get(h, key)`, ...) backs the class.
+
 ### Other
 
 - `typeof(x)` can now be compared to a type name string: `typeof(x) ==
@@ -147,6 +161,13 @@
   with routes registered up front serves correctly over a real socket instead
   of failing with "unknown web app handle". Handle ids created inside a handler
   stay isolated to that request.
+- A module-qualified call such as `mod.foo()` no longer mis-binds to a
+  same-spelled class that differs only in case (for example a `Mod` class in
+  scope) on the bytecode VM. Call-site dispatch and static-value access are now
+  case-sensitive on both backends, matching the tree-walking evaluator.
+- Calling a method that does not exist on a native class instance (for example a
+  `Response`) now raises a clear "unknown method" error on the bytecode VM,
+  matching the evaluator, instead of the misleading "module ... is not loaded".
 
 ## 1.7.2
 

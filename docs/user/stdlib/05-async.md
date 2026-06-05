@@ -302,3 +302,53 @@ if (t.cancelled) {
 
 These are equivalent to `async.done(t)` and inspecting the cancellation state
 set by `async.cancel(t)` / `t.cancel()`.
+
+## Sharing state safely: `store.Store`
+
+Tasks (and server request handlers) run concurrently on separate goroutines.
+A plain `dict`, `list`, or object captured and mutated from more than one of
+them at once is NOT safe: concurrent access to a shared container can crash the
+process. The fix is not to lock every access (that would slow down all
+single-threaded code); it is to put shared mutable state behind a primitive
+built for concurrency.
+
+`store.Store` is that primitive: a thread-safe key-value store. Every operation
+is serialised internally, and values are deep-copied in and out, so a stored
+value is an isolated snapshot that a caller cannot mutate behind the store's
+back.
+
+```gb
+import store;
+
+let s = store.Store();
+
+s.set("config", {"theme": "dark"});   # deep-copied in
+let cfg = s.get("config");            # deep-copied out (null if absent)
+
+s.incr("requests");                   # atomic counter; missing key starts at 0
+s.incr("bytes", 1024);                # add an explicit amount
+
+# Atomic get-or-set: stores the default only if the key is absent.
+let conn = s.getOrSet("pool", makePool());
+
+# Atomic read-modify-write. `fn` receives the current value (null if absent)
+# and its result is stored, retrying if another task changed the key first.
+# Do NOT touch this same key non-atomically inside `fn`.
+s.update("tally", func(any old): any {
+    return (old == null ? 0 : old as int) + 1;
+});
+```
+
+Full surface: `get`, `set`, `has`, `delete`, `clear`, `len`, `keys`, `values`,
+`incr(key, delta = 1)`, `getOrSet(key, value)`,
+`compareAndSet(key, expected, next)` (null matches an absent key), and
+`update(key, fn)`. `keys()` / `values()` return snapshots in a deterministic
+order.
+
+Rule of thumb: each task / request runs with its own local variables; share
+infrastructure (database pools, caches) through their own handles, and reach
+for a `Store` whenever you need a shared mutable map. Do not share a plain
+container across concurrent tasks.
+
+There is also a lower-level functional API (`store.new()`, `store.get(h, key)`,
+...) that the `Store` class wraps; prefer the class.

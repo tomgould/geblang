@@ -16,7 +16,7 @@ var NativeModuleNames = map[string]struct{}{
 	"pcre": {}, "proc": {}, "procnative": {}, "process": {}, "profile": {},
 	"profiler": {}, "random": {}, "re": {}, "reflect": {}, "schema": {},
 	"secrets": {}, "secureRandom": {}, "serde": {}, "smtp": {}, "sockets": {},
-	"ssh": {}, "sshnative": {}, "strbuilder": {},
+	"ssh": {}, "sshnative": {}, "store": {}, "strbuilder": {},
 	"streams": {}, "string": {}, "strings": {}, "sys": {}, "template": {},
 	"test": {}, "time": {}, "toml": {}, "trace": {}, "unicode": {}, "url": {},
 	"uuid": {}, "watch": {}, "web": {}, "websocket": {}, "xml": {},

@@ -115,6 +115,7 @@ func registerAllBuiltins(r *Registry) {
 	registerAsyncSync(r)
 	registerAsyncAtomic(r)
 	registerAsyncChannel(r)
+	registerStore(r)
 	registerTime(r)
 	registerBytes(r)
 	registerString(r)
@@ -4661,6 +4662,12 @@ func registerSys(r *Registry) {
 			return nil, fmt.Errorf("sys.pid expects no arguments")
 		}
 		return runtime.NewInt64(int64(sysPid())), nil
+	})
+	r.Register("sys", "goroutineId", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("sys.goroutineId expects no arguments")
+		}
+		return runtime.NewInt64(sysGoroutineID()), nil
 	})
 	r.Register("sys", "platform", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {

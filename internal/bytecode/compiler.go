@@ -3186,7 +3186,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			}
 			if object, ok := selector.Object.(*ast.Identifier); ok {
 				if _, resolvedName := c.resolveName(object.Value); !resolvedName {
-					if classIndex, ok := c.classes[strings.ToLower(object.Value)]; ok {
+					if classIndex, ok := c.classes[strings.ToLower(object.Value)]; ok && c.chunk.Classes[classIndex].Name == object.Value {
 						indices, ok := c.lookupStaticMethod(c.chunk.Classes[classIndex], selector.Name.Value)
 						var orderedArgs []ast.Expression
 						var functionIndex int64
@@ -3362,7 +3362,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		if !expr.Optional {
 			if object, ok := expr.Object.(*ast.Identifier); ok {
 				if _, resolvedName := c.resolveName(object.Value); !resolvedName {
-					if classIndex, ok := c.classes[strings.ToLower(object.Value)]; ok {
+					if classIndex, ok := c.classes[strings.ToLower(object.Value)]; ok && c.chunk.Classes[classIndex].Name == object.Value {
 						nameIndex := int64(len(c.chunk.Constants))
 						c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: expr.Name.Value})
 						c.emitAt(OpGetStaticValue, expr.Token.Line, expr.Token.Column, classIndex, nameIndex)
@@ -4376,7 +4376,7 @@ func (c *Compiler) compileAssignmentExpression(expr *ast.AssignmentExpression) e
 	case *ast.SelectorExpression:
 		if object, ok := left.Object.(*ast.Identifier); ok {
 			if _, resolvedName := c.resolveName(object.Value); !resolvedName {
-				if classIndex, ok := c.classes[strings.ToLower(object.Value)]; ok {
+				if classIndex, ok := c.classes[strings.ToLower(object.Value)]; ok && c.chunk.Classes[classIndex].Name == object.Value {
 					if err := c.compileExpression(expr.Value); err != nil {
 						return err
 					}

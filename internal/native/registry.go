@@ -175,7 +175,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"close": {}, "isClosed": {},
 	},
 	"sys": {
-		"hostname": {}, "pid": {}, "platform": {}, "arch": {},
+		"hostname": {}, "pid": {}, "goroutineId": {}, "platform": {}, "arch": {},
 		"tmpdir": {}, "homedir": {}, "username": {}, "environ": {},
 	},
 	"json": {

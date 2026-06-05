@@ -1,0 +1,109 @@
+/**
+ * @title store.Store (1.8.0)
+ * @summary Thread-safe shared key-value store with copy-in/copy-out
+ * isolation and atomic incr / getOrSet / compareAndSet / update.
+ */
+import test;
+import store;
+
+class StoreTest extends test.Test {
+
+    @test
+    func functionalGetSetHasDelete(): void {
+        let s = store.new();
+        store.set(s, "a", 1);
+        this.assertEquals(1, store.get(s, "a"));
+        this.assertTrue(store.has(s, "a"));
+        this.assertFalse(store.has(s, "z"));
+        this.assertNull(store.get(s, "z"));
+        this.assertTrue(store.delete(s, "a"));
+        this.assertFalse(store.delete(s, "a"));
+        this.assertEquals(0, store.len(s));
+    }
+
+    @test
+    func classGetSet(): void {
+        let s = store.Store();
+        s.set("name", "geb");
+        this.assertEquals("geb", s.get("name"));
+        this.assertTrue(s.has("name"));
+        this.assertEquals(1, s.len());
+    }
+
+    @test
+    func copyInIsolatesStoredValue(): void {
+        let s = store.Store();
+        let d = {"n": 1};
+        s.set("k", d);
+        d["n"] = 999;
+        this.assertEquals(1, (s.get("k") as dict<string, any>)["n"]);
+    }
+
+    @test
+    func copyOutIsolatesStoredValue(): void {
+        let s = store.Store();
+        s.set("k", {"n": 1});
+        let got = s.get("k") as dict<string, any>;
+        got["n"] = 42;
+        this.assertEquals(1, (s.get("k") as dict<string, any>)["n"]);
+    }
+
+    @test
+    func incrTreatsMissingAsZero(): void {
+        let s = store.Store();
+        this.assertEquals(1, s.incr("hits"));
+        this.assertEquals(2, s.incr("hits"));
+        this.assertEquals(12, s.incr("hits", 10));
+    }
+
+    @test
+    func getOrSetStoresOnlyWhenAbsent(): void {
+        let s = store.Store();
+        this.assertEquals(9, s.getOrSet("k", 9));
+        this.assertEquals(9, s.getOrSet("k", 99));
+        this.assertEquals(9, s.get("k"));
+    }
+
+    @test
+    func compareAndSetMatchesValueAndAbsence(): void {
+        let s = store.Store();
+        /* null matches an absent key */
+        this.assertTrue(s.compareAndSet("k", null, 1));
+        this.assertFalse(s.compareAndSet("k", 5, 2));
+        this.assertTrue(s.compareAndSet("k", 1, 2));
+        this.assertEquals(2, s.get("k"));
+    }
+
+    @test
+    func updateAppliesFunctionAtomically(): void {
+        let s = store.Store();
+        let r1 = s.update("total", func(any old): any {
+            return (old == null ? 0 : old as int) + 5;
+        });
+        this.assertEquals(5, r1);
+        let r2 = s.update("total", func(any old): any {
+            return (old as int) * 2;
+        });
+        this.assertEquals(10, r2);
+        this.assertEquals(10, s.get("total"));
+    }
+
+    @test
+    func keysAndValuesAreDeterministic(): void {
+        let s = store.Store();
+        s.set("b", 2);
+        s.set("a", 1);
+        this.assertEquals(["a", "b"], s.keys());
+        this.assertEquals([1, 2], s.values());
+    }
+
+    @test
+    func clearRemovesAll(): void {
+        let s = store.Store();
+        s.set("a", 1);
+        s.set("b", 2);
+        s.clear();
+        this.assertEquals(0, s.len());
+        this.assertFalse(s.has("a"));
+    }
+}
