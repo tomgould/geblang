@@ -1,0 +1,6 @@
+/* A user module may not declare a reserved built-in name (io is native).
+   geblang check must flag this. */
+module io;
+
+export func println(any value): void {
+}

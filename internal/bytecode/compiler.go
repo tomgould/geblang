@@ -649,7 +649,7 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		if err := c.compileExpression(stmt.Expression); err != nil {
 			return err
 		}
-		if !expressionLeavesNoValue(stmt.Expression) {
+		if !c.expressionLeavesNoValue(stmt.Expression) {
 			c.emitAt(OpPop, stmt.Token.Line, stmt.Token.Column)
 		}
 		return nil
@@ -2181,13 +2181,21 @@ func (c *Compiler) patchLoopContinues(loop loopContext, target int) {
 	}
 }
 
-func expressionLeavesNoValue(expr ast.Expression) bool {
+// Canonicalize + resolveName-gate exactly like compileBuiltinCall so an aliased
+// io.print/println (value-less opcode) skips the trailing OpPop too.
+func (c *Compiler) expressionLeavesNoValue(expr ast.Expression) bool {
 	call, ok := expr.(*ast.CallExpression)
 	if !ok {
 		return false
 	}
 	module, name, ok := selectorName(call.Callee)
-	return ok && module == "io" && (name == "println" || name == "print" || name == "stdoutWrite")
+	if !ok {
+		return false
+	}
+	if _, resolved := c.resolveName(module); resolved {
+		return false
+	}
+	return c.canonicalModule(module) == "io" && (name == "println" || name == "print" || name == "stdoutWrite")
 }
 
 func containsParentConstructorCall(block *ast.BlockStatement) bool {

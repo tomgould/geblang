@@ -385,7 +385,7 @@ func (p *Parser) parseModuleStatement() ast.Statement {
 
 func (p *Parser) parseImportStatement() ast.Statement {
 	stmt := &ast.ImportStatement{Token: p.curToken}
-	stmt.Path = p.parsePath()
+	stmt.Path, stmt.ForceBuiltin = ast.NormalizeReservedImportPath(p.parsePath())
 	if p.peekTokenIs(token.As) {
 		p.nextToken()
 		if p.expectPeek(token.Ident) {
@@ -399,7 +399,7 @@ func (p *Parser) parseImportStatement() ast.Statement {
 func (p *Parser) parseFromImportStatement() ast.Statement {
 	stmt := &ast.FromImportStatement{Token: p.curToken}
 	p.nextToken() // advance to first path component
-	stmt.Path = p.parsePathHere()
+	stmt.Path, stmt.ForceBuiltin = ast.NormalizeReservedImportPath(p.parsePathHere())
 	if !p.expectPeek(token.Import) {
 		return stmt
 	}

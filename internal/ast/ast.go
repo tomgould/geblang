@@ -143,10 +143,27 @@ func (*ModuleStatement) statementNode()         {}
 func (s *ModuleStatement) TokenLiteral() string { return s.Token.Literal }
 func (s *ModuleStatement) String() string       { return "module " + strings.Join(s.Path, ".") + ";" }
 
+// ReservedModuleNamespace is the top-level namespace reserved for built-in
+// modules. `import geblang.X` resolves canonically to the built-in X; a user
+// module may not live under this namespace.
+const ReservedModuleNamespace = "geblang"
+
+// NormalizeReservedImportPath strips a leading `geblang.` prefix, returning the
+// bare path and whether the prefix was present (forceBuiltin). `import
+// geblang.io` becomes path ["io"] with forceBuiltin true, so downstream
+// resolution treats it as the built-in.
+func NormalizeReservedImportPath(path []string) ([]string, bool) {
+	if len(path) >= 2 && path[0] == ReservedModuleNamespace {
+		return append([]string(nil), path[1:]...), true
+	}
+	return path, false
+}
+
 type ImportStatement struct {
-	Token token.Token
-	Path  []string
-	Alias *Identifier
+	Token        token.Token
+	Path         []string
+	Alias        *Identifier
+	ForceBuiltin bool
 }
 
 func (*ImportStatement) statementNode()         {}
@@ -184,9 +201,10 @@ func (n FromImportName) Local() string {
 }
 
 type FromImportStatement struct {
-	Token token.Token
-	Path  []string
-	Names []FromImportName
+	Token        token.Token
+	Path         []string
+	Names        []FromImportName
+	ForceBuiltin bool
 }
 
 func (*FromImportStatement) statementNode()         {}

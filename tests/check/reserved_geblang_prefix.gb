@@ -1,0 +1,3 @@
+/* The geblang.* namespace is reserved for built-ins; geblang.<non-builtin>
+   must be flagged. */
+import geblang.notabuiltin;

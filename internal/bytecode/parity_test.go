@@ -12299,3 +12299,11 @@ store.clear();
 io.println(store.count());
 `, "3\na\ny\ntrue\nc\ntrue\nfalse\n2\n0\n")
 }
+
+// Aliased io.print/println must not underflow the VM stack.
+func TestParityAliasedIoPrint(t *testing.T) {
+	runParity(t, `import io as out;
+out.println("via alias");
+out.print("no newline");
+`, "via alias\nno newline")
+}

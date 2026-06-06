@@ -244,9 +244,38 @@ source modules include:
 Set `GEBLANG_STDLIB` to add or override bundled stdlib roots in custom
 installations.
 
-User modules take precedence over bundled stdlib modules in the normal package
-resolution path. Prefer unique package names for application code to avoid
-accidentally shadowing stdlib modules.
+## Reserved built-in module names
+
+Built-in module names - every native module and every shipped stdlib module -
+are reserved. A program or package module may not use one of these names: doing
+so is an error reported by `geblang` and `geblang check`. Built-in names always
+resolve to the built-in, so a stray local file can never silently shadow `io`,
+`json`, `math`, and the like, and resolution is identical on both the evaluator
+and the bytecode VM.
+
+```gb
+/* a file declaring a reserved name is rejected: */
+module io;            /* error: module io shadows a reserved built-in name */
+```
+
+This applies to the declared module name, not the filename, so a namespaced
+module is fine even if its file is named like a built-in - for example a file
+`errors.gb` that declares `module myapp.errors;` is accepted, because its
+canonical name is `myapp.errors`, not `errors`. Choose a top-level namespace for
+your own modules (e.g. `myapp.*`) and you will never collide.
+
+The `geblang` namespace is also reserved. `import geblang.X` resolves explicitly
+and unambiguously to the built-in module `X` (whether native or stdlib):
+
+```gb
+import geblang.json as json;   /* always the built-in json */
+import geblang.math;           /* always the built-in math */
+```
+
+`geblang.X` is only valid when `X` is a built-in; `import geblang.something` for
+a non-built-in is an error. Resolution for ordinary (non-reserved) names is
+unchanged: your own modules resolve from the program and package paths first,
+then bundled stdlib, then `GEBLANG_PATH`.
 
 ### Native + stdlib dual-name modules (1.6.0)
 

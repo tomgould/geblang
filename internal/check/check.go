@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"geblang/internal/ast"
+	"geblang/internal/token"
 	"geblang/internal/bytecode"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
@@ -134,6 +135,7 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 		}
 	}
 	if opts.Resolver != nil {
+		diags = append(diags, checkReservedNames(file, program, opts)...)
 		diags = append(diags, checkImports(file, program, opts)...)
 		if opts.CrossModule {
 			diags = append(diags, checkCrossModuleSymbols(file, program, opts)...)
@@ -143,6 +145,65 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 		diags = append(diags, lintProgram(file, program)...)
 	}
 	return program, diags
+}
+
+// checkReservedNames flags a user module that declares a reserved built-in
+// name (native or stdlib, or the geblang namespace) and a `geblang.X` import
+// whose target is not a built-in. Keyed on the declared module name, not the
+// filename, so a namespaced module (e.g. `module gebweb.errors` in errors.gb)
+// is fine. stdlib-path files are exempt: they legitimately wrap native modules.
+func checkReservedNames(file string, program *ast.Program, opts Options) []Diagnostic {
+	if opts.Resolver == nil || fileUnderStdlib(file, opts.Resolver) {
+		return nil
+	}
+	var diags []Diagnostic
+	for _, stmt := range program.Statements {
+		switch s := stmt.(type) {
+		case *ast.ModuleStatement:
+			name := strings.Join(s.Path, ".")
+			if opts.Resolver.IsReservedModuleName(name) {
+				diags = append(diags, Diagnostic{
+					File: file, Line: s.Token.Line, Column: s.Token.Column,
+					Severity: SeverityError, Rule: "module",
+					Message: "module " + name + " shadows a reserved built-in module name; rename it (built-in module names and the geblang namespace are reserved)",
+				})
+			}
+		case *ast.ImportStatement:
+			if s.ForceBuiltin && !opts.Resolver.IsReservedModuleName(strings.Join(s.Path, ".")) {
+				diags = append(diags, reservedImportDiag(file, s.Token, strings.Join(s.Path, ".")))
+			}
+		case *ast.FromImportStatement:
+			if s.ForceBuiltin && !opts.Resolver.IsReservedModuleName(strings.Join(s.Path, ".")) {
+				diags = append(diags, reservedImportDiag(file, s.Token, strings.Join(s.Path, ".")))
+			}
+		}
+	}
+	return diags
+}
+
+func reservedImportDiag(file string, tok token.Token, name string) Diagnostic {
+	return Diagnostic{
+		File: file, Line: tok.Line, Column: tok.Column,
+		Severity: SeverityError, Rule: "import",
+		Message: "geblang." + name + " is not a built-in module; the geblang namespace is reserved for built-ins",
+	}
+}
+
+func fileUnderStdlib(file string, r *modules.Resolver) bool {
+	abs, err := filepath.Abs(file)
+	if err != nil {
+		return false
+	}
+	for _, base := range r.StdlibPaths {
+		baseAbs, err := filepath.Abs(base)
+		if err != nil {
+			continue
+		}
+		if rel, err := filepath.Rel(baseAbs, abs); err == nil && !strings.HasPrefix(rel, "..") {
+			return true
+		}
+	}
+	return false
 }
 
 // compileDiagnostic maps a bytecode compile error onto the static-

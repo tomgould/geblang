@@ -129,6 +129,12 @@ examples.
 Native modules are always available in a normal Geblang binary. Source modules
 resolve from the bundled stdlib, package roots, and `GEBLANG_STDLIB`.
 
+Built-in module names (native and stdlib) are reserved: a program or package may
+not declare a module with one of these names, and built-in names always resolve
+to the built-in identically on both backends. Use `import geblang.X` to refer to
+a built-in explicitly. See "Reserved built-in module names" in the Modules and
+Packages chapter for details.
+
 Prefer explicit aliases when a module name would otherwise be noisy or collide
 with local names:
 

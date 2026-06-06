@@ -2,6 +2,20 @@
 
 ## 1.10.0
 
+### Modules
+
+- Built-in module names (every native and stdlib module) are now reserved: a
+  program or package module may not declare one of these names, and a built-in
+  name always resolves to the built-in, identically on the evaluator and the
+  bytecode VM. This removes a divergence where a local source file could shadow
+  a built-in on one backend but not the other. The reservation is on the
+  declared module name, not the filename, so a namespaced module (e.g.
+  `module myapp.errors;` in a file named `errors.gb`) is unaffected. A collision
+  is reported by `geblang` and `geblang check`.
+- New reserved `geblang.` import prefix: `import geblang.json` resolves
+  explicitly and unambiguously to the built-in module, regardless of local
+  files. The `geblang.*` namespace is reserved for built-ins.
+
 ### AI and retrieval
 
 - New `PgVectorStore` (in `vectorstore`): a Postgres + pgvector backend behind

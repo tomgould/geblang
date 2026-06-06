@@ -68,7 +68,7 @@ dependencies:
 	}
 }
 
-func TestResolverSearchesStdlibBeforeGeblangPath(t *testing.T) {
+func TestResolverReservedNamesResolveToStdlib(t *testing.T) {
 	root := t.TempDir()
 	appRoot := filepath.Join(root, "app")
 	stdlibRoot := filepath.Join(root, "stdlib")
@@ -82,13 +82,13 @@ func TestResolverSearchesStdlibBeforeGeblangPath(t *testing.T) {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
 	}
-	appModule := filepath.Join(appRoot, "pkg", "tool.gb")
+	// `pkg` exists on the stdlib path, so it is a reserved built-in name: a user
+	// or GEBLANG_PATH file may not shadow it; the stdlib copy always wins.
 	stdlibModule := filepath.Join(stdlibRoot, "pkg", "tool.gb")
-	envModule := filepath.Join(envRoot, "pkg", "tool.gb")
 	for path, source := range map[string]string{
-		appModule:    "module pkg.tool; # app",
-		stdlibModule: "module pkg.tool; # stdlib",
-		envModule:    "module pkg.tool; # env",
+		filepath.Join(appRoot, "pkg", "tool.gb"): "module pkg.tool; # app",
+		stdlibModule:                              "module pkg.tool; # stdlib",
+		filepath.Join(envRoot, "pkg", "tool.gb"):  "module pkg.tool; # env",
 	} {
 		if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 			t.Fatalf("write %s: %v", path, err)
@@ -96,33 +96,39 @@ func TestResolverSearchesStdlibBeforeGeblangPath(t *testing.T) {
 	}
 	t.Setenv("GEBLANG_PATH", envRoot)
 
+	// Reserved name: stdlib wins over the app's own ModulePaths.
 	resolver := modules.NewResolver([]string{appRoot})
 	resolver.StdlibPaths = []string{stdlibRoot}
 	resolved, err := resolver.Resolve("pkg.tool")
 	if err != nil {
-		t.Fatalf("resolve app module: %v", err)
-	}
-	if resolved != filepath.Clean(appModule) {
-		t.Fatalf("resolved app: got %q, want %q", resolved, filepath.Clean(appModule))
-	}
-
-	resolver = modules.NewResolver(nil)
-	resolver.StdlibPaths = []string{stdlibRoot}
-	resolved, err = resolver.Resolve("pkg.tool")
-	if err != nil {
-		t.Fatalf("resolve stdlib module: %v", err)
+		t.Fatalf("resolve reserved module: %v", err)
 	}
 	if resolved != filepath.Clean(stdlibModule) {
-		t.Fatalf("resolved stdlib: got %q, want %q", resolved, filepath.Clean(stdlibModule))
+		t.Fatalf("reserved name should resolve to stdlib: got %q, want %q", resolved, filepath.Clean(stdlibModule))
 	}
 
-	resolver = modules.NewResolver(nil)
-	resolver.DisableStdlib = true
-	resolved, err = resolver.Resolve("pkg.tool")
+	// `import geblang.pkg.tool` resolves the same built-in explicitly.
+	resolved, err = resolver.Resolve("geblang.pkg.tool")
 	if err != nil {
-		t.Fatalf("resolve env module: %v", err)
+		t.Fatalf("resolve geblang-prefixed module: %v", err)
 	}
-	if resolved != filepath.Clean(envModule) {
-		t.Fatalf("resolved env: got %q, want %q", resolved, filepath.Clean(envModule))
+	if resolved != filepath.Clean(stdlibModule) {
+		t.Fatalf("geblang.pkg.tool should resolve to stdlib: got %q", resolved)
+	}
+
+	// A non-reserved user module still follows ModulePaths before GEBLANG_PATH.
+	appWidget := filepath.Join(appRoot, "widget.gb")
+	if err := os.WriteFile(appWidget, []byte("module widget; # app"), 0o644); err != nil {
+		t.Fatalf("write widget: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(envRoot, "widget.gb"), []byte("module widget; # env"), 0o644); err != nil {
+		t.Fatalf("write env widget: %v", err)
+	}
+	resolved, err = resolver.Resolve("widget")
+	if err != nil {
+		t.Fatalf("resolve user module: %v", err)
+	}
+	if resolved != filepath.Clean(appWidget) {
+		t.Fatalf("non-reserved name should resolve from ModulePaths: got %q, want %q", resolved, filepath.Clean(appWidget))
 	}
 }

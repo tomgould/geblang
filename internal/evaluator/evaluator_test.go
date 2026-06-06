@@ -4362,16 +4362,47 @@ io.println(extra.label);
 	}
 }
 
+// A user file named like a built-in module must not shadow it: built-in names
+// are reserved and always resolve to the built-in, identically on both backends.
+// (The evaluator previously preferred the user file, diverging from the VM.)
+func TestEvaluatorReservedNameIgnoresUserShadow(t *testing.T) {
+	dir := t.TempDir()
+	// A user `math.gb` that, if used, would return a string instead of a number.
+	if err := os.WriteFile(filepath.Join(dir, "math.gb"), []byte("module math;\nexport func sqrt(any x): string { return \"USER\"; }\n"), 0o644); err != nil {
+		t.Fatalf("write shadow: %v", err)
+	}
+	run := func(src string) string {
+		p := parser.New(lexer.New(src))
+		program := p.ParseProgram()
+		if len(p.Errors()) != 0 {
+			t.Fatalf("parse errors: %v", p.Errors())
+		}
+		var out bytes.Buffer
+		if _, err := evaluator.NewWithArgsAndModulePaths(&out, nil, []string{dir}).Eval(program); err != nil {
+			t.Fatalf("eval error: %v", err)
+		}
+		return out.String()
+	}
+	// Bare import: the native math wins, not the user shadow.
+	if got := run("import math;\nimport io;\nio.println(math.sqrt(16.0));\n"); got != "4\n" {
+		t.Fatalf("shadowed native math: got %q, want %q", got, "4\n")
+	}
+	// geblang. prefix resolves the built-in explicitly.
+	if got := run("import geblang.math as m;\nimport io;\nio.println(m.sqrt(16.0));\n"); got != "4\n" {
+		t.Fatalf("geblang.math: got %q, want %q", got, "4\n")
+	}
+}
+
 func TestEvaluatorLoadsJSONPackageManifest(t *testing.T) {
 	dir := t.TempDir()
 	moduleDir := filepath.Join(dir, "src")
 	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
 		t.Fatalf("mkdir module dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "geblang.json"), []byte(`{"package":{"name":"json.pkg","version":"1.0.0"},"source":"src"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "geblang.json"), []byte(`{"package":{"name":"jsonpkg","version":"1.0.0"},"source":"src"}`), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(moduleDir, "hello.gb"), []byte(`module json.pkg.hello;
+	if err := os.WriteFile(filepath.Join(moduleDir, "hello.gb"), []byte(`module jsonpkg.hello;
 
 export func message(): string {
     return "json manifest";
@@ -4381,7 +4412,7 @@ export func message(): string {
 	}
 
 	input := `import io;
-import json.pkg.hello as hello;
+import jsonpkg.hello as hello;
 
 io.println(hello.message());
 `

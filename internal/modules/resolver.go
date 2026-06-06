@@ -6,14 +6,23 @@ import (
 	"path/filepath"
 	"strings"
 
+	"geblang/internal/ast"
+	"geblang/internal/native"
+
 	yamllib "gopkg.in/yaml.v3"
 )
+
+// ReservedNamespace is the top-level namespace reserved for built-in modules
+// (`geblang`). Defined canonically in the ast package.
+const ReservedNamespace = ast.ReservedModuleNamespace
 
 type Resolver struct {
 	ModulePaths   []string
 	StdlibPaths   []string
 	DisableStdlib bool
 	Manifests     map[string]*Manifest
+
+	stdlibNamesCache map[string]bool
 }
 
 type Manifest struct {
@@ -72,7 +81,86 @@ func NewResolver(modulePaths []string) *Resolver {
 	return &Resolver{ModulePaths: append([]string(nil), modulePaths...), StdlibPaths: DefaultStdlibPaths(), Manifests: map[string]*Manifest{}}
 }
 
+// topComponent returns the first dotted component of a canonical module name.
+func topComponent(canonical string) string {
+	if i := strings.IndexByte(canonical, '.'); i >= 0 {
+		return canonical[:i]
+	}
+	return canonical
+}
+
+// stdlibModuleNames is the set of top-level module names shipped on the stdlib
+// path (cached). A top-level `.gb` file or directory there is a module name.
+func (r *Resolver) stdlibModuleNames() map[string]bool {
+	if r.stdlibNamesCache != nil {
+		return r.stdlibNamesCache
+	}
+	names := map[string]bool{}
+	for _, base := range r.StdlibPaths {
+		entries, err := os.ReadDir(base)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() {
+				names[name] = true
+			} else if strings.HasSuffix(name, ".gb") {
+				names[strings.TrimSuffix(name, ".gb")] = true
+			}
+		}
+	}
+	r.stdlibNamesCache = names
+	return names
+}
+
+// IsReservedModuleName reports whether the top-level component of canonical
+// names a built-in module (native or stdlib) or the reserved geblang namespace.
+// A user/program/package module may not use such a name.
+func (r *Resolver) IsReservedModuleName(canonical string) bool {
+	top := topComponent(canonical)
+	if top == ReservedNamespace {
+		return true
+	}
+	if _, ok := native.NativeModuleNames[top]; ok {
+		return true
+	}
+	return r.stdlibModuleNames()[top]
+}
+
+// resolveStdlibOnly resolves canonical strictly against the stdlib path,
+// ignoring user/program/package paths. Used for reserved built-in names and the
+// geblang. prefix so user files can never shadow a built-in. A not-found result
+// (e.g. a native-only module with no stdlib source) lets the caller fall back
+// to the native built-in.
+func (r *Resolver) resolveStdlibOnly(canonical string) (string, error) {
+	if r.DisableStdlib {
+		return "", fmt.Errorf("cannot resolve module %q", canonical)
+	}
+	baseRelative := filepath.Join(strings.Split(canonical, ".")...)
+	candidates := []string{baseRelative + ".gb", filepath.Join(baseRelative, "init.gb")}
+	for _, base := range r.StdlibPaths {
+		for _, relative := range candidates {
+			candidate := filepath.Clean(filepath.Join(base, relative))
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				return candidate, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("cannot resolve module %q", canonical)
+}
+
 func (r *Resolver) Resolve(canonical string) (string, error) {
+	// `geblang.X` is the canonical built-in path: resolve X strictly against the
+	// stdlib, never user/package files.
+	if rest, ok := strings.CutPrefix(canonical, ReservedNamespace+"."); ok {
+		return r.resolveStdlibOnly(rest)
+	}
+	// A reserved built-in name resolves only to the built-in; user/package files
+	// may not shadow it (parity with the VM, which always treats these natively).
+	if r.IsReservedModuleName(canonical) {
+		return r.resolveStdlibOnly(canonical)
+	}
 	baseRelative := filepath.Join(strings.Split(canonical, ".")...)
 	candidates := []string{baseRelative + ".gb", filepath.Join(baseRelative, "init.gb")}
 	seen := map[string]bool{}
@@ -243,7 +331,7 @@ func (r *Resolver) collectPackageModuleRoots(manifest *Manifest, seenManifests m
 			// Git dependency: resolved from vendor/<name> adjacent to this manifest.
 			vendorPath := filepath.Join(manifest.Root, "vendor", name)
 			if _, err := os.Stat(vendorPath); err != nil {
-				// Not yet installed; skip — user must run geblang install.
+				// Not yet installed; skip (user must run geblang install).
 				continue
 			}
 			dependencyRoot = vendorPath
