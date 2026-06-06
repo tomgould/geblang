@@ -2745,21 +2745,33 @@ io.println(-(factor ** 2.0f));
 }
 
 func TestCompileAndRunBytecodeMixedFloatNumericError(t *testing.T) {
-	source := []byte(`import io;
-io.println(1 + 2.0f);
-`)
-	program := parseProgram(t, string(source))
-	chunk, err := bytecode.Compile(program, source, "test")
+	// int + float promotes to float; decimal + float is the precision wall.
+	okSource := []byte("import io;\nio.println(1 + 2.0f);\n")
+	program := parseProgram(t, string(okSource))
+	chunk, err := bytecode.Compile(program, okSource, "test")
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-
 	var out bytes.Buffer
-	err = bytecode.NewVM(chunk, &out).Run()
-	if err == nil {
-		t.Fatal("expected mixed numeric error")
+	if err := bytecode.NewVM(chunk, &out).Run(); err != nil {
+		t.Fatalf("int + float should promote to float: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unsupported mixed numeric operands for +: int and float") {
+	if strings.TrimSpace(out.String()) != "3" {
+		t.Fatalf("int + float: got %q, want 3", out.String())
+	}
+
+	errSource := []byte("import io;\nio.println(2.5 + 2.0f);\n")
+	program = parseProgram(t, string(errSource))
+	chunk, err = bytecode.Compile(program, errSource, "test")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var out2 bytes.Buffer
+	err = bytecode.NewVM(chunk, &out2).Run()
+	if err == nil {
+		t.Fatal("expected decimal/float arithmetic error")
+	}
+	if !strings.Contains(err.Error(), "cannot mix decimal and float") {
 		t.Fatalf("error: got %v", err)
 	}
 }

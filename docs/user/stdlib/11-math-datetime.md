@@ -62,6 +62,36 @@ io.println(math.min(3, 1, 4, 1, 5));   # 1
 io.println(math.max(3, 1, 4, 1, 5));   # 5
 ```
 
+### Linear interpolation
+
+`math.lerp(a, b, t)` interpolates between `a` and `b` by `t` (`a + (b - a) * t`).
+`math.remap(x, inLow, inHigh, outLow, outHigh)` linearly maps `x` from the input
+range onto the output range (`outLow + (x - inLow) * (outHigh - outLow) /
+(inHigh - inLow)`).
+
+Both preserve precision the way Geblang's arithmetic operators do: `int` and
+`decimal` inputs are computed exactly and return a `decimal` (no float
+round-trip), `float` inputs return a `float`, and mixing `float` with
+`int`/`decimal` is an error. `remap` raises an error if the input range has zero
+width (`inLow == inHigh`). Neither clamps, so values of `t` outside `[0, 1]` (or
+`x` outside the input range) extrapolate; wrap with `math.clamp` if you want
+clamping.
+
+```gb
+io.println(math.lerp(10, 20, 0.25));                 # 12.5000000000 (exact decimal)
+io.println(math.remap(450000, 400000, 500000, 11500, 10000));  # 10750.0000000000
+
+# exact: 1/3 stays a rational, so three thirds sum back to exactly 1
+let third = math.remap(1, 0, 3, 0, 1);
+io.println(third + third + third);                   # 1.0000000000
+
+io.println(math.lerp(0.0f, 1.0f, 0.5f));             # 0.5 (float in, float out)
+```
+
+This is the precision-safe way to interpolate a value from a lookup table - a
+fee schedule, a rate band, a price curve - where rounding error before the final
+`ceil`/`round` would be a bug.
+
 `math.sign(n)` returns `-1`, `0`, or `1` as `int`:
 
 ```gb

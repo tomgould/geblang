@@ -3457,6 +3457,9 @@ func (vm *VM) binaryNumericValues(instruction Instruction, left runtime.Value, r
 		if r, ok := right.(runtime.Decimal); ok {
 			return vm.decimalBinary(instruction, native.SmallIntToDecimal(l), r)
 		}
+		if r, ok := right.(runtime.Float); ok {
+			return vm.floatBinary(instruction, intToFloatVal(left), r)
+		}
 	}
 	if l, ok := left.(runtime.Decimal); ok {
 		if r, ok := right.(runtime.SmallInt); ok {
@@ -3467,6 +3470,8 @@ func (vm *VM) binaryNumericValues(instruction Instruction, left runtime.Value, r
 			return vm.decimalBinary(instruction, l, native.IntToDecimal(r))
 		case runtime.Decimal:
 			return vm.decimalBinary(instruction, l, r)
+		case runtime.Float:
+			return vm.decimalFloatArithError(instruction, left, right)
 		}
 	}
 	if l, ok := left.(runtime.Int); ok {
@@ -3478,19 +3483,35 @@ func (vm *VM) binaryNumericValues(instruction Instruction, left runtime.Value, r
 			return vm.decimalBinary(instruction, native.IntToDecimal(l), r)
 		case runtime.Int:
 			return vm.intBinary(instruction, l, r)
+		case runtime.Float:
+			return vm.floatBinary(instruction, intToFloatVal(left), r)
 		}
 	}
 	if l, ok := left.(runtime.Float); ok {
-		r, ok := right.(runtime.Float)
-		if !ok {
-			return vm.runtimeError(instruction, "unsupported mixed numeric operands for %s: %s and %s (implicit coercion between int/decimal and float is not supported)", binaryOpSymbol(instruction.Op), left.TypeName(), right.TypeName())
+		switch r := right.(type) {
+		case runtime.Float:
+			return vm.floatBinary(instruction, l, r)
+		case runtime.SmallInt, runtime.Int:
+			return vm.floatBinary(instruction, l, intToFloatVal(right))
+		case runtime.Decimal:
+			return vm.decimalFloatArithError(instruction, left, right)
 		}
-		return vm.floatBinary(instruction, l, r)
 	}
 	if isNumericValue(left) && isNumericValue(right) {
-		return vm.runtimeError(instruction, "unsupported mixed numeric operands for %s: %s and %s (implicit coercion between int/decimal and float is not supported)", binaryOpSymbol(instruction.Op), left.TypeName(), right.TypeName())
+		return vm.decimalFloatArithError(instruction, left, right)
 	}
 	return vm.runtimeError(instruction, "left operand must be numeric")
+}
+
+func intToFloatVal(v runtime.Value) runtime.Float {
+	f, _ := runtime.NumericToFloat(v)
+	return runtime.Float{Value: f}
+}
+
+// decimalFloatArithError reports the precision wall: arithmetic mixing decimal
+// and float, which would silently lose decimal exactness. Comparisons are fine.
+func (vm *VM) decimalFloatArithError(instruction Instruction, left, right runtime.Value) error {
+	return vm.runtimeError(instruction, "cannot mix decimal and float in %s: convert explicitly (got %s and %s)", binaryOpSymbol(instruction.Op), left.TypeName(), right.TypeName())
 }
 
 // compareJumpIntFallback handles the fused integer compare-and-branch opcodes
@@ -15503,6 +15524,9 @@ func numericSignCheck(value runtime.Value, check func(int) bool) (runtime.Value,
 }
 
 func valuesEqual(left runtime.Value, right runtime.Value) bool {
+	if eq, both := runtime.NumericValuesEqual(left, right); both {
+		return eq
+	}
 	switch leftValue := left.(type) {
 	case *runtime.List:
 		rightValue, ok := right.(*runtime.List)

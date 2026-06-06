@@ -8849,6 +8849,8 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"clamp":      e.registryBuiltin("math", "clamp"),
 			"floor":      e.registryBuiltin("math", "floor"),
 			"ceil":       e.registryBuiltin("math", "ceil"),
+			"lerp":       e.registryBuiltin("math", "lerp"),
+			"remap":      e.registryBuiltin("math", "remap"),
 			"round":      e.registryBuiltin("math", "round"),
 			"sqrt":       e.registryBuiltin("math", "sqrt"),
 			"sin":        e.registryBuiltin("math", "sin"),
@@ -28056,6 +28058,9 @@ func valuesIdentical(left runtime.Value, right runtime.Value) bool {
 }
 
 func primitiveEqual(left runtime.Value, right runtime.Value) bool {
+	if eq, both := runtime.NumericValuesEqual(left, right); both {
+		return eq
+	}
 	switch leftValue := left.(type) {
 	case runtime.Null:
 		_, ok := right.(runtime.Null)
@@ -28383,6 +28388,8 @@ func evalNumericInfix(operator string, left runtime.Value, right runtime.Value) 
 			return evalIntInfix(operator, l, r)
 		case runtime.Decimal:
 			return evalDecimalInfix(operator, intToDecimal(l), r)
+		case runtime.Float:
+			return evalFloatInfix(operator, intToFloatValue(l), r)
 		}
 	case runtime.Decimal:
 		switch r := right.(type) {
@@ -28390,13 +28397,31 @@ func evalNumericInfix(operator string, left runtime.Value, right runtime.Value) 
 			return evalDecimalInfix(operator, l, intToDecimal(r))
 		case runtime.Decimal:
 			return evalDecimalInfix(operator, l, r)
+		case runtime.Float:
+			return nil, decimalFloatArithError(operator, left, right)
 		}
 	case runtime.Float:
-		if r, ok := right.(runtime.Float); ok {
+		switch r := right.(type) {
+		case runtime.Float:
 			return evalFloatInfix(operator, l, r)
+		case runtime.Int:
+			return evalFloatInfix(operator, l, intToFloatValue(r))
+		case runtime.Decimal:
+			return nil, decimalFloatArithError(operator, left, right)
 		}
 	}
 	return nil, fmt.Errorf("unsupported operands for %s: %s and %s", operator, left.TypeName(), right.TypeName())
+}
+
+func intToFloatValue(v runtime.Int) runtime.Float {
+	f, _ := runtime.NumericToFloat(v)
+	return runtime.Float{Value: f}
+}
+
+// decimalFloatArithError reports the one remaining precision wall: arithmetic
+// mixing decimal and float, which would silently lose decimal exactness.
+func decimalFloatArithError(operator string, left, right runtime.Value) error {
+	return fmt.Errorf("cannot mix decimal and float in %s: convert explicitly (got %s and %s)", operator, left.TypeName(), right.TypeName())
 }
 
 func evalIntInfix(operator string, left runtime.Int, right runtime.Int) (runtime.Value, error) {
@@ -28579,66 +28604,9 @@ func (e *Evaluator) compareValues(left runtime.Value, right runtime.Value) (int,
 }
 
 func compareValues(left runtime.Value, right runtime.Value) (int, error) {
-	switch l := left.(type) {
-	case runtime.SmallInt:
-		if r, ok := right.(runtime.SmallInt); ok {
-			if l.Value < r.Value {
-				return -1, nil
-			}
-			if l.Value > r.Value {
-				return 1, nil
-			}
-			return 0, nil
-		}
-		lb := big.NewInt(l.Value)
-		if r, ok := right.(runtime.Int); ok {
-			return lb.Cmp(r.Value), nil
-		}
-		if r, ok := right.(runtime.Decimal); ok {
-			return new(big.Rat).SetInt(lb).Cmp(r.Value), nil
-		}
-	case runtime.Int:
-		switch r := right.(type) {
-		case runtime.SmallInt:
-			return l.Value.Cmp(big.NewInt(r.Value)), nil
-		case runtime.Int:
-			return l.Value.Cmp(r.Value), nil
-		case runtime.Decimal:
-			return intToDecimal(l).Value.Cmp(r.Value), nil
-		}
-	case runtime.Decimal:
-		switch r := right.(type) {
-		case runtime.SmallInt:
-			return l.Value.Cmp(new(big.Rat).SetInt64(r.Value)), nil
-		case runtime.Int:
-			return l.Value.Cmp(intToDecimal(r).Value), nil
-		case runtime.Decimal:
-			return l.Value.Cmp(r.Value), nil
-		}
-	case runtime.Float:
-		if r, ok := right.(runtime.Float); ok {
-			switch {
-			case l.Value < r.Value:
-				return -1, nil
-			case l.Value > r.Value:
-				return 1, nil
-			default:
-				return 0, nil
-			}
-		}
-	case runtime.String:
-		if r, ok := right.(runtime.String); ok {
-			switch {
-			case l.Value < r.Value:
-				return -1, nil
-			case l.Value > r.Value:
-				return 1, nil
-			default:
-				return 0, nil
-			}
-		}
-	}
-	return 0, fmt.Errorf("cannot compare %s and %s", left.TypeName(), right.TypeName())
+	// Delegate to the shared kernel so ordering matches the bytecode VM exactly
+	// (one source of truth for numeric/string comparison across backends).
+	return native.NumericCompare(left, right)
 }
 
 func intToDecimal(value runtime.Int) runtime.Decimal {

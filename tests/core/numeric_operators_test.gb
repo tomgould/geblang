@@ -1,0 +1,107 @@
+/**
+ * @title Numeric operators, comparisons, and casts across primitives (1.10.0)
+ * @summary Exercises arithmetic, comparison, and cast behavior for every
+ * int/decimal/float combination so the cross-type rules are pinned: int<->float
+ * promote in arithmetic; decimal<->float arithmetic is an error; comparisons
+ * and equality compare by exact value across all numeric types.
+ */
+import test;
+
+class NumericOperatorsTest extends test.Test {
+
+    func typeName(any v): string { return "${typeof(v)}"; }
+
+    @test
+    func arithmeticWithinType(): void {
+        this.assertEquals(5, 2 + 3);
+        this.assertEquals("int", this.typeName(2 + 3));
+        this.assertEquals("decimal", this.typeName(2.0 + 3.0));
+        this.assertEquals("float", this.typeName(2.0f + 3.0f));
+        /* int / int yields an exact decimal, not truncated */
+        this.assertEquals("decimal", this.typeName(1 / 2));
+        this.assertEquals(0.5, 1 / 2);
+    }
+
+    @test
+    func intDecimalStaysExact(): void {
+        this.assertEquals("decimal", this.typeName(3 + 2.5));
+        this.assertEquals(5.5, 3 + 2.5);
+        /* a third + a third + a third is exactly one (would drift in float) */
+        let third = 1 / 3;
+        this.assertEquals(1, third + third + third);
+    }
+
+    @test
+    func intFloatPromotesToFloat(): void {
+        this.assertEquals("float", this.typeName(3 + 2.5f));
+        this.assertEquals(5.5f, 3 + 2.5f);
+        this.assertEquals(5.5f, 2.5f + 3);
+        this.assertEquals("float", this.typeName(5 / 2.0f));
+        this.assertEquals(2.5f, 5 / 2.0f);
+    }
+
+    @test
+    func decimalFloatArithmeticThrows(): void {
+        this.assertThrows(func(): void { let x = 2.5 + 2.5f; });
+        this.assertThrows(func(): void { let x = 2.5f * 2.0; });
+        this.assertThrows(func(): void { let x = 2.5 - 1.0f; });
+    }
+
+    @test
+    func comparisonsAreExactAndCrossType(): void {
+        this.assertTrue(3 == 3.0f);
+        this.assertFalse(3 == 3.5f);
+        this.assertTrue(3 == 3.0);
+        this.assertTrue(2.5 == 2.5f);
+        this.assertTrue(3 < 2.5f == false);
+        this.assertTrue(2.5 < 3.0f);
+        this.assertTrue(2.5f <= 2.5);
+        this.assertTrue(3.0f >= 3);
+        this.assertTrue(3 != 3.5f);
+    }
+
+    @test
+    func comparisonExactnessExposesFloatTruth(): void {
+        /* decimal 0.1 is exact; float 0.1f is not - so they genuinely differ */
+        this.assertFalse(0.1 == 0.1f);
+        /* but 2.5 is exactly representable as a float, so these are equal */
+        this.assertTrue(2.5 == 2.5f);
+    }
+
+    @test
+    func membershipComparesNumericallyCrossType(): void {
+        this.assertTrue([1, 2, 3].contains(2.0f));
+        this.assertTrue([1.0f, 2.0f].contains(2));
+        this.assertTrue(2 in [1.0f, 2.0f]);
+    }
+
+    @test
+    func numericCasts(): void {
+        /* float/decimal -> int truncate toward zero */
+        this.assertEquals(3, 3.7f as int);
+        this.assertEquals(-3, -3.7f as int);
+        this.assertEquals(3, 3.7 as int);
+        /* widening */
+        this.assertEquals("float", this.typeName(3 as float));
+        this.assertEquals("decimal", this.typeName(3 as decimal));
+        this.assertEquals(2.5f, 2.5 as float);
+        this.assertEquals(2.5, 2.5f as decimal);
+    }
+
+    @test
+    func stringAndBoolCasts(): void {
+        this.assertEquals(42, "42" as int);
+        this.assertEquals(2.5f, "2.5" as float);
+        this.assertEquals(2.5, "2.5" as decimal);
+        this.assertEquals("42", 42 as string);
+        this.assertEquals("true", true as string);
+        this.assertFalse(0 as bool);
+        this.assertTrue(5 as bool);
+    }
+
+    @test
+    func invalidCastsThrow(): void {
+        this.assertThrows(func(): void { let x = "not a number" as int; });
+        this.assertThrows(func(): void { let x = "xyz" as float; });
+    }
+}

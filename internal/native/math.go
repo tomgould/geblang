@@ -136,68 +136,47 @@ func SortLess(result runtime.Value) (bool, error) {
 }
 
 func NumericCompare(left runtime.Value, right runtime.Value) (int, error) {
-	// Fast path: both SmallInt
+	// Fast path: both SmallInt.
 	if l, ok := left.(runtime.SmallInt); ok {
 		if r, ok := right.(runtime.SmallInt); ok {
-			if l.Value < r.Value {
+			switch {
+			case l.Value < r.Value:
 				return -1, nil
-			}
-			if l.Value > r.Value {
+			case l.Value > r.Value:
 				return 1, nil
+			default:
+				return 0, nil
 			}
-			return 0, nil
 		}
-		lb := big.NewInt(l.Value)
-		if r, ok := right.(runtime.Int); ok {
-			return lb.Cmp(r.Value), nil
-		}
-		if r, ok := right.(runtime.Decimal); ok {
-			return new(big.Rat).SetInt(lb).Cmp(r.Value), nil
-		}
-		return 0, fmt.Errorf("comparison expects compatible numeric operands")
 	}
-	switch l := left.(type) {
-	case runtime.Int:
-		switch r := right.(type) {
-		case runtime.SmallInt:
-			return l.Value.Cmp(big.NewInt(r.Value)), nil
-		case runtime.Int:
-			return l.Value.Cmp(r.Value), nil
-		case runtime.Decimal:
-			return IntToDecimal(l).Value.Cmp(r.Value), nil
-		}
-	case runtime.Decimal:
-		if r, ok := right.(runtime.SmallInt); ok {
-			return l.Value.Cmp(new(big.Rat).SetInt64(r.Value)), nil
-		}
-		switch r := right.(type) {
-		case runtime.Int:
-			return l.Value.Cmp(IntToDecimal(r).Value), nil
-		case runtime.Decimal:
-			return l.Value.Cmp(r.Value), nil
-		}
-	case runtime.Float:
-		if r, ok := right.(runtime.Float); ok {
-			if l.Value < r.Value {
-				return -1, nil
-			}
-			if l.Value > r.Value {
-				return 1, nil
-			}
-			return 0, nil
-		}
-	case runtime.String:
+	if l, ok := left.(runtime.String); ok {
 		if r, ok := right.(runtime.String); ok {
-			if l.Value < r.Value {
-				return -1, nil
-			}
-			if l.Value > r.Value {
-				return 1, nil
-			}
-			return 0, nil
+			return strings.Compare(l.Value, r.Value), nil
+		}
+		return 0, fmt.Errorf("cannot compare %s and %s", left.TypeName(), right.TypeName())
+	}
+	// Numbers compare by exact value across int/decimal/float: a finite float
+	// becomes its exact rational, so cross-type comparison is lossless and
+	// truthful (3 == 3.0f, 0.1 != 0.1f). Non-finite floats (NaN/Inf) fall back
+	// to float64 comparison.
+	if lr, ok := runtime.NumericToRat(left); ok {
+		if rr, ok := runtime.NumericToRat(right); ok {
+			return lr.Cmp(rr), nil
 		}
 	}
-	return 0, fmt.Errorf("comparison expects compatible numeric operands")
+	if lf, lok := runtime.NumericToFloat(left); lok {
+		if rf, rok := runtime.NumericToFloat(right); rok {
+			switch {
+			case lf < rf:
+				return -1, nil
+			case lf > rf:
+				return 1, nil
+			default:
+				return 0, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("cannot compare %s and %s", left.TypeName(), right.TypeName())
 }
 
 // NumericAbs returns the absolute value of a numeric runtime.Value.
@@ -472,4 +451,48 @@ func coerceToReceiver(v, bound runtime.Value) (runtime.Value, error) {
 		return nil, fmt.Errorf("clamp bound not compatible with int")
 	}
 	return nil, fmt.Errorf("%s has no method clamp", v.TypeName())
+}
+
+// interpOperands classifies args for the interpolation builtins (lerp/remap),
+// matching Geblang's arithmetic operators: int/decimal stay exact via big.Rat
+// while float is separate, and mixing float with int/decimal is an error.
+func interpOperands(args []runtime.Value, fn string) ([]*big.Rat, []float64, error) {
+	hasFloat, hasRat := false, false
+	for _, a := range args {
+		switch a.(type) {
+		case runtime.Float:
+			hasFloat = true
+		case runtime.SmallInt, runtime.Int, runtime.Decimal:
+			hasRat = true
+		default:
+			return nil, nil, fmt.Errorf("%s: expected numbers, got %s", fn, a.TypeName())
+		}
+	}
+	if hasFloat && hasRat {
+		return nil, nil, fmt.Errorf("%s: cannot mix float with int/decimal operands", fn)
+	}
+	if hasFloat {
+		floats := make([]float64, len(args))
+		for i, a := range args {
+			floats[i] = interpFloat(a)
+		}
+		return nil, floats, nil
+	}
+	rats := make([]*big.Rat, len(args))
+	for i, a := range args {
+		rats[i] = interpRat(a)
+	}
+	return rats, nil, nil
+}
+
+func interpRat(v runtime.Value) *big.Rat {
+	if r, ok := runtime.NumericToRat(v); ok {
+		return r
+	}
+	return new(big.Rat)
+}
+
+func interpFloat(v runtime.Value) float64 {
+	f, _ := runtime.NumericToFloat(v)
+	return f
 }

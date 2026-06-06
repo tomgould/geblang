@@ -2,6 +2,30 @@
 
 ## 1.10.0
 
+### Numeric types
+
+- Mixed-type numeric operations now follow one consistent, precision-safe rule
+  on both backends. `int` and `float` mix in arithmetic by promoting the int to
+  float (`3 + 2.5f` is `5.5`). `decimal` and `float` still may not mix in
+  arithmetic (a `decimal` is exact, a `float` is not), so `2.5 + 2.5f` is a clear
+  error - convert explicitly. `int` and `decimal` continue to mix exactly.
+- Comparisons (`== != < > <= >=`) and membership (`in`, `.contains()`) now work
+  across all numeric types and compare by exact value. Previously `3 == 3.0f`
+  returned `false` (comparing types, not values) and `3 < 2.5f` was an error;
+  now `3 == 3.0f` is `true`, `2.5 == 2.5f` is `true`, and `0.1 == 0.1f` is
+  `false` (the binary float is genuinely not one tenth). No precision is lost and
+  comparisons never error on numeric operands.
+
+### Math
+
+- New `math.lerp(a, b, t)` (linear interpolation, `a + (b - a) * t`) and
+  `math.remap(x, inLow, inHigh, outLow, outHigh)` (linearly remap `x` from one
+  range onto another). Both preserve precision: `int`/`decimal` inputs compute
+  exactly and return a `decimal`, `float` inputs return `float`, and mixing
+  `float` with `int`/`decimal` is an error (matching the arithmetic operators).
+  `remap` errors on a zero-width input range. Neither clamps. Useful for
+  precision-safe interpolation over lookup tables (fee schedules, rate bands).
+
 ### Modules
 
 - Built-in module names (every native and stdlib module) are now reserved: a

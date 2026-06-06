@@ -118,6 +118,33 @@ io.println((255).toString(16)); # ff
 io.println((3.1415926536 as decimal).toString(13));  # 3.1415926536000
 ```
 
+### Mixing numeric types
+
+The three numeric types interact by a single rule, designed to protect the
+exact types from silent precision loss:
+
+- `int` and `decimal` mix freely and stay exact: `3 + 2.5` is a `decimal`,
+  `1 / 2` is the exact `decimal` `0.5` (not truncated).
+- `int` and `float` mix in arithmetic by promoting the `int` to `float`:
+  `3 + 2.5f` is the `float` `5.5`.
+- `decimal` and `float` do **not** mix in arithmetic - `2.5 + 2.5f` is an error.
+  A `decimal` is exact and a `float` is not, so the result type would be
+  ambiguous and lossy; convert one explicitly (`(2.5 as float) + 2.5f`).
+
+Comparisons (`== != < > <= >=`) and membership (`in`, `.contains()`) work across
+*all* numeric types and compare by exact value - they never error and never lose
+precision. This means they tell the truth: `3 == 3.0f` is `true`, `2.5 == 2.5f`
+is `true` (2.5 is exactly representable as a float), but `0.1 == 0.1f` is
+`false`, because the binary float `0.1f` is not exactly one tenth.
+
+```gb
+io.println(3 + 2.5f);     # 5.5    (int promoted to float)
+io.println(3 + 2.5);      # 5.5000000000  (decimal, exact)
+# io.println(2.5 + 2.5f); # error: cannot mix decimal and float in +
+io.println(3 == 3.0f);    # true
+io.println(0.1 == 0.1f);  # false  (they genuinely differ)
+```
+
 ## Boolean methods
 
 | Method | Returns | Description |

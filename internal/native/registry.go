@@ -132,7 +132,7 @@ func IsPureBuiltinModule(module string) bool {
 
 var pureBuiltins = map[string]map[string]struct{}{
 	"math": {
-		"abs": {}, "min": {}, "max": {}, "clamp": {}, "floor": {}, "ceil": {},
+		"abs": {}, "min": {}, "max": {}, "clamp": {}, "lerp": {}, "remap": {}, "floor": {}, "ceil": {},
 		"round": {}, "sqrt": {}, "sin": {}, "cos": {}, "tan": {}, "asin": {},
 		"acos": {}, "atan": {}, "atan2": {}, "log": {}, "log10": {}, "exp": {},
 		"pow": {}, "pi": {}, "e": {},

@@ -224,6 +224,10 @@ func ValuesEqual(left Value, right Value) bool {
 }
 
 func primitiveValuesEqual(left Value, right Value) bool {
+	// Numbers compare by exact value across int/decimal/float.
+	if eq, both := NumericValuesEqual(left, right); both {
+		return eq
+	}
 	switch leftValue := left.(type) {
 	case Null:
 		_, ok := right.(Null)

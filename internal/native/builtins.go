@@ -193,6 +193,45 @@ func registerMath(r *Registry) {
 		}
 		return args[0], nil
 	})
+	r.Register("math", "lerp", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("math.lerp expects (a, b, t)")
+		}
+		rats, floats, err := interpOperands(args, "math.lerp")
+		if err != nil {
+			return nil, err
+		}
+		if floats != nil {
+			a, b, t := floats[0], floats[1], floats[2]
+			return runtime.Float{Value: a + (b-a)*t}, nil
+		}
+		a, b, t := rats[0], rats[1], rats[2]
+		scaled := new(big.Rat).Mul(new(big.Rat).Sub(b, a), t)
+		return runtime.Decimal{Value: new(big.Rat).Add(a, scaled)}, nil
+	})
+	r.Register("math", "remap", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 5 {
+			return nil, fmt.Errorf("math.remap expects (x, inLow, inHigh, outLow, outHigh)")
+		}
+		rats, floats, err := interpOperands(args, "math.remap")
+		if err != nil {
+			return nil, err
+		}
+		if floats != nil {
+			x, il, ih, ol, oh := floats[0], floats[1], floats[2], floats[3], floats[4]
+			if ih == il {
+				return nil, fmt.Errorf("math.remap: input range has zero width (inLow == inHigh)")
+			}
+			return runtime.Float{Value: ol + (x-il)*(oh-ol)/(ih-il)}, nil
+		}
+		x, il, ih, ol, oh := rats[0], rats[1], rats[2], rats[3], rats[4]
+		den := new(big.Rat).Sub(ih, il)
+		if den.Sign() == 0 {
+			return nil, fmt.Errorf("math.remap: input range has zero width (inLow == inHigh)")
+		}
+		num := new(big.Rat).Mul(new(big.Rat).Sub(x, il), new(big.Rat).Sub(oh, ol))
+		return runtime.Decimal{Value: new(big.Rat).Add(ol, new(big.Rat).Quo(num, den))}, nil
+	})
 	r.Register("math", "floor", func(args []runtime.Value) (runtime.Value, error) {
 		return IntUnaryMath(args, math.Floor, "math.floor")
 	})

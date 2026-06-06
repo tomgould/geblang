@@ -821,6 +821,8 @@ var stdlibCatalog = map[string]moduleDoc{
 		"min":        fn([]string{"number left", "number right"}, "number", "Minimum value."),
 		"max":        fn([]string{"number left", "number right"}, "number", "Maximum value."),
 		"clamp":      fn([]string{"number value", "number min", "number max"}, "number", "Clamps a value."),
+		"lerp":       fn([]string{"number a", "number b", "number t"}, "number", "Linear interpolation a+(b-a)*t. int/decimal inputs return an exact decimal; float returns float (1.10.0)."),
+		"remap":      fn([]string{"number x", "number inLow", "number inHigh", "number outLow", "number outHigh"}, "number", "Linearly remaps x from [inLow,inHigh] onto [outLow,outHigh]. int/decimal inputs return an exact decimal; float returns float (1.10.0)."),
 		"floor":      fn([]string{"number value"}, "int", "Largest integer <= value."),
 		"ceil":       fn([]string{"number value"}, "int", "Smallest integer >= value."),
 		"round":      fn([]string{"number value"}, "int", "Rounds to nearest integer."),

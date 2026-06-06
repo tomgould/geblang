@@ -1,0 +1,54 @@
+/**
+ * @title math.lerp / math.remap (1.10.0)
+ * @summary Linear interpolation. int/decimal inputs interpolate in exact
+ * decimal (no float rounding); float inputs return float; mixing errors.
+ */
+import test;
+import math;
+
+class MathInterpolationTest extends test.Test {
+
+    @test
+    func lerpBasics(): void {
+        this.assertEquals(5.0, math.lerp(0, 10, 0.5));
+        this.assertEquals(12.5, math.lerp(10, 20, 0.25));
+        /* t outside [0,1] extrapolates */
+        this.assertEquals(30.0, math.lerp(10, 20, 2));
+        this.assertEquals(0.0, math.lerp(10, 20, -1.0));
+    }
+
+    @test
+    func remapMatchesPointInterpolation(): void {
+        /* the fee-calculator case: amount in [400000,500000] -> fee [11500,10000] */
+        this.assertEquals(10750.0, math.remap(450000, 400000, 500000, 11500, 10000));
+        /* endpoints map exactly */
+        this.assertEquals(11500.0, math.remap(400000, 400000, 500000, 11500, 10000));
+        this.assertEquals(10000.0, math.remap(500000, 400000, 500000, 11500, 10000));
+    }
+
+    @test
+    func decimalStaysExact(): void {
+        /* 1/3 is exact as a decimal, not a lossy float */
+        let third = math.remap(1, 0, 3, 0, 1);
+        this.assertEquals("decimal", "${typeof(third)}");
+        /* three thirds sum back to exactly 1 (would drift in float) */
+        this.assertEquals(1.0, third + third + third);
+    }
+
+    @test
+    func floatInputsReturnFloat(): void {
+        this.assertEquals(0.5f, math.lerp(0.0f, 1.0f, 0.5f));
+        this.assertEquals("float", "${typeof(math.remap(5.0f, 0.0f, 10.0f, 0.0f, 100.0f))}");
+    }
+
+    @test
+    func mixingFloatAndDecimalThrows(): void {
+        this.assertThrows(func(): void { math.lerp(3, 2.5f, 0.5); });
+        this.assertThrows(func(): void { math.remap(5.0f, 0, 10, 0, 100); });
+    }
+
+    @test
+    func zeroWidthRangeThrows(): void {
+        this.assertThrows(func(): void { math.remap(5, 10, 10, 0, 100); });
+    }
+}

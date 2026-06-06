@@ -12307,3 +12307,35 @@ out.println("via alias");
 out.print("no newline");
 `, "via alias\nno newline")
 }
+
+// math.lerp / math.remap: exact decimal for int/decimal, float for float.
+func TestParityMathInterpolation(t *testing.T) {
+	runParity(t, `import io;
+import math;
+io.println(math.lerp(0, 10, 0.5));
+io.println(math.lerp(10, 20, 0.25));
+io.println(math.remap(450000, 400000, 500000, 11500, 10000));
+io.println(math.remap(1, 0, 3, 0, 1));
+io.println(math.lerp(0.0f, 1.0f, 0.5f));
+io.println(math.remap(5.0f, 0.0f, 10.0f, 0.0f, 100.0f));
+`, "5.0000000000\n12.5000000000\n10750.0000000000\n0.3333333333\n0.5\n50\n")
+}
+
+// Cross-type numeric mixing: int<->float promote in arithmetic; comparisons and
+// membership compare by exact value across int/decimal/float.
+func TestParityNumericMixing(t *testing.T) {
+	runParity(t, `import io;
+io.println(3 + 2.5f);
+io.println(2.5f + 3);
+io.println(5 / 2.0f);
+io.println(3 + 2.5);
+io.println(3 == 3.0f);
+io.println(3 == 3.5f);
+io.println(2.5 == 2.5f);
+io.println(0.1 == 0.1f);
+io.println(3 < 2.5f);
+io.println(2.5 < 3.0f);
+io.println([1, 2, 3].contains(2.0f));
+io.println(3 != 3.0f);
+`, "5.5\n5.5\n2.5\n5.5000000000\ntrue\nfalse\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\n")
+}
