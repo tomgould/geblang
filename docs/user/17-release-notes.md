@@ -10,6 +10,10 @@
   nearest-neighbour queries - the same shape as idiomatic pgvector usage. Built
   on the `db` module; no new dependency. The extension, table, and index are
   created on construction; `add` upserts by id.
+- New `HnswVectorStore` (in `vectorstore`): an in-process HNSW index for
+  sublinear approximate-nearest-neighbour search with no external service - the
+  middle ground between the exact O(n) in-memory store and a database backend.
+  Tune recall with `m` and `efSearch`. Behind the same `VectorStore` interface.
 - New `searchFilter(query, k, criteria)` on every vector store: a portable,
   dict-based metadata filter (`{"field": value}` for equality; nested
   `{"field": {"gte": x}}` for `gt`/`gte`/`lt`/`lte`/`ne`/`in`). In-memory and

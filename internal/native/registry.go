@@ -146,6 +146,9 @@ var pureBuiltins = map[string]map[string]struct{}{
 	"vecmath": {
 		"score": {}, "topK": {},
 	},
+	"hnsw": {
+		"new": {}, "add": {}, "get": {}, "delete": {}, "count": {}, "clear": {}, "search": {},
+	},
 	"secureRandom": {
 		"openSession": {}, "fromSeed": {}, "commitment": {}, "reveal": {},
 		"auditLog": {}, "auditLogJson": {},

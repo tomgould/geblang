@@ -8895,6 +8895,15 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"score": e.registryBuiltin("vecmath", "score"),
 			"topK":  e.registryBuiltin("vecmath", "topK"),
 		},
+		"hnsw": {
+			"new":    e.registryBuiltin("hnsw", "new"),
+			"add":    e.registryBuiltin("hnsw", "add"),
+			"get":    e.registryBuiltin("hnsw", "get"),
+			"delete": e.registryBuiltin("hnsw", "delete"),
+			"count":  e.registryBuiltin("hnsw", "count"),
+			"clear":  e.registryBuiltin("hnsw", "clear"),
+			"search": e.registryBuiltin("hnsw", "search"),
+		},
 		"secureRandom": {
 			"openSession":      e.registryBuiltin("secureRandom", "openSession"),
 			"fromSeed":         e.registryBuiltin("secureRandom", "fromSeed"),

@@ -27,6 +27,8 @@ Expat-style MIT license:
 - `github.com/jackc/puddle/v2` v2.2.2 - Copyright (c) 2018 Jack Christensen.
 - `github.com/rivo/uniseg` v0.4.7 - Copyright (c) 2019 Oliver Kuederle.
 - `github.com/segmentio/kafka-go` v0.4.51 - Copyright (c) 2017 Segment.
+- `github.com/viterin/partial` v1.1.0 - Copyright (c) 2022 viterin.
+- `github.com/viterin/vek` v0.4.2 - Copyright (c) 2022 viterin.
 - `github.com/yuin/goldmark` v1.8.2 - Copyright (c) 2019 Yusuke Inuzuka.
 - `github.com/yuin/goldmark-emoji` v1.0.6 - Copyright (c) 2020 Yusuke Inuzuka.
 - `gopkg.in/yaml.v3` v3.0.1 - Copyright (c) 2006-2011 Kirill Simonov;
@@ -60,6 +62,8 @@ IN THE SOFTWARE.
 
 The following components are licensed under the BSD 2-Clause License:
 
+- `github.com/chewxy/math32` v1.10.1 - Copyright (c) 2021, Xuanyi Chew and
+  the Go Authors. All rights reserved.
 - `github.com/gorilla/websocket` v1.5.3 - Copyright (c) 2013 The Gorilla
   WebSocket Authors. All rights reserved.
 - `github.com/pkg/sftp` v1.13.10 - Copyright (c) 2013, Dave Cheney. All
@@ -115,6 +119,8 @@ The following components are licensed under the BSD 3-Clause License:
   v0.0.0-20230129092748-24d4a6f8daec - Copyright (c) 2012 The Go Authors.
   All rights reserved.
 - `golang.org/x/crypto` v0.52.0 - Copyright 2009 The Go Authors.
+- `golang.org/x/exp` v0.0.0-20250305212735-054e65f0b394 - Copyright 2009 The
+  Go Authors. All rights reserved.
 - `golang.org/x/mod` v0.35.0 - Copyright 2009 The Go Authors.
 - `golang.org/x/net` v0.54.0 - Copyright 2009 The Go Authors.
 - `golang.org/x/sync` v0.20.0 - Copyright 2009 The Go Authors.
@@ -164,6 +170,7 @@ POSSIBILITY OF SUCH DAMAGE.
 The following components are licensed under the Apache License, Version 2.0:
 
 - `github.com/ebitengine/purego` v0.10.1 - The Ebitengine Authors.
+- `github.com/google/renameio` v1.0.1 - Copyright 2018 Google Inc.
 
 The `gopkg.in/yaml.v3` module includes this notice:
 
@@ -336,6 +343,14 @@ incurred by, or claims asserted against, such Contributor by reason of your
 accepting any such warranty or additional liability.
 
 END OF TERMS AND CONDITIONS
+
+## CC0-1.0 Public-Domain Component
+
+The following component is released under the Creative Commons CC0 1.0
+Universal Public Domain Dedication (no rights reserved):
+
+- `github.com/coder/hnsw` v0.6.1 - dedicated to the public domain by Coder
+  Technologies, Inc.
 
 ## MPL-2.0 Component
 

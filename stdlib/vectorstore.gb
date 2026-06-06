@@ -5,6 +5,7 @@ import binary;
 import json;
 import re;
 import vecmath;
+import hnsw;
 
 /**
  * In-memory and persistent vector stores for embeddings, with brute-force
@@ -425,6 +426,160 @@ export class PgVectorStore implements VectorStore {
             out = out.push(SearchHit(rec, r["score"] as float));
         }
         return out;
+    }
+}
+
+/**
+ * In-process approximate-nearest-neighbour store backed by an HNSW index (the
+ * native `hnsw` module). Sublinear search with no external service; ideal when
+ * the in-memory brute-force store is too slow but a database is unwanted.
+ * Metadata is held in Geblang; the index holds the vectors. add() upserts by id.
+ *
+ * ```gb
+ * import vectorstore;
+ * let store = vectorstore.HnswVectorStore("cosine");
+ * store.add("doc-1", embedding, {"text": "..."});
+ * let hits = store.search(queryVector, 5);
+ * ```
+ *
+ * Results are approximate: tune recall via the constructor's `m` (graph degree)
+ * and `efSearch` (search breadth). Filtered searches over-fetch then filter, so
+ * a very selective filter may return fewer than k hits.
+ */
+export class HnswVectorStore implements VectorStore {
+    any _index;
+    string _metric;
+    dict<string, any> _meta;
+    sync.Mutex _lock;
+
+    func HnswVectorStore(string metric = "cosine", int m = 16, int efSearch = 20) {
+        if (metric != "cosine" && metric != "dot" && metric != "euclidean") {
+            throw ValueError("HnswVectorStore: unknown metric '" + metric + "'");
+        }
+        this._index = hnsw.new(metric, m, efSearch);
+        this._metric = metric;
+        this._meta = {};
+        this._lock = sync.Mutex();
+    }
+
+    func add(string id, list<any> vector, dict<string, any> metadata): void {
+        this._lock.lock();
+        try {
+            hnsw.add(this._index, id, vector);
+            this._meta[id] = metadata;
+        } finally {
+            this._lock.unlock();
+        }
+    }
+
+    func addAll(list<VectorRecord> records): void {
+        for (rec in records) {
+            let r = rec as VectorRecord;
+            this.add(r.id, r.vector, r.metadata);
+        }
+    }
+
+    func get(string id): ?VectorRecord {
+        this._lock.lock();
+        try {
+            let vec = hnsw.get(this._index, id);
+            if (vec == null) {
+                return null;
+            }
+            return VectorRecord(id, vec as list<any>, (this._meta[id] ?? {}) as dict<string, any>);
+        } finally {
+            this._lock.unlock();
+        }
+    }
+
+    func delete(string id): bool {
+        this._lock.lock();
+        try {
+            let removed = hnsw.delete(this._index, id);
+            if (removed) {
+                this._meta.delete(id);
+            }
+            return removed;
+        } finally {
+            this._lock.unlock();
+        }
+    }
+
+    func count(): int {
+        this._lock.lock();
+        try {
+            return hnsw.count(this._index);
+        } finally {
+            this._lock.unlock();
+        }
+    }
+
+    func clear(): void {
+        this._lock.lock();
+        try {
+            hnsw.clear(this._index);
+            this._meta = {};
+        } finally {
+            this._lock.unlock();
+        }
+    }
+
+    func search(list<any> query, int k): list<SearchHit> {
+        this._lock.lock();
+        try {
+            let out = [];
+            for (h in hnsw.search(this._index, query, k)) {
+                out = out.push(this.toHit(h as dict<string, any>));
+            }
+            return out;
+        } finally {
+            this._lock.unlock();
+        }
+    }
+
+    func searchWhere(list<any> query, int k, callable filter): list<SearchHit> {
+        return this.filteredSearch(query, k, func(any id, any vec, any meta): bool {
+            return filter(VectorRecord(id as string, vec as list<any>, meta as dict<string, any>));
+        });
+    }
+
+    func searchFilter(list<any> query, int k, dict<string, any> criteria): list<SearchHit> {
+        return this.filteredSearch(query, k, func(any id, any vec, any meta): bool {
+            return matchesCriteria(meta as dict<string, any>, criteria);
+        });
+    }
+
+    /* Over-fetch from the index, then keep the first k results whose
+     * (id, vector, metadata) passes the predicate. */
+    func filteredSearch(list<any> query, int k, callable keep): list<SearchHit> {
+        this._lock.lock();
+        try {
+            int fetch = k * 8;
+            int total = hnsw.count(this._index);
+            if (fetch > total) {
+                fetch = total;
+            }
+            let out = [];
+            for (h in hnsw.search(this._index, query, fetch)) {
+                if (out.length() >= k) {
+                    break;
+                }
+                let hh = h as dict<string, any>;
+                let meta = (this._meta[hh["id"] as string] ?? {}) as dict<string, any>;
+                if (keep(hh["id"], hh["vector"], meta)) {
+                    out = out.push(this.toHit(hh));
+                }
+            }
+            return out;
+        } finally {
+            this._lock.unlock();
+        }
+    }
+
+    func toHit(dict<string, any> h): SearchHit {
+        let id = h["id"] as string;
+        let rec = VectorRecord(id, h["vector"] as list<any>, (this._meta[id] ?? {}) as dict<string, any>);
+        return SearchHit(rec, h["score"] as float);
     }
 }
 

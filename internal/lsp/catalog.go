@@ -1314,6 +1314,15 @@ var stdlibCatalog = map[string]moduleDoc{
 			"join":      fn([]string{"string separator"}, "string", "Joins the elements into a string (terminal)."),
 		},
 	}},
+	"hnsw": {functions: map[string]functionDoc{
+		"new":    fn([]string{"string metric", "int m", "int efSearch"}, "HnswIndex", "Creates an in-memory HNSW index handle (metric cosine/dot/euclidean; m and efSearch tune the graph) (1.10.0)."),
+		"add":    fn([]string{"HnswIndex handle", "string id", "list<any> vector"}, "void", "Adds or replaces a vector by id."),
+		"get":    fn([]string{"HnswIndex handle", "string id"}, "?list<any>", "Returns the stored vector for id, or null."),
+		"delete": fn([]string{"HnswIndex handle", "string id"}, "bool", "Removes id; true if it existed."),
+		"count":  fn([]string{"HnswIndex handle"}, "int", "Number of indexed vectors."),
+		"clear":  fn([]string{"HnswIndex handle"}, "void", "Removes all vectors."),
+		"search": fn([]string{"HnswIndex handle", "list<any> query", "int k"}, "list<dict<string, any>>", "Approximate top-k as {id, score, vector}, ranked by descending similarity."),
+	}},
 	"vecmath": {functions: map[string]functionDoc{
 		"score": fn([]string{"string metric", "list<any> a", "list<any> b"}, "float", "Similarity score (higher = closer) for metric cosine/dot/euclidean over two vectors (list or float32 blob) (1.9.0)."),
 		"topK":  fn([]string{"list<any> vectors", "list<any> query", "int k", "string metric"}, "list<dict<string, any>>", "Top-k most similar vectors as {index, score}, ranked descending; vectors are lists or float32 blobs (1.9.0)."),
@@ -1327,6 +1336,7 @@ var stdlibCatalog = map[string]moduleDoc{
 		"MemoryVectorStore": "Brute-force in-memory vector store, mutex-guarded. Metric cosine (default) / dot / euclidean (1.9.0).",
 		"SqliteVectorStore": "Persistent vector store backed by a db Connection; float32-blob vectors, auto-created table, upsert by id (1.9.0).",
 		"PgVectorStore":     "Postgres + pgvector store: typed vector(D) column, metric-matched HNSW index, jsonb metadata, index-using ANN queries with server-side filter pushdown (1.10.0).",
+		"HnswVectorStore":   "In-process approximate-nearest-neighbour store backed by a native HNSW index; sublinear search, no external service. Tune recall with m / efSearch (1.10.0).",
 	}, classMethods: map[string]map[string]functionDoc{
 		"MemoryVectorStore": {
 			"add":          fn([]string{"string id", "list<any> vector", "dict<string, any> metadata"}, "void", "Adds or replaces a vector by id."),
@@ -1358,6 +1368,17 @@ var stdlibCatalog = map[string]moduleDoc{
 			"search":       fn([]string{"list<any> query", "int k"}, "list<SearchHit>", "Top k via the HNSW index."),
 			"searchWhere":  fn([]string{"list<any> query", "int k", "func filter"}, "list<SearchHit>", "Top k filtered client-side (prefer searchFilter for pushdown)."),
 			"searchFilter": fn([]string{"list<any> query", "int k", "dict<string, any> criteria"}, "list<SearchHit>", "Top k with the dict criteria pushed down to SQL as jsonb predicates (1.10.0)."),
+			"count":        fn([]string{}, "int", "Number of stored records."),
+			"clear":        fn([]string{}, "void", "Removes all records."),
+		},
+		"HnswVectorStore": {
+			"add":          fn([]string{"string id", "list<any> vector", "dict<string, any> metadata"}, "void", "Upserts a vector by id."),
+			"addAll":       fn([]string{"list<VectorRecord> records"}, "void", "Upserts many records."),
+			"get":          fn([]string{"string id"}, "?VectorRecord", "Record for id, or null."),
+			"delete":       fn([]string{"string id"}, "bool", "Removes id; true if it existed."),
+			"search":       fn([]string{"list<any> query", "int k"}, "list<SearchHit>", "Approximate top k via the HNSW index."),
+			"searchWhere":  fn([]string{"list<any> query", "int k", "func filter"}, "list<SearchHit>", "Over-fetches then keeps the first k passing the callable filter."),
+			"searchFilter": fn([]string{"list<any> query", "int k", "dict<string, any> criteria"}, "list<SearchHit>", "Over-fetches then keeps the first k matching the dict criteria (1.10.0)."),
 			"count":        fn([]string{}, "int", "Number of stored records."),
 			"clear":        fn([]string{}, "void", "Removes all records."),
 		},

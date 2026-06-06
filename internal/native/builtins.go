@@ -99,6 +99,7 @@ func NewBuiltinRegistry() *Registry {
 func registerAllBuiltins(r *Registry) {
 	registerMath(r)
 	registerVecmath(r)
+	registerHnsw(r)
 	registerJSON(r)
 	registerCSV(r)
 	registerXML(r)

@@ -20,6 +20,7 @@ interface:
 | `MemoryVectorStore(metric = "cosine")` | Brute-force in-memory search; mutex-guarded so one shared store is safe under concurrent requests. Ideal up to ~1e4-1e5 vectors. |
 | `SqliteVectorStore(conn, table = "vectors", metric = "cosine")` | Persistent store backed by a `db` Connection. Vectors are stored as little-endian float32 BLOBs and metadata as JSON; the table is created if absent and `add` upserts by id. |
 | `PgVectorStore(conn, table = "vectors", dimension, metric = "cosine")` | Postgres + pgvector backend with real approximate-nearest-neighbour search. See the pgvector section below. |
+| `HnswVectorStore(metric = "cosine", m = 16, efSearch = 20)` | In-process HNSW index: sublinear approximate search with no external service. See the HNSW section below. |
 
 Metric is `"cosine"` (default), `"dot"`, or `"euclidean"`; all scores follow
 "higher = closer". Vectors are `list<any>` so they accept the decimal numbers
@@ -112,6 +113,30 @@ the criteria down to a SQL `WHERE` over the `jsonb` metadata (containment for
 equality/`in`, numeric casts for ranges). The dimension is fixed at table
 creation, so pass it to the constructor. The Postgres server must have the
 pgvector extension available.
+
+### In-process HNSW
+
+`HnswVectorStore` gives sublinear approximate-nearest-neighbour search in memory,
+with no external service. It is the middle ground between the brute-force
+`MemoryVectorStore` (exact but O(n)) and a database backend: ideal when you have
+more vectors than brute force handles comfortably but do not want to run
+Postgres.
+
+```gb
+import vectorstore;
+
+let store = vectorstore.HnswVectorStore("cosine");   /* or "dot" / "euclidean" */
+store.add("doc-1", embedding, {"text": "..."});
+let hits = store.search(queryVector, 5);
+```
+
+Results are approximate: tune recall versus speed with the constructor's `m`
+(graph degree, default 16) and `efSearch` (search breadth, default 20). The index
+holds the vectors; metadata is kept alongside in memory. `searchFilter` and
+`searchWhere` over-fetch from the index and then filter, so a very selective
+filter may return fewer than `k` hits; raise `k` or widen `efSearch` if needed.
+The store is not persistent; rebuild it from your source data on startup, or use
+`PgVectorStore` when you need durability.
 
 ## `rag`
 

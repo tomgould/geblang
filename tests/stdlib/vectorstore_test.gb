@@ -126,6 +126,53 @@ class VectorStoreTest extends test.Test {
     }
 
     @test
+    func hnswCrudAndSearch(): void {
+        let store = vs.HnswVectorStore("cosine");
+        store.add("a", [1.0, 0.0, 0.0], {"g": "x"});
+        store.add("b", [0.0, 1.0, 0.0], {"g": "y"});
+        store.add("c", [0.0, 0.0, 1.0], {"g": "x"});
+        this.assertEquals(3, store.count());
+        this.assertEquals("a", store.search([0.9, 0.1, 0.0], 1)[0].record.id);
+        let rec = store.get("c") as vs.VectorRecord;
+        this.assertEquals("x", rec.metadata["g"]);
+        this.assertEquals(3, rec.vector.length());
+        this.assertTrue(store.get("missing") == null);
+    }
+
+    @test
+    func hnswUpsertDeleteClear(): void {
+        let store = vs.HnswVectorStore("cosine");
+        store.add("a", [1.0, 0.0], {"v": "first"});
+        store.add("a", [0.0, 1.0], {"v": "second"});
+        this.assertEquals(1, store.count());
+        this.assertEquals("second", (store.get("a") as vs.VectorRecord).metadata["v"]);
+        this.assertTrue(store.delete("a"));
+        this.assertTrue(!store.delete("a"));
+        this.assertEquals(0, store.count());
+        store.add("x", [1.0, 0.0], {});
+        store.clear();
+        this.assertEquals(0, store.count());
+    }
+
+    @test
+    func hnswSearchFilter(): void {
+        let store = vs.HnswVectorStore("cosine");
+        store.add("a", [1.0, 0.0, 0.0], {"g": "x"});
+        store.add("b", [0.0, 1.0, 0.0], {"g": "y"});
+        store.add("c", [0.0, 0.0, 1.0], {"g": "x"});
+        let hits = store.searchFilter([0.1, 0.1, 0.9], 5, {"g": "x"});
+        for (h in hits) {
+            this.assertEquals("x", h.record.metadata["g"]);
+        }
+        this.assertEquals("c", hits[0].record.id);
+    }
+
+    @test
+    func hnswRejectsUnknownMetric(): void {
+        this.assertThrows(func(): void { vs.HnswVectorStore("manhattan"); });
+    }
+
+    @test
     func sqlitePersistsAndSearches(): void {
         let store = this.sqliteStore();
         store.add("cats", [0.1, 0.2, 0.9], {"text": "cats"});

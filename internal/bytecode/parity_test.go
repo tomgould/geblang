@@ -12277,3 +12277,25 @@ io.println(r["failed"]);
 io.println(r["skipped"]);
 `, "3\n1\n0\n2\n")
 }
+
+// HnswVectorStore over a small, well-separated set (exact regime, so the
+// approximate index is deterministic) - CRUD, ranking, and filter pushdown.
+func TestParityHnswVectorStore(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import vectorstore as vs;
+let store = vs.HnswVectorStore("cosine");
+store.add("a", [1.0, 0.0, 0.0], {"g": "x"});
+store.add("b", [0.0, 1.0, 0.0], {"g": "y"});
+store.add("c", [0.0, 0.0, 1.0], {"g": "x"});
+io.println(store.count());
+io.println(store.search([0.9, 0.1, 0.0], 1)[0].record.id);
+io.println(store.get("b").metadata["g"]);
+io.println(store.get("z") == null);
+io.println(store.searchFilter([0.1, 0.1, 0.9], 5, {"g": "x"})[0].record.id);
+io.println(store.delete("b"));
+io.println(store.delete("b"));
+io.println(store.count());
+store.clear();
+io.println(store.count());
+`, "3\na\ny\ntrue\nc\ntrue\nfalse\n2\n0\n")
+}
