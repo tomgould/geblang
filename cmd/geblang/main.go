@@ -1430,19 +1430,22 @@ func runTests(args []string) {
 	}
 	total := int64(0)
 	failed := int64(0)
+	skipped := int64(0)
 	for _, file := range files {
-		fileTotal, fileFailed, err := runTestFile(file, tags, classFilter, methodFilters, format, allowFFI)
+		fileTotal, fileFailed, fileSkipped, err := runTestFile(file, tags, classFilter, methodFilters, format, allowFFI)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
 			os.Exit(1)
 		}
 		total += fileTotal
 		failed += fileFailed
+		skipped += fileSkipped
 	}
+	passed := total - failed - skipped
 	if format == "teamcity" {
-		fmt.Printf("##teamcity[message text='tests: total=%d failed=%d passed=%d' status='NORMAL']\n", total, failed, total-failed)
+		fmt.Printf("##teamcity[message text='tests: total=%d failed=%d passed=%d skipped=%d' status='NORMAL']\n", total, failed, passed, skipped)
 	} else {
-		fmt.Printf("tests: total=%d failed=%d passed=%d\n", total, failed, total-failed)
+		fmt.Printf("tests: total=%d failed=%d passed=%d skipped=%d\n", total, failed, passed, skipped)
 	}
 	if failed > 0 {
 		os.Exit(1)
@@ -1473,14 +1476,14 @@ func discoverTestFiles(path string) ([]string, error) {
 	return files, err
 }
 
-func runTestFile(path string, tags []string, classFilter string, methodFilters []string, format string, allowFFI []string) (int64, int64, error) {
+func runTestFile(path string, tags []string, classFilter string, methodFilters []string, format string, allowFFI []string) (int64, int64, int64, error) {
 	source, err := os.ReadFile(path)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	program, err := parseAndAnalyze(string(source))
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	classes := testClasses(program)
 	if classFilter != "" {
@@ -1493,12 +1496,12 @@ func runTestFile(path string, tags []string, classFilter string, methodFilters [
 		classes = filtered
 	}
 	if len(classes) == 0 {
-		return 0, 0, nil
+		return 0, 0, 0, nil
 	}
 	runner := buildTestRunner(classes, tags, methodFilters, format)
 	program, err = parseAndAnalyze(string(source) + "\n" + runner)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	var out strings.Builder
 	// Pass the script's directory as a module path so the resolver
@@ -1508,14 +1511,14 @@ func runTestFile(path string, tags []string, classFilter string, methodFilters [
 	if policy, perr := ev.BuildFFIPolicy(filepath.Dir(path), allowFFI); perr == nil {
 		ev.SetFFIPolicy(policy)
 	} else {
-		return 0, 0, perr
+		return 0, 0, 0, perr
 	}
 	result, err := ev.Eval(program)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if result.Exited && result.ExitCode != 0 {
-		return 0, 0, fmt.Errorf("test runner exited with %d", result.ExitCode)
+		return 0, 0, 0, fmt.Errorf("test runner exited with %d", result.ExitCode)
 	}
 	printTestOutput(out.String())
 	return parseTestSummary(out.String())
@@ -1568,7 +1571,7 @@ func testClasses(program *ast.Program) []string {
 func buildTestRunner(classes []string, tags []string, methodFilters []string, format string) string {
 	var b strings.Builder
 	b.WriteString("import io;\nimport sys;\nimport test;\n")
-	b.WriteString("let __geb_total = 0;\nlet __geb_failed = 0;\n")
+	b.WriteString("let __geb_total = 0;\nlet __geb_failed = 0;\nlet __geb_skipped = 0;\n")
 	if format == "teamcity" {
 		// Helper that escapes a string per the TeamCity service-message
 		// spec: | -> ||, ' -> |', [ -> |[, ] -> |], \n -> |n, \r -> |r.
@@ -1611,6 +1614,7 @@ func buildTestRunner(classes []string, tags []string, methodFilters []string, fo
 		fmt.Fprintf(&b, "let %s = test.run(%s, {\"tags\": %s, \"methods\": %s});\n", resultName, className, tagList, methodList)
 		fmt.Fprintf(&b, "__geb_total = __geb_total + %s[\"total\"];\n", resultName)
 		fmt.Fprintf(&b, "__geb_failed = __geb_failed + %s[\"failed\"];\n", resultName)
+		fmt.Fprintf(&b, "__geb_skipped = __geb_skipped + (%s[\"skipped\"] ?? 0);\n", resultName)
 		switch format {
 		case "teamcity":
 			classTC := strconvQuote(className)
@@ -1619,7 +1623,9 @@ func buildTestRunner(classes []string, tags []string, methodFilters []string, fo
 			b.WriteString("    string __geb_tc_name = __geb_tc_escape(__geb_case[\"name\"]);\n")
 			fmt.Fprintf(&b, "    string __geb_tc_loc = \"geblang_test://\" + __geb_tc_escape(%s) + \"/\" + __geb_tc_name;\n", classTC)
 			b.WriteString("    io.println(\"##teamcity[testStarted name='\" + __geb_tc_name + \"' locationHint='\" + __geb_tc_loc + \"' captureStandardOutput='true']\");\n")
-			b.WriteString("    if (!__geb_case[\"passed\"]) {\n")
+			b.WriteString("    if (__geb_case[\"skipped\"] ?? false) {\n")
+			b.WriteString("        io.println(\"##teamcity[testIgnored name='\" + __geb_tc_name + \"' message='\" + __geb_tc_escape(__geb_case[\"message\"]) + \"']\");\n")
+			b.WriteString("    } else if (!__geb_case[\"passed\"]) {\n")
 			b.WriteString("        string __geb_tc_msg = __geb_tc_escape(__geb_case[\"message\"]);\n")
 			b.WriteString("        io.println(\"##teamcity[testFailed name='\" + __geb_tc_name + \"' message='\" + __geb_tc_msg + \"']\");\n")
 			b.WriteString("    }\n")
@@ -1629,7 +1635,9 @@ func buildTestRunner(classes []string, tags []string, methodFilters []string, fo
 		case "verbose":
 			fmt.Fprintf(&b, "io.println(%q);\n", className)
 			fmt.Fprintf(&b, "for (__geb_case in %s[\"tests\"]) {\n", resultName)
-			b.WriteString("  if (__geb_case[\"passed\"]) {\n")
+			b.WriteString("  if (__geb_case[\"skipped\"] ?? false) {\n")
+			b.WriteString("    io.println(\"  SKIP \" + __geb_case[\"name\"] + \": \" + __geb_case[\"message\"]);\n")
+			b.WriteString("  } else if (__geb_case[\"passed\"]) {\n")
 			b.WriteString("    io.println(\"  PASS \" + __geb_case[\"name\"]);\n")
 			b.WriteString("  } else {\n")
 			b.WriteString("    io.println(\"  FAIL \" + __geb_case[\"name\"] + \": \" + __geb_case[\"message\"]);\n")
@@ -1639,7 +1647,7 @@ func buildTestRunner(classes []string, tags []string, methodFilters []string, fo
 			fmt.Fprintf(&b, "for (__geb_failure in %s[\"failures\"]) { io.println(\"FAIL %s: \" + __geb_failure); }\n", resultName, className)
 		}
 	}
-	b.WriteString("io.println(\"__GEB_TEST_SUMMARY__ \" + (__geb_total as string) + \" \" + (__geb_failed as string));\n")
+	b.WriteString("io.println(\"__GEB_TEST_SUMMARY__ \" + (__geb_total as string) + \" \" + (__geb_failed as string) + \" \" + (__geb_skipped as string));\n")
 	return b.String()
 }
 
@@ -1647,25 +1655,28 @@ func strconvQuote(value string) string {
 	return fmt.Sprintf("%q", value)
 }
 
-func parseTestSummary(output string) (int64, int64, error) {
+func parseTestSummary(output string) (int64, int64, int64, error) {
 	for _, line := range strings.Split(output, "\n") {
 		if !strings.HasPrefix(line, "__GEB_TEST_SUMMARY__ ") {
 			continue
 		}
 		parts := strings.Fields(line)
-		if len(parts) != 3 {
-			return 0, 0, fmt.Errorf("invalid test summary")
+		if len(parts) != 4 {
+			return 0, 0, 0, fmt.Errorf("invalid test summary")
 		}
-		var total, failed int64
+		var total, failed, skipped int64
 		if _, err := fmt.Sscan(parts[1], &total); err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 		if _, err := fmt.Sscan(parts[2], &failed); err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
-		return total, failed, nil
+		if _, err := fmt.Sscan(parts[3], &skipped); err != nil {
+			return 0, 0, 0, err
+		}
+		return total, failed, skipped, nil
 	}
-	return 0, 0, fmt.Errorf("missing test summary")
+	return 0, 0, 0, fmt.Errorf("missing test summary")
 }
 
 func printTestOutput(output string) {

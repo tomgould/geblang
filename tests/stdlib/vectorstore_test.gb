@@ -59,6 +59,26 @@ class VectorStoreTest extends test.Test {
     }
 
     @test
+    func searchFilterCriteria(): void {
+        let store = vs.MemoryVectorStore();
+        store.add("a", [0.1, 0.2, 0.9], {"lang": "en", "year": 2020});
+        store.add("b", [0.12, 0.22, 0.88], {"lang": "fr", "year": 2021});
+        store.add("c", [0.11, 0.21, 0.89], {"lang": "en", "year": 2023});
+        /* scalar eq */
+        this.assertEquals(2, store.searchFilter([0.1, 0.2, 0.9], 5, {"lang": "en"}).length());
+        /* range */
+        this.assertEquals(2, store.searchFilter([0.1, 0.2, 0.9], 5, {"year": {"gte": 2021}}).length());
+        this.assertEquals(1, store.searchFilter([0.1, 0.2, 0.9], 5, {"year": {"lt": 2021}}).length());
+        /* combined AND */
+        let r = store.searchFilter([0.1, 0.2, 0.9], 5, {"lang": "en", "year": {"gt": 2020}});
+        this.assertEquals(1, r.length());
+        this.assertEquals("c", r[0].record.id);
+        /* in + ne */
+        this.assertEquals("b", store.searchFilter([0.1, 0.2, 0.9], 5, {"lang": {"in": ["fr"]}})[0].record.id);
+        this.assertEquals(2, store.searchFilter([0.1, 0.2, 0.9], 5, {"year": {"ne": 2020}}).length());
+    }
+
+    @test
     func searchWhereFiltersBeforeRanking(): void {
         let store = vs.MemoryVectorStore();
         store.add("a", [0.1, 0.2, 0.9], {"lang": "en"});

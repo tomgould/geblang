@@ -115,10 +115,39 @@ func RunTestAssertion(name string, args []Value) (Value, bool, error) {
 			return nil, true, fmt.Errorf("%s", args[0].Inspect())
 		}
 		return nil, true, fmt.Errorf("failed")
+	case "skip":
+		if len(args) > 1 {
+			return nil, true, fmt.Errorf("Test.skip expects zero or one argument")
+		}
+		reason := ""
+		if len(args) == 1 {
+			if s, ok := args[0].(String); ok {
+				reason = s.Value
+			} else {
+				reason = args[0].Inspect()
+			}
+		}
+		return nil, true, &TestSkip{Reason: reason}
 	default:
 		return nil, false, nil
 	}
 }
+
+// TestSkip is the signal raised by this.skip(reason) inside a @test method.
+// It surfaces as the "TestSkip" error class so the runners recognise it across
+// the native-to-script boundary (via TypedError) and record a skip, not a fail.
+type TestSkip struct {
+	Reason string
+}
+
+func (e *TestSkip) Error() string {
+	if e.Reason == "" {
+		return "test skipped"
+	}
+	return e.Reason
+}
+
+func (e *TestSkip) ErrorClass() string { return "TestSkip" }
 
 func assertEqual(expected Value, actual Value, format string) (Value, bool, error) {
 	if !ValuesEqual(actual, expected) {

@@ -3073,6 +3073,7 @@ func (e *Evaluator) installBuiltinTypes(env *runtime.Environment) error {
 		"assertThrows",
 		"assertThrowsOf",
 		"fail",
+		"skip",
 	} {
 		testClass.Methods[strings.ToLower(methodName)] = []runtime.Function{{Name: methodName, Native: e.nativeTestAssertion(methodName)}}
 	}
@@ -12557,6 +12558,7 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 	total := int64(0)
 	passed := int64(0)
 	failed := int64(0)
+	skipped := int64(0)
 	failures := []runtime.Value{}
 	tests := []runtime.Value{}
 	methods := filterTestMethods(decoratedMethods(class, "test"), options.tags, options.methods)
@@ -12570,29 +12572,41 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 	} else {
 		for _, method := range methods {
 			total++
+			if hasDecorator(method.Decorators, "skip") {
+				skipped++
+				tests = append(tests, testCaseSkipped(method.Name, skipDecoratorReason(method.Decorators)))
+				continue
+			}
 			/* Snapshot test.mock patches before each method so
-			 * mocks from one test don't leak into the next.
-			 * Both the evaluator's registry and the VM's (when
-			 * present) need to roll back. */
+			 * mocks from one test don't leak into the next. */
 			patchSnapshot := e.natives.Snapshot()
 			var vmSnapshot map[string]native.Function
 			if e.vmDispatcher != nil {
 				vmSnapshot = e.vmDispatcher.NativeSnapshot()
 			}
-			testErr := e.applyOptionalTestHook(instance, "setup")
-			if testErr == nil {
-				_, testErr = e.applyFunctionWithThis(method, nil, instance)
+			bodyErr := e.applyOptionalTestHook(instance, "setup")
+			if bodyErr == nil {
+				_, bodyErr = e.applyFunctionWithThis(method, nil, instance)
 			}
-			if teardownErr := e.applyOptionalTestHook(instance, "teardown"); teardownErr != nil {
+			teardownErr := e.applyOptionalTestHook(instance, "teardown")
+			e.natives.Restore(patchSnapshot)
+			if e.vmDispatcher != nil {
+				e.vmDispatcher.RestoreNatives(vmSnapshot)
+			}
+			if bodyErr != nil && teardownErr == nil {
+				if rerr := runtime.NewRecoverableError(bodyErr); rerr.Class == "TestSkip" {
+					skipped++
+					tests = append(tests, testCaseSkipped(method.Name, rerr.Message))
+					continue
+				}
+			}
+			testErr := bodyErr
+			if teardownErr != nil {
 				if testErr != nil {
 					testErr = fmt.Errorf("%v; teardown: %w", testErr, teardownErr)
 				} else {
 					testErr = fmt.Errorf("teardown: %w", teardownErr)
 				}
-			}
-			e.natives.Restore(patchSnapshot)
-			if e.vmDispatcher != nil {
-				e.vmDispatcher.RestoreNatives(vmSnapshot)
 			}
 			if testErr != nil {
 				failed++
@@ -12618,9 +12632,23 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 	putDict(entries, "total", runtime.NewInt64(total))
 	putDict(entries, "passed", runtime.NewInt64(passed))
 	putDict(entries, "failed", runtime.NewInt64(failed))
+	putDict(entries, "skipped", runtime.NewInt64(skipped))
 	putDict(entries, "failures", &runtime.List{Elements: failures})
 	putDict(entries, "tests", &runtime.List{Elements: tests})
 	return runtime.Dict{Entries: entries}, nil
+}
+
+// skipDecoratorReason returns the optional string argument of a @Skip decorator.
+func skipDecoratorReason(decorators []ast.Decorator) string {
+	for _, d := range decorators {
+		if !strings.EqualFold(d.Name.Value, "skip") || len(d.Arguments) == 0 {
+			continue
+		}
+		if lit, ok := d.Arguments[0].Value.(*ast.StringLiteral); ok {
+			return lit.Value
+		}
+	}
+	return ""
 }
 
 // testMock(moduleName, {"fname": callable, ...}) installs patches
@@ -12725,6 +12753,15 @@ func testCaseDict(name string, passed bool, message string) runtime.Value {
 	if !passed {
 		putDict(entries, "message", runtime.String{Value: message})
 	}
+	return runtime.Dict{Entries: entries}
+}
+
+func testCaseSkipped(name string, reason string) runtime.Value {
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "name", runtime.String{Value: name})
+	putDict(entries, "passed", runtime.Bool{Value: false})
+	putDict(entries, "skipped", runtime.Bool{Value: true})
+	putDict(entries, "message", runtime.String{Value: reason})
 	return runtime.Dict{Entries: entries}
 }
 

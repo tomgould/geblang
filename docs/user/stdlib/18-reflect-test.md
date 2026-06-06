@@ -161,7 +161,40 @@ io.println(fast["total"]);
 - `total`: number of selected test methods
 - `passed`: number that completed without throwing
 - `failed`: number that threw an assertion or runtime error
+- `skipped`: number that were skipped (see below)
 - `failures`: list of failure strings, prefixed with the test method name
+
+## Skipping Tests
+
+A test can be skipped so it counts as neither passed nor failed (and does not
+affect the exit code). Two mechanisms:
+
+- `this.skip(reason)` skips at runtime. Use it for conditional skips, e.g. an
+  integration test that needs an environment variable or service. Calling it
+  aborts the current test method immediately. Call it before any work you want
+  to avoid (and outside a `try`/`catch`, which would intercept the signal).
+- The `@Skip` (or `@Skip("reason")`) decorator skips a method unconditionally,
+  for temporarily disabling a test without deleting it.
+
+```gb
+@test
+func needsDatabase(): void {
+    if (sys.getenv("DATABASE_URL") == null) {
+        this.skip("DATABASE_URL not set");
+    }
+    /* ... real assertions run only when the env var is present ... */
+}
+
+@test
+@Skip("flaky, see issue 123")
+func underInvestigation(): void {
+    this.fail();   /* never runs */
+}
+```
+
+The `geblang test` summary reports skips separately, e.g.
+`tests: total=8 failed=0 passed=6 skipped=2`, and `--format verbose` prints a
+`SKIP <name>: <reason>` line.
 
 ## Test Assertions
 

@@ -318,6 +318,10 @@ type vmThrownError struct {
 
 func (e vmThrownError) Error() string { return "uncaught " + e.err.Inspect() }
 
+// ErrorClass exposes the carried Geblang error class so a typed throw
+// (e.g. TestSkip) survives the native-to-script boundary via runtime.TypedError.
+func (e vmThrownError) ErrorClass() string { return e.err.Class }
+
 // vmFatalError marks a fault that try/catch must never intercept (VM
 // bytecode corruption, stack overflow). Run() routes ordinary runtime
 // faults to the active handler but lets a vmFatalError terminate.
@@ -12176,6 +12180,12 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			}
 			if result, handled, err := vm.callBuiltinParentMethod(classInfo, instance, nameValue.Value, args); handled {
 				if err != nil {
+					/* preserve the TestSkip class so the runner records a
+					 * skip, not a failure; other assertion errors stay on
+					 * the generic runtime-error path */
+					if rerr := runtime.NewRecoverableError(err); rerr.Class == "TestSkip" {
+						return vm.throwRecoverableError(instruction, ip, err)
+					}
 					return 0, vm.runtimeError(instruction, "%s", err.Error())
 				}
 				vm.push(result)
@@ -13574,6 +13584,8 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 	type testMethod struct {
 		callKey     string
 		displayName string
+		skip        bool
+		skipReason  string
 	}
 	var testMethods []testMethod
 	seenMethods := map[string]bool{}
@@ -13622,7 +13634,19 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 					}
 				}
 			}
-			testMethods = append(testMethods, testMethod{callKey: methodKey, displayName: displayName})
+			skip := false
+			skipReason := ""
+			for _, dec := range decs {
+				if strings.EqualFold(dec.Name, "skip") {
+					skip = true
+					if len(dec.Args) > 0 {
+						if s, ok := dec.Args[0].(runtime.String); ok {
+							skipReason = s.Value
+						}
+					}
+				}
+			}
+			testMethods = append(testMethods, testMethod{callKey: methodKey, displayName: displayName, skip: skip, skipReason: skipReason})
 		}
 		if info.ParentIndex >= 0 && int(info.ParentIndex) < len(vm.chunk.Classes) {
 			collectMethods(vm.chunk.Classes[info.ParentIndex])
@@ -13650,6 +13674,7 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 	total := int64(0)
 	passed := int64(0)
 	failed := int64(0)
+	skipped := int64(0)
 	failures := []runtime.Value{}
 	tests := []runtime.Value{}
 
@@ -13663,6 +13688,19 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 			k = runtime.String{Value: "message"}
 			entries[native.DictKey(k)] = runtime.DictEntry{Key: k, Value: runtime.String{Value: message}}
 		}
+		return runtime.Dict{Entries: entries}
+	}
+
+	buildSkippedEntry := func(name string, reason string) runtime.Value {
+		entries := map[string]runtime.DictEntry{}
+		k := runtime.String{Value: "name"}
+		entries[native.DictKey(k)] = runtime.DictEntry{Key: k, Value: runtime.String{Value: name}}
+		k = runtime.String{Value: "passed"}
+		entries[native.DictKey(k)] = runtime.DictEntry{Key: k, Value: runtime.Bool{Value: false}}
+		k = runtime.String{Value: "skipped"}
+		entries[native.DictKey(k)] = runtime.DictEntry{Key: k, Value: runtime.Bool{Value: true}}
+		k = runtime.String{Value: "message"}
+		entries[native.DictKey(k)] = runtime.DictEntry{Key: k, Value: runtime.String{Value: reason}}
 		return runtime.Dict{Entries: entries}
 	}
 
@@ -13682,20 +13720,36 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 	if !setupFailed {
 		for _, m := range testMethods {
 			total++
-			var testErr error
+			if m.skip {
+				skipped++
+				tests = append(tests, buildSkippedEntry(m.displayName, m.skipReason))
+				continue
+			}
+			var bodyErr error
 			if hasMethod("setup") {
-				testErr = callHook("setup")
+				bodyErr = callHook("setup")
 			}
-			if testErr == nil {
-				_, testErr = vm.CallMethod(instance, m.callKey, nil)
+			if bodyErr == nil {
+				_, bodyErr = vm.CallMethod(instance, m.callKey, nil)
 			}
+			var teardownErr error
 			if hasMethod("teardown") {
-				if tdErr := callHook("teardown"); tdErr != nil {
-					if testErr != nil {
-						testErr = fmt.Errorf("%v; teardown: %w", testErr, tdErr)
-					} else {
-						testErr = fmt.Errorf("teardown: %w", tdErr)
-					}
+				teardownErr = callHook("teardown")
+			}
+			if bodyErr != nil && teardownErr == nil {
+				var thrown vmThrownError
+				if errors.As(bodyErr, &thrown) && thrown.err.Class == "TestSkip" {
+					skipped++
+					tests = append(tests, buildSkippedEntry(m.displayName, thrown.err.Message))
+					continue
+				}
+			}
+			testErr := bodyErr
+			if teardownErr != nil {
+				if testErr != nil {
+					testErr = fmt.Errorf("%v; teardown: %w", testErr, teardownErr)
+				} else {
+					testErr = fmt.Errorf("teardown: %w", teardownErr)
 				}
 			}
 			if testErr != nil {
@@ -13730,6 +13784,7 @@ func (vm *VM) RunTestClass(classIndex int64, tagFilter []string) (runtime.Value,
 	setEntry(entries, "total", runtime.NewInt64(total))
 	setEntry(entries, "passed", runtime.NewInt64(passed))
 	setEntry(entries, "failed", runtime.NewInt64(failed))
+	setEntry(entries, "skipped", runtime.NewInt64(skipped))
 	setEntry(entries, "failures", &runtime.List{Elements: failures})
 	setEntry(entries, "tests", &runtime.List{Elements: tests})
 	return runtime.Dict{Entries: entries}, nil

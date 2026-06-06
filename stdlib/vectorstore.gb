@@ -54,6 +54,7 @@ export interface VectorStore {
     func delete(string id): bool;
     func search(list<any> query, int k): list<SearchHit>;
     func searchWhere(list<any> query, int k, callable filter): list<SearchHit>;
+    func searchFilter(list<any> query, int k, dict<string, any> criteria): list<SearchHit>;
     func count(): int;
     func clear(): void;
 }
@@ -179,6 +180,12 @@ export class MemoryVectorStore implements VectorStore {
         }
         return rankFiltered(ids, blobs, metas, query, this._metric, k, filter);
     }
+
+    func searchFilter(list<any> query, int k, dict<string, any> criteria): list<SearchHit> {
+        return this.searchWhere(query, k, func(any rec): bool {
+            return matchesCriteria((rec as VectorRecord).metadata, criteria);
+        });
+    }
 }
 
 /**
@@ -277,6 +284,148 @@ export class SqliteVectorStore implements VectorStore {
         }
         return rankFiltered(ids, blobs, metas, query, this._metric, k, filter);
     }
+
+    func searchFilter(list<any> query, int k, dict<string, any> criteria): list<SearchHit> {
+        return this.searchWhere(query, k, func(any rec): bool {
+            return matchesCriteria((rec as VectorRecord).metadata, criteria);
+        });
+    }
+}
+
+/**
+ * Persistent store backed by Postgres + the pgvector extension via the `db`
+ * module. Uses a typed vector(D) column, a metric-matched HNSW index, jsonb
+ * metadata, and index-using ANN queries (the same shape as idiomatic pgvector
+ * usage elsewhere). The extension, table, and index are created on construction.
+ * add() upserts by id.
+ *
+ * ```gb
+ * import db; import vectorstore;
+ * let conn  = db.connect("postgres", dsn);
+ * let store = vectorstore.PgVectorStore(conn, "items", 1536);
+ * store.add("doc-1", embedding, {"source": "handbook"});
+ * let hits = store.searchFilter(queryVector, 5, {"source": "handbook"});
+ * ```
+ *
+ * The pgvector value is bound in its text form with CAST(? AS vector); metadata
+ * filters push down server-side as jsonb containment / range predicates.
+ */
+export class PgVectorStore implements VectorStore {
+    any _conn;
+    string _table;
+    int _dim;
+    string _metric;
+
+    func PgVectorStore(any conn, string table = "vectors", int dimension = 0, string metric = "cosine") {
+        if (metric != "cosine" && metric != "dot" && metric != "euclidean") {
+            throw ValueError("PgVectorStore: unknown metric '" + metric + "'");
+        }
+        if (dimension <= 0) {
+            throw ValueError("PgVectorStore: dimension must be a positive integer");
+        }
+        if (!re.test("^[A-Za-z_][A-Za-z0-9_]*$", table)) {
+            throw ValueError("PgVectorStore: unsafe table name '" + table + "'");
+        }
+        this._conn = conn;
+        this._table = table;
+        this._dim = dimension;
+        this._metric = metric;
+        conn.exec("CREATE EXTENSION IF NOT EXISTS vector");
+        conn.exec("CREATE TABLE IF NOT EXISTS " + table + " (id text PRIMARY KEY, embedding vector("
+            + (dimension as string) + ") NOT NULL, metadata jsonb NOT NULL)");
+        conn.exec("CREATE INDEX IF NOT EXISTS " + table + "_embedding_idx ON " + table
+            + " USING hnsw (embedding " + pgOpsClass(metric) + ")");
+    }
+
+    func add(string id, list<any> vector, dict<string, any> metadata): void {
+        this._conn.exec("INSERT INTO " + this._table
+            + " (id, embedding, metadata) VALUES (?, CAST(? AS vector), CAST(? AS jsonb))"
+            + " ON CONFLICT (id) DO UPDATE SET embedding = EXCLUDED.embedding, metadata = EXCLUDED.metadata",
+            id, vectorToPgText(vector), json.stringify(metadata));
+    }
+
+    func addAll(list<VectorRecord> records): void {
+        for (rec in records) {
+            let r = rec as VectorRecord;
+            this.add(r.id, r.vector, r.metadata);
+        }
+    }
+
+    func get(string id): ?VectorRecord {
+        let rows = this._conn.query("SELECT embedding, metadata FROM " + this._table + " WHERE id = ?", id).all();
+        if (rows.length() == 0) {
+            return null;
+        }
+        let r = rows[0] as dict<string, any>;
+        return VectorRecord(id, json.parse(r["embedding"] as string) as list<any>,
+            json.parse(r["metadata"] as string) as dict<string, any>);
+    }
+
+    func delete(string id): bool {
+        let r = this._conn.exec("DELETE FROM " + this._table + " WHERE id = ?", id);
+        return (r["rowsAffected"] as int) > 0;
+    }
+
+    func count(): int {
+        let rows = this._conn.query("SELECT COUNT(*) AS c FROM " + this._table).all();
+        return rows[0]["c"] as int;
+    }
+
+    func clear(): void {
+        this._conn.exec("DELETE FROM " + this._table);
+    }
+
+    func search(list<any> query, int k): list<SearchHit> {
+        return this.runSearch(query, k, "", []);
+    }
+
+    func searchFilter(list<any> query, int k, dict<string, any> criteria): list<SearchHit> {
+        let w = pgWhere(criteria);
+        return this.runSearch(query, k, w["sql"] as string, w["params"] as list<any>);
+    }
+
+    func searchWhere(list<any> query, int k, callable filter): list<SearchHit> {
+        /* An arbitrary callable cannot be pushed to SQL: rank all by distance
+         * (index-ordered), filter client-side, take k. Prefer searchFilter for
+         * scale. */
+        let out = [];
+        for (h in this.runSearch(query, -1, "", [])) {
+            if (out.length() >= k) {
+                break;
+            }
+            if (filter((h as SearchHit).record)) {
+                out = out.push(h);
+            }
+        }
+        return out;
+    }
+
+    func runSearch(list<any> query, int k, string whereSql, list<any> whereParams): list<SearchHit> {
+        let qtext = vectorToPgText(query);
+        let params = [qtext];
+        for (p in whereParams) {
+            params = params.push(p);
+        }
+        params = params.push(qtext);
+        string sql = "SELECT id, embedding, metadata, " + pgScoreExpr(this._metric)
+            + " AS score FROM " + this._table;
+        if (whereSql != "") {
+            sql = sql + " WHERE " + whereSql;
+        }
+        sql = sql + " ORDER BY embedding " + pgOperator(this._metric) + " CAST(? AS vector)";
+        if (k >= 0) {
+            sql = sql + " LIMIT ?";
+            params = params.push(k);
+        }
+        let out = [];
+        for (row in this._conn.query(sql, ...params).all()) {
+            let r = row as dict<string, any>;
+            let rec = VectorRecord(r["id"] as string, json.parse(r["embedding"] as string) as list<any>,
+                json.parse(r["metadata"] as string) as dict<string, any>);
+            out = out.push(SearchHit(rec, r["score"] as float));
+        }
+        return out;
+    }
 }
 
 /** Native-kernel top-k over packed float32 blobs aligned with ids and metadata. */
@@ -331,4 +480,123 @@ func rowToRecord(string id, dict<string, any> row): VectorRecord {
 /** Similarity score (higher = closer) between two vectors for the given metric. */
 export func score(string metric, list<any> a, list<any> b): float {
     return vecmath.score(metric, a, b);
+}
+
+/**
+ * Tests a metadata dict against a criteria dict. A scalar value means equality;
+ * a nested operator dict supports eq/ne/gt/gte/lt/lte/in. Multiple keys AND.
+ */
+func matchesCriteria(dict<string, any> meta, dict<string, any> criteria): bool {
+    for (field in criteria.keys()) {
+        let cond = criteria[field];
+        let actual = meta[field] ?? null;
+        if ("${typeof(cond)}" == "dict") {
+            let ops = cond as dict<string, any>;
+            for (op in ops.keys()) {
+                if (!matchOp(op as string, actual, ops[op])) {
+                    return false;
+                }
+            }
+        } else {
+            if (actual != cond) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+func matchOp(string op, any actual, any val): bool {
+    if (op == "in") {
+        return (val as list<any>).contains(actual);
+    }
+    if (actual == null) {
+        return false;
+    }
+    if (op == "eq") { return actual == val; }
+    if (op == "ne") { return actual != val; }
+    if (op == "gt") { return actual > val; }
+    if (op == "gte") { return actual >= val; }
+    if (op == "lt") { return actual < val; }
+    if (op == "lte") { return actual <= val; }
+    throw ValueError("vectorstore: unknown filter operator '" + op + "'");
+}
+
+func vectorToPgText(list<any> vector): string {
+    let parts = [];
+    for (x in vector) {
+        parts = parts.push((x as float) as string);
+    }
+    return "[" + parts.join(",") + "]";
+}
+
+func pgOpsClass(string metric): string {
+    if (metric == "dot") { return "vector_ip_ops"; }
+    if (metric == "euclidean") { return "vector_l2_ops"; }
+    return "vector_cosine_ops";
+}
+
+func pgOperator(string metric): string {
+    if (metric == "dot") { return "<#>"; }
+    if (metric == "euclidean") { return "<->"; }
+    return "<=>";
+}
+
+func pgScoreExpr(string metric): string {
+    /* map the distance operator back to a "higher = closer" score */
+    if (metric == "dot") { return "-(embedding <#> CAST(? AS vector))"; }
+    if (metric == "euclidean") { return "-(embedding <-> CAST(? AS vector))"; }
+    return "1 - (embedding <=> CAST(? AS vector))";
+}
+
+func pgCmpOp(string op): string {
+    if (op == "gt") { return ">"; }
+    if (op == "gte") { return ">="; }
+    if (op == "lt") { return "<"; }
+    if (op == "lte") { return "<="; }
+    throw ValueError("vectorstore: unsupported comparison operator '" + op + "'");
+}
+
+/** Translates a criteria dict into a parameterized SQL WHERE over jsonb metadata. */
+func pgWhere(dict<string, any> criteria): dict<string, any> {
+    let clauses = [];
+    let params = [];
+    for (field in criteria.keys()) {
+        let cond = criteria[field];
+        if ("${typeof(cond)}" == "dict") {
+            let ops = cond as dict<string, any>;
+            for (op in ops.keys()) {
+                let val = ops[op];
+                if (op == "eq" || op == "ne") {
+                    let obj = {};
+                    obj[field] = val;
+                    if (op == "eq") {
+                        clauses = clauses.push("metadata @> CAST(? AS jsonb)");
+                    } else {
+                        clauses = clauses.push("NOT (metadata @> CAST(? AS jsonb))");
+                    }
+                    params = params.push(json.stringify(obj));
+                } else if (op == "in") {
+                    let ors = [];
+                    for (v in (val as list<any>)) {
+                        let obj = {};
+                        obj[field] = v;
+                        ors = ors.push("metadata @> CAST(? AS jsonb)");
+                        params = params.push(json.stringify(obj));
+                    }
+                    clauses = clauses.push("(" + ors.join(" OR ") + ")");
+                } else {
+                    clauses = clauses.push("CAST(metadata->>? AS float8) " + pgCmpOp(op as string) + " ?");
+                    params = params.push(field);
+                    params = params.push(val as float);
+                }
+            }
+        } else {
+            let obj = {};
+            obj[field] = cond;
+            clauses = clauses.push("metadata @> CAST(? AS jsonb)");
+            params = params.push(json.stringify(obj));
+        }
+    }
+    return {"sql": clauses.join(" AND "), "params": params};
 }

@@ -1,5 +1,31 @@
 # Release Notes
 
+## 1.10.0
+
+### AI and retrieval
+
+- New `PgVectorStore` (in `vectorstore`): a Postgres + pgvector backend behind
+  the existing `VectorStore` interface. Uses a typed `vector(D)` column, a
+  metric-matched HNSW index, and `jsonb` metadata, with index-using approximate
+  nearest-neighbour queries - the same shape as idiomatic pgvector usage. Built
+  on the `db` module; no new dependency. The extension, table, and index are
+  created on construction; `add` upserts by id.
+- New `searchFilter(query, k, criteria)` on every vector store: a portable,
+  dict-based metadata filter (`{"field": value}` for equality; nested
+  `{"field": {"gte": x}}` for `gt`/`gte`/`lt`/`lte`/`ne`/`in`). In-memory and
+  SQLite stores apply it in process; `PgVectorStore` pushes it down to SQL as
+  jsonb containment and range predicates. The callable `searchWhere` remains for
+  arbitrary in-process predicates.
+
+### Testing
+
+- Tests can now be skipped. `this.skip(reason)` skips at runtime (for
+  conditional cases such as an integration test that needs a service or
+  environment variable); the `@Skip` / `@Skip("reason")` decorator skips a method
+  unconditionally. Skips count separately from passed/failed, do not affect the
+  exit code, and appear in the summary (`skipped=N`) and as `SKIP` lines under
+  `--format verbose`. `test.run()` results gain a `skipped` count.
+
 ## 1.9.0
 
 ### Tooling

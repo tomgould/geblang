@@ -12236,3 +12236,44 @@ io.println(all.length());
 io.println(all[0]["index"]);
 `, "1\n0\n11\n-5\n2\n0\n2\n2\n0\n")
 }
+
+// searchFilter: dict-criteria metadata filtering (eq, range, in) over the
+// in-memory store, on both backends.
+func TestParityVectorStoreFilter(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import vectorstore as vs;
+let store = vs.MemoryVectorStore();
+store.add("a", [0.1, 0.2, 0.9], {"lang": "en", "year": 2020});
+store.add("b", [0.12, 0.22, 0.88], {"lang": "fr", "year": 2021});
+store.add("c", [0.11, 0.21, 0.89], {"lang": "en", "year": 2023});
+io.println(store.searchFilter([0.1, 0.2, 0.9], 5, {"lang": "en"}).length());
+io.println(store.searchFilter([0.1, 0.2, 0.9], 5, {"year": {"gte": 2021}}).length());
+let r = store.searchFilter([0.1, 0.2, 0.9], 5, {"lang": "en", "year": {"gt": 2020}});
+io.println((r.length() as string) + " " + r[0].record.id);
+let inq = store.searchFilter([0.1, 0.2, 0.9], 5, {"lang": {"in": ["fr", "de"]}});
+io.println((inq.length() as string) + " " + inq[0].record.id);
+io.println(store.searchFilter([0.1, 0.2, 0.9], 5, {"year": {"ne": 2020}}).length());
+`, "2\n2\n1 c\n1 b\n2\n")
+}
+
+// Test framework skip: this.skip(reason) + @Skip decorator, with a separate
+// skipped count, agree across the evaluator testRun and the VM RunTestClass.
+func TestParityTestSkip(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import test;
+class SkipParity extends test.Test {
+    @test
+    func passes(): void { this.assertTrue(true); }
+    @test
+    func runtimeSkip(): void { this.skip("nope"); this.assertTrue(false); }
+    @test
+    @Skip("disabled")
+    func staticSkip(): void { this.assertTrue(false); }
+}
+let r = test.run(SkipParity, {});
+io.println(r["total"]);
+io.println(r["passed"]);
+io.println(r["failed"]);
+io.println(r["skipped"]);
+`, "3\n1\n0\n2\n")
+}

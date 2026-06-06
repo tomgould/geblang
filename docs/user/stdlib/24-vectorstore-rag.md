@@ -19,6 +19,7 @@ interface:
 |-------|-----|
 | `MemoryVectorStore(metric = "cosine")` | Brute-force in-memory search; mutex-guarded so one shared store is safe under concurrent requests. Ideal up to ~1e4-1e5 vectors. |
 | `SqliteVectorStore(conn, table = "vectors", metric = "cosine")` | Persistent store backed by a `db` Connection. Vectors are stored as little-endian float32 BLOBs and metadata as JSON; the table is created if absent and `add` upserts by id. |
+| `PgVectorStore(conn, table = "vectors", dimension, metric = "cosine")` | Postgres + pgvector backend with real approximate-nearest-neighbour search. See the pgvector section below. |
 
 Metric is `"cosine"` (default), `"dot"`, or `"euclidean"`; all scores follow
 "higher = closer". Vectors are `list<any>` so they accept the decimal numbers
@@ -47,16 +48,26 @@ io.println(hits[0].score);                      // similarity, higher = closer
 | `get(id)` | Returns the `VectorRecord`, or `null`. |
 | `delete(id)` | Removes id; returns `true` if it existed. |
 | `search(query, k)` | Top `k` records by descending similarity. |
-| `searchWhere(query, k, filter)` | Top `k` among records for which `filter(record)` is true. |
+| `searchWhere(query, k, filter)` | Top `k` among records for which the callable `filter(record)` is true (in-process only). |
+| `searchFilter(query, k, criteria)` | Top `k` among records matching a portable dict `criteria` (pushed down server-side by external backends). |
 | `count()` | Number of stored records. |
 | `clear()` | Removes everything. |
 
-`searchWhere` filters on metadata before ranking, e.g. by tenant or source:
+`searchWhere` takes an arbitrary callable and runs in process:
 
 ```gb
 let hits = store.searchWhere(queryVector, 5, func(any rec): bool {
     return (rec as vectorstore.VectorRecord).metadata["lang"] == "en";
 });
+```
+
+`searchFilter` takes a portable dict of criteria that external backends can push
+down to the database. A scalar value means equality; a nested operator dict
+supports `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, and `in`. Multiple keys are ANDed.
+
+```gb
+/* lang == "en" AND year >= 2020 */
+let hits = store.searchFilter(queryVector, 5, {"lang": "en", "year": {"gte": 2020}});
 ```
 
 A persistent store is a drop-in replacement:
@@ -73,6 +84,34 @@ let hits = store.search(queryVector, 5);
 
 The exported helper `vectorstore.score(metric, a, b)` computes a single
 similarity score between two vectors.
+
+### Postgres with pgvector
+
+`PgVectorStore` is a production-scale backend using the
+[pgvector](https://github.com/pgvector/pgvector) extension for real
+approximate-nearest-neighbour search. It rides on the `db` module (no new
+dependency) and is a drop-in `VectorStore`.
+
+```gb
+import db;
+import vectorstore;
+
+let conn  = db.connect("postgres", dsn);
+let store = vectorstore.PgVectorStore(conn, "items", 1536);   /* dimension required */
+store.add("doc-1", embedding, {"source": "handbook", "year": 2024});
+
+let hits = store.searchFilter(queryVector, 5, {"source": "handbook"});
+```
+
+On construction it runs `CREATE EXTENSION IF NOT EXISTS vector`, creates the
+table with a typed `vector(D)` column and a `jsonb` metadata column, and builds a
+metric-matched HNSW index (`vector_cosine_ops` / `vector_l2_ops` /
+`vector_ip_ops`). Searches use the index-backed distance operator (`<=>` / `<->`
+/ `<#>`) with `ORDER BY embedding <op> query LIMIT k`, and `searchFilter` pushes
+the criteria down to a SQL `WHERE` over the `jsonb` metadata (containment for
+equality/`in`, numeric casts for ranges). The dimension is fixed at table
+creation, so pass it to the constructor. The Postgres server must have the
+pgvector extension available.
 
 ## `rag`
 

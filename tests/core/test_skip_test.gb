@@ -1,0 +1,51 @@
+/**
+ * @title Test framework skip (1.10.0)
+ * @summary this.skip(reason) skips at runtime (for conditional cases) and the
+ * @Skip decorator skips a method unconditionally; both count separately from
+ * passed/failed. Verified by running an inner test class via test.run.
+ */
+import test;
+
+class SkipSubject extends test.Test {
+    @test
+    func passes(): void { this.assertTrue(true); }
+
+    @test
+    func runtimeSkip(): void {
+        this.skip("conditionally skipped");
+        this.fail();
+    }
+
+    @test
+    @Skip("statically disabled")
+    func staticSkip(): void {
+        this.fail();
+    }
+}
+
+class SkipBehaviorTest extends test.Test {
+    @test
+    func countsSkipsSeparately(): void {
+        let r = test.run(SkipSubject, {});
+        this.assertEquals(3, r["total"] as int);
+        this.assertEquals(1, r["passed"] as int);
+        this.assertEquals(0, r["failed"] as int);
+        this.assertEquals(2, r["skipped"] as int);
+    }
+
+    @test
+    func skippedCaseCarriesReason(): void {
+        let r = test.run(SkipSubject, {});
+        let byName = {};
+        for (c in r["tests"]) {
+            let cc = c as dict<string, any>;
+            byName[cc["name"] as string] = cc;
+        }
+        let rt = byName["runtimeSkip"] as dict<string, any>;
+        this.assertTrue(rt["skipped"] ?? false);
+        this.assertEquals("conditionally skipped", rt["message"]);
+        let st = byName["staticSkip"] as dict<string, any>;
+        this.assertTrue(st["skipped"] ?? false);
+        this.assertEquals("statically disabled", st["message"]);
+    }
+}

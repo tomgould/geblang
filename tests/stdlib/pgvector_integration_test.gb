@@ -1,0 +1,95 @@
+/**
+ * @title PgVectorStore integration (1.10.0)
+ * @summary End-to-end PgVectorStore against a real Postgres + pgvector. Gated
+ * on the GEBLANG_PG_DSN environment variable: when it is unset the tests skip
+ * (no mock), so CI without Postgres stays green. Run locally with e.g.
+ *   GEBLANG_PG_DSN="postgres://postgres:pw@localhost:5432/db?sslmode=disable"
+ */
+import test;
+import db;
+import sys;
+import vectorstore as vs;
+
+class PgVectorIntegrationTest extends test.Test {
+
+    func dsn(): string {
+        let v = sys.getenv("GEBLANG_PG_DSN");
+        if (v == null) {
+            return "";
+        }
+        return v as string;
+    }
+
+    func freshStore(): any {
+        let conn = db.connect("postgres", this.dsn());
+        conn.exec("DROP TABLE IF EXISTS geblang_pgvec_test");
+        return vs.PgVectorStore(conn, "geblang_pgvec_test", 3);
+    }
+
+    @test
+    func crudAndSearch(): void {
+        if (this.dsn() == "") {
+            this.skip("GEBLANG_PG_DSN unset");
+        }
+        let store = this.freshStore();
+        store.add("cats", [0.1, 0.2, 0.9], {"lang": "en"});
+        store.add("cars", [0.9, 0.1, 0.1], {"lang": "fr"});
+        store.add("kittens", [0.15, 0.25, 0.85], {"lang": "en"});
+        this.assertEquals(3, store.count());
+
+        let hits = store.search([0.1, 0.2, 0.8], 2);
+        this.assertEquals(2, hits.length());
+        this.assertEquals("cats", hits[0].record.id);
+        this.assertEquals("kittens", hits[1].record.id);
+        this.assertTrue(hits[0].score >= hits[1].score);
+
+        /* get returns vector + metadata */
+        let rec = store.get("cars") as vs.VectorRecord;
+        this.assertEquals("fr", rec.metadata["lang"]);
+        this.assertEquals(3, rec.vector.length());
+        this.assertTrue(store.get("missing") == null);
+    }
+
+    @test
+    func upsertAndDelete(): void {
+        if (this.dsn() == "") {
+            this.skip("GEBLANG_PG_DSN unset");
+        }
+        let store = this.freshStore();
+        store.add("a", [1.0, 0.0, 0.0], {"v": "first"});
+        store.add("a", [0.0, 1.0, 0.0], {"v": "second"});
+        this.assertEquals(1, store.count());
+        this.assertEquals("second", (store.get("a") as vs.VectorRecord).metadata["v"]);
+        this.assertTrue(store.delete("a"));
+        this.assertTrue(!store.delete("a"));
+        this.assertEquals(0, store.count());
+    }
+
+    @test
+    func filterPushdown(): void {
+        if (this.dsn() == "") {
+            this.skip("GEBLANG_PG_DSN unset");
+        }
+        let store = this.freshStore();
+        store.add("a", [0.1, 0.2, 0.9], {"lang": "en", "year": 2020});
+        store.add("b", [0.12, 0.22, 0.88], {"lang": "fr", "year": 2021});
+        store.add("c", [0.11, 0.21, 0.89], {"lang": "en", "year": 2023});
+        this.assertEquals(2, store.searchFilter([0.1, 0.2, 0.8], 5, {"lang": "en"}).length());
+        this.assertEquals(2, store.searchFilter([0.1, 0.2, 0.8], 5, {"year": {"gte": 2021}}).length());
+        let r = store.searchFilter([0.1, 0.2, 0.8], 5, {"lang": "en", "year": {"gt": 2020}});
+        this.assertEquals(1, r.length());
+        this.assertEquals("c", r[0].record.id);
+        this.assertEquals("b", store.searchFilter([0.1, 0.2, 0.8], 5, {"lang": {"in": ["fr"]}})[0].record.id);
+    }
+
+    @test
+    func rejectsBadConfig(): void {
+        if (this.dsn() == "") {
+            this.skip("GEBLANG_PG_DSN unset");
+        }
+        let conn = db.connect("postgres", this.dsn());
+        this.assertThrows(func(): void { vs.PgVectorStore(conn, "ok_name", 0); });
+        this.assertThrows(func(): void { vs.PgVectorStore(conn, "bad; drop", 3); });
+        this.assertThrows(func(): void { vs.PgVectorStore(conn, "ok_name", 3, "manhattan"); });
+    }
+}
