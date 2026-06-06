@@ -8138,6 +8138,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			},
 			"cwd":                sysCwd,
 			"getenv":             sysGetenv,
+			"bundleDir":          sysBundleDir,
 			"args":               e.sysArgs,
 			"run":                sysRun,
 			"runWithOptions":     sysRunWithOptions,
@@ -20059,6 +20060,16 @@ func sysGetenv(call *ast.CallExpression, args []runtime.Value) (runtime.Value, e
 		return runtime.Null{}, nil
 	}
 	return runtime.String{Value: value}, nil
+}
+
+// sysBundleDir returns the bundle extract directory for a built binary, or ""
+// when not running from a bundle, so programs resolve embedded resources
+// against it (and against the project dir when empty).
+func sysBundleDir(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("%s expects no arguments", call.Callee.String())
+	}
+	return runtime.String{Value: os.Getenv("GEBLANG_BUNDLE_DIR")}, nil
 }
 
 func (e *Evaluator) sysArgs(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {

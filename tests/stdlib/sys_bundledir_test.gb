@@ -1,0 +1,25 @@
+/**
+ * @title sys.bundleDir (1.11.0)
+ * @summary Returns the embedded-resource extract directory of a built binary,
+ * or "" when not running from a bundle. Under `geblang test` no bundle is
+ * present, so it is empty and a string; programs resolve resources against the
+ * project dir when it is empty.
+ */
+import test;
+import sys;
+
+class SysBundleDirTest extends test.Test {
+    @test
+    func emptyWhenNotBundled(): void {
+        let dir = sys.bundleDir();
+        this.assertEquals("string", "${typeof(dir)}");
+        this.assertEquals("", dir);
+    }
+
+    @test
+    func resolvesAgainstProjectDirWhenEmpty(): void {
+        let base = sys.bundleDir();
+        if (base == "") { base = "."; }
+        this.assertEquals(".", base);
+    }
+}

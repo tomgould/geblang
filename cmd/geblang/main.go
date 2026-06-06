@@ -243,6 +243,12 @@ doneFlags:
 		}
 		os.Exit(1)
 	}
+	// A directly-run file that declares `export func main` auto-invokes it.
+	// Mark the source so the transformed bytecode caches under a distinct key
+	// from the same file's untransformed compilation when imported as a module.
+	if appendMainInvocation(program) {
+		source = append(source, []byte("\n/*__geb_automain__*/\n")...)
+	}
 	if diagnostics := semantic.New().Analyze(program); len(diagnostics) > 0 {
 		hasError := false
 		for _, diagnostic := range diagnostics {

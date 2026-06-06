@@ -55,9 +55,53 @@ interpreter's bytecode cache on first run, so the bundled program starts at
 full speed with no warm-up compilation step.
 
 Only imported modules are bundled. `geblang build` does not copy the entire
-package directory, the entire `vendor/` directory, test files, generated
-artifacts, or arbitrary assets. If a package dependency is declared but no
-module from that package is imported, it is not included in the bundle.
+package directory, the entire `vendor/` directory, test files, or generated
+artifacts. If a package dependency is declared but no module from that package
+is imported, it is not included in the bundle. Non-code files (templates, static
+assets, data files) are embedded only when listed under `resources:` in the
+manifest; see [Embedding Resources](#embedding-resources).
+
+## Embedding Resources
+
+Programs often ship non-code files alongside their source: HTML templates,
+static assets, data files. List them under `resources:` in `geblang.yaml` and
+`geblang build` embeds them in the bundle ZIP at their project-relative path,
+next to `src/` and `stdlib/`.
+
+```yaml
+name: myapp
+source: src
+resources:
+  - templates        # a directory: embedded recursively
+  - static           # another directory
+  - data/*.json      # a glob: matched files only
+```
+
+Each entry is either a directory (embedded recursively) or a glob pattern. A
+pattern that matches nothing is a build error, so a typo fails loudly rather
+than silently shipping an empty bundle. Resource paths may not collide with the
+reserved `src/` or `stdlib/` bundle directories.
+
+At run time a program finds its embedded files through `sys.bundleDir()`, which
+returns the bundle's extract directory (see [First-Run
+Extraction](#first-run-extraction)) or the empty string when the program is not
+running from a bundle. Resolve resources against it, falling back to the project
+directory in development, so the same code path works in both cases:
+
+```gb
+import io;
+import sys;
+
+func loadTemplate(string name): string {
+    let base = sys.bundleDir();
+    if (base == "") { base = "."; }   /* dev: read from the project tree */
+    return io.readText(base + "/templates/" + name);
+}
+```
+
+Because resources keep their project-relative path inside the bundle, the same
+relative path (`templates/page.html`) resolves correctly whether `base` is the
+project directory in development or the extract directory in a built binary.
 
 ## Package Layout
 
@@ -100,6 +144,12 @@ export func main(list<string> args): void {
 The entry module name must match a `module` declaration that the package
 resolver can find. In this layout the canonical name is `myapp.main`.
 
+The same entry file runs directly during development: `geblang <file>`
+auto-invokes an exported top-level `main` when the file declares one, forwarding
+command-line arguments and using an `int` return value as the exit code. So a
+`module` that `export func main(list<string> args)` behaves identically whether
+run directly or built. A file with no exported `main` runs as a plain script.
+
 ## Running geblang build
 
 ```sh
@@ -110,6 +160,7 @@ geblang build --entry <module.name> --out <output-path> [<package-dir>]
 |---|---|---|
 | `--entry` | yes | Canonical name of the entry module (must export `main`) |
 | `--out` | yes | Path for the output binary |
+| `--resource` | no | Extra resource to embed, in addition to the manifest `resources:`. Repeatable. `--resource <path>` keeps the project-relative path; `--resource <path>=<bundlePath>` remaps it (a directory's contents mirror under `<bundlePath>`), so a build step can embed processed copies without altering the source tree |
 | `<package-dir>` | no | Package root directory (default: `.`) |
 
 Build the example package above:

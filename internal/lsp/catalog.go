@@ -964,6 +964,7 @@ var stdlibCatalog = map[string]moduleDoc{
 		"getenv":           fn([]string{"string name"}, "string", "Reads an environment variable."),
 		"setenv":           fn([]string{"string name", "string value"}, "void", "Sets an environment variable."),
 		"environ":          fn([]string{}, "dict<string, string>", "Returns every environment variable as a dict."),
+		"bundleDir":        fn([]string{}, "string", "Returns the extract directory of a built binary's embedded resources, or \"\" when not running from a bundle."),
 		"args":             fn([]string{}, "list<string>", "Returns command-line arguments."),
 		"run":              fn([]string{"string command", "list<string> args = []"}, "dict<string, any>", "Runs a process."),
 		"shell":            fn([]string{"string command"}, "dict<string, any>", "Runs a command through the shell and returns its result."),

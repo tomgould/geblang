@@ -1,0 +1,67 @@
+/**
+ * @title Closure capture in loops (1.11.0)
+ * @summary A `let` declared inside a loop body is a fresh binding per
+ * iteration, so closures created each iteration and called later capture
+ * distinct values. The loop variable itself is a single shared binding.
+ * Assignment to a captured variable writes through the shared binding. These
+ * pin the per-iteration capture semantics across both backends.
+ */
+import test;
+
+class ClosureCaptureInLoopsTest extends test.Test {
+
+    @test
+    func bodyLetIsFreshPerIteration(): void {
+        list<callable> hs = [];
+        for (item in ["a", "b", "c"]) {
+            let nm = item;
+            hs = hs.push(func(): string { return nm; });
+        }
+        let out = [];
+        for (h in hs) { out = out.push((h as callable)()); }
+        this.assertEquals(["a", "b", "c"], out);
+    }
+
+    @test
+    func loopVariableIsShared(): void {
+        list<callable> hs = [];
+        for (item in ["a", "b", "c"]) {
+            hs = hs.push(func(): string { return item; });
+        }
+        let out = [];
+        for (h in hs) { out = out.push((h as callable)()); }
+        this.assertEquals(["c", "c", "c"], out);
+    }
+
+    @test
+    func whileBodyLetIsFreshPerIteration(): void {
+        list<callable> hs = [];
+        let i = 0;
+        while (i < 3) {
+            let nm = "n" + (i as string);
+            hs = hs.push(func(): string { return nm; });
+            i = i + 1;
+        }
+        let out = [];
+        for (h in hs) { out = out.push((h as callable)()); }
+        this.assertEquals(["n0", "n1", "n2"], out);
+    }
+
+    @test
+    func closureCalledInsideLoop(): void {
+        let out = [];
+        for (item in ["a", "b"]) {
+            let h = func(): string { return item; };
+            out = out.push(h());
+        }
+        this.assertEquals(["a", "b"], out);
+    }
+
+    @test
+    func assignmentWritesThroughCapturedBinding(): void {
+        let x = 1;
+        let f = func(): int { return x; };
+        x = 2;
+        this.assertEquals(2, f());
+    }
+}

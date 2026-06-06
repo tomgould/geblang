@@ -38,9 +38,11 @@ Semantic Analyzer (internal/semantic)  -- validates declarations
 ```
 
 The bytecode path is tried first. If compilation succeeds the VM runs the
-resulting chunk. If compilation fails and strict-VM mode is not set, the
-evaluator runs the AST directly. The `--trace-exec` flag prints which engine
-ran a given script.
+resulting chunk. If compilation fails because of a genuine static error the run
+aborts; if it fails only because the compiler does not yet support a construct
+(and `--vm-strict` is not set), the evaluator runs the AST directly. `--disable-vm`
+forces the evaluator; `--vm-strict` forbids the fallback. The `--trace-exec`
+flag prints which engine ran a given script.
 
 ---
 
@@ -119,12 +121,13 @@ type Expression interface {
 
 ### Statements and expressions
 
-There are around 40 statement types (`LetStatement`, `FunctionStatement`,
-`ClassStatement`, `ReturnStatement`, `ForStatement`, `IfStatement`,
-`TryCatchStatement`, `DeferStatement`, `ImportStatement`, etc.) and a similar
-number of expression types (`Identifier`, `IntegerLiteral`, `StringLiteral`,
-`CallExpression`, `SelectorExpression`, `IndexExpression`, `InfixExpression`,
-`PrefixExpression`, `FunctionLiteral`, `ListLiteral`, `DictLiteral`, and more).
+There are around 40 statement types (`DeclarationStatement` for `let`,
+`FunctionStatement`, `ClassStatement`, `ReturnStatement`, `ForStatement`,
+`IfStatement`, `TryStatement`, `ImportStatement`, `InitStatement`,
+`ModuleStatement`, etc.) and a similar number of expression types (`Identifier`,
+`IntegerLiteral`, `StringLiteral`, `CallExpression`, `SelectorExpression`,
+`IndexExpression`, `InfixExpression`, `PrefixExpression`, `FunctionLiteral`,
+`ListLiteral`, `DictLiteral`, and more).
 
 ### TypeRef
 
@@ -226,18 +229,26 @@ type Analyzer struct {
 }
 ```
 
-`Analyze(program)` does four things in order:
+`Analyze(program)` runs a sequence of structural passes:
 
 1. **`collectTypeDeclarations`**: walks all statements to register functions,
    classes and interfaces so that forward references work.
-2. **`validateTopLevelOverloads`**: checks that overloaded functions at the
-   top level have distinct signatures.
-3. **`validateClassOverloads`**: same check for methods and constructors.
-4. **`validateInterfaceImplementations`**: verifies that classes marked
+2. **`validateTopLevelOverloads`** / **`validateClassOverloads`** /
+   **`validateInterfaceOverloads`**: check that overloaded functions, methods,
+   constructors, and interface methods have distinct signatures.
+3. **`validateInterfaceImplementations`**: verifies that classes marked
    `implements Foo` actually provide every method the interface declares.
+4. **`validateCastDunderReturns`**: checks cast dunder methods return the type
+   they cast to.
+5. A per-statement walk then enforces module-file rules (a file opening with
+   `module name;` allows only declarative statements plus a single `init {}`
+   block at the top level) and flags identifiers that shadow reserved built-in
+   module names.
 
 Errors are collected as `[]Diagnostic` rather than halting immediately, so the
-caller receives all problems at once.
+caller receives all problems at once. The analyzer is intentionally not a full
+type checker; deeper type errors surface from the bytecode compiler, and
+`geblang check` reconciles the analyzer and compiler diagnostics.
 
 ---
 
@@ -364,7 +375,8 @@ are rare.
 
 ### Opcodes
 
-The `Op` type is a `byte`. There are around 110 opcodes. Representative
+The `Op` type is a `byte`. There are around 150 opcodes (many are
+performance-specialised variants of a more general opcode). Representative
 examples:
 
 | Opcode | Action |
@@ -403,6 +415,8 @@ type FunctionInfo struct {
     ReturnType       string
     DefaultConstants []int64    // constant pool indices for default values
     UpvalueCount     int64
+    LocalCount       int64      // slots to reserve for a call frame
+    SharesParentFrame bool      // nested function reusing the parent's slots
     Variadic         bool
     Async            bool
     IsGenerator      bool
@@ -498,19 +512,22 @@ type VM struct {
     stdout            io.Writer
     stack             []runtime.VMValue // operand stack (tagged union)
     globals           []runtime.VMValue // indexed by global slot
-    locals            []runtime.VMValue // current frame's locals (alias into frames)
+    localsStack       []runtime.VMValue // all frames' locals in one slice
+    currentFrameBP    int               // base pointer: this frame's slot 0
     frames            []callFrame       // call stack
     defers            [][]deferredAction
     exceptionHandlers []exceptionHandler
     pendingThrow      *runtime.Error
     moduleLoader      ModuleLoader
     statefulNative    StatefulNativeCaller
-    classIndex        map[string]int    // class name to Classes index
     natives           *native.Registry
-    syncMode          bool              // run async funcs synchronously
     ...
 }
 ```
+
+Locals for every active frame live in a single `localsStack`; each frame's
+slot `n` is `localsStack[currentFrameBP + n]`. A call advances the base
+pointer rather than copying a per-frame slice (see Call frame, below).
 
 The stack / locals / globals slices hold `runtime.VMValue`
 (`internal/runtime/vmvalue.go`), a 32-byte tagged union with an inline
@@ -539,7 +556,8 @@ used by the evaluator, preserving identity through `ToValue()` /
 ```go
 type callFrame struct {
     returnIP     int
-    locals       []runtime.Value
+    basePointer  int                // this frame's slot 0 in localsStack
+    localCount   int                // slots reserved for this frame
     typeBindings map[string]string  // generic type parameter bindings
     generator    chan vmGeneratorItem
     functionName string
@@ -549,9 +567,12 @@ type callFrame struct {
 ```
 
 Each function call pushes a new `callFrame`. `returnIP` is the instruction index
-to resume after the call returns. `typeBindings` holds generic type parameter
-names resolved to concrete type strings for the duration of the call, populated
-by `OpSetTypeBindings`.
+to resume after the call returns. `basePointer` records where this frame's
+locals begin in the shared `localsStack`, and `localCount` how many slots it
+reserves; on return the VM restores the caller's base pointer and truncates the
+locals stack. `typeBindings` holds generic type parameter names resolved to
+concrete type strings for the duration of the call, populated by
+`OpSetTypeBindings`.
 
 ### Run loop
 
@@ -564,19 +585,19 @@ for ip < len(vm.chunk.Instructions) {
     ip++
     switch instr.Op {
     case OpConstant:
-        vm.push(vm.chunk.Constants[instr.Operands[0]])
-    case OpAdd:
-        right := vm.pop()
-        left := vm.pop()
-        vm.push(vm.add(left, right))
-    // ... ~165 cases
+        vm.pushVM(runtime.VMValueFromValue(vm.chunk.Constants[instr.Operands[0]]))
+    case OpAddInt:
+        // SmallInt fast path: operate on the inline I64 field, no boxing.
+        ...
+    // ... ~240 cases
     }
 }
 ```
 
-The stack grows upward; `push` appends to the slice and `pop` removes from the
-end. All arithmetic, comparisons, collections, control flow, function calls, and
-error handling are implemented as opcode handlers in this loop.
+The stack grows upward; `pushVM` appends a `VMValue` to the slice and `popVM`
+removes from the end. All arithmetic, comparisons, collections, control flow,
+function calls, and error handling are implemented as opcode handlers in this
+loop.
 
 A handful of opcodes operate on `VMValue` directly without round-tripping
 through `runtime.Value`:
@@ -608,28 +629,26 @@ runs and routes through `runtime.Value`.
   function's locals pre-allocated, sets `ip` to `Entry`, and continues the loop.
 - For native functions, `startFunction` calls the registered Go function
   directly.
-- For closures, upvalues are injected into the new frame's locals before
-  entering the body.
+- For closures, captured upvalues are loaded into the new frame's leading
+  slots before entering the body. Upvalues are shared `runtime.BytecodeCell`
+  boxes, so an assignment to a captured variable is visible through every
+  closure that captured it; a fresh `let` (including one re-run each loop
+  iteration) binds a new value rather than writing through an existing box.
 
-Type checking at call sites is done in `startFunction` using `matchValueToTypeStr`,
-which walks the string-encoded type recursively. Generic type parameters in
-`typeBindings` are skipped during element-level checks.
+Type checking at call sites is done in `startFunction` using
+`matchVMValueToTypeSpec`, which matches a value against a parsed type spec.
+Generic type parameters in `typeBindings` are skipped during element-level
+checks.
 
-#### Locals snapshot
+#### Frame-local storage
 
-On entering a callee, the VM snapshots the current frame's locals so
-the caller and callee can share the same backing storage without one
-clobbering the other:
-
-```go
-frame.locals = vm.snapshotLocals()   // internal/bytecode/vm.go
-```
-
-The snapshot is a per-call `copy()` of the parent frame's locals slice
-into a fresh buffer (reused from `vm.localsFree` when available). For
-deep recursion this copy is measurable in CPU profiles; `runtime.duffcopy`
-typically shows up at single-digit percent on `BenchmarkRecursiveFib`,
-and is one of the larger remaining costs on recursion-heavy workloads.
+The VM keeps every active frame's locals in one shared `localsStack` slice and
+gives each frame a `basePointer` into it, so entering a callee advances the base
+pointer instead of copying a per-frame slice. A call reserves `localCount` slots
+above the base pointer (growing the slice when needed) and a return truncates
+back to the caller's region. This replaced an earlier per-call deep copy of the
+locals slice that showed up as `runtime.duffcopy` in profiles of
+recursion-heavy workloads.
 
 ### Generators
 
@@ -665,9 +684,11 @@ and returns the exported `runtime.Module`. Modules are cached after first load.
 ## Evaluator: `internal/evaluator`
 
 The evaluator is a tree-walking interpreter that executes the AST directly
-without compilation. It is the older and more complete execution path;
-new language features sometimes appear in the evaluator before the compiler and
-VM support them.
+without compilation. It is the runtime for `geblang test`, the `--disable-vm`
+mode, and the fallback when the bytecode compiler does not yet support a
+construct. The evaluator and VM are held to strict output parity (enforced by
+the parity and fuzz suites in `internal/bytecode`); a language feature is not
+considered done until both backends implement it and parity tests pass.
 
 The main types are `Evaluator` (holds stdlib registrations, import caches, and
 the evaluator configuration) and `Session` (wraps an `Evaluator` and an
@@ -733,17 +754,24 @@ type Resolver struct {
 }
 ```
 
-Resolution order:
+Resolution order (`Resolver.Resolve`):
 
-1. Check if the import name matches a builtin native module (registered in the
-   evaluator or native registry).
-2. Look for `<name>.gb` relative to the importing file's directory.
-3. Search each `ModulePaths` entry.
-4. Search each `StdlibPaths` entry.
+1. A `geblang.` prefix (`import geblang.io`) resolves strictly against the
+   stdlib, never user or package files. Declaring a module named `geblang` (or
+   `geblang.*`) is rejected.
+2. A reserved built-in name (a native module or a stdlib module shipped with the
+   toolchain) resolves only to the built-in; user or package files may not
+   shadow it. This keeps resolution identical on both backends (the VM always
+   treats these names natively).
+3. Otherwise, search the configured search paths in order -- `ModulePaths`, then
+   `StdlibPaths` (unless stdlib is disabled), then any `GEBLANG_PATH` entries --
+   for `<name>.gb` or `<name>/init.gb` (dotted names map to nested directories).
+4. Search the module roots of any package dependencies declared in manifests.
+5. Fall back to a path relative to the current working directory.
 
 A `Manifest` (`geblang.yaml`) can declare a module name, version, source
-entrypoint, and additional module paths. The resolver loads manifests to support
-multi-file packages.
+entrypoint, resource globs, additional module paths, and dependencies. The
+resolver loads manifests to support multi-file packages.
 
 ---
 
@@ -780,9 +808,12 @@ line arguments and delegates to one of several execution modes:
 
 - **Script mode**: `geblang script.gb` reads and parses the file, runs the
   semantic analyzer, then tries the bytecode path and falls back to the
-  evaluator.
+  evaluator. If the file declares an exported top-level `main`, it is
+  auto-invoked after analysis (arguments forwarded, an `int` return becomes the
+  exit code); a file without an exported `main` runs its top-level statements.
 - **Module mode**: `geblang -m moduleName` generates a thin wrapper script
-  that imports the named module and calls its `main()` function.
+  that imports the named module and calls its `main()` function. Use this to run
+  a module by canonical name; running the file directly auto-invokes `main` too.
 - **REPL mode**: `geblang` with no arguments starts an interactive session.
   The REPL (`repl.go`) maintains a persistent `evaluator.Session`. Each input
   line is parsed and evaluated; expression results are printed if non-void.
@@ -802,9 +833,10 @@ line arguments and delegates to one of several execution modes:
 `runScript` tries the bytecode path by calling `loadOrCompileBytecode`, which
 either decodes a cached `.gbc` file (if the source hash matches) or calls
 `bytecode.Compile`. If compilation succeeds, a `VM` is constructed and `Run()`
-is called. If compilation fails (for example because a feature is not yet
-implemented in the compiler), the function falls back to `runEvaluator` unless
-`--vm-only` was passed.
+is called. If compilation fails only because a construct is not yet implemented
+in the compiler, the function falls back to `runEvaluator` (unless `--vm-strict`
+was passed); a genuine static error aborts instead of falling back. `--disable-vm`
+skips the bytecode path entirely.
 
 The `--trace-exec` flag writes a one-line note to stderr indicating which path
 (`vm` or `evaluator`) handled the script and, on the evaluator path, the
@@ -843,9 +875,12 @@ The typical path for adding a language feature is:
 8. Emit the opcodes in `internal/bytecode/compiler.go`.
 9. Handle the opcodes in `internal/bytecode/vm.go`.
 10. Add parity tests in `internal/bytecode/parity_test.go` to verify that the
-    evaluator and VM produce the same result.
+    evaluator and VM produce the same result, plus a Geblang-level test under
+    `tests/`.
 11. Update documentation in `docs/user/` and add examples in `examples/`.
 
-Features typically land in the evaluator first (steps 1-6) and get compiler/VM
-support (steps 7-10) as a follow-up. Until both paths support a feature,
-programs using it run via the evaluator fallback.
+A feature may be prototyped in the evaluator first, but it is not finished until
+both backends implement it and the parity (and fuzz) tests agree. Backend
+divergence is treated as a bug: the evaluator's fallback exists for constructs
+the compiler does not yet handle, not as a place for permanent behaviour
+differences.

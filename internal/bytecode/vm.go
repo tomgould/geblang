@@ -1457,7 +1457,12 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
-			if err := vm.setLocalVM(slot, value); err != nil {
+			// A definition is a fresh binding: replace the slot outright rather
+			// than writing into any cell a previous execution boxed. This makes
+			// a `let` re-run per loop iteration capture a distinct value (the
+			// evaluator's semantics), while OpSetLocal (assignment, loop-var
+			// update) still writes through a captured cell.
+			if err := vm.defineLocalVM(slot, value); err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
 		case OpGetLocal:
@@ -16541,6 +16546,21 @@ func (vm *VM) setLocalVM(slot int64, value runtime.VMValue) error {
 				return nil
 			}
 		}
+	}
+	vm.localsStack[idx] = value
+	return nil
+}
+
+// defineLocalVM binds slot to a fresh value, replacing any prior value
+// (including a boxed cell captured by an earlier closure). Used by
+// OpDefineLocal so a re-executed `let` starts a new binding.
+func (vm *VM) defineLocalVM(slot int64, value runtime.VMValue) error {
+	idx := vm.currentFrameBP + int(slot)
+	if idx >= len(vm.localsStack) {
+		if err := vm.ensureLocalSlot(slot); err != nil {
+			return err
+		}
+		idx = vm.currentFrameBP + int(slot)
 	}
 	vm.localsStack[idx] = value
 	return nil

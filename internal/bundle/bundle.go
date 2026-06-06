@@ -286,14 +286,18 @@ func WalkImports(
 				continue
 			}
 			canonical := strings.Join(imp.Path, ".")
-			if isNative(canonical) {
-				continue
-			}
 			if _, seen := result[canonical]; seen {
 				continue
 			}
+			// A module backed by a source file must be bundled even when it is
+			// also natively registered (the source holds the real exports, e.g.
+			// async.sync's Mutex). Only modules with no resolvable source are
+			// pure-native and provided by the runtime binary.
 			depPath, err := resolver.Resolve(canonical)
 			if err != nil {
+				if isNative(canonical) {
+					continue
+				}
 				return fmt.Errorf("bundle: resolve import %q: %w", canonical, err)
 			}
 			absDepPath, _ := filepath.Abs(depPath)

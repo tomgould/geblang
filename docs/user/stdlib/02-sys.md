@@ -56,6 +56,27 @@ key a `store.Store` by the id, and clear that key when the goroutine's work
 finishes so a later goroutine reusing the id starts clean. Most code never needs
 it; prefer passing state explicitly or sharing through a `store.Store`.
 
+## Bundled Resources
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `bundleDir()` | `string` | Extract directory of a built binary's embedded resources, or `""` when not running from a bundle |
+
+`geblang build` can embed non-code files (templates, static assets, data) listed
+under `resources:` in `geblang.yaml`. A running program locates them through
+`sys.bundleDir()`: resolve resource paths against it, falling back to the project
+directory when it is empty, so the same code works in development and in a built
+binary.
+
+```gb
+let base = sys.bundleDir();
+if (base == "") { base = "."; }
+let html = io.readText(base + "/templates/page.html");
+```
+
+See [Bundling And Standalone Executables](../13-bundling.md) for the `resources:`
+manifest field and how embedding works.
+
 ## Environment Variables
 
 | Function | Returns | Description |

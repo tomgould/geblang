@@ -1,5 +1,35 @@
 # Release Notes
 
+## 1.11.0
+
+### Bundling
+
+- `geblang.yaml` gains a `resources:` list. `geblang build` embeds the listed
+  files (directories are embedded recursively; glob patterns match files) into
+  the bundle at their project-relative path, so a built binary can ship
+  templates, static assets, and data files. A pattern that matches nothing is a
+  build error. `geblang build --resource <path>` embeds additional resources
+  beyond the manifest list; `--resource <path>=<bundlePath>` remaps a resource's
+  bundle location, so a build step can embed processed copies without altering
+  the source tree.
+- New `sys.bundleDir()` returns the extract directory of a built binary's
+  embedded resources, or `""` when not running from a bundle. Resolve resource
+  paths against it (falling back to the project directory when empty) so the
+  same code reads its files in development and in a built binary.
+- `geblang build` now embeds source-backed standard-library modules (such as
+  `async.sync`) that are also natively registered. Previously these were skipped
+  as native and left out of the bundle, so a built binary that used them failed
+  at runtime. Modules with no source remain provided by the runtime binary.
+
+### Running
+
+- Running a file directly (`geblang <file>`) now auto-invokes an exported
+  top-level `main` when one is declared: a `module` that `export func main(list
+  <string> args)` runs the same whether executed directly or built with `geblang
+  build`. Command-line arguments are forwarded to `main`, and an `int` return
+  value becomes the process exit code. Files with no exported `main` run as
+  scripts exactly as before.
+
 ## 1.10.0
 
 ### Numeric types

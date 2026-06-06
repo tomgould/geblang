@@ -12339,3 +12339,65 @@ io.println([1, 2, 3].contains(2.0f));
 io.println(3 != 3.0f);
 `, "5.5\n5.5\n2.5\n5.5000000000\ntrue\nfalse\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\n")
 }
+
+// sys.bundleDir() returns "" when not running from a bundle, on both backends.
+func TestParitySysBundleDir(t *testing.T) {
+	t.Setenv("GEBLANG_BUNDLE_DIR", "")
+	runParityWithStdlib(t, `import io; import sys;
+io.println(sys.bundleDir() == "");
+`, "true\n")
+}
+
+// Closures created inside a loop: a `let` in the body is a fresh binding per
+// iteration (so closures stored and called later see distinct values), while
+// the loop variable itself is a single shared binding. Regression guard for a
+// VM bug where a closure's `return` emitted the enclosing for-loop's iterator
+// close (crash) and loop-body lets shared one cell.
+func TestParityClosureCapturesInLoops(t *testing.T) {
+	// Body-let captured, closures called after the loop: per-iteration values.
+	runParity(t, `import io;
+let hs = [];
+for (item in ["a", "b", "c"]) {
+    let nm = item;
+    hs = hs.push(func(): string { return nm; });
+}
+for (h in hs) { io.println((h as callable)()); }
+`, "a\nb\nc\n")
+
+	// Loop variable captured directly: a single shared binding (last value).
+	runParity(t, `import io;
+let hs = [];
+for (item in ["a", "b", "c"]) {
+    hs = hs.push(func(): string { return item; });
+}
+for (h in hs) { io.println((h as callable)()); }
+`, "c\nc\nc\n")
+
+	// while-loop body-let: fresh per iteration.
+	runParity(t, `import io;
+let hs = [];
+let i = 0;
+while (i < 3) {
+    let nm = "n" + (i as string);
+    hs = hs.push(func(): string { return nm; });
+    i = i + 1;
+}
+for (h in hs) { io.println((h as callable)()); }
+`, "n0\nn1\nn2\n")
+
+	// Closure created and called inside the loop body (no crash).
+	runParity(t, `import io;
+for (item in ["a", "b"]) {
+    let h = func(): string { return item; };
+    io.println(h());
+}
+`, "a\nb\n")
+
+	// Assignment to a captured variable writes through the shared binding.
+	runParity(t, `import io;
+let x = 1;
+let f = func(): int { return x; };
+x = 2;
+io.println("${f()}");
+`, "2\n")
+}

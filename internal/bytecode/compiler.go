@@ -1085,6 +1085,12 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	c.chunk.Functions[index].Async = stmt.Async
 	c.inFunc++
 	c.returnTypes = append(c.returnTypes, c.chunk.Functions[index].ReturnType)
+	// Isolate loop/finalizer context: a `return` inside this body must emit
+	// only this function's finalizers, never the enclosing function's (e.g. an
+	// outer for-loop's iterator close, whose slot lives in a different frame).
+	savedLoops, savedFinalizers := c.loops, c.finalizers
+	c.loops, c.finalizers = nil, nil
+	defer func() { c.loops, c.finalizers = savedLoops, savedFinalizers }()
 	if prologue != nil {
 		if err := prologue(); err != nil {
 			c.inFunc--
@@ -3762,6 +3768,12 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 
 	c.inFunc++
 	c.returnTypes = append(c.returnTypes, fn.ReturnType)
+	// Isolate loop/finalizer context (see compileFunctionWithPrologue): a
+	// `return` in this closure must not emit the enclosing for-loop's
+	// iterator close, whose slot belongs to a different frame.
+	savedLoops, savedFinalizers := c.loops, c.finalizers
+	c.loops, c.finalizers = nil, nil
+	defer func() { c.loops, c.finalizers = savedLoops, savedFinalizers }()
 	if err := c.compileBlock(expr.Body); err != nil {
 		c.inFunc--
 		c.returnTypes = c.returnTypes[:len(c.returnTypes)-1]

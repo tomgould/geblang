@@ -18,6 +18,7 @@ import (
 func runBuild(args []string) {
 	var entry, outPath, pkgDir string
 	pkgDir = "."
+	var extraResources []resourceSpec
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -35,6 +36,13 @@ func runBuild(args []string) {
 			}
 			i++
 			outPath = args[i]
+		case "--resource":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "geblang build: --resource requires a value")
+				os.Exit(2)
+			}
+			i++
+			extraResources = append(extraResources, parseResourceSpec(args[i]))
 		case "--no-assert":
 			bytecode.AssertionsDisabled = true
 		default:
@@ -130,6 +138,25 @@ func runBuild(args []string) {
 		})
 	}
 
+	specs := append([]resourceSpec(nil), extraResources...)
+	resourceRoot := absPkgDir
+	if pkgManifest, err := resolver.FindManifest(absPkgDir); err == nil && pkgManifest != nil {
+		resourceRoot = pkgManifest.Root
+		for _, pattern := range pkgManifest.Resources {
+			specs = append(specs, resourceSpec{src: pattern})
+		}
+	}
+	if len(specs) > 0 {
+		resources, err := collectResources(resourceRoot, specs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "geblang build: collect resources: %v\n", err)
+			os.Exit(1)
+		}
+		for zipPath, data := range resources {
+			files[zipPath] = data
+		}
+	}
+
 	manifest := bundle.Manifest{
 		Version: version,
 		Entry:   entry,
@@ -213,6 +240,11 @@ func runBundled(b *bundle.Bundle) int {
 		}
 	}
 
+	if err := os.Setenv("GEBLANG_BUNDLE_DIR", tempDir); err != nil {
+		fmt.Fprintf(os.Stderr, "geblang: set GEBLANG_BUNDLE_DIR: %v\n", err)
+		return 1
+	}
+
 	return runBundledEntry(b.Manifest.Entry, os.Args[1:], filepath.Join(tempDir, "src"))
 }
 
@@ -239,4 +271,136 @@ if (__geb_result != null) {
 		return 1
 	}
 	return exitCode
+}
+
+// resourceSpec is one bundle resource: a source path or glob (relative to the
+// project root), with an optional bundle destination. When dest is empty the
+// file keeps its project-relative path, so dev and bundled reads share a path.
+// A non-empty dest remaps the source there (a dir's contents mirror under dest,
+// a single file lands at dest), letting a build stage processed copies without
+// disturbing the source tree.
+type resourceSpec struct {
+	src  string
+	dest string
+}
+
+// parseResourceSpec parses a --resource value of the form "src" or "src=dest".
+func parseResourceSpec(arg string) resourceSpec {
+	if i := strings.Index(arg, "="); i >= 0 {
+		return resourceSpec{src: arg[:i], dest: filepath.ToSlash(arg[i+1:])}
+	}
+	return resourceSpec{src: arg}
+}
+
+// collectResources resolves resource specs into bundle ZIP entries keyed by
+// their bundle path. Directories embed recursively; otherwise the source is
+// treated as a glob.
+func collectResources(root string, specs []resourceSpec) (map[string][]byte, error) {
+	out := map[string][]byte{}
+
+	put := func(bundlePath, diskPath string) error {
+		bundlePath = filepath.ToSlash(bundlePath)
+		if bundlePath == ".." || strings.HasPrefix(bundlePath, "../") {
+			return fmt.Errorf("resource %q maps outside the bundle", diskPath)
+		}
+		if bundlePath == "src" || strings.HasPrefix(bundlePath, "src/") || bundlePath == "stdlib" || strings.HasPrefix(bundlePath, "stdlib/") {
+			return fmt.Errorf("resource path %q collides with a reserved bundle directory", bundlePath)
+		}
+		data, err := os.ReadFile(diskPath)
+		if err != nil {
+			return err
+		}
+		out[bundlePath] = data
+		return nil
+	}
+
+	// bundlePathFor maps a matched disk path to its bundle path. base is the
+	// directory the match is relative to (the spec's source dir, or root for a
+	// bare file/glob); dest, when set, replaces that base prefix.
+	bundlePathFor := func(diskPath, base, dest string) (string, error) {
+		rel, err := filepath.Rel(base, diskPath)
+		if err != nil {
+			return "", err
+		}
+		rel = filepath.ToSlash(rel)
+		if dest != "" {
+			if rel == "." {
+				return dest, nil
+			}
+			return dest + "/" + rel, nil
+		}
+		projRel, err := filepath.Rel(root, diskPath)
+		if err != nil {
+			return "", err
+		}
+		projRel = filepath.ToSlash(projRel)
+		if projRel == ".." || strings.HasPrefix(projRel, "../") {
+			return "", fmt.Errorf("resource %q is outside the project directory", diskPath)
+		}
+		return projRel, nil
+	}
+
+	addPath := func(diskPath, dest string) error {
+		info, err := os.Stat(diskPath)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return filepath.WalkDir(diskPath, func(p string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if d.IsDir() {
+					return nil
+				}
+				bundlePath, err := bundlePathFor(p, diskPath, dest)
+				if err != nil {
+					return err
+				}
+				return put(bundlePath, p)
+			})
+		}
+		if dest != "" {
+			return put(dest, diskPath)
+		}
+		bundlePath, err := bundlePathFor(diskPath, root, "")
+		if err != nil {
+			return err
+		}
+		return put(bundlePath, diskPath)
+	}
+
+	for _, spec := range specs {
+		if spec.src == "" {
+			continue
+		}
+		abs := spec.src
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(root, spec.src)
+		}
+		if _, err := os.Stat(abs); err == nil {
+			if err := addPath(abs, spec.dest); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		matches, err := filepath.Glob(abs)
+		if err != nil {
+			return nil, fmt.Errorf("resource pattern %q: %w", spec.src, err)
+		}
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("resource pattern %q matched no files", spec.src)
+		}
+		for _, m := range matches {
+			dest := spec.dest
+			if dest != "" {
+				dest = dest + "/" + filepath.Base(m)
+			}
+			if err := addPath(m, dest); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return out, nil
 }

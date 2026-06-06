@@ -32,6 +32,7 @@ type Manifest struct {
 	Version      string
 	Source       string
 	Paths        []string
+	Resources    []string
 	Dependencies map[string]Dependency
 }
 
@@ -65,6 +66,7 @@ type manifestFile struct {
 	Source       string                `yaml:"source"`
 	Paths        []string              `yaml:"paths"`
 	ModulePaths  []string              `yaml:"modulePaths"`
+	Resources    []string              `yaml:"resources"`
 	Dependencies map[string]Dependency `yaml:"dependencies"`
 	Package      struct {
 		Name    string `yaml:"name"`
@@ -415,6 +417,7 @@ func (r *Resolver) LoadManifest(path string) (*Manifest, error) {
 		Version:      version,
 		Source:       parsed.Source,
 		Paths:        paths,
+		Resources:    append([]string(nil), parsed.Resources...),
 		Dependencies: parsed.Dependencies,
 	}
 	if manifest.Dependencies == nil {

@@ -106,6 +106,15 @@ means success; returning a non-zero integer exits with that code. A `void`
 or `null` result is treated as success. Top-level module code still runs during
 import, but executable behavior should live in `main`.
 
+Running a file directly does the same thing: `geblang path/to/file.gb` (or just
+`geblang file.gb`) auto-invokes an exported top-level `main` when the file
+declares one, forwarding the remaining command-line arguments and using an
+`int` return value as the exit code. So `geblang app/cli.gb Ada` runs the
+`main` above without `-m` and without a wrapper. `-m` is the way to run a module
+by its canonical name (resolved through the module path) rather than by file
+path; both invoke `main` the same way. A file with no exported `main` runs as a
+plain script (its top-level statements execute).
+
 ## Module Top-Level
 
 A file that opens with `module name;` is a **module file** and is held to a
