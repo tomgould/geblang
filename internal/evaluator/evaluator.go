@@ -8374,7 +8374,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"upperBound":      e.collectionsMethod("upperBound", 2),
 			"minBy":           e.collectionsMethod("minBy", 2),
 			"maxBy":           e.collectionsMethod("maxBy", 2),
-			"sortBy":          e.collectionsMethod("sortBy", 2),
+			"sortBy":          e.collectionsMethod("sortBy", -1),
 			"topBy":           e.collectionsMethod("topBy", 3),
 			"sumBy":           e.collectionsMethod("sumBy", 2),
 			"averageBy":       e.collectionsMethod("averageBy", 2),
@@ -9371,6 +9371,9 @@ func (e *Evaluator) collectionsMethod(name string, arity int) builtinFunc {
 		}
 		if name == "sorted" && len(args) != 1 && len(args) != 2 {
 			return nil, fmt.Errorf("%s expects list and optional comparison function", call.Callee.String())
+		}
+		if name == "sortBy" && len(args) != 2 && len(args) != 3 {
+			return nil, fmt.Errorf("%s expects a collection, selector, and optional descending flag", call.Callee.String())
 		}
 		if len(args) == 0 {
 			return nil, fmt.Errorf("%s expects a collection", call.Callee.String())
@@ -15623,6 +15626,8 @@ func dbArg(value runtime.Value) (any, error) {
 		return nil, nil
 	case runtime.Bool:
 		return value.Value, nil
+	case runtime.SmallInt:
+		return value.Value, nil
 	case runtime.Int:
 		if !value.Value.IsInt64() {
 			return nil, fmt.Errorf("database int argument is out of int64 range")
@@ -15633,6 +15638,8 @@ func dbArg(value runtime.Value) (any, error) {
 	case runtime.Float:
 		return value.Value, nil
 	case runtime.String:
+		return value.Value, nil
+	case runtime.Bytes:
 		return value.Value, nil
 	default:
 		return nil, fmt.Errorf("unsupported database argument type %s", value.TypeName())
@@ -15647,8 +15654,28 @@ func sqlValueToRuntime(value any) (runtime.Value, error) {
 		return runtime.Bool{Value: value}, nil
 	case int64:
 		return runtime.NewInt64(value), nil
+	case int:
+		return runtime.NewInt64(int64(value)), nil
+	case int32:
+		return runtime.NewInt64(int64(value)), nil
+	case int16:
+		return runtime.NewInt64(int64(value)), nil
+	case int8:
+		return runtime.NewInt64(int64(value)), nil
+	case uint64:
+		return runtime.Int{Value: new(big.Int).SetUint64(value)}, nil
+	case uint:
+		return runtime.Int{Value: new(big.Int).SetUint64(uint64(value))}, nil
+	case uint32:
+		return runtime.NewInt64(int64(value)), nil
+	case uint16:
+		return runtime.NewInt64(int64(value)), nil
+	case uint8:
+		return runtime.NewInt64(int64(value)), nil
 	case float64:
 		return runtime.Float{Value: value}, nil
+	case float32:
+		return runtime.Float{Value: float64(value)}, nil
 	case string:
 		return runtime.String{Value: value}, nil
 	case []byte:

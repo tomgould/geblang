@@ -298,6 +298,9 @@ const (
 	// OpContains implements the `in` operator: pops container then needle,
 	// pushes a Bool. Dispatches to __contains for user objects.
 	OpContains
+	// Spread-aware OpNativeCall. Operands [nameIndex, staticArgCount];
+	// stack [static_args..., spread_list].
+	OpNativeCallSpread
 )
 
 type Instruction struct {

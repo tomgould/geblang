@@ -3855,6 +3855,23 @@ func (c *Compiler) compileBuiltinCall(expr *ast.CallExpression, module, name str
 		c.emitAt(OpExit, expr.Token.Line, expr.Token.Column)
 		return nil
 	case native.IsPureBuiltin(module, name), isStatefulBytecodeBuiltin(module, name):
+		if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+			for _, arg := range expr.Arguments[:spreadIndex] {
+				if arg.Name != nil {
+					return fmt.Errorf("named arguments are not supported with spread on %s.%s", module, name)
+				}
+				if err := c.compileExpression(arg.Value); err != nil {
+					return err
+				}
+			}
+			if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+				return err
+			}
+			nameIndex := int64(len(c.chunk.Constants))
+			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: module + "." + name})
+			c.emitAt(OpNativeCallSpread, expr.Token.Line, expr.Token.Column, nameIndex, int64(spreadIndex))
+			return nil
+		}
 		hasNamedArgs := false
 		for _, arg := range expr.Arguments {
 			if arg.Name != nil {

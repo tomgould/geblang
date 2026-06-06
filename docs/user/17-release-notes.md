@@ -24,6 +24,33 @@
   materialised and huge or unbounded sources stay cheap. The lazy counterpart
   to the eager `collections` module and the built-in list methods.
 
+### AI and retrieval
+
+- New `vectorstore` module: stores `(id, vector, metadata)` records and ranks
+  them by similarity (cosine, dot, or euclidean). `MemoryVectorStore` is a
+  mutex-guarded brute-force in-memory store; `SqliteVectorStore` persists
+  vectors as float32 BLOBs through the `db` module (table auto-created, upsert
+  by id). Both share a `VectorStore` interface with `add`, `addAll`, `get`,
+  `delete`, `search`, `searchWhere` (metadata-filtered), `count`, and `clear`.
+- New `rag` module: retrieval-augmented-generation helpers on top of
+  `vectorstore`. `chunk` splits text into overlapping windows (by words,
+  characters, or paragraphs); `index` chunks, embeds, and stores a document;
+  `retrieve` returns the most similar chunks for a query; `context` assembles
+  them into a prompt-ready block. Built on a small `Embedder` interface (with an
+  `LlmEmbedder` adapter) so it stays provider-agnostic and testable without a
+  network.
+
+### Fixes
+
+- `collections.sortBy(list, selector, descending)` now accepts the optional
+  `descending` flag through the module-function form, matching the list-method
+  form and both backends.
+- Database parameter binding now accepts plain integers and `bytes` values
+  (BLOBs); query results now decode the full range of integer and float column
+  types returned by the supported drivers.
+- Spreading a list into a native function's variadic parameter (`f(...list)`)
+  now expands correctly when running on the bytecode VM, matching the evaluator.
+
 ## 1.8.0
 
 ### Dict-like objects

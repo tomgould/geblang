@@ -8,6 +8,8 @@
  * OpMethodCallSpread with `__invoke`.
  */
 import test;
+import math;
+import binary;
 
 class Holder {
     callable adder;
@@ -54,5 +56,22 @@ class CallableSpreadTest extends test.Test {
         /* mix one static arg (1) with a 2-element spread for the
          * adder's 3-int signature. */
         this.assertEquals(6, (h.adder)(1, ...rest));
+    }
+
+    @test
+    func spreadIntoNativeVariadic(): void {
+        let nums = [3, 7, 2];
+        this.assertEquals(7, math.max(...nums));
+        this.assertEquals(2, math.min(...nums));
+    }
+
+    @test
+    func staticArgBeforeSpreadIntoNative(): void {
+        /* a fixed leading arg (10), then a spread */
+        this.assertEquals(10, math.max(10, ...[3, 7, 2]));
+        /* binary.pack: fixed format string, then spread floats */
+        let blob = binary.pack("<3f", ...[1.5f, 2.5f, 3.5f]);
+        this.assertEquals(12, blob.length());
+        this.assertEquals(2.5f, binary.unpack("<3f", blob)[1] as float);
     }
 }

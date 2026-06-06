@@ -2796,6 +2796,24 @@ io.println(add(...[1, 2, 3]) as string);
 `, "60\n6\n")
 }
 
+// Spread (...list) into native variadics; the VM previously dropped it.
+func TestParitySpreadIntoNativeVariadic(t *testing.T) {
+	runParity(t, `import io;
+import math;
+import binary;
+let nums = [3, 7, 2];
+io.println(math.max(...nums));
+io.println(math.min(...nums));
+io.println(math.max(10, ...nums));
+io.println(math.max(...[5]));
+let floats = [1.5f, 2.5f, 3.5f];
+let blob = binary.pack("<3f", ...floats);
+io.println(blob.length());
+let back = binary.unpack("<3f", blob);
+io.println("${back[0]}-${back[2]}");
+`, "7\n2\n10\n5\n12\n1.5-3.5\n")
+}
+
 func TestParityJWT(t *testing.T) {
 	runParity(t, `import io;
 import crypt;
@@ -4278,7 +4296,12 @@ let s = collections.sortBy(xs, func(int n): int { return n; });
 io.println(s[0]);
 io.println(s[4]);
 io.println(collections.sortBy(xs, func(int n): int { return -n; })[0]);
-`, "1\n5\n5\n")
+let desc = collections.sortBy(xs, func(int n): int { return n; }, true);
+io.println(desc[0]);
+io.println(desc[4]);
+let asc = collections.sortBy(xs, func(int n): int { return n; }, false);
+io.println(asc[0]);
+`, "1\n5\n5\n5\n1\n1\n")
 }
 
 func TestParityCollectionsTopBy(t *testing.T) {
@@ -12080,4 +12103,116 @@ io.println(seq.stream(1..1000000).map(func(any n): any { return (n as int)*2; })
 io.println(seq.stream([2,4,6]).all(func(any n): bool { return (n as int)%2==0; }));
 io.println(seq.stream([3,1,2]).min());
 `, "56\n[2, 3, 4]\n[3, 1, 2]\n[1, 2, 3]\n1-2-3\n2\ntrue\n1\n")
+}
+
+func TestParityVectorStore(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import vectorstore as vs;
+let store = vs.MemoryVectorStore();
+store.add("a", [0.1, 0.2, 0.9], {"text": "cats"});
+store.add("b", [0.9, 0.1, 0.1], {"text": "cars"});
+store.add("c", [0.15, 0.25, 0.85], {"text": "kittens"});
+io.println(store.count());
+let hits = store.search([0.1, 0.2, 0.8], 2);
+io.println(hits.length());
+io.println(hits[0].record.id + " " + hits[1].record.id);
+io.println(store.get("b").metadata["text"]);
+io.println(store.get("z") == null);
+io.println(store.delete("a"));
+io.println(store.delete("a"));
+io.println(store.count());
+let dot = vs.MemoryVectorStore("dot");
+dot.add("x", [1.0, 0.0], {});
+dot.add("y", [0.0, 1.0], {});
+io.println(dot.search([2.0, 0.5], 1)[0].record.id);
+let euc = vs.MemoryVectorStore("euclidean");
+euc.add("near", [1.0, 1.0], {});
+euc.add("far", [9.0, 9.0], {});
+io.println(euc.search([1.1, 1.1], 1)[0].record.id);
+let f = store.searchWhere([0.1, 0.2, 0.8], 5, func(any r): bool {
+    return (r as vs.VectorRecord).metadata["text"] == "kittens";
+});
+io.println((f.length() as string) + " " + f[0].record.id);
+`, "3\n2\na c\ncars\ntrue\ntrue\nfalse\n2\nx\nnear\n1 c\n")
+}
+
+// Binds an int (SmallInt) param and a bytes BLOB, then reads both back.
+func TestParityDBBindIntAndBlob(t *testing.T) {
+	runParityStateful(t, `import db;
+import binary;
+import io;
+let conn = db.connect("sqlite", ":memory:");
+conn.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, v BLOB)");
+let blob = binary.pack("<3f", 1.0f, 2.0f, 3.0f);
+conn.exec("INSERT INTO t (id, name, v) VALUES (?, ?, ?)", 7, "row", blob);
+let rows = conn.query("SELECT id, name, v FROM t WHERE id = ?", 7).all();
+io.println(rows.length());
+io.println(rows[0]["id"]);
+io.println(rows[0]["name"]);
+io.println(typeof(rows[0]["v"]));
+let back = binary.unpack("<3f", rows[0]["v"] as bytes);
+io.println("${back[0]}");
+io.println("${back[2]}");
+`, "1\n7\nrow\nbytes\n1\n3\n")
+}
+
+// SqliteVectorStore: float32-blob persistence, upsert, search, and delete.
+func TestParitySqliteVectorStore(t *testing.T) {
+	runParityWithStdlib(t, `import db;
+import vectorstore as vs;
+import io;
+let conn = db.connect("sqlite", ":memory:");
+let store = vs.SqliteVectorStore(conn);
+store.add("cats", [0.1, 0.2, 0.9], {"text": "cats"});
+store.add("cars", [0.9, 0.1, 0.1], {"text": "cars"});
+store.add("kittens", [0.15, 0.25, 0.85], {"text": "kittens"});
+io.println(store.count());
+let hits = store.search([0.1, 0.2, 0.8], 2);
+io.println(hits[0].record.id + " " + hits[1].record.id);
+io.println(store.get("cars").metadata["text"]);
+io.println(store.get("z") == null);
+store.add("cats", [0.0, 0.0, 1.0], {"text": "updated"});
+io.println(store.count());
+io.println(store.get("cats").metadata["text"]);
+io.println(store.delete("cars"));
+io.println(store.delete("cars"));
+io.println(store.count());
+let f = store.searchWhere([0.1, 0.2, 0.8], 5, func(any r): bool {
+    return (r as vs.VectorRecord).metadata["text"] == "kittens";
+});
+io.println((f.length() as string) + " " + f[0].record.id);
+store.clear();
+io.println(store.count());
+`, "3\ncats kittens\ncars\ntrue\n3\nupdated\ntrue\nfalse\n2\n1 kittens\n0\n")
+}
+
+// rag: chunking, index/retrieve over a stub embedder (no network), and context.
+func TestParityRag(t *testing.T) {
+	runParityWithStdlib(t, `import rag;
+import vectorstore as vs;
+import io;
+class Stub implements rag.Embedder {
+    func embed(string text): list<any> {
+        let keys = ["cat", "dog", "car"];
+        let v = [];
+        for (k in keys) {
+            if (text.lower().contains(k as string)) { v = v.push(1.0f); } else { v = v.push(0.0f); }
+        }
+        return v;
+    }
+}
+let cs = rag.chunk("one two three four five six", {"size": 3, "overlap": 1});
+io.println(cs.length());
+io.println(cs[0]);
+let store = vs.MemoryVectorStore();
+let emb = Stub();
+io.println(rag.index(store, emb, "d1", "the cat sat", {}, {}));
+rag.index(store, emb, "d2", "a fast car", {}, {});
+rag.index(store, emb, "d3", "the dog ran", {}, {});
+io.println(store.count());
+let hits = rag.retrieve(store, emb, "find the cat", 1);
+io.println(hits[0].record.metadata["text"]);
+io.println(rag.context(hits, {}));
+io.println(rag.context(hits, {"withSources": false}));
+`, "3\none two three\n1\n3\nthe cat sat\n[1] (d1): the cat sat\nthe cat sat\n")
 }

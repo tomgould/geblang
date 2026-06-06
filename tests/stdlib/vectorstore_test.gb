@@ -1,0 +1,156 @@
+/**
+ * @title vectorstore (1.9.0)
+ * @summary In-memory and SQLite-backed vector stores with brute-force
+ * cosine/dot/euclidean similarity search, metadata filtering, and CRUD.
+ */
+import test;
+import vectorstore as vs;
+import db;
+
+class VectorStoreTest extends test.Test {
+
+    @test
+    func addCountGetDelete(): void {
+        let store = vs.MemoryVectorStore();
+        store.add("a", [1.0, 0.0], {"text": "alpha"});
+        store.add("b", [0.0, 1.0], {"text": "beta"});
+        this.assertEquals(2, store.count());
+        this.assertEquals("alpha", (store.get("a") as vs.VectorRecord).metadata["text"]);
+        this.assertTrue(store.get("missing") == null);
+        this.assertTrue(store.delete("a"));
+        this.assertTrue(!store.delete("a"));
+        this.assertEquals(1, store.count());
+        store.clear();
+        this.assertEquals(0, store.count());
+    }
+
+    @test
+    func cosineSearchRanksByDirection(): void {
+        let store = vs.MemoryVectorStore();
+        store.add("cats", [0.1, 0.2, 0.9], {});
+        store.add("cars", [0.9, 0.1, 0.1], {});
+        store.add("kittens", [0.15, 0.25, 0.85], {});
+        let hits = store.search([0.1, 0.2, 0.8], 2);
+        this.assertEquals(2, hits.length());
+        this.assertEquals("cats", hits[0].record.id);
+        this.assertEquals("kittens", hits[1].record.id);
+        /* scores are sorted descending */
+        this.assertTrue(hits[0].score >= hits[1].score);
+    }
+
+    @test
+    func metricSelectable(): void {
+        let dot = vs.MemoryVectorStore("dot");
+        dot.add("x", [1.0, 0.0], {});
+        dot.add("y", [0.0, 1.0], {});
+        this.assertEquals("x", dot.search([2.0, 0.5], 1)[0].record.id);
+
+        let euc = vs.MemoryVectorStore("euclidean");
+        euc.add("near", [1.0, 1.0], {});
+        euc.add("far", [9.0, 9.0], {});
+        this.assertEquals("near", euc.search([1.1, 1.1], 1)[0].record.id);
+    }
+
+    @test
+    func unknownMetricThrows(): void {
+        this.assertThrows(func(): void {
+            vs.MemoryVectorStore("manhattan");
+        });
+    }
+
+    @test
+    func searchWhereFiltersBeforeRanking(): void {
+        let store = vs.MemoryVectorStore();
+        store.add("a", [0.1, 0.2, 0.9], {"lang": "en"});
+        store.add("b", [0.12, 0.22, 0.88], {"lang": "fr"});
+        store.add("c", [0.11, 0.21, 0.89], {"lang": "en"});
+        let hits = store.searchWhere([0.1, 0.2, 0.9], 5, func(any r): bool {
+            return (r as vs.VectorRecord).metadata["lang"] == "en";
+        });
+        this.assertEquals(2, hits.length());
+        for (h in hits) {
+            this.assertEquals("en", h.record.metadata["lang"]);
+        }
+    }
+
+    @test
+    func dimensionMismatchThrows(): void {
+        let store = vs.MemoryVectorStore();
+        store.add("a", [1.0, 2.0, 3.0], {});
+        this.assertThrows(func(): void {
+            store.search([1.0, 2.0], 1);
+        });
+    }
+
+    @test
+    func addAllAndAcceptsDecimalAndFloatVectors(): void {
+        let store = vs.MemoryVectorStore();
+        /* decimal literals and float literals both accepted */
+        store.addAll([
+            vs.VectorRecord("d", [0.1, 0.2], {}),
+            vs.VectorRecord("f", [0.1f, 0.2f], {})
+        ]);
+        this.assertEquals(2, store.count());
+        this.assertEquals(1, store.search([0.1, 0.2], 1).length());
+    }
+
+    @test
+    func scoreHelperIsExposed(): void {
+        /* identical vectors are maximally cosine-similar */
+        this.assertTrue(vs.score("cosine", [1.0, 1.0], [1.0, 1.0]) > 0.999f);
+        this.assertTrue(vs.score("cosine", [1.0, 0.0], [0.0, 1.0]) < 0.001f);
+    }
+
+    func sqliteStore(): vs.SqliteVectorStore {
+        return vs.SqliteVectorStore(db.connect("sqlite", ":memory:"));
+    }
+
+    @test
+    func sqlitePersistsAndSearches(): void {
+        let store = this.sqliteStore();
+        store.add("cats", [0.1, 0.2, 0.9], {"text": "cats"});
+        store.add("cars", [0.9, 0.1, 0.1], {"text": "cars"});
+        store.add("kittens", [0.15, 0.25, 0.85], {"text": "kittens"});
+        this.assertEquals(3, store.count());
+        let hits = store.search([0.1, 0.2, 0.8], 2);
+        this.assertEquals("cats", hits[0].record.id);
+        this.assertEquals("kittens", hits[1].record.id);
+        this.assertEquals("cars", (store.get("cars") as vs.VectorRecord).metadata["text"]);
+        this.assertTrue(store.get("missing") == null);
+    }
+
+    @test
+    func sqliteUpsertsById(): void {
+        let store = this.sqliteStore();
+        store.add("a", [1.0, 0.0], {"v": "first"});
+        store.add("a", [0.0, 1.0], {"v": "second"});
+        this.assertEquals(1, store.count());
+        this.assertEquals("second", (store.get("a") as vs.VectorRecord).metadata["v"]);
+    }
+
+    @test
+    func sqliteDeleteReportsRemoval(): void {
+        let store = this.sqliteStore();
+        store.add("a", [1.0, 0.0], {});
+        this.assertTrue(store.delete("a"));
+        this.assertTrue(!store.delete("a"));
+        this.assertEquals(0, store.count());
+    }
+
+    @test
+    func sqliteRejectsUnsafeTableName(): void {
+        this.assertThrows(func(): void {
+            vs.SqliteVectorStore(db.connect("sqlite", ":memory:"), "bad; drop table");
+        });
+    }
+
+    @test
+    func sqliteVectorRoundTripsThroughBlob(): void {
+        let store = this.sqliteStore();
+        store.add("a", [0.5, 1.5, 2.5], {});
+        let v = (store.get("a") as vs.VectorRecord).vector;
+        this.assertEquals(3, v.length());
+        /* float32 precision: close enough, not exact */
+        this.assertTrue(((v[1] as float) - 1.5f) < 0.0001f);
+    }
+}

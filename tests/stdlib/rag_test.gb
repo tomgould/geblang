@@ -1,0 +1,96 @@
+/**
+ * @title rag (1.9.0)
+ * @summary Retrieval-augmented generation helpers: chunking, index/retrieve
+ * over a vector store, and prompt-context assembly. Uses a deterministic stub
+ * embedder so the suite needs no network.
+ */
+import test;
+import rag;
+import vectorstore as vs;
+
+/* keyword-indicator embedder: similar text shares a direction, no network */
+class StubEmbedder implements rag.Embedder {
+    func embed(string text): list<any> {
+        let keys = ["cat", "dog", "car", "bird"];
+        let v = [];
+        for (k in keys) {
+            if (text.lower().contains(k as string)) {
+                v = v.push(1.0f);
+            } else {
+                v = v.push(0.0f);
+            }
+        }
+        return v;
+    }
+}
+
+class RagTest extends test.Test {
+
+    @test
+    func chunkByWordsWithOverlap(): void {
+        let cs = rag.chunk("a b c d e f g", {"size": 3, "overlap": 1});
+        /* windows step by size-overlap=2: [a b c] [c d e] [e f g] */
+        this.assertEquals(3, cs.length());
+        this.assertEquals("a b c", cs[0]);
+        this.assertEquals("c d e", cs[1]);
+        this.assertEquals("e f g", cs[2]);
+    }
+
+    @test
+    func chunkByChars(): void {
+        let cs = rag.chunk("abcdefgh", {"by": "chars", "size": 4, "overlap": 0});
+        this.assertEquals(2, cs.length());
+        this.assertEquals("abcd", cs[0]);
+        this.assertEquals("efgh", cs[1]);
+    }
+
+    @test
+    func chunkByParagraphs(): void {
+        let text = "first para\n\nsecond para\n\nthird";
+        let cs = rag.chunk(text, {"by": "paragraphs", "size": 1000});
+        /* all fit in one budget */
+        this.assertEquals(1, cs.length());
+        let small = rag.chunk(text, {"by": "paragraphs", "size": 12});
+        this.assertEquals(3, small.length());
+    }
+
+    @test
+    func emptyTextYieldsNoChunks(): void {
+        this.assertEquals(0, rag.chunk("   ", {}).length());
+        this.assertEquals(0, rag.chunk("", {"by": "chars"}).length());
+    }
+
+    @test
+    func indexReturnsChunkCountAndStores(): void {
+        let store = vs.MemoryVectorStore();
+        let n = rag.index(store, StubEmbedder(), "doc", "the cat sat on the mat", {"src": "a"}, {"size": 3});
+        this.assertTrue(n > 1);
+        this.assertEquals(n, store.count());
+        /* chunk metadata carries text, docId, chunk index, and the caller's keys */
+        let rec = store.get("doc#0") as vs.VectorRecord;
+        this.assertEquals("doc", rec.metadata["docId"]);
+        this.assertEquals(0, rec.metadata["chunk"] as int);
+        this.assertEquals("a", rec.metadata["src"]);
+    }
+
+    @test
+    func retrieveFindsRelevantChunk(): void {
+        let store = vs.MemoryVectorStore();
+        let emb = StubEmbedder();
+        rag.index(store, emb, "d1", "the cat sat", {}, {"size": 100});
+        rag.index(store, emb, "d2", "a fast car", {}, {"size": 100});
+        rag.index(store, emb, "d3", "the dog ran", {}, {"size": 100});
+        let hits = rag.retrieve(store, emb, "where is the cat", 1);
+        this.assertEquals("the cat sat", hits[0].record.metadata["text"]);
+    }
+
+    @test
+    func contextNumbersAndCitesByDefault(): void {
+        let store = vs.MemoryVectorStore();
+        let emb = StubEmbedder();
+        rag.index(store, emb, "d1", "the cat sat", {}, {"size": 100});
+        let hits = rag.retrieve(store, emb, "cat", 1);
+        this.assertEquals("[1] (d1): the cat sat", rag.context(hits, {}));
+        this.assertEquals("the cat sat", rag.context(hits, {"withSources": false}));
+    }
+}

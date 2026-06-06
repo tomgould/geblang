@@ -1,0 +1,185 @@
+module rag;
+
+import vectorstore as vs;
+import re;
+
+/**
+ * Retrieval-augmented generation helpers built on the `vectorstore` module and
+ * the existing `llm.embed`. Chunk a document, embed and index its chunks, then
+ * retrieve the most relevant chunks for a query and assemble them into a
+ * prompt-ready context block.
+ *
+ * ```gb
+ * import db; import llm; import rag; import vectorstore;
+ *
+ * let store = vectorstore.MemoryVectorStore();
+ * let embedder = rag.LlmEmbedder(llm.client({"provider": "openai", "apiKey": key}),
+ *                                {"model": "text-embedding-3-small"});
+ * rag.index(store, embedder, "handbook", longText, {"source": "handbook"}, {});
+ * let hits = rag.retrieve(store, embedder, "how do I reset my password?", 4);
+ * let prompt = "Answer using only this context:\n" + rag.context(hits, {});
+ * ```
+ */
+
+/** Turns text into an embedding vector. Decouples rag from any single provider. */
+export interface Embedder {
+    func embed(string text): list<any>;
+}
+
+/** Embedder backed by an llm client; opts carries the embedding model. */
+export class LlmEmbedder implements Embedder {
+    any _client;
+    dict<string, any> _opts;
+
+    func LlmEmbedder(any client, dict<string, any> opts = {}) {
+        this._client = client;
+        this._opts = opts;
+    }
+
+    func embed(string text): list<any> {
+        return this._client.embed(text, this._opts)["vector"] as list<any>;
+    }
+}
+
+/**
+ * Splits text into overlapping chunks for embedding. opts:
+ *   by: "words" (default) | "chars" | "paragraphs"
+ *   size: window size (words=200, chars=1000, paragraphs=1000 char budget)
+ *   overlap: overlap between windows (words=40, chars=200; ignored for paragraphs)
+ */
+export func chunk(string text, dict<string, any> opts): list<string> {
+    string unit = (opts["by"] ?? "words") as string;
+    if (unit == "chars") {
+        return chunkChars(text, (opts["size"] ?? 1000) as int, (opts["overlap"] ?? 200) as int);
+    }
+    if (unit == "paragraphs") {
+        return chunkParagraphs(text, (opts["size"] ?? 1000) as int);
+    }
+    return chunkWords(text, (opts["size"] ?? 200) as int, (opts["overlap"] ?? 40) as int);
+}
+
+/**
+ * Chunks text, embeds each chunk, and stores it under id "<docId>#<i>". The
+ * caller's metadata is attached to every chunk along with the chunk text,
+ * docId, and chunk index. Returns the number of chunks indexed.
+ */
+export func index(vs.VectorStore store, Embedder embedder, string docId, string text,
+                  dict<string, any> metadata, dict<string, any> opts): int {
+    let chunks = chunk(text, opts);
+    int i = 0;
+    for (c in chunks) {
+        string cs = c as string;
+        dict<string, any> meta = {};
+        for (key in metadata.keys()) {
+            meta[key] = metadata[key];
+        }
+        meta["text"] = cs;
+        meta["docId"] = docId;
+        meta["chunk"] = i;
+        store.add(docId + "#" + (i as string), embedder.embed(cs), meta);
+        i = i + 1;
+    }
+    return chunks.length();
+}
+
+/** Embeds the query and returns the k most similar stored chunks. */
+export func retrieve(vs.VectorStore store, Embedder embedder, string query, int k): list<vs.SearchHit> {
+    return store.search(embedder.embed(query), k);
+}
+
+/**
+ * Assembles retrieved chunks into a prompt-ready block. opts:
+ *   withSources: true (default) prefixes each chunk with "[n] (docId): "
+ *   separator: between chunks (default blank line)
+ */
+export func context(list<vs.SearchHit> hits, dict<string, any> opts): string {
+    string sep = (opts["separator"] ?? "\n\n") as string;
+    bool withSources = (opts["withSources"] ?? true) as bool;
+    let parts = [];
+    int i = 1;
+    for (h in hits) {
+        let hit = h as vs.SearchHit;
+        string text = (hit.record.metadata["text"] ?? "") as string;
+        if (withSources) {
+            string src = (hit.record.metadata["docId"] ?? hit.record.id) as string;
+            parts = parts.push("[" + (i as string) + "] (" + src + "): " + text);
+        } else {
+            parts = parts.push(text);
+        }
+        i = i + 1;
+    }
+    return parts.join(sep);
+}
+
+func chunkWords(string text, int size, int overlap): list<string> {
+    let words = re.split("\\s+", text.trim());
+    let chunks = [];
+    if (words.length() == 1 && (words[0] as string) == "") {
+        return chunks;
+    }
+    int step = size - overlap;
+    if (step < 1) {
+        step = 1;
+    }
+    int i = 0;
+    while (i < words.length()) {
+        int end = i + size;
+        if (end > words.length()) {
+            end = words.length();
+        }
+        chunks = chunks.push(words[i:end].join(" "));
+        if (end >= words.length()) {
+            break;
+        }
+        i = i + step;
+    }
+    return chunks;
+}
+
+func chunkChars(string text, int size, int overlap): list<string> {
+    let chunks = [];
+    int n = text.length();
+    if (n == 0) {
+        return chunks;
+    }
+    int step = size - overlap;
+    if (step < 1) {
+        step = 1;
+    }
+    int i = 0;
+    while (i < n) {
+        int end = i + size;
+        if (end > n) {
+            end = n;
+        }
+        chunks = chunks.push(text[i:end]);
+        if (end >= n) {
+            break;
+        }
+        i = i + step;
+    }
+    return chunks;
+}
+
+func chunkParagraphs(string text, int size): list<string> {
+    let chunks = [];
+    string current = "";
+    for (p in re.split("\\n\\s*\\n", text)) {
+        string ps = (p as string).trim();
+        if (ps.length() == 0) {
+            continue;
+        }
+        if (current.length() == 0) {
+            current = ps;
+        } else if (current.length() + ps.length() + 2 <= size) {
+            current = current + "\n\n" + ps;
+        } else {
+            chunks = chunks.push(current);
+            current = ps;
+        }
+    }
+    if (current.length() > 0) {
+        chunks = chunks.push(current);
+    }
+    return chunks;
+}

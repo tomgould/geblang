@@ -113,6 +113,9 @@ Operations, introspection, and extension:
 - [LLM](llm.html): provider-agnostic client for chat completions, embeddings,
   image analysis, and image generation across OpenAI, Anthropic, and AWS
   Bedrock.
+- [Vector Search and RAG](vectorstore-rag.html): in-memory and SQLite-backed
+  vector stores with similarity search, plus retrieval-augmented-generation
+  helpers (chunking, indexing, retrieval, prompt-context assembly).
 - [Utility Modules](utilities.html): miscellaneous result, option, and helper
   modules that do not fit one larger category.
 

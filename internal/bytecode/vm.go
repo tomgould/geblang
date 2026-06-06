@@ -1758,6 +1758,19 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				}
 				return err
 			}
+		case OpNativeCallSpread:
+			if err := vm.nativeCallSpread(instruction); err != nil {
+				var recoverable recoverableNativeError
+				if errors.As(err, &recoverable) {
+					nextIP, throwErr := vm.throwRecoverableError(instruction, ip, recoverable.err)
+					if throwErr != nil {
+						return throwErr
+					}
+					ip = nextIP
+					continue
+				}
+				return err
+			}
 		case OpNativeCallNamed:
 			if err := vm.nativeCallNamed(instruction); err != nil {
 				var recoverable recoverableNativeError
@@ -6101,6 +6114,43 @@ func (vm *VM) nativeCall(instruction Instruction) error {
 		}
 	}
 	result, err := vm.evalNativeCall(name.Value, args)
+	if err != nil {
+		return recoverableNativeError{err: err}
+	}
+	vm.push(result)
+	return nil
+}
+
+func (vm *VM) nativeCallSpread(instruction Instruction) error {
+	if len(instruction.Operands) != 2 {
+		return vm.fatalError(instruction, "native call-spread instruction has invalid operands")
+	}
+	nameIndex := instruction.Operands[0]
+	staticArgCount := int(instruction.Operands[1])
+	if nameIndex < 0 || int(nameIndex) >= len(vm.chunk.Constants) {
+		return vm.runtimeError(instruction, "native call name out of range")
+	}
+	name, ok := vm.chunk.Constants[nameIndex].(runtime.String)
+	if !ok {
+		return vm.runtimeError(instruction, "native call name must be string")
+	}
+	spreadVal, err := vm.pop()
+	if err != nil {
+		return vm.runtimeError(instruction, "%s", err.Error())
+	}
+	spreadList, ok := spreadVal.(*runtime.List)
+	if !ok {
+		return vm.runtimeError(instruction, "spread argument must be a list")
+	}
+	staticArgs := make([]runtime.Value, staticArgCount)
+	for i := staticArgCount - 1; i >= 0; i-- {
+		value, err := vm.pop()
+		if err != nil {
+			return vm.runtimeError(instruction, "%s", err.Error())
+		}
+		staticArgs[i] = value
+	}
+	result, err := vm.evalNativeCall(name.Value, append(staticArgs, spreadList.Elements...))
 	if err != nil {
 		return recoverableNativeError{err: err}
 	}
@@ -10973,7 +11023,7 @@ func copyStringInt64SliceMap(values map[string][]int64) map[string][]int64 {
 
 func shiftInstructionOperands(instruction *Instruction, instructionShift int, constantShift int) {
 	switch instruction.Op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 		for i := range instruction.Operands {
 			if isConstantOperand(instruction.Op, i) && instruction.Operands[i] >= 0 {
 				instruction.Operands[i] += int64(constantShift)
@@ -11004,7 +11054,7 @@ func shiftInstructionOperands(instruction *Instruction, instructionShift int, co
 
 func isConstantOperand(op Op, index int) bool {
 	switch op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpGetField, OpSetField, OpMethodCall, OpMethodCallSpread, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallSpread, OpGetField, OpSetField, OpMethodCall, OpMethodCallSpread, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst:
 		return index == 0
 	case OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 		return index == 1

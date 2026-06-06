@@ -1,0 +1,43 @@
+/**
+ * @title db parameter binding (1.9.0)
+ * @summary Binding integer parameters and bytes BLOBs, then reading them back,
+ * over a real in-memory SQLite connection (no mocks).
+ */
+import test;
+import db;
+import binary;
+
+class DbTest extends test.Test {
+
+    func conn(): any {
+        let c = db.connect("sqlite", ":memory:");
+        c.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, v BLOB)");
+        return c;
+    }
+
+    @test
+    func bindsIntegerParameter(): void {
+        let c = this.conn();
+        c.exec("INSERT INTO t (id, name) VALUES (?, ?)", 42, "alpha");
+        c.exec("INSERT INTO t (id, name) VALUES (?, ?)", 7, "beta");
+        let rows = c.query("SELECT name FROM t WHERE id = ?", 42).all();
+        this.assertEquals(1, rows.length());
+        this.assertEquals("alpha", rows[0]["name"]);
+        /* integer column reads back as int */
+        let ids = c.query("SELECT id FROM t WHERE id < ?", 100).all();
+        this.assertEquals(2, ids.length());
+    }
+
+    @test
+    func roundTripsBytesBlob(): void {
+        let c = this.conn();
+        let blob = binary.pack("<3f", 1.5f, 2.5f, 3.5f);
+        c.exec("INSERT INTO t (id, v) VALUES (?, ?)", 1, blob);
+        let rows = c.query("SELECT v FROM t WHERE id = ?", 1).all();
+        this.assertEquals(1, rows.length());
+        this.assertEquals("bytes", "${typeof(rows[0]["v"])}");
+        let back = binary.unpack("<3f", rows[0]["v"] as bytes);
+        this.assertEquals(3, back.length());
+        this.assertEquals(2.5f, back[1] as float);
+    }
+}

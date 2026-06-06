@@ -1313,6 +1313,49 @@ var stdlibCatalog = map[string]moduleDoc{
 			"join":      fn([]string{"string separator"}, "string", "Joins the elements into a string (terminal)."),
 		},
 	}},
+	"vectorstore": {functions: map[string]functionDoc{
+		"score": fn([]string{"string metric", "list<any> a", "list<any> b"}, "float", "Similarity score (higher = closer) for metric cosine/dot/euclidean (1.9.0)."),
+	}, classes: map[string]string{
+		"VectorStore":       "Interface for an id-keyed vector store with nearest-neighbour search (1.9.0).",
+		"VectorRecord":      "A stored item: id, vector (list<any>), and metadata dict (1.9.0).",
+		"SearchHit":         "A search result: the record plus its similarity score (1.9.0).",
+		"MemoryVectorStore": "Brute-force in-memory vector store, mutex-guarded. Metric cosine (default) / dot / euclidean (1.9.0).",
+		"SqliteVectorStore": "Persistent vector store backed by a db Connection; float32-blob vectors, auto-created table, upsert by id (1.9.0).",
+	}, classMethods: map[string]map[string]functionDoc{
+		"MemoryVectorStore": {
+			"add":         fn([]string{"string id", "list<any> vector", "dict<string, any> metadata"}, "void", "Adds or replaces a vector by id."),
+			"addAll":      fn([]string{"list<VectorRecord> records"}, "void", "Adds or replaces many records."),
+			"get":         fn([]string{"string id"}, "?VectorRecord", "Record for id, or null."),
+			"delete":      fn([]string{"string id"}, "bool", "Removes id; true if it existed."),
+			"search":      fn([]string{"list<any> query", "int k"}, "list<SearchHit>", "Top k most similar records."),
+			"searchWhere": fn([]string{"list<any> query", "int k", "func filter"}, "list<SearchHit>", "Top k among records passing the metadata filter."),
+			"count":       fn([]string{}, "int", "Number of stored records."),
+			"clear":       fn([]string{}, "void", "Removes all records."),
+		},
+		"SqliteVectorStore": {
+			"add":         fn([]string{"string id", "list<any> vector", "dict<string, any> metadata"}, "void", "Upserts a vector by id."),
+			"addAll":      fn([]string{"list<VectorRecord> records"}, "void", "Upserts many records."),
+			"get":         fn([]string{"string id"}, "?VectorRecord", "Record for id, or null."),
+			"delete":      fn([]string{"string id"}, "bool", "Removes id; true if a row was deleted."),
+			"search":      fn([]string{"list<any> query", "int k"}, "list<SearchHit>", "Top k most similar records."),
+			"searchWhere": fn([]string{"list<any> query", "int k", "func filter"}, "list<SearchHit>", "Top k among records passing the metadata filter."),
+			"count":       fn([]string{}, "int", "Number of stored records."),
+			"clear":       fn([]string{}, "void", "Removes all records."),
+		},
+	}},
+	"rag": {functions: map[string]functionDoc{
+		"chunk":    fn([]string{"string text", "dict<string, any> opts"}, "list<string>", "Splits text into overlapping chunks. opts: by words/chars/paragraphs, size, overlap (1.9.0)."),
+		"index":    fn([]string{"VectorStore store", "Embedder embedder", "string docId", "string text", "dict<string, any> metadata", "dict<string, any> opts"}, "int", "Chunks, embeds, and stores a document; returns the chunk count (1.9.0)."),
+		"retrieve": fn([]string{"VectorStore store", "Embedder embedder", "string query", "int k"}, "list<SearchHit>", "Embeds the query and returns the k most similar chunks (1.9.0)."),
+		"context":  fn([]string{"list<SearchHit> hits", "dict<string, any> opts"}, "string", "Assembles hits into a prompt block. opts: withSources, separator (1.9.0)."),
+	}, classes: map[string]string{
+		"Embedder":    "Interface turning text into an embedding vector (1.9.0).",
+		"LlmEmbedder": "Embedder backed by an llm client; opts carries the embedding model (1.9.0).",
+	}, classMethods: map[string]map[string]functionDoc{
+		"LlmEmbedder": {
+			"embed": fn([]string{"string text"}, "list<any>", "Returns the embedding vector for text via the wrapped llm client."),
+		},
+	}},
 	"async.sync": {functions: map[string]functionDoc{
 		"mutexNew":            fn([]string{}, "AsyncMutex", "Internal: returns a new Mutex handle. Prefer the `async.sync.Mutex` class wrapper (1.6.0)."),
 		"mutexLock":           fn([]string{"AsyncMutex h"}, "void", "Internal."),

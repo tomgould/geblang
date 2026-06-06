@@ -1,0 +1,328 @@
+module vectorstore;
+
+import async.sync as sync;
+import collections;
+import math;
+import binary;
+import json;
+import re;
+
+/**
+ * In-memory and persistent vector stores for embeddings, with brute-force
+ * similarity search. The foundation for retrieval-augmented generation (see
+ * the `rag` module).
+ *
+ * ```gb
+ * import vectorstore;
+ *
+ * let store = vectorstore.MemoryVectorStore();
+ * store.add("a", [0.1, 0.2, 0.9], {"text": "about cats"});
+ * store.add("b", [0.9, 0.1, 0.1], {"text": "about cars"});
+ * let hits = store.search([0.1, 0.2, 0.8], 1);   // -> [SearchHit for "a"]
+ * io.println(hits[0].record.metadata["text"]);
+ * ```
+ *
+ * Metric is cosine by default; pass "dot" or "euclidean" to the constructor.
+ * All scores follow "higher = closer".
+ */
+export class VectorRecord {
+    string id;
+    list<any> vector;
+    dict<string, any> metadata;
+
+    func VectorRecord(string id, list<any> vector, dict<string, any> metadata) {
+        this.id = id;
+        this.vector = vector;
+        this.metadata = metadata;
+    }
+}
+
+export class SearchHit {
+    VectorRecord record;
+    float score;
+
+    func SearchHit(VectorRecord record, float score) {
+        this.record = record;
+        this.score = score;
+    }
+}
+
+/** A store of id-keyed vectors supporting nearest-neighbour search. */
+export interface VectorStore {
+    func add(string id, list<any> vector, dict<string, any> metadata): void;
+    func addAll(list<VectorRecord> records): void;
+    func get(string id): ?VectorRecord;
+    func delete(string id): bool;
+    func search(list<any> query, int k): list<SearchHit>;
+    func searchWhere(list<any> query, int k, callable filter): list<SearchHit>;
+    func count(): int;
+    func clear(): void;
+}
+
+/**
+ * Brute-force in-memory store. O(n) per search; ideal up to ~1e4-1e5 vectors.
+ * Mutations and the search snapshot are guarded by a mutex, so a single shared
+ * store is safe under concurrent requests.
+ */
+export class MemoryVectorStore implements VectorStore {
+    dict<string, any> _records;
+    string _metric;
+    sync.Mutex _lock;
+
+    func MemoryVectorStore(string metric = "cosine") {
+        if (metric != "cosine" && metric != "dot" && metric != "euclidean") {
+            throw ValueError("MemoryVectorStore: unknown metric '" + metric + "'");
+        }
+        this._records = {};
+        this._metric = metric;
+        this._lock = sync.Mutex();
+    }
+
+    func add(string id, list<any> vector, dict<string, any> metadata): void {
+        let rec = VectorRecord(id, vector, metadata);
+        this._lock.lock();
+        try {
+            this._records[id] = rec;
+        } finally {
+            this._lock.unlock();
+        }
+    }
+
+    func addAll(list<VectorRecord> records): void {
+        this._lock.lock();
+        try {
+            for (rec in records) {
+                let r = rec as VectorRecord;
+                this._records[r.id] = r;
+            }
+        } finally {
+            this._lock.unlock();
+        }
+    }
+
+    func get(string id): ?VectorRecord {
+        this._lock.lock();
+        try {
+            if (this._records.contains(id)) {
+                return this._records[id] as VectorRecord;
+            }
+            return null;
+        } finally {
+            this._lock.unlock();
+        }
+    }
+
+    func delete(string id): bool {
+        this._lock.lock();
+        try {
+            if (!this._records.contains(id)) {
+                return false;
+            }
+            this._records.delete(id);
+            return true;
+        } finally {
+            this._lock.unlock();
+        }
+    }
+
+    func count(): int {
+        this._lock.lock();
+        try {
+            return this._records.keys().length();
+        } finally {
+            this._lock.unlock();
+        }
+    }
+
+    func clear(): void {
+        this._lock.lock();
+        try {
+            this._records = {};
+        } finally {
+            this._lock.unlock();
+        }
+    }
+
+    func search(list<any> query, int k): list<SearchHit> {
+        return this.searchWhere(query, k, func(any rec): bool { return true; });
+    }
+
+    func searchWhere(list<any> query, int k, callable filter): list<SearchHit> {
+        /* Snapshot under the lock, then score + rank unlocked. */
+        let snapshot = [];
+        this._lock.lock();
+        try {
+            for (id in this._records.keys()) {
+                snapshot = snapshot.push(this._records[id]);
+            }
+        } finally {
+            this._lock.unlock();
+        }
+        return rankHits(snapshot, query, this._metric, k, filter);
+    }
+}
+
+/**
+ * Persistent store backed by a SQL table via the `db` module. Vectors are
+ * stored as little-endian float32 BLOBs and metadata as JSON text; search loads
+ * the rows and ranks them in memory (no SQL-side ANN). The table is created on
+ * construction if absent. add() upserts by id.
+ *
+ * ```gb
+ * import db; import vectorstore;
+ * let conn = db.connect("sqlite", "vectors.db");
+ * let store = vectorstore.SqliteVectorStore(conn);
+ * store.add("doc-1", embedding, {"text": "..."});
+ * let hits = store.search(queryVector, 5);
+ * ```
+ */
+export class SqliteVectorStore implements VectorStore {
+    any _conn;
+    string _table;
+    string _metric;
+
+    func SqliteVectorStore(any conn, string table = "vectors", string metric = "cosine") {
+        if (metric != "cosine" && metric != "dot" && metric != "euclidean") {
+            throw ValueError("SqliteVectorStore: unknown metric '" + metric + "'");
+        }
+        if (!re.test("^[A-Za-z_][A-Za-z0-9_]*$", table)) {
+            throw ValueError("SqliteVectorStore: unsafe table name '" + table + "'");
+        }
+        this._conn = conn;
+        this._table = table;
+        this._metric = metric;
+        conn.exec("CREATE TABLE IF NOT EXISTS " + table
+            + " (id TEXT PRIMARY KEY, vector BLOB NOT NULL, metadata TEXT NOT NULL)");
+    }
+
+    func add(string id, list<any> vector, dict<string, any> metadata): void {
+        this._conn.exec("INSERT OR REPLACE INTO " + this._table
+            + " (id, vector, metadata) VALUES (?, ?, ?)",
+            id, encodeVector(vector), json.stringify(metadata));
+    }
+
+    func addAll(list<VectorRecord> records): void {
+        for (rec in records) {
+            let r = rec as VectorRecord;
+            this.add(r.id, r.vector, r.metadata);
+        }
+    }
+
+    func get(string id): ?VectorRecord {
+        let rows = this._conn.query("SELECT vector, metadata FROM " + this._table
+            + " WHERE id = ?", id).all();
+        if (rows.length() == 0) {
+            return null;
+        }
+        return rowToRecord(id, rows[0]);
+    }
+
+    func delete(string id): bool {
+        let r = this._conn.exec("DELETE FROM " + this._table + " WHERE id = ?", id);
+        return (r["rowsAffected"] as int) > 0;
+    }
+
+    func count(): int {
+        let rows = this._conn.query("SELECT COUNT(*) AS c FROM " + this._table).all();
+        return rows[0]["c"] as int;
+    }
+
+    func clear(): void {
+        this._conn.exec("DELETE FROM " + this._table);
+    }
+
+    func search(list<any> query, int k): list<SearchHit> {
+        return this.searchWhere(query, k, func(any rec): bool { return true; });
+    }
+
+    func searchWhere(list<any> query, int k, callable filter): list<SearchHit> {
+        let rows = this._conn.query("SELECT id, vector, metadata FROM " + this._table).all();
+        let records = [];
+        for (row in rows) {
+            let r = row as dict<string, any>;
+            records = records.push(rowToRecord(r["id"] as string, r));
+        }
+        return rankHits(records, query, this._metric, k, filter);
+    }
+}
+
+/** Scores every record, then returns the top k by descending similarity. */
+func rankHits(list<any> records, list<any> query, string metric, int k, callable filter): list<SearchHit> {
+    let hits = [];
+    for (rec in records) {
+        let r = rec as VectorRecord;
+        if (!filter(r)) {
+            continue;
+        }
+        hits = hits.push(SearchHit(r, score(metric, query, r.vector)));
+    }
+    let ranked = collections.sortBy(hits, func(any h): any {
+        return (h as SearchHit).score;
+    }, true);
+    let out = [];
+    let n = 0;
+    for (h in ranked) {
+        if (n >= k) {
+            break;
+        }
+        out = out.push(h);
+        n = n + 1;
+    }
+    return out;
+}
+
+func encodeVector(list<any> vector): bytes {
+    let floats = [];
+    for (x in vector) {
+        floats = floats.push(x as float);
+    }
+    return binary.pack("<" + (vector.length() as string) + "f", ...floats);
+}
+
+func decodeVector(bytes b): list<any> {
+    int n = b.length() // 4;
+    if (n == 0) {
+        return [];
+    }
+    return binary.unpack("<" + (n as string) + "f", b);
+}
+
+func rowToRecord(string id, dict<string, any> row): VectorRecord {
+    return VectorRecord(id, decodeVector(row["vector"] as bytes),
+        json.parse(row["metadata"] as string) as dict<string, any>);
+}
+
+/** Computes a similarity score (higher = closer) between two vectors. */
+export func score(string metric, list<any> a, list<any> b): float {
+    if (a.length() != b.length()) {
+        throw ValueError("vectorstore: vector dimension mismatch ("
+            + (a.length() as string) + " vs " + (b.length() as string) + ")");
+    }
+    if (metric == "dot") {
+        return dot(a, b);
+    }
+    if (metric == "euclidean") {
+        /* Negative distance so that higher = closer. */
+        float sum = 0.0f;
+        for (i in 0..<a.length()) {
+            float d = (a[i] as float) - (b[i] as float);
+            sum = sum + d * d;
+        }
+        return -math.sqrt(sum);
+    }
+    /* cosine */
+    float na = math.sqrt(dot(a, a));
+    float nb = math.sqrt(dot(b, b));
+    if (na == 0.0f || nb == 0.0f) {
+        return 0.0f;
+    }
+    return dot(a, b) / (na * nb);
+}
+
+func dot(list<any> a, list<any> b): float {
+    float sum = 0.0f;
+    for (i in 0..<a.length()) {
+        sum = sum + (a[i] as float) * (b[i] as float);
+    }
+    return sum;
+}
