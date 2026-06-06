@@ -98,6 +98,7 @@ func NewBuiltinRegistry() *Registry {
 // NewBuiltinRegistry.
 func registerAllBuiltins(r *Registry) {
 	registerMath(r)
+	registerVecmath(r)
 	registerJSON(r)
 	registerCSV(r)
 	registerXML(r)

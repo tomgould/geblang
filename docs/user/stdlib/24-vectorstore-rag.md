@@ -22,7 +22,9 @@ interface:
 
 Metric is `"cosine"` (default), `"dot"`, or `"euclidean"`; all scores follow
 "higher = closer". Vectors are `list<any>` so they accept the decimal numbers
-that come back from JSON-parsed embeddings as well as float literals.
+that come back from JSON-parsed embeddings as well as float literals. Vectors are
+stored packed as float32 and ranked by the native `vecmath` kernel (below), so
+search is well off the interpreted path.
 
 ```gb
 import vectorstore;
@@ -147,3 +149,25 @@ class StubEmbedder implements rag.Embedder {
     }
 }
 ```
+
+## `vecmath`
+
+The float32 similarity kernel underpinning the stores. It scores in native code
+rather than the interpreted loop, and accepts vectors as either a list of
+numbers or a packed little-endian float32 BLOB (the stored form).
+
+| Function | Description |
+|----------|-------------|
+| `score(metric, a, b)` | Similarity (higher = closer) between two vectors for `"cosine"` / `"dot"` / `"euclidean"`. |
+| `topK(vectors, query, k, metric)` | Ranks `vectors` (a list of lists or float32 blobs) against `query`, returns up to `k` `{index, score}` dicts in descending order. |
+
+```gb
+import vecmath;
+
+vecmath.score("cosine", [1.0, 0.0], [1.0, 0.0]);   // 1.0
+let hits = vecmath.topK([[1.0, 0.0], [0.0, 1.0]], [1.0, 0.0], 1, "cosine");
+hits[0]["index"];                                   // 0
+```
+
+`vectorstore.score(metric, a, b)` delegates to `vecmath.score`; you rarely call
+`vecmath` directly unless building your own ranking.

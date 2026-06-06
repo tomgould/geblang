@@ -1,11 +1,10 @@
 module vectorstore;
 
 import async.sync as sync;
-import collections;
-import math;
 import binary;
 import json;
 import re;
+import vecmath;
 
 /**
  * In-memory and persistent vector stores for embeddings, with brute-force
@@ -79,10 +78,10 @@ export class MemoryVectorStore implements VectorStore {
     }
 
     func add(string id, list<any> vector, dict<string, any> metadata): void {
-        let rec = VectorRecord(id, vector, metadata);
+        let blob = encodeVector(vector);
         this._lock.lock();
         try {
-            this._records[id] = rec;
+            this._records[id] = {"blob": blob, "metadata": metadata};
         } finally {
             this._lock.unlock();
         }
@@ -93,7 +92,7 @@ export class MemoryVectorStore implements VectorStore {
         try {
             for (rec in records) {
                 let r = rec as VectorRecord;
-                this._records[r.id] = r;
+                this._records[r.id] = {"blob": encodeVector(r.vector), "metadata": r.metadata};
             }
         } finally {
             this._lock.unlock();
@@ -104,7 +103,8 @@ export class MemoryVectorStore implements VectorStore {
         this._lock.lock();
         try {
             if (this._records.contains(id)) {
-                return this._records[id] as VectorRecord;
+                let rec = this._records[id] as dict<string, any>;
+                return VectorRecord(id, decodeVector(rec["blob"] as bytes), rec["metadata"] as dict<string, any>);
             }
             return null;
         } finally {
@@ -144,21 +144,40 @@ export class MemoryVectorStore implements VectorStore {
     }
 
     func search(list<any> query, int k): list<SearchHit> {
-        return this.searchWhere(query, k, func(any rec): bool { return true; });
-    }
-
-    func searchWhere(list<any> query, int k, callable filter): list<SearchHit> {
-        /* Snapshot under the lock, then score + rank unlocked. */
-        let snapshot = [];
+        let ids = [];
+        let blobs = [];
+        let metas = [];
         this._lock.lock();
         try {
             for (id in this._records.keys()) {
-                snapshot = snapshot.push(this._records[id]);
+                let rec = this._records[id] as dict<string, any>;
+                ids = ids.push(id);
+                blobs = blobs.push(rec["blob"]);
+                metas = metas.push(rec["metadata"]);
             }
         } finally {
             this._lock.unlock();
         }
-        return rankHits(snapshot, query, this._metric, k, filter);
+        return rankHitsNative(ids, blobs, metas, query, this._metric, k);
+    }
+
+    func searchWhere(list<any> query, int k, callable filter): list<SearchHit> {
+        /* Snapshot under the lock, then filter + rank unlocked. */
+        let ids = [];
+        let blobs = [];
+        let metas = [];
+        this._lock.lock();
+        try {
+            for (id in this._records.keys()) {
+                let rec = this._records[id] as dict<string, any>;
+                ids = ids.push(id);
+                blobs = blobs.push(rec["blob"]);
+                metas = metas.push(rec["metadata"]);
+            }
+        } finally {
+            this._lock.unlock();
+        }
+        return rankFiltered(ids, blobs, metas, query, this._metric, k, filter);
     }
 }
 
@@ -232,43 +251,60 @@ export class SqliteVectorStore implements VectorStore {
     }
 
     func search(list<any> query, int k): list<SearchHit> {
-        return this.searchWhere(query, k, func(any rec): bool { return true; });
+        let rows = this._conn.query("SELECT id, vector, metadata FROM " + this._table).all();
+        let ids = [];
+        let blobs = [];
+        let metas = [];
+        for (row in rows) {
+            let r = row as dict<string, any>;
+            ids = ids.push(r["id"]);
+            blobs = blobs.push(r["vector"]);
+            metas = metas.push(json.parse(r["metadata"] as string));
+        }
+        return rankHitsNative(ids, blobs, metas, query, this._metric, k);
     }
 
     func searchWhere(list<any> query, int k, callable filter): list<SearchHit> {
         let rows = this._conn.query("SELECT id, vector, metadata FROM " + this._table).all();
-        let records = [];
+        let ids = [];
+        let blobs = [];
+        let metas = [];
         for (row in rows) {
             let r = row as dict<string, any>;
-            records = records.push(rowToRecord(r["id"] as string, r));
+            ids = ids.push(r["id"]);
+            blobs = blobs.push(r["vector"]);
+            metas = metas.push(json.parse(r["metadata"] as string));
         }
-        return rankHits(records, query, this._metric, k, filter);
+        return rankFiltered(ids, blobs, metas, query, this._metric, k, filter);
     }
 }
 
-/** Scores every record, then returns the top k by descending similarity. */
-func rankHits(list<any> records, list<any> query, string metric, int k, callable filter): list<SearchHit> {
-    let hits = [];
-    for (rec in records) {
-        let r = rec as VectorRecord;
-        if (!filter(r)) {
-            continue;
-        }
-        hits = hits.push(SearchHit(r, score(metric, query, r.vector)));
-    }
-    let ranked = collections.sortBy(hits, func(any h): any {
-        return (h as SearchHit).score;
-    }, true);
+/** Native-kernel top-k over packed float32 blobs aligned with ids and metadata. */
+func rankHitsNative(list<string> ids, list<any> blobs, list<any> metas, list<any> query, string metric, int k): list<SearchHit> {
     let out = [];
-    let n = 0;
-    for (h in ranked) {
-        if (n >= k) {
-            break;
-        }
-        out = out.push(h);
-        n = n + 1;
+    for (r in vecmath.topK(blobs, query, k, metric)) {
+        let rr = r as dict<string, any>;
+        int i = rr["index"] as int;
+        let rec = VectorRecord(ids[i] as string, decodeVector(blobs[i] as bytes), metas[i] as dict<string, any>);
+        out = out.push(SearchHit(rec, rr["score"] as float));
     }
     return out;
+}
+
+/** Applies the metadata filter (which receives a decoded VectorRecord), then ranks. */
+func rankFiltered(list<string> ids, list<any> blobs, list<any> metas, list<any> query, string metric, int k, callable filter): list<SearchHit> {
+    let fids = [];
+    let fblobs = [];
+    let fmetas = [];
+    for (i in 0..<ids.length()) {
+        let rec = VectorRecord(ids[i] as string, decodeVector(blobs[i] as bytes), metas[i] as dict<string, any>);
+        if (filter(rec)) {
+            fids = fids.push(ids[i]);
+            fblobs = fblobs.push(blobs[i]);
+            fmetas = fmetas.push(metas[i]);
+        }
+    }
+    return rankHitsNative(fids, fblobs, fmetas, query, metric, k);
 }
 
 func encodeVector(list<any> vector): bytes {
@@ -292,37 +328,7 @@ func rowToRecord(string id, dict<string, any> row): VectorRecord {
         json.parse(row["metadata"] as string) as dict<string, any>);
 }
 
-/** Computes a similarity score (higher = closer) between two vectors. */
+/** Similarity score (higher = closer) between two vectors for the given metric. */
 export func score(string metric, list<any> a, list<any> b): float {
-    if (a.length() != b.length()) {
-        throw ValueError("vectorstore: vector dimension mismatch ("
-            + (a.length() as string) + " vs " + (b.length() as string) + ")");
-    }
-    if (metric == "dot") {
-        return dot(a, b);
-    }
-    if (metric == "euclidean") {
-        /* Negative distance so that higher = closer. */
-        float sum = 0.0f;
-        for (i in 0..<a.length()) {
-            float d = (a[i] as float) - (b[i] as float);
-            sum = sum + d * d;
-        }
-        return -math.sqrt(sum);
-    }
-    /* cosine */
-    float na = math.sqrt(dot(a, a));
-    float nb = math.sqrt(dot(b, b));
-    if (na == 0.0f || nb == 0.0f) {
-        return 0.0f;
-    }
-    return dot(a, b) / (na * nb);
-}
-
-func dot(list<any> a, list<any> b): float {
-    float sum = 0.0f;
-    for (i in 0..<a.length()) {
-        sum = sum + (a[i] as float) * (b[i] as float);
-    }
-    return sum;
+    return vecmath.score(metric, a, b);
 }

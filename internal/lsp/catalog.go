@@ -1313,6 +1313,10 @@ var stdlibCatalog = map[string]moduleDoc{
 			"join":      fn([]string{"string separator"}, "string", "Joins the elements into a string (terminal)."),
 		},
 	}},
+	"vecmath": {functions: map[string]functionDoc{
+		"score": fn([]string{"string metric", "list<any> a", "list<any> b"}, "float", "Similarity score (higher = closer) for metric cosine/dot/euclidean over two vectors (list or float32 blob) (1.9.0)."),
+		"topK":  fn([]string{"list<any> vectors", "list<any> query", "int k", "string metric"}, "list<dict<string, any>>", "Top-k most similar vectors as {index, score}, ranked descending; vectors are lists or float32 blobs (1.9.0)."),
+	}},
 	"vectorstore": {functions: map[string]functionDoc{
 		"score": fn([]string{"string metric", "list<any> a", "list<any> b"}, "float", "Similarity score (higher = closer) for metric cosine/dot/euclidean (1.9.0)."),
 	}, classes: map[string]string{

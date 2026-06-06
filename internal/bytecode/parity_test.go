@@ -12216,3 +12216,23 @@ io.println(rag.context(hits, {}));
 io.println(rag.context(hits, {"withSources": false}));
 `, "3\none two three\n1\n3\nthe cat sat\n[1] (d1): the cat sat\nthe cat sat\n")
 }
+
+// vecmath: float32 similarity score + batched top-k over list and blob vectors.
+func TestParityVecmath(t *testing.T) {
+	runParity(t, `import io;
+import vecmath;
+import binary;
+io.println(vecmath.score("cosine", [1.0, 0.0], [1.0, 0.0]));
+io.println(vecmath.score("cosine", [1.0, 0.0], [0.0, 1.0]));
+io.println(vecmath.score("dot", [1.0, 2.0], [3.0, 4.0]));
+io.println(vecmath.score("euclidean", [0.0, 0.0], [3.0, 4.0]));
+let vs = [binary.pack("<2f", 1.0f, 0.0f), binary.pack("<2f", 0.0f, 1.0f), binary.pack("<2f", 0.9f, 0.1f)];
+let r = vecmath.topK(vs, [1.0, 0.0], 2, "cosine");
+io.println(r.length());
+io.println(r[0]["index"]);
+io.println(r[1]["index"]);
+let all = vecmath.topK([[1.0,0.0],[0.0,1.0]], [1.0,0.0], 5, "cosine");
+io.println(all.length());
+io.println(all[0]["index"]);
+`, "1\n0\n11\n-5\n2\n0\n2\n2\n0\n")
+}

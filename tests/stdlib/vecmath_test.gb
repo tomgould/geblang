@@ -1,0 +1,54 @@
+/**
+ * @title vecmath (1.9.0)
+ * @summary Float32 similarity kernels: per-pair score and batched top-k over
+ * vectors given as lists or packed float32 blobs.
+ */
+import test;
+import vecmath;
+import binary;
+
+class VecmathTest extends test.Test {
+
+    @test
+    func scoreMetrics(): void {
+        this.assertTrue(vecmath.score("cosine", [1.0, 0.0], [1.0, 0.0]) > 0.999f);
+        this.assertTrue(vecmath.score("cosine", [1.0, 0.0], [0.0, 1.0]) < 0.001f);
+        this.assertEquals(11.0f, vecmath.score("dot", [1.0, 2.0], [3.0, 4.0]));
+        /* euclidean returns negative distance: -(3-0,4-0) = -5 */
+        this.assertEquals(-5.0f, vecmath.score("euclidean", [0.0, 0.0], [3.0, 4.0]));
+    }
+
+    @test
+    func scoreDimensionMismatchThrows(): void {
+        this.assertThrows(func(): void {
+            vecmath.score("cosine", [1.0, 2.0, 3.0], [1.0, 2.0]);
+        });
+    }
+
+    @test
+    func topKOverBlobs(): void {
+        let vs = [
+            binary.pack("<2f", 1.0f, 0.0f),
+            binary.pack("<2f", 0.0f, 1.0f),
+            binary.pack("<2f", 0.9f, 0.1f)
+        ];
+        let r = vecmath.topK(vs, [1.0, 0.0], 2, "cosine");
+        this.assertEquals(2, r.length());
+        this.assertEquals(0, r[0]["index"] as int);
+        this.assertEquals(2, r[1]["index"] as int);
+        this.assertTrue((r[0]["score"] as float) >= (r[1]["score"] as float));
+    }
+
+    @test
+    func topKOverLists(): void {
+        let r = vecmath.topK([[1.0, 0.0], [0.0, 1.0]], [0.0, 1.0], 1, "cosine");
+        this.assertEquals(1, r.length());
+        this.assertEquals(1, r[0]["index"] as int);
+    }
+
+    @test
+    func topKClampsToAvailable(): void {
+        let r = vecmath.topK([[1.0], [2.0]], [1.0], 10, "dot");
+        this.assertEquals(2, r.length());
+    }
+}

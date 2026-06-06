@@ -19,7 +19,7 @@ var NativeModuleNames = map[string]struct{}{
 	"ssh": {}, "sshnative": {}, "store": {}, "strbuilder": {},
 	"streams": {}, "string": {}, "strings": {}, "sys": {}, "template": {},
 	"test": {}, "time": {}, "toml": {}, "trace": {}, "unicode": {}, "url": {},
-	"uuid": {}, "watch": {}, "web": {}, "websocket": {}, "xml": {},
+	"uuid": {}, "vecmath": {}, "watch": {}, "web": {}, "websocket": {}, "xml": {},
 	"yaml": {},
 }
 

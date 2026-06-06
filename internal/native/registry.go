@@ -143,6 +143,9 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"maxInt": {}, "minInt": {}, "maxFloat": {}, "minFloat": {},
 		"epsilon": {}, "sqrt2Pi": {}, "log2Pi": {},
 	},
+	"vecmath": {
+		"score": {}, "topK": {},
+	},
 	"secureRandom": {
 		"openSession": {}, "fromSeed": {}, "commitment": {}, "reveal": {},
 		"auditLog": {}, "auditLogJson": {},

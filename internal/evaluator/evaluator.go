@@ -8890,6 +8890,10 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"sqrt2Pi":    e.registryBuiltin("math", "sqrt2Pi"),
 			"log2Pi":     e.registryBuiltin("math", "log2Pi"),
 		},
+		"vecmath": {
+			"score": e.registryBuiltin("vecmath", "score"),
+			"topK":  e.registryBuiltin("vecmath", "topK"),
+		},
 		"secureRandom": {
 			"openSession":      e.registryBuiltin("secureRandom", "openSession"),
 			"fromSeed":         e.registryBuiltin("secureRandom", "fromSeed"),

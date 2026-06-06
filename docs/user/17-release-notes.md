@@ -32,6 +32,11 @@
   vectors as float32 BLOBs through the `db` module (table auto-created, upsert
   by id). Both share a `VectorStore` interface with `add`, `addAll`, `get`,
   `delete`, `search`, `searchWhere` (metadata-filtered), `count`, and `clear`.
+  Vectors are stored packed as float32 and scored by the native `vecmath`
+  kernel, keeping search off the interpreted path.
+- New `vecmath` module: float32 similarity kernels - `score(metric, a, b)` and a
+  batched `topK(vectors, query, k, metric)` - over vectors given as lists or
+  packed float32 blobs.
 - New `rag` module: retrieval-augmented-generation helpers on top of
   `vectorstore`. `chunk` splits text into overlapping windows (by words,
   characters, or paragraphs); `index` chunks, embeds, and stores a document;
