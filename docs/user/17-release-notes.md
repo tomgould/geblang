@@ -30,6 +30,17 @@
   value becomes the process exit code. Files with no exported `main` run as
   scripts exactly as before.
 
+### Fixes
+
+- Fixed a bytecode-VM bug where a closure created inside a `for` or `while` loop
+  captured variables incorrectly: a closure that returned could crash, and a
+  `let` declared in the loop body was shared across iterations instead of being
+  a fresh binding. The VM now matches the evaluator exactly - a loop-body `let`
+  is a fresh binding each iteration (closures stored per iteration keep their
+  own value), the loop variable itself is a single shared binding, and
+  assignment to a captured variable is visible through every closure that
+  captured it.
+
 ## 1.10.0
 
 ### Numeric types
