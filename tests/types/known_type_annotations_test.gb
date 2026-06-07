@@ -1,0 +1,52 @@
+/**
+ * @title Known type annotations (1.13.0)
+ * @summary The unknown-type check accepts every legitimate annotation:
+ * forward-referenced enums, in-scope generic type params, ambient error
+ * classes in catch clauses, type aliases, and generic element types.
+ * This file must compile and run clean on both backends.
+ */
+import test;
+
+type Id = int;
+
+enum Color { Red, Green, Blue }
+
+class Box<T> {
+    T value;
+    func Box(T value): void { this.value = value; }
+    func get(): T { return this.value; }
+}
+
+class KnownTypeAnnotationsTest extends test.Test {
+    @test
+    func aliasAndEnumAndGeneric(): void {
+        Id n = 7;
+        this.assertEquals(7, n);
+        Color c = Color.Green;
+        this.assertEquals(Color.Green, c);
+        let b = Box<string>("hi");
+        this.assertEquals("hi", b.get());
+        list<Id> xs = [1, 2, 3];
+        this.assertEquals(3, xs.length());
+    }
+
+    @test
+    func typeParamInScope(): void {
+        this.assertEquals(5, this.identity(5));
+    }
+
+    func identity<U>(U x): U {
+        return x;
+    }
+
+    @test
+    func ambientErrorClassInCatch(): void {
+        let caught = false;
+        try {
+            throw RuntimeError("boom");
+        } catch (Error e) {
+            caught = true;
+        }
+        this.assertTrue(caught);
+    }
+}

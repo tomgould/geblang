@@ -1,0 +1,66 @@
+/**
+ * @title clib.magic
+ * @summary File type and MIME detection via libmagic. Skips when
+ * libmagic is not on the loader path; requires --allow-ffi 'libmagic*'.
+ */
+import test;
+import clib.magic as magic;
+import io;
+import bytes;
+
+class ClibMagicTest extends test.Test {
+    func available(): bool {
+        try { magic.detect("go.mod"); return true; }
+        catch (Error e) { io.println("skipping: libmagic not available"); return false; }
+    }
+
+    @test
+    func detectTextFile(): void {
+        if (!this.available()) { return; }
+        let result = magic.detect("go.mod");
+        this.assertTrue(result.contains("text") || result.contains("ASCII") || result.contains("UTF-8"));
+    }
+
+    @test
+    func mimeTextFile(): void {
+        if (!this.available()) { return; }
+        let result = magic.mime("go.mod");
+        this.assertTrue(result.contains("text/"));
+    }
+
+    @test
+    func detectBuffer(): void {
+        if (!this.available()) { return; }
+        let data = bytes.fromString("hello world\n");
+        let m = magic.Magic(magic.NONE);
+        let result = m.detectBuffer(data);
+        this.assertTrue(result.contains("text") || result.contains("ASCII") || result.contains("UTF-8"));
+        m.close();
+    }
+
+    @test
+    func detectMimeBuffer(): void {
+        if (!this.available()) { return; }
+        let data = bytes.fromString("hello world\n");
+        let m = magic.Magic(magic.MIME_TYPE);
+        let result = m.detectBuffer(data);
+        this.assertTrue(result.contains("text/"));
+        m.close();
+    }
+
+    @test
+    func detectSourceFile(): void {
+        if (!this.available()) { return; }
+        let result = magic.detect("tests/stdlib/clib_magic_test.gb");
+        this.assertTrue(result.contains("text") || result.contains("ASCII") || result.contains("UTF-8"));
+    }
+
+    @test
+    func closeIsIdempotent(): void {
+        if (!this.available()) { return; }
+        let m = magic.Magic(magic.NONE);
+        m.close();
+        m.close();
+        this.assertTrue(true);
+    }
+}

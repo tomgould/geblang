@@ -42,4 +42,6 @@ echo "GEBLANG_PG_DSN=$GEBLANG_PG_DSN"
 # nothing skipped by default in this run.
 "$BIN" test \
   --allow-ffi 'libm.so.*' --allow-ffi 'libc.so.*' --allow-ffi 'libsqlite3*' \
+  --allow-ffi 'libzstd*' --allow-ffi 'libsystemd*' --allow-ffi 'libmagic*' \
+  --allow-ffi 'libncursesw*' --allow-ffi 'libncurses*' --allow-ffi 'libtinfo*' \
   "$TARGET"

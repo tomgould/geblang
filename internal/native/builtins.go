@@ -118,6 +118,7 @@ func registerAllBuiltins(r *Registry) {
 	registerAsyncAtomic(r)
 	registerAsyncChannel(r)
 	registerStore(r)
+	registerImage(r)
 	registerTime(r)
 	registerBytes(r)
 	registerString(r)

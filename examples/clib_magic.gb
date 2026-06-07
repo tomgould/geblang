@@ -1,0 +1,10 @@
+/* clib.magic example - content-based file type and MIME detection.
+ * Run with: geblang --allow-ffi 'libmagic*' examples/clib_magic.gb
+ */
+import clib.magic as magic;
+import io;
+
+let path = "go.mod";
+io.println("path: " + path);
+io.println("type: " + magic.detect(path));
+io.println("mime: " + magic.mime(path));

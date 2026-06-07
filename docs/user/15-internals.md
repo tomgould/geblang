@@ -741,6 +741,108 @@ call through the same registry at runtime.
 
 ---
 
+## Foreign Function Interface: `internal/ffi`
+
+The FFI layer calls into C-ABI shared libraries in-process, with no cgo and no
+subprocess. It is built on [purego](https://github.com/ebitengine/purego), which
+provides `Dlopen`/`Dlsym`/`Dlclose` and, crucially, `RegisterFunc` and
+`NewCallback`: these synthesise calling-convention trampolines at runtime using
+architecture-specific assembly, so a Go program can call an arbitrary C function
+(and hand C a Go callback) without cgo. That is why FFI works in ordinary
+cross-compiled builds.
+
+### Library and Symbol
+
+`ffi.Open(path)` calls `purego.Dlopen(path, RTLD_NOW|RTLD_GLOBAL)` and wraps the
+resulting handle in a `Library`:
+
+```go
+type Library struct {
+    Path    string
+    mu      sync.Mutex
+    handle  uintptr
+    closed  bool
+    symbols map[symbolKey]*Symbol
+}
+```
+
+`Library.Symbol(name, argTypes, retType)` is mutex-guarded. It builds a
+`symbolKey{name, sig}` where `sig` encodes the return type and argument types as
+a byte string, consults the per-library `symbols` cache, and on a miss resolves
+the address with `purego.Dlsym` and constructs a `Symbol`. Keying by the full
+signature lets the same C symbol be registered under more than one declared
+signature. `Close` calls `purego.Dlclose` and marks the library closed; later
+`Symbol` calls return `ErrClosed`.
+
+### Trampoline construction
+
+A resolved `Symbol` holds a `reflect.Value` caller built by `makeCaller`
+(`marshal.go`). `makeCaller` maps each `Type` code to a Go `reflect.Type`
+(`reflectType`), assembles `reflect.FuncOf(in, out, false)` for the C signature,
+allocates a function holder with `reflect.New`, and points it at the C address
+with `purego.RegisterFunc(holder.Interface(), addr)`. The holder's `Elem` is the
+callable trampoline; it is cached on the `Symbol`, so repeated calls re-use one.
+
+`Symbol.Call(args []any)` is the per-call hot path: it converts each argument to
+the Go-native type the trampoline expects (`goValueFor` in `marshal.go`),
+invokes `caller.Call(in)` (a reflect call straight into the purego trampoline),
+and converts the single return value back (`goValueOut`), or returns nil for a
+`Void` return.
+
+### Marshalling and memory
+
+`marshal.go` maps the `Type` enum (`Int8`..`Int64`, the unsigned variants,
+`Float32`/`Float64`, `Ptr`, `CString`, `Bytes`) to Go reflect types and converts
+runtime values across the boundary. `memory.go` exposes the libc heap
+(`alloc`/`free`/`readBytes`/`writeBytes`/`cString`/`readCString`) by binding
+`malloc`/`free` and the platform `errno` location through this same FFI layer,
+cached behind a `sync.Once`. `struct.go` and `array.go` compute C struct field
+offsets (standard alignment rules) and pack or unpack typed arrays. `Errno`
+reads the C `errno` of the calling OS thread by dereferencing the thread-local
+errno location.
+
+### Callbacks (Go as a C function pointer)
+
+`callback.go` runs the reverse direction. The runtime registers a
+`CallableInvoker` once at startup via `SetCallableInvoker` (called from
+`internal/evaluator/ffi.go`'s `init`, which installs `invokeFFICallback`); it is
+held in a package-level `atomic.Pointer[invokerCell]`. `NewCallback(token,
+argTypes, retType)` builds a `reflect.MakeFunc` bridge whose signature matches
+the C-ABI callback, then returns a C function pointer via
+`purego.NewCallback(bridge.Interface())`. When C invokes the pointer, the bridge
+converts the incoming C arguments to Go values, calls the stored invoker with the
+opaque `token` (the Geblang callable), and converts the result back. Argument
+types are restricted to the integer and pointer set `purego.NewCallback`
+supports; strings and structs cross as `Ptr` and are decoded on the Geblang side.
+
+### Capability policy
+
+`policy.go` holds the allow-list built from the `permissions.ffi` manifest block
+(or `--allow-ffi` patterns). The policy is enforced by the Geblang surface
+*before* it reaches `Open`; this Go layer itself does no policy checking. A
+disallowed path produces a `PermissionError` the program can catch.
+
+### Threading model
+
+Geblang async is genuinely multi-threaded: `async.run` starts a task on a real
+Go goroutine on both backends, and goroutines migrate across OS threads at
+scheduling points, so an FFI call runs on whichever OS thread the calling
+goroutine currently occupies. The mechanism tolerates this: purego trampolines
+are reentrant and `Library`'s symbol cache is mutex-guarded. The loaded
+library's own state is not managed here, so a binding over a non-thread-safe
+handle must serialize its calls (for example with an `async.sync.Mutex`). Two
+implementation consequences: `Errno` is only meaningful on the calling OS thread
+immediately after the call that set it, never across a suspension point; and a
+multi-threaded C library may invoke a registered callback from an arbitrary OS
+thread, reaching the runtime through the shared atomic invoker, so the callback
+path must be safe from any thread.
+
+FFI is unsafe in the C sense: a bad pointer inside the library crashes the
+process. The capability gate prevents accidental loads but does not sandbox a
+library once it is open.
+
+---
+
 ## Module System: `internal/modules`
 
 `modules.Resolver` locates `.gb` source files for import statements.

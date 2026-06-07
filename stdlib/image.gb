@@ -1,0 +1,73 @@
+module image;
+
+import imagenative;
+import io;
+
+/**
+ * Raster image handle: load, transform, and re-encode PNG / JPEG / GIF
+ * (and decode WebP). Each transform returns a NEW Image; the source
+ * stays valid. Call close() to release a handle, or let the process
+ * exit reclaim everything.
+ */
+export class Image {
+    any _handle;
+
+    func Image(any handle) {
+        this._handle = handle;
+    }
+
+    /** Pixel width. */
+    func width(): int {
+        return imagenative.width(this._handle) as int;
+    }
+
+    /** Pixel height. */
+    func height(): int {
+        return imagenative.height(this._handle) as int;
+    }
+
+    /** A new Image scaled to w x h (high-quality resampling). */
+    func resize(int w, int h): Image {
+        return Image(imagenative.resize(this._handle, w, h));
+    }
+
+    /** A new Image cropped to the rectangle at (x, y) of size w x h. */
+    func crop(int x, int y, int w, int h): Image {
+        return Image(imagenative.crop(this._handle, x, y, w, h));
+    }
+
+    /** A new Image rotated clockwise by a multiple of 90 degrees. */
+    func rotate(int degrees): Image {
+        return Image(imagenative.rotate(this._handle, degrees));
+    }
+
+    /** Encode to bytes in the given format ("png", "jpeg", "gif"). */
+    func encode(string format): bytes {
+        return imagenative.encode(this._handle, format);
+    }
+
+    /** Encode and write to `path`; the format is taken from `format`. */
+    func save(string path, string format): void {
+        io.writeBytes(path, imagenative.encode(this._handle, format));
+    }
+
+    /** Release the native handle; using the Image afterwards throws. */
+    func close(): void {
+        imagenative.close(this._handle);
+    }
+}
+
+/** Decode an image from raw bytes (PNG / JPEG / GIF / WebP). */
+export func loadBytes(bytes data): Image {
+    return Image(imagenative.decode(data));
+}
+
+/** Load and decode an image file at `path`. */
+export func load(string path): Image {
+    return Image(imagenative.decode(io.readBytes(path)));
+}
+
+/** A new blank (transparent) Image of w x h. */
+export func blank(int w, int h): Image {
+    return Image(imagenative.blank(w, h));
+}

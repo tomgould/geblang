@@ -1,0 +1,53 @@
+/**
+ * @title clib.zstd
+ * @summary Round-trip compression via libzstd. Skips when libzstd is
+ * not on the loader path; requires --allow-ffi 'libzstd*' to run.
+ */
+import test;
+import clib.zstd as zstd;
+import bytes;
+import io;
+
+class ClibZstdTest extends test.Test {
+    func available(): bool {
+        try { zstd.compress(bytes.fromString("probe"), 3); return true; }
+        catch (Error e) { io.println("skipping: libzstd not available"); return false; }
+    }
+
+    @test
+    func roundTrip(): void {
+        if (!this.available()) { return; }
+        let original = bytes.fromString("the quick brown fox jumps over the lazy dog");
+        let packed = zstd.compress(original, 3);
+        let restored = zstd.decompress(packed);
+        this.assertEquals(original, restored);
+    }
+
+    @test
+    func roundTripWithDefaultLevel(): void {
+        if (!this.available()) { return; }
+        let original = bytes.fromString("default level should round-trip too");
+        let restored = zstd.decompress(zstd.compress(original));
+        this.assertEquals(original, restored);
+    }
+
+    @test
+    func compressShrinksRepetitiveInput(): void {
+        if (!this.available()) { return; }
+        let data = "";
+        for (let int i = 0; i < 500; i++) { data = data + "ABCD"; }
+        let raw = bytes.fromString(data);
+        let packed = zstd.compress(raw, 9);
+        this.assertTrue(packed.length() < raw.length());
+        this.assertEquals(raw, zstd.decompress(packed));
+    }
+
+    @test
+    func decompressRejectsCorruptInput(): void {
+        if (!this.available()) { return; }
+        let threw = false;
+        try { zstd.decompress(bytes.fromString("not a zstd frame")); }
+        catch (Error e) { threw = true; }
+        this.assertTrue(threw);
+    }
+}

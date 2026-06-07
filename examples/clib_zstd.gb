@@ -1,0 +1,20 @@
+/* Round-trip compression example using clib.zstd.
+ * Requires libzstd installed on the host.
+ * Run with: geblang --allow-ffi 'libzstd*' examples/clib_zstd.gb
+ */
+import clib.zstd as zstd;
+import bytes;
+import io;
+
+let original = bytes.fromString("hello, world - this is a test of zstd compression in Geblang");
+
+let compressed = zstd.compress(original);
+io.println("original length:   ${original.length()}");
+io.println("compressed length: ${compressed.length()}");
+
+let recovered = zstd.decompress(compressed);
+if (recovered.toString() == original.toString()) {
+    io.println("round-trip ok");
+} else {
+    throw RuntimeError("round-trip mismatch");
+}

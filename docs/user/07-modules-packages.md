@@ -336,6 +336,14 @@ stdlib externally and the native internally:
   async.sync;`) resolves to the native module so the wrapper can call
   its primitives.
 
+A dual-name stdlib module must not export a member whose name also
+exists on its native namesake. The fallback above relies on the two
+surfaces being disjoint; a name present in both is ambiguous and is not
+guaranteed to resolve the same way everywhere. When the native side
+needs functions the wrapper reuses internally, give the native module a
+distinct name (the convention is a `native` suffix, as with
+`ffinative`) and import that, rather than colliding on the shared name.
+
 ## Multi-Module Layout
 
 An idiomatic project keeps executable entry points thin and moves reusable code

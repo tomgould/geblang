@@ -1577,6 +1577,64 @@ var stdlibCatalog = map[string]moduleDoc{
 			"signal": fn([]string{"string name"}, "void", "Sends a named signal (e.g. \"SIGTERM\", \"SIGHUP\")."),
 		},
 	}},
+	"image": {functions: map[string]functionDoc{
+		"load":      fn([]string{"string path"}, "Image", "Loads and decodes an image file (PNG / JPEG / GIF / WebP)."),
+		"loadBytes": fn([]string{"bytes data"}, "Image", "Decodes an image from raw bytes."),
+		"blank":     fn([]string{"int w", "int h"}, "Image", "Creates a new blank (transparent) image."),
+	}, classes: map[string]string{
+		"Image": "Raster image handle. Transforms return a new Image; the source stays valid. Encodes PNG / JPEG / GIF (decodes WebP too).",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Image": {
+			"width":  fn([]string{}, "int", "Pixel width."),
+			"height": fn([]string{}, "int", "Pixel height."),
+			"resize": fn([]string{"int w", "int h"}, "Image", "Returns a new Image scaled to w x h."),
+			"crop":   fn([]string{"int x", "int y", "int w", "int h"}, "Image", "Returns a new Image cropped to the rectangle."),
+			"rotate": fn([]string{"int degrees"}, "Image", "Returns a new Image rotated by a multiple of 90 degrees."),
+			"encode": fn([]string{"string format"}, "bytes", "Encodes to bytes (png, jpeg, gif)."),
+			"save":   fn([]string{"string path", "string format"}, "void", "Encodes and writes to path."),
+			"close":  fn([]string{}, "void", "Releases the native handle."),
+		},
+	}},
+	"clib.zstd": {functions: map[string]functionDoc{
+		"compress":   fn([]string{"bytes data", "int level = 3"}, "bytes", "Compresses data with zstd at the given level (1..22); returns a frame carrying its content size."),
+		"decompress": fn([]string{"bytes frame"}, "bytes", "Decompresses a zstd frame produced by compress."),
+	}},
+	"clib.systemd": {functions: map[string]functionDoc{
+		"notify":   fn([]string{"string state"}, "bool", "Sends a raw sd_notify state string; true if delivered to the service manager."),
+		"ready":    fn([]string{}, "bool", "Signals service readiness (READY=1)."),
+		"watchdog": fn([]string{}, "bool", "Pings the systemd watchdog (WATCHDOG=1)."),
+		"status":   fn([]string{"string text"}, "bool", "Sets the systemctl status line (STATUS=text)."),
+		"journal":  fn([]string{"string message", "dict<string,string> fields = {}"}, "void", "Sends a structured journald entry."),
+	}},
+	"clib.magic": {functions: map[string]functionDoc{
+		"detect": fn([]string{"string path"}, "string", "Returns a content description for the file at path (libmagic NONE flags)."),
+		"mime":   fn([]string{"string path"}, "string", "Returns the MIME type for the file at path (libmagic MIME_TYPE flags)."),
+	}, classes: map[string]string{
+		"Magic": "libmagic handle opened with the given flags (NONE or MIME_TYPE). Calls are serialised internally for thread safety.",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Magic": {
+			"detect":       fn([]string{"string path"}, "string", "Returns a content description for the file at path."),
+			"detectBuffer": fn([]string{"bytes data"}, "string", "Returns a content description for the given bytes."),
+			"close":        fn([]string{}, "void", "Closes the libmagic handle. Idempotent."),
+		},
+	}},
+	"clib.curses": {functions: map[string]functionDoc{
+		"init":       fn([]string{}, "void", "Initialises the curses screen (initscr + cbreak + noecho + keypad). Call once from a single task."),
+		"end":        fn([]string{}, "void", "Ends the curses session (endwin). Safe to call before init."),
+		"addStr":     fn([]string{"string s"}, "void", "Writes a string at the current cursor position."),
+		"mvAddStr":   fn([]string{"int y", "int x", "string s"}, "void", "Writes a string at position (y, x)."),
+		"move":       fn([]string{"int y", "int x"}, "void", "Moves the cursor to (y, x)."),
+		"clear":      fn([]string{}, "void", "Clears the screen."),
+		"refresh":    fn([]string{}, "void", "Refreshes the display."),
+		"getCh":      fn([]string{}, "int", "Reads a keystroke (blocking); returns the key code."),
+		"maxY":       fn([]string{}, "int", "Returns the number of rows in the terminal window."),
+		"maxX":       fn([]string{}, "int", "Returns the number of columns in the terminal window."),
+		"startColor": fn([]string{}, "void", "Enables colour support. Call before initPair."),
+		"initPair":   fn([]string{"int id", "int fg", "int bg"}, "void", "Defines colour pair id with foreground fg and background bg."),
+		"attrOn":     fn([]string{"int attrs"}, "void", "Enables the given attribute bits."),
+		"attrOff":    fn([]string{"int attrs"}, "void", "Disables the given attribute bits."),
+		"colorPair":  fn([]string{"int n"}, "int", "Returns the attribute value for colour pair n (COLOR_PAIR(n) = n * 256)."),
+	}},
 	"sockets": {functions: map[string]functionDoc{
 		"dial":  fn([]string{"string host", "int port", "dict<string, any> opts = {}"}, "Socket", "Open a TCP (or TLS via opts.tls) connection. Returns a Socket implementing the F3 stream protocol (1.2.0)."),
 		"serve": fn([]string{"string host", "int port", "func handler"}, "Listener", "Bind a listener and dispatch each accepted connection to handler(socket). Close the Listener to join the accept goroutine (1.2.0)."),

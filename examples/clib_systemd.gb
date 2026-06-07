@@ -1,0 +1,19 @@
+/* systemd integration example using clib.systemd. Linux only.
+ * Requires libsystemd installed on the host.
+ * Run with: geblang --allow-ffi 'libsystemd*' examples/clib_systemd.gb
+ * When run outside a systemd service, notify/ready/status return false.
+ */
+import clib.systemd as systemd;
+import io;
+
+let delivered = systemd.ready();
+io.println("ready delivered: ${delivered}");
+
+let statusOk = systemd.status("serving");
+io.println("status delivered: ${statusOk}");
+
+systemd.journal("example started", {
+    "PRIORITY":          "6",
+    "SYSLOG_IDENTIFIER": "clib_systemd_example"
+});
+io.println("journal entry sent");

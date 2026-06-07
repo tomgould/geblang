@@ -1,0 +1,66 @@
+module clib.zstd;
+
+import ffi;
+import clib.loader as loader;
+
+let _CANDIDATES = ["libzstd.so.1", "libzstd.so", "libzstd.dylib", "libzstd.1.dylib"];
+
+func _lib(): ffi.Library {
+    return loader.load("zstd", _CANDIDATES);
+}
+
+/** Compress `data` at `level` (1..22; default 3). Returns a zstd frame
+ *  carrying its content size so decompress needs no size hint. */
+export func compress(bytes data, int level = 3): bytes {
+    let lib = _lib();
+    let compressBound = lib.symbol("ZSTD_compressBound", [ffi.UINT64], ffi.UINT64);
+    let zstdCompress = lib.symbol("ZSTD_compress", [ffi.PTR, ffi.UINT64, ffi.PTR, ffi.UINT64, ffi.INT32], ffi.UINT64);
+    let isError = lib.symbol("ZSTD_isError", [ffi.UINT64], ffi.UINT32);
+
+    let srcLen = data.length();
+    let src = ffi.alloc(srcLen);
+    ffi.writeBytes(src, data);
+    let cap = compressBound(srcLen) as int;
+    let dst = ffi.alloc(cap);
+
+    let written = zstdCompress(dst, cap, src, srcLen, level) as int;
+    if ((isError(written) as int) != 0) {
+        ffi.free(src);
+        ffi.free(dst);
+        throw RuntimeError("clib.zstd.compress: libzstd reported an error");
+    }
+    let out = ffi.readBytes(dst, written);
+    ffi.free(src);
+    ffi.free(dst);
+    return out;
+}
+
+/** Decompress a zstd frame produced by compress (one that carries its
+ *  content size). */
+export func decompress(bytes frame): bytes {
+    let lib = _lib();
+    let frameSize = lib.symbol("ZSTD_getFrameContentSize", [ffi.PTR, ffi.UINT64], ffi.UINT64);
+    let zstdDecompress = lib.symbol("ZSTD_decompress", [ffi.PTR, ffi.UINT64, ffi.PTR, ffi.UINT64], ffi.UINT64);
+    let isError = lib.symbol("ZSTD_isError", [ffi.UINT64], ffi.UINT32);
+
+    let frameLen = frame.length();
+    let src = ffi.alloc(frameLen);
+    ffi.writeBytes(src, frame);
+
+    let size = frameSize(src, frameLen) as int;
+    if (size < 0 || size > 1073741824) {
+        ffi.free(src);
+        throw RuntimeError("clib.zstd.decompress: frame has unknown or invalid content size");
+    }
+    let dst = ffi.alloc(size);
+    let produced = zstdDecompress(dst, size, src, frameLen) as int;
+    if ((isError(produced) as int) != 0) {
+        ffi.free(src);
+        ffi.free(dst);
+        throw RuntimeError("clib.zstd.decompress: corrupt or truncated frame");
+    }
+    let out = ffi.readBytes(dst, produced);
+    ffi.free(src);
+    ffi.free(dst);
+    return out;
+}

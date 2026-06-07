@@ -1,0 +1,18 @@
+/* Image transform example.
+ * Creates a blank image, resizes it, and encodes to PNG.
+ * Run with: geblang examples/image_transform.gb
+ */
+import image;
+import io;
+
+let img = image.blank(64, 32);
+io.println("original: ${img.width()}x${img.height()}");
+
+let resized = img.resize(16, 16);
+io.println("resized:  ${resized.width()}x${resized.height()}");
+
+let png = resized.encode("png");
+io.println("png bytes: ${png.length()}");
+
+img.close();
+resized.close();

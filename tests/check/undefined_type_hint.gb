@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an unknown bare type name in an
+ * annotation position.
+ */
+func f(NotARealType x): void {}
+
+f(1);

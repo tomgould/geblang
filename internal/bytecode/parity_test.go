@@ -5527,6 +5527,27 @@ io.println(encoding.htmlEscape("<b>x</b>"));
 `, "any carnal pleasure.\naGk=\nhi\nfalse\nfalse\ntrue\n&lt;b&gt;x&lt;/b&gt;\n")
 }
 
+// TestParityImageTransforms verifies the image module (native imagenative +
+// stdlib Image class) produces identical output on both backends. The dual-name
+// shadow bug returned a raw handle on the evaluator and a wrapped Image on the
+// VM; this locks that divergence shut.
+func TestParityImageTransforms(t *testing.T) {
+	runParityWithStdlib(t, `
+import image;
+import io;
+let img = image.blank(20, 10);
+let r = img.resize(5, 8);
+io.println("${r.width()}x${r.height()}");
+let c = img.crop(1, 1, 4, 3);
+io.println("${c.width()}x${c.height()}");
+let rot = img.rotate(90);
+io.println("${rot.width()}x${rot.height()}");
+let png = img.encode("png");
+io.println("${png.length() > 0}");
+io.println("${image.loadBytes(png).width()}");
+`, "5x8\n4x3\n10x20\ntrue\n20\n")
+}
+
 // TestParityWebRouterRealServe verifies a web.router app served over a real
 // socket resolves through the callback child evaluator: the HTTP handler runs in
 // a child and must find the web app registered on the parent at setup. Before

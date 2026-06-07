@@ -1,0 +1,78 @@
+module clib.systemd;
+
+import ffi;
+import bytes;
+import clib.loader as loader;
+
+/**
+ * systemd integration: the sd_notify readiness protocol and structured
+ * journald logging. Linux-only. Both sd_notify and sd_journal_sendv are
+ * thread-safe, so these are safe to call from any async task.
+ */
+
+let _CANDIDATES = ["libsystemd.so.0", "libsystemd.so"];
+
+func _lib(): ffi.Library {
+    return loader.load("systemd", _CANDIDATES);
+}
+
+/** Send a raw sd_notify state string (e.g. "READY=1", "STATUS=...",
+ *  "WATCHDOG=1"). Returns true if delivered to the service manager,
+ *  false if not running under systemd. */
+export func notify(string state): bool {
+    let lib = _lib();
+    let sdNotify = lib.symbol("sd_notify", [ffi.INT32, ffi.CSTRING], ffi.INT32);
+    let rc = sdNotify(0, state) as int;
+    return rc > 0;
+}
+
+/** Signal service readiness ("READY=1"). */
+export func ready(): bool {
+    return notify("READY=1");
+}
+
+/** Ping the systemd watchdog ("WATCHDOG=1"). */
+export func watchdog(): bool {
+    return notify("WATCHDOG=1");
+}
+
+/** Set the service status line shown by `systemctl status`. */
+export func status(string text): bool {
+    return notify("STATUS=" + text);
+}
+
+/**
+ * Send a structured journald entry. `message` becomes the MESSAGE
+ * field; each key/value in `fields` is sent as an additional
+ * "KEY=value" field (PRIORITY, UNIT, custom keys, ...).
+ */
+export func journal(string message, dict<string, string> fields = {}): void {
+    let lib = _lib();
+    let sendv = lib.symbol("sd_journal_sendv", [ffi.PTR, ffi.INT32], ffi.INT32);
+
+    let entries = ["MESSAGE=" + message];
+    for (key in fields.keys()) {
+        entries = entries.push(key + "=" + fields.get(key));
+    }
+
+    let n = entries.length();
+    /* iovec[n]: each entry is {char* base; size_t len} = 2 u64 words. */
+    let iov = ffi.alloc(n * 16);
+    let cstrs = [];
+    let words = [];
+    for (let int i = 0; i < n; i++) {
+        let s = entries.get(i);
+        let raw = bytes.fromString(s);
+        let len = raw.length();
+        let buf = ffi.alloc(len);
+        ffi.writeBytes(buf, raw);
+        cstrs = cstrs.push(buf);
+        words = words.push(buf);
+        words = words.push(len);
+    }
+    ffi.writeArray(iov, ffi.UINT64, words);
+    sendv(iov, n);
+
+    for (p in cstrs) { ffi.free(p as int); }
+    ffi.free(iov);
+}

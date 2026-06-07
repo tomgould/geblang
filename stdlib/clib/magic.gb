@@ -1,0 +1,127 @@
+module clib.magic;
+
+import ffi;
+import bytes;
+import clib.loader as loader;
+
+let _CANDIDATES = ["libmagic.so.1", "libmagic.so", "libmagic.dylib"];
+
+export const int NONE = 0;
+export const int MIME_TYPE = 16;
+
+func _lib(): ffi.Library {
+    return loader.load("magic", _CANDIDATES);
+}
+
+/** Detect file type or MIME from a path or buffer via libmagic. */
+export class Magic {
+    int _cookie;
+    bool _closed;
+    any _guard;
+
+    func Magic(int flags = 0) {
+        let lib = _lib();
+        let magicOpen = lib.symbol("magic_open", [ffi.INT32], ffi.PTR);
+        let magicLoad = lib.symbol("magic_load", [ffi.PTR, ffi.PTR], ffi.INT32);
+        let magicError = lib.symbol("magic_error", [ffi.PTR], ffi.PTR);
+
+        let cookie = magicOpen(flags) as int;
+        if (cookie == 0) {
+            throw RuntimeError("clib.magic: magic_open failed");
+        }
+        let rc = magicLoad(cookie, 0) as int;
+        if (rc != 0) {
+            let errPtr = magicError(cookie) as int;
+            let msg = "unknown error";
+            if (errPtr != 0) {
+                msg = ffi.readCString(errPtr);
+            }
+            throw RuntimeError("clib.magic: magic_load failed: " + msg);
+        }
+        this._cookie = cookie;
+        this._closed = false;
+        this._guard = loader.guard();
+    }
+
+    /** Return a content description for the file at path. */
+    func detect(string path): string {
+        let lib = _lib();
+        let magicFile = lib.symbol("magic_file", [ffi.PTR, ffi.CSTRING], ffi.PTR);
+        this._guard.lock();
+        try {
+            let ptr = magicFile(this._cookie, path) as int;
+            if (ptr == 0) {
+                let magicError = lib.symbol("magic_error", [ffi.PTR], ffi.PTR);
+                let errPtr = magicError(this._cookie) as int;
+                let msg = "unknown error";
+                if (errPtr != 0) {
+                    msg = ffi.readCString(errPtr);
+                }
+                throw RuntimeError("clib.magic.detect: " + msg);
+            }
+            return ffi.readCString(ptr);
+        } finally {
+            this._guard.unlock();
+        }
+    }
+
+    /** Return a content description for the given bytes buffer. */
+    func detectBuffer(bytes data): string {
+        let lib = _lib();
+        let magicBuffer = lib.symbol("magic_buffer", [ffi.PTR, ffi.PTR, ffi.UINT64], ffi.PTR);
+        let n = data.length();
+        let buf = ffi.alloc(n);
+        ffi.writeBytes(buf, data);
+        this._guard.lock();
+        try {
+            let ptr = magicBuffer(this._cookie, buf, n) as int;
+            ffi.free(buf);
+            if (ptr == 0) {
+                let magicError = lib.symbol("magic_error", [ffi.PTR], ffi.PTR);
+                let errPtr = magicError(this._cookie) as int;
+                let msg = "unknown error";
+                if (errPtr != 0) {
+                    msg = ffi.readCString(errPtr);
+                }
+                throw RuntimeError("clib.magic.detectBuffer: " + msg);
+            }
+            return ffi.readCString(ptr);
+        } finally {
+            this._guard.unlock();
+        }
+    }
+
+    /** Close the libmagic handle. Idempotent. */
+    func close(): void {
+        if (this._closed) { return; }
+        let lib = _lib();
+        let magicClose = lib.symbol("magic_close", [ffi.PTR], ffi.VOID);
+        this._guard.lock();
+        try {
+            magicClose(this._cookie);
+            this._closed = true;
+        } finally {
+            this._guard.unlock();
+        }
+    }
+}
+
+/* Shared lazily-initialised cookies for the module-level helpers. */
+?Magic _sharedNone = null;
+?Magic _sharedMime = null;
+
+/** Return a content description for the file at path (NONE flags). */
+export func detect(string path): string {
+    if (_sharedNone == null) {
+        _sharedNone = Magic(NONE);
+    }
+    return (_sharedNone as Magic).detect(path);
+}
+
+/** Return the MIME type for the file at path (MIME_TYPE flags). */
+export func mime(string path): string {
+    if (_sharedMime == null) {
+        _sharedMime = Magic(MIME_TYPE);
+    }
+    return (_sharedMime as Magic).detect(path);
+}

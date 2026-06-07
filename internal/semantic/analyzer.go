@@ -40,7 +40,11 @@ type Analyzer struct {
 	functions   map[string][]methodInfo
 	classes     map[string]classInfo
 	interfaces  map[string]interfaceInfo
+	enums       map[string]struct{}
 	aliases     map[string]typeInfo
+	// typeParamScope counts in-scope generic type-param names so the
+	// unknown-type check accepts `func f<T>(T x)`.
+	typeParamScope map[string]int
 	// classSurface, when set, returns the full member set (methods +
 	// fields, walked across parents/interfaces and modules) for a class
 	// name, plus whether the class was cleanly resolvable. Injected by
@@ -181,11 +185,12 @@ func (a *Analyzer) checkBuiltinModuleShadow(name *ast.Identifier, declaredType *
 }
 
 func New() *Analyzer {
-	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, aliases: map[string]typeInfo{}, deprecatedFuncs: map[string]string{}, deprecatedClasses: map[string]string{}, deprecatedMethods: map[string]map[string]string{}}
+	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, enums: map[string]struct{}{}, aliases: map[string]typeInfo{}, typeParamScope: map[string]int{}, deprecatedFuncs: map[string]string{}, deprecatedClasses: map[string]string{}, deprecatedMethods: map[string]map[string]string{}}
 }
 
 func (a *Analyzer) Analyze(program *ast.Program) []Diagnostic {
 	a.collectTypeDeclarations(program.Statements)
+	a.validateTypeAnnotations(program.Statements)
 	a.validateTopLevelOverloads()
 	a.validateClassOverloads()
 	a.validateInterfaceOverloads()
@@ -380,8 +385,199 @@ func (a *Analyzer) collectTypeDeclarations(stmts []ast.Statement) {
 				info.methods[key] = append(info.methods[key], methodInfo)
 			}
 			a.interfaces[info.name] = info
+		case *ast.EnumStatement:
+			a.enums[stmt.Name.Value] = struct{}{}
 		}
 	}
+}
+
+// validateTypeAnnotations walks every statement and expression and
+// flags any bare type name in an annotation position that resolves to
+// no known type. Generic type-param names are scoped per signature.
+func (a *Analyzer) validateTypeAnnotations(stmts []ast.Statement) {
+	for _, stmt := range stmts {
+		a.validateStmtAnnotations(stmt)
+	}
+}
+
+func (a *Analyzer) validateStmtAnnotations(stmt ast.Statement) {
+	switch s := stmt.(type) {
+	case *ast.ExportStatement:
+		a.validateStmtAnnotations(s.Statement)
+	case *ast.TypeAliasStatement:
+		a.checkTypeRefExists(s.Type, "type alias "+s.Name.Value)
+	case *ast.DeclarationStatement:
+		a.checkTypeRefExists(s.Type, "declaration of "+s.Name.Value)
+		a.validateExprAnnotations(s.Value)
+	case *ast.FunctionStatement:
+		pop := a.pushTypeParams(s.Generics)
+		a.validateSignatureAnnotations(s.Parameters, s.ReturnType, "function "+nameOf(s.Name))
+		a.validateBlockAnnotations(s.Body)
+		pop()
+	case *ast.ClassStatement:
+		pop := a.pushTypeParams(s.Generics)
+		a.checkTypeRefExists(s.Extends, "extends clause of "+nameOf(s.Name))
+		for _, iface := range s.Implements {
+			a.checkTypeRefExists(iface, "implements clause of "+nameOf(s.Name))
+		}
+		for _, member := range s.Members {
+			a.validateStmtAnnotations(member)
+		}
+		if s.Destructor != nil {
+			a.validateBlockAnnotations(s.Destructor.Body)
+		}
+		pop()
+	case *ast.InterfaceStatement:
+		pop := a.pushTypeParams(s.Generics)
+		for _, parent := range s.Parents {
+			a.checkTypeRefExists(parent, "extends clause of "+nameOf(s.Name))
+		}
+		for _, sig := range s.Methods {
+			sp := a.pushTypeParams(sig.Generics)
+			a.validateSignatureAnnotations(sig.Parameters, sig.ReturnType, "interface method "+nameOf(sig.Name))
+			sp()
+		}
+		for _, def := range s.Defaults {
+			a.validateStmtAnnotations(def)
+		}
+		for _, field := range s.Fields {
+			a.validateStmtAnnotations(field)
+		}
+		pop()
+	case *ast.InitStatement:
+		a.validateBlockAnnotations(s.Body)
+	case *ast.ExpressionStatement:
+		a.validateExprAnnotations(s.Expression)
+	case *ast.ReturnStatement:
+		a.validateExprAnnotations(s.Value)
+	case *ast.YieldStatement:
+		a.validateExprAnnotations(s.Value)
+	case *ast.SimpleStatement:
+		a.validateExprAnnotations(s.Value)
+	case *ast.IfStatement:
+		a.validateExprAnnotations(s.Condition)
+		a.validateBlockAnnotations(s.Consequence)
+		for _, ei := range s.ElseIfs {
+			a.validateExprAnnotations(ei.Condition)
+			a.validateBlockAnnotations(ei.Body)
+		}
+		a.validateBlockAnnotations(s.Alternative)
+	case *ast.WhileStatement:
+		a.validateExprAnnotations(s.Condition)
+		a.validateBlockAnnotations(s.Body)
+	case *ast.ForStatement:
+		a.validateStmtAnnotations(s.Init)
+		a.validateExprAnnotations(s.Condition)
+		a.validateStmtAnnotations(s.Update)
+		a.validateBlockAnnotations(s.Body)
+	case *ast.WithStatement:
+		a.validateExprAnnotations(s.Value)
+		a.validateBlockAnnotations(s.Body)
+	case *ast.TryStatement:
+		a.validateBlockAnnotations(s.Body)
+		for _, catch := range s.Catches {
+			a.checkTypeRefExists(catch.Type, "catch clause")
+			a.validateBlockAnnotations(catch.Body)
+		}
+		a.validateBlockAnnotations(s.Finally)
+	case *ast.MatchStatement:
+		a.validateExprAnnotations(s.Expr)
+		for _, c := range s.Cases {
+			a.validateBlockAnnotations(c.Body)
+		}
+	case *ast.SelectStatement:
+		for _, c := range s.Cases {
+			a.validateBlockAnnotations(c.Body)
+		}
+		a.validateBlockAnnotations(s.Default)
+	case *ast.DestructuringStatement:
+		a.validateExprAnnotations(s.Value)
+	}
+}
+
+func (a *Analyzer) validateSignatureAnnotations(params []ast.Parameter, returnType *ast.TypeRef, context string) {
+	for _, p := range params {
+		a.checkTypeRefExists(p.Type, "parameter "+nameOf(p.Name)+" of "+context)
+		a.validateExprAnnotations(p.Default)
+	}
+	a.checkTypeRefExists(returnType, "return type of "+context)
+}
+
+func (a *Analyzer) validateBlockAnnotations(block *ast.BlockStatement) {
+	if block == nil {
+		return
+	}
+	for _, stmt := range block.Statements {
+		a.validateStmtAnnotations(stmt)
+	}
+}
+
+func (a *Analyzer) validateExprAnnotations(expr ast.Expression) {
+	switch e := expr.(type) {
+	case nil:
+		return
+	case *ast.CastExpression:
+		a.checkTypeRefExists(e.Type, "cast")
+		a.validateExprAnnotations(e.Value)
+	case *ast.PrefixExpression:
+		a.validateExprAnnotations(e.Right)
+	case *ast.PostfixExpression:
+		a.validateExprAnnotations(e.Left)
+	case *ast.InfixExpression:
+		a.validateExprAnnotations(e.Left)
+		a.validateExprAnnotations(e.Right)
+	case *ast.AssignmentExpression:
+		a.validateExprAnnotations(e.Left)
+		a.validateExprAnnotations(e.Value)
+	case *ast.SelectorExpression:
+		a.validateExprAnnotations(e.Object)
+	case *ast.IndexExpression:
+		a.validateExprAnnotations(e.Left)
+		a.validateExprAnnotations(e.Index)
+	case *ast.CallExpression:
+		a.validateExprAnnotations(e.Callee)
+		for _, arg := range e.Arguments {
+			a.validateExprAnnotations(arg.Value)
+		}
+	case *ast.ListLiteral:
+		for _, el := range e.Elements {
+			a.validateExprAnnotations(el)
+		}
+	case *ast.SetLiteral:
+		for _, el := range e.Elements {
+			a.validateExprAnnotations(el)
+		}
+	case *ast.DictLiteral:
+		for _, entry := range e.Entries {
+			a.validateExprAnnotations(entry.Key)
+			a.validateExprAnnotations(entry.Value)
+		}
+	case *ast.TernaryExpression:
+		a.validateExprAnnotations(e.Condition)
+		a.validateExprAnnotations(e.ThenExpr)
+		a.validateExprAnnotations(e.ElseExpr)
+	case *ast.RangeExpression:
+		a.validateExprAnnotations(e.Start)
+		a.validateExprAnnotations(e.End)
+		a.validateExprAnnotations(e.Step)
+	case *ast.PipeExpression:
+		a.validateExprAnnotations(e.Left)
+		a.validateExprAnnotations(e.Right)
+	case *ast.AwaitExpression:
+		a.validateExprAnnotations(e.Value)
+	case *ast.SpreadExpression:
+		a.validateExprAnnotations(e.Value)
+	case *ast.FunctionLiteral:
+		a.validateSignatureAnnotations(e.Parameters, e.ReturnType, "function literal")
+		a.validateBlockAnnotations(e.Body)
+	}
+}
+
+func nameOf(id *ast.Identifier) string {
+	if id == nil {
+		return ""
+	}
+	return id.Value
 }
 
 // castDunderExpectedReturn returns the declared-return-type a cast
@@ -603,7 +799,6 @@ func (a *Analyzer) analyzeDeclaration(stmt *ast.DeclarationStatement) {
 	var declared typeInfo
 	if stmt.Type != nil {
 		declared = a.typeInfoFromRef(stmt.Type)
-		a.checkTypeRefName(stmt.Type, stmt.Name.Value)
 	} else if stmt.Value != nil {
 		declared = a.expressionTypeName(stmt.Value)
 	}
@@ -622,11 +817,8 @@ func (a *Analyzer) analyzeDeclaration(stmt *ast.DeclarationStatement) {
 }
 
 // builtinTypeNames are the lower-case type names the language treats
-// as primitives. Lower-case type refs that aren't in this set, an
-// alias, a class, or an interface are flagged as unknown by
-// checkTypeRefName. The set is intentionally permissive (includes
-// pseudo-types like `iterable` and `callable`) so that legitimate
-// stdlib signatures parse without complaint.
+// as primitives. Includes pseudo-types like `iterable` and `callable`
+// so legitimate stdlib signatures resolve.
 var builtinTypeNames = map[string]struct{}{
 	"string": {}, "int": {}, "float": {}, "decimal": {}, "bool": {},
 	"bytes": {}, "list": {}, "dict": {}, "set": {}, "range": {},
@@ -635,11 +827,29 @@ var builtinTypeNames = map[string]struct{}{
 	"iterable": {}, "generator": {},
 }
 
+// ambientErrorClasses are the built-in error types every program may
+// reference without declaring them (mirrors the engine's
+// isBuiltinErrorClass).
+var ambientErrorClasses = map[string]struct{}{
+	"Error": {}, "RuntimeError": {}, "TypeError": {}, "ValueError": {},
+	"IOError": {}, "ParseError": {}, "MatchError": {}, "ImmutableError": {},
+	"PermissionError": {}, "AssertionError": {}, "FatalError": {},
+}
+
 func (a *Analyzer) isKnownTypeName(name string) bool {
 	if name == "" {
 		return true
 	}
 	if _, ok := builtinTypeNames[strings.ToLower(name)]; ok {
+		return true
+	}
+	if _, ok := ambientErrorClasses[name]; ok {
+		return true
+	}
+	if _, ok := ambientNativeTypeNames[name]; ok {
+		return true
+	}
+	if a.typeParamScope[name] > 0 {
 		return true
 	}
 	if _, ok := a.aliases[strings.ToLower(name)]; ok {
@@ -651,43 +861,55 @@ func (a *Analyzer) isKnownTypeName(name string) bool {
 	if _, ok := a.interfaces[name]; ok {
 		return true
 	}
+	if _, ok := a.enums[name]; ok {
+		return true
+	}
 	if _, ok := a.lookup(name); ok {
 		return true
 	}
 	return false
 }
 
-// checkTypeRefName flags a typed declaration whose type name is all
-// lower-case and not recognised. The lower-case scope deliberately
-// ignores PascalCase and single-uppercase identifiers so generic type
-// parameters (`T`, `U`) and yet-to-be-declared class names don't
-// false-positive. The diagnostic targets the common typo case where
-// two bare identifiers (`aaa bbb;`) parse as a typed declaration with
-// an unknown type.
-func (a *Analyzer) checkTypeRefName(ref *ast.TypeRef, declName string) {
-	if ref == nil || ref.Operator != "" || ref.ListAlias {
+// checkTypeRefExists recursively flags any bare type name in an
+// annotation that resolves to no known type. Module-qualified names
+// (containing a dot) are validated by the cross-module check layer.
+func (a *Analyzer) checkTypeRefExists(ref *ast.TypeRef, context string) {
+	if ref == nil {
 		return
 	}
+	if ref.Operator != "" {
+		a.checkTypeRefExists(ref.Left, context)
+		a.checkTypeRefExists(ref.Right, context)
+		return
+	}
+	for _, arg := range ref.Arguments {
+		a.checkTypeRefExists(arg, context)
+	}
 	name := ref.Name
-	if name == "" || !isAllLowerCase(name) {
+	if name == "" || strings.Contains(name, ".") {
 		return
 	}
 	if a.isKnownTypeName(name) {
 		return
 	}
-	a.errorAt(ref.Token, "unknown type %q in declaration of %s", name, declName)
+	a.errorAt(ref.Token, "unknown type %q in %s", name, context)
 }
 
-func isAllLowerCase(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r >= 'A' && r <= 'Z' {
-			return false
+// pushTypeParams adds generic type-param names to scope and returns a
+// function that removes them.
+func (a *Analyzer) pushTypeParams(generics []*ast.TypeParam) func() {
+	for _, g := range generics {
+		if g.Name != nil {
+			a.typeParamScope[g.Name.Value]++
 		}
 	}
-	return true
+	return func() {
+		for _, g := range generics {
+			if g.Name != nil {
+				a.typeParamScope[g.Name.Value]--
+			}
+		}
+	}
 }
 
 // Declare exposes the analyzer's binding-registration so REPL sessions

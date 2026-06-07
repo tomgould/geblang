@@ -1,5 +1,50 @@
 # Release Notes
 
+## 1.13.0
+
+### Standard library
+
+- New `image` module: a portable, native raster-image toolkit that needs no
+  system library. Decode PNG / JPEG / GIF / WebP from a file or bytes, create
+  blank images, and transform via resize (high-quality resampling), crop, and
+  90-degree rotation. Encode back to PNG / JPEG / GIF. Each transform returns a
+  new image; the source is left unchanged. Released through the `Image` class
+  plus `image.load`, `image.loadBytes`, and `image.blank`.
+- New `clib.zstd` module: Zstandard compression over the system libzstd, with
+  `compress(data, level = 3)` and `decompress(frame)`.
+- New `clib.magic` module: content-based file type and MIME detection over the
+  system libmagic, via `detect(path)`, `mime(path)`, and a `Magic` class for
+  reuse and buffer input.
+- New `clib.systemd` module (Linux): the sd_notify readiness protocol
+  (`ready`, `watchdog`, `status`, and raw `notify`) and structured journald
+  logging (`journal`), over the system libsystemd.
+- New `clib.curses` module: a full-screen terminal UI surface over ncurses
+  (screen lifecycle, cursor movement and output, key input, colour pairs, and
+  text attributes). Single-owner: drive it from one task.
+
+The `clib.*` modules load system shared libraries through the in-process FFI, so
+they require FFI to be enabled in `geblang.yaml` (or `--allow-ffi`). Each is
+safe to call from any async task except where its docs note a per-handle lock or
+a single-owner constraint.
+
+### Tooling
+
+- Unknown type names in annotations are now flagged. A bare type name used in
+  any annotation position (parameter, return, field, variable, generic argument,
+  nullable, union, catch clause, or `as` cast) that resolves to no known type
+  (primitive, declared class, interface, enum, type alias, in-scope generic type
+  param, or built-in error class) is an error at both `geblang check` and compile
+  time, so a typo in a type hint is caught before it runs. A module-qualified
+  type name whose module does not export that name is reported by `geblang check`
+  as a warning.
+
+### Documentation
+
+- The internals reference now documents how the FFI is implemented and its
+  threading and thread-safety model: FFI calls run on the calling goroutine's OS
+  thread, native library state is the caller's responsibility, and `errno` is
+  valid only immediately after a call.
+
 ## 1.12.0
 
 ### Classes

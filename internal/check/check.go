@@ -143,6 +143,7 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 		diags = append(diags, checkImports(file, program, opts)...)
 		if opts.CrossModule {
 			diags = append(diags, checkCrossModuleSymbols(file, program, opts)...)
+			diags = append(diags, checkCrossModuleTypes(file, program, opts)...)
 		}
 	}
 	if opts.Lint {

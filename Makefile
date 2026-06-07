@@ -40,6 +40,8 @@ test-go:
 test-lang: build
 	./$(BINARY) test \
 	  --allow-ffi 'libm.so.*' --allow-ffi 'libc.so.*' --allow-ffi 'libsqlite3*' \
+	  --allow-ffi 'libzstd*' --allow-ffi 'libsystemd*' --allow-ffi 'libmagic*' \
+	  --allow-ffi 'libncursesw*' --allow-ffi 'libncurses*' --allow-ffi 'libtinfo*' \
 	  tests/
 
 # test-pgvector spins up a pgvector Postgres container (pgvector/pgvector:pg16),

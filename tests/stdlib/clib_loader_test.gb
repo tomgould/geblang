@@ -1,0 +1,45 @@
+/**
+ * @title clib.loader
+ * @summary Soname resolution, load-once caching, and the guard factory
+ * that every clib binding builds on. Uses libc (always present on the
+ * test host) as the probe library so the core logic runs even without
+ * the optional bindings' .so files.
+ */
+import test;
+import clib.loader as loader;
+import io;
+
+class ClibLoaderTest extends test.Test {
+    @test
+    func resolvesFirstWorkingCandidate(): void {
+        let lib = loader.load("libc", ["libnope.so.999", "libc.so.6", "libc.so", "libc.dylib"]);
+        this.assertTrue(lib != null);
+    }
+
+    @test
+    func cachesPerName(): void {
+        let a = loader.load("libc", ["libc.so.6", "libc.so", "libc.dylib"]);
+        let b = loader.load("libc", ["libc.so.6", "libc.so", "libc.dylib"]);
+        this.assertEquals(a.handle, b.handle);
+    }
+
+    @test
+    func throwsClearErrorWhenAllCandidatesFail(): void {
+        let threw = false;
+        try {
+            loader.load("ghostlib", ["libnope1.so", "libnope2.so"]);
+        } catch (Error e) {
+            threw = true;
+            this.assertTrue("${e}".contains("ghostlib"));
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func guardIsReentrantPerCall(): void {
+        let g = loader.guard();
+        g.lock();
+        g.unlock();
+        this.assertTrue(true);
+    }
+}

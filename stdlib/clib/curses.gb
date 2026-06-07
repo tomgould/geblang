@@ -1,0 +1,166 @@
+module clib.curses;
+
+/*
+ * SINGLE-OWNER: ncurses is global, single-screen, single-thread state.
+ * Drive this module from ONE task only. Concurrent use is unsupported
+ * and cannot be made safe by serialising.
+ */
+
+import ffi;
+import clib.loader as loader;
+
+let _CANDIDATES = ["libncursesw.so.6", "libncurses.so.6", "libncursesw.so", "libncurses.so", "libncurses.dylib"];
+
+/* ABI colour constants (stable ncurses values). */
+export const int BLACK   = 0;
+export const int RED     = 1;
+export const int GREEN   = 2;
+export const int YELLOW  = 3;
+export const int BLUE    = 4;
+export const int MAGENTA = 5;
+export const int CYAN    = 6;
+export const int WHITE   = 7;
+
+/* ABI attribute bitmask constants (ncurses chtype bits). */
+export const int A_NORMAL    = 0;
+export const int A_BOLD      = 2097152;
+export const int A_UNDERLINE = 131072;
+export const int A_REVERSE   = 262144;
+export const int A_DIM       = 1048576;
+export const int A_BLINK     = 524288;
+
+/* stdscr pointer; non-null after init(). */
+?int _stdscr = null;
+
+func _lib(): ffi.Library {
+    return loader.load("ncurses", _CANDIDATES);
+}
+
+func _requireInit(): void {
+    if (_stdscr == null) {
+        throw RuntimeError("clib.curses: call init() first");
+    }
+}
+
+/** Initialise the screen (initscr + cbreak + noecho + keypad). */
+export func init(): void {
+    let lib = _lib();
+    let initscr = lib.symbol("initscr", [], ffi.PTR);
+    let cbreak  = lib.symbol("cbreak",  [], ffi.INT32);
+    let noecho  = lib.symbol("noecho",  [], ffi.INT32);
+    let keypad  = lib.symbol("keypad",  [ffi.PTR, ffi.INT32], ffi.INT32);
+    let ptr = initscr() as int;
+    _stdscr = ptr;
+    cbreak();
+    noecho();
+    keypad(ptr, 1);
+}
+
+/** End the curses session (endwin). Safe to call before init. */
+export func end(): void {
+    let lib = _lib();
+    let endwin = lib.symbol("endwin", [], ffi.INT32);
+    endwin();
+    _stdscr = null;
+}
+
+/** Write a string at the current cursor position. */
+export func addStr(string s): void {
+    _requireInit();
+    let lib = _lib();
+    let addstr = lib.symbol("addstr", [ffi.CSTRING], ffi.INT32);
+    addstr(s);
+}
+
+/** Write a string at position (y, x). */
+export func mvAddStr(int y, int x, string s): void {
+    _requireInit();
+    let lib = _lib();
+    let mvaddstr = lib.symbol("mvaddstr", [ffi.INT32, ffi.INT32, ffi.CSTRING], ffi.INT32);
+    mvaddstr(y, x, s);
+}
+
+/** Move the cursor to (y, x). */
+export func move(int y, int x): void {
+    _requireInit();
+    let lib = _lib();
+    let fn_move = lib.symbol("move", [ffi.INT32, ffi.INT32], ffi.INT32);
+    fn_move(y, x);
+}
+
+/** Clear the screen. */
+export func clear(): void {
+    _requireInit();
+    let lib = _lib();
+    let fn_clear = lib.symbol("clear", [], ffi.INT32);
+    fn_clear();
+}
+
+/** Refresh the display. */
+export func refresh(): void {
+    _requireInit();
+    let lib = _lib();
+    let fn_refresh = lib.symbol("refresh", [], ffi.INT32);
+    fn_refresh();
+}
+
+/** Read a single keystroke (blocking). Returns the key code. */
+export func getCh(): int {
+    _requireInit();
+    let lib = _lib();
+    let getch = lib.symbol("getch", [], ffi.INT32);
+    return getch() as int;
+}
+
+/** Number of rows in the terminal window. */
+export func maxY(): int {
+    _requireInit();
+    let lib = _lib();
+    let getmaxy = lib.symbol("getmaxy", [ffi.PTR], ffi.INT32);
+    return getmaxy(_stdscr as int) as int;
+}
+
+/** Number of columns in the terminal window. */
+export func maxX(): int {
+    _requireInit();
+    let lib = _lib();
+    let getmaxx = lib.symbol("getmaxx", [ffi.PTR], ffi.INT32);
+    return getmaxx(_stdscr as int) as int;
+}
+
+/** Enable colour support. Call before initPair. */
+export func startColor(): void {
+    _requireInit();
+    let lib = _lib();
+    let start_color = lib.symbol("start_color", [], ffi.INT32);
+    start_color();
+}
+
+/** Define colour pair id with foreground fg and background bg. */
+export func initPair(int id, int fg, int bg): void {
+    _requireInit();
+    let lib = _lib();
+    let init_pair = lib.symbol("init_pair", [ffi.INT16, ffi.INT16, ffi.INT16], ffi.INT32);
+    init_pair(id, fg, bg);
+}
+
+/** Enable the given attribute bits. */
+export func attrOn(int attrs): void {
+    _requireInit();
+    let lib = _lib();
+    let attron = lib.symbol("attron", [ffi.INT32], ffi.INT32);
+    attron(attrs);
+}
+
+/** Disable the given attribute bits. */
+export func attrOff(int attrs): void {
+    _requireInit();
+    let lib = _lib();
+    let attroff = lib.symbol("attroff", [ffi.INT32], ffi.INT32);
+    attroff(attrs);
+}
+
+/** Returns the attribute value for colour pair n (COLOR_PAIR(n) = n * 256). */
+export func colorPair(int n): int {
+    return n * 256;
+}

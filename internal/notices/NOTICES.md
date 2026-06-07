@@ -121,6 +121,7 @@ The following components are licensed under the BSD 3-Clause License:
 - `golang.org/x/crypto` v0.52.0 - Copyright 2009 The Go Authors.
 - `golang.org/x/exp` v0.0.0-20250305212735-054e65f0b394 - Copyright 2009 The
   Go Authors. All rights reserved.
+- `golang.org/x/image` v0.41.0 - Copyright 2009 The Go Authors.
 - `golang.org/x/mod` v0.35.0 - Copyright 2009 The Go Authors.
 - `golang.org/x/net` v0.54.0 - Copyright 2009 The Go Authors.
 - `golang.org/x/sync` v0.20.0 - Copyright 2009 The Go Authors.

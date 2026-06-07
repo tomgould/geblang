@@ -13,6 +13,7 @@ import (
 // surfaced in editor completion, so the catalog need not list them.
 var internalCatalogModules = map[string]bool{
 	"ffinative": true, "procnative": true, "sshnative": true,
+	"imagenative": true,
 }
 
 // isInternalMember reports members that exist on the engine but are

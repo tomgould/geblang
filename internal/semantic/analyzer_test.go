@@ -982,3 +982,87 @@ let int n = take(b);
 		t.Fatalf("expected user-generic invariance to reject Box<Dog> -> Box<Animal>, got: %v", diagnostics)
 	}
 }
+
+func hasUnknownTypeDiag(diags []semantic.Diagnostic) bool {
+	for _, d := range diags {
+		if strings.Contains(d.Message, "unknown type") {
+			return true
+		}
+	}
+	return false
+}
+
+// TestUndefinedTypeErrorsByPosition checks that a non-existent bare
+// type name is flagged in each annotation position.
+func TestUndefinedTypeErrorsByPosition(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"param", `func f(Nope x): void {}`},
+		{"return", `func f(): Nope {}`},
+		{"field", `class C { Nope x; }`},
+		{"method param", `class C { func m(Nope x): void {} }`},
+		{"method return", `class C { func m(): Nope {} }`},
+		{"var decl", `Nope x = 0;`},
+		{"generic arg", `list<Nope> xs = [];`},
+		{"nested generic arg", `dict<string, Nope> d = {};`},
+		{"nullable", `?Nope x = null;`},
+		{"union", `func f(): int | Nope { return 0; }`},
+		{"catch", `try {} catch (Nope e) {}`},
+		{"cast", `let y = 1 as Nope;`},
+		{"interface method", `interface I { func m(Nope x): void; }`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diags := analyzeInput(t, tc.input)
+			if !hasUnknownTypeDiag(diags) {
+				t.Fatalf("expected unknown-type error for %s, got: %v", tc.name, diags)
+			}
+		})
+	}
+}
+
+// TestUndefinedTypeAcceptsValidTypes checks that legitimate type
+// references in annotation positions are not flagged.
+func TestUndefinedTypeAcceptsValidTypes(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"primitive param", `func f(int x): void {}`},
+		{"forward class", `func f(Later x): void {}
+class Later {}`},
+		{"interface", `interface Shape {}
+func f(Shape x): void {}`},
+		{"enum forward", `func f(Color c): void {}
+enum Color { Red, Green }`},
+		{"alias", `type Id = int;
+func f(Id x): void {}`},
+		{"generic real", `class Real {}
+list<Real> xs = [];`},
+		{"generic primitive", `list<int> xs = [];`},
+		{"nullable primitive", `?int x = null;`},
+		{"union real", `class Real {}
+func f(): int | Real { return 0; }`},
+		{"catch error class", `try {} catch (Error e) {}`},
+		{"cast real", `class Real {}
+let r = Real();
+let y = r as Real;`},
+		{"cast primitive", `let y = 1 as int;`},
+		{"func type param", `func f<T>(T x): T { return x; }`},
+		{"class type param", `class Box<T> { T value; func get(): T { return this.value; } }`},
+		{"method type param", `class C { func m<U>(U x): U { return x; } }`},
+		{"qualified skipped", `import foo;
+func f(foo.Bar x): void {}`},
+		{"runtime error class param", `func f(RuntimeError e): void {}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diags := analyzeInput(t, tc.input)
+			if hasUnknownTypeDiag(diags) {
+				t.Fatalf("unexpected unknown-type error for %s: %v", tc.name, diags)
+			}
+		})
+	}
+}

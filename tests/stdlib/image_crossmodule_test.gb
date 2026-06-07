@@ -1,0 +1,22 @@
+/**
+ * @title image cross-boundary
+ * @summary An Image handle passed through a helper retains identity and
+ * dimensions, exercising handle flow across a call boundary and a
+ * module-qualified parameter type on both backends.
+ */
+import test;
+import image;
+
+func widthOf(image.Image img): int {
+    return img.width();
+}
+
+class ImageCrossTest extends test.Test {
+    @test
+    func handlePassesThroughHelper(): void {
+        let img = image.blank(33, 17);
+        this.assertEquals(33 as int, widthOf(img));
+        let resized = img.resize(8, 9);
+        this.assertEquals(8 as int, widthOf(resized));
+    }
+}

@@ -1,0 +1,30 @@
+/* clib.curses example - requires a real terminal.
+ * Run with: geblang --allow-ffi 'libncursesw*' --allow-ffi 'libncurses*' examples/clib_curses.gb
+ */
+import clib.curses as curses;
+
+curses.init();
+curses.startColor();
+curses.initPair(1, curses.GREEN, curses.BLACK);
+curses.initPair(2, curses.YELLOW, curses.BLACK);
+
+let rows = curses.maxY();
+let cols = curses.maxX();
+
+let title = "Welcome to Geblang clib.curses";
+let sub   = "Press any key to exit.";
+let tr = rows / 2 - 1;
+let tc = (cols - title.length()) / 2;
+let sr = rows / 2 + 1;
+let sc = (cols - sub.length()) / 2;
+
+curses.clear();
+curses.attrOn(curses.colorPair(1) | curses.A_BOLD);
+curses.mvAddStr(tr, tc, title);
+curses.attrOff(curses.colorPair(1) | curses.A_BOLD);
+curses.attrOn(curses.colorPair(2));
+curses.mvAddStr(sr, sc, sub);
+curses.attrOff(curses.colorPair(2));
+curses.refresh();
+curses.getCh();
+curses.end();

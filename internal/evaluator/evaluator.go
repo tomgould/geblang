@@ -9132,6 +9132,17 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"getOrSet":      e.registryBuiltin("store", "getOrSet"),
 			"compareAndSet": e.registryBuiltin("store", "compareAndSet"),
 		},
+		"imagenative": {
+			"blank":  e.registryBuiltin("imagenative", "blank"),
+			"decode": e.registryBuiltin("imagenative", "decode"),
+			"width":  e.registryBuiltin("imagenative", "width"),
+			"height": e.registryBuiltin("imagenative", "height"),
+			"resize": e.registryBuiltin("imagenative", "resize"),
+			"crop":   e.registryBuiltin("imagenative", "crop"),
+			"rotate": e.registryBuiltin("imagenative", "rotate"),
+			"encode": e.registryBuiltin("imagenative", "encode"),
+			"close":  e.registryBuiltin("imagenative", "close"),
+		},
 		"errors": {
 			"new":           e.registryBuiltin("errors", "new"),
 			"message":       e.registryBuiltin("errors", "message"),

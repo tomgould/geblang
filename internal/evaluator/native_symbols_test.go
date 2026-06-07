@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"geblang/internal/native"
+	"geblang/internal/runtime"
+	"geblang/internal/semantic"
 )
 
 // Every module the engine exposes natively must be recognised by
@@ -108,5 +110,35 @@ func TestNativeModuleNamesAreBacked(t *testing.T) {
 	if len(stale) > 0 {
 		sort.Strings(stale)
 		t.Fatalf("NativeModuleNames entries with no Go-native surface and no stdlib source (stale): %v", stale)
+	}
+}
+
+// Every native-module class/interface export usable as a bare type name
+// must be in semantic.AmbientNativeTypeNames, or the single-file
+// unknown-type check false-positives on the documented bare idiom (e.g.
+// `func(Request req): Response`). Guards against a new native type export
+// drifting from the analyzer's ambient set.
+func TestAmbientNativeTypesCoverEngineTypeExports(t *testing.T) {
+	e := New(os.NewFile(0, os.DevNull))
+	_ = e.installBuiltinTypes(runtime.NewEnvironment())
+	known := semantic.AmbientNativeTypeNames()
+	missing := map[string]struct{}{}
+	for module := range native.NativeModuleNames {
+		for name, value := range e.builtinModuleValue(module, "").Exports {
+			switch value.(type) {
+			case *runtime.Class, *runtime.Interface:
+				if _, ok := known[name]; !ok {
+					missing[name] = struct{}{}
+				}
+			}
+		}
+	}
+	if len(missing) > 0 {
+		names := make([]string, 0, len(missing))
+		for n := range missing {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		t.Fatalf("native type exports missing from semantic.ambientNativeTypeNames: %v", names)
 	}
 }

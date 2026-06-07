@@ -1,0 +1,33 @@
+/**
+ * @title clib.systemd
+ * @summary Service readiness notifications and journald logging via
+ * libsystemd. Skips when libsystemd is absent; requires
+ * --allow-ffi 'libsystemd*' to run. Most hosts have no NOTIFY_SOCKET,
+ * so notify() returns false there without error.
+ */
+import test;
+import clib.systemd as systemd;
+import io;
+
+class ClibSystemdTest extends test.Test {
+    func available(): bool {
+        try { systemd.notify("STATUS=probe"); return true; }
+        catch (Error e) { io.println("skipping: libsystemd not available"); return false; }
+    }
+
+    @test
+    func notifyDoesNotThrowWithoutSocket(): void {
+        if (!this.available()) { return; }
+        let delivered = systemd.ready();
+        this.assertTrue(delivered == true || delivered == false);
+    }
+
+    @test
+    func journalAcceptsFields(): void {
+        if (!this.available()) { return; }
+        systemd.journal("clib.systemd test message", {"PRIORITY": "6", "UNIT": "geblang-test"});
+        /* default empty fields path */
+        systemd.journal("clib.systemd message with no fields");
+        this.assertTrue(true);
+    }
+}

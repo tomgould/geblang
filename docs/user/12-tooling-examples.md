@@ -119,6 +119,27 @@ $ geblang check app.gb
 app.gb:1:1: error[type]: unknown bytecode function notAThing
 ```
 
+A bare type name in an annotation - parameter, return, field, variable, generic
+argument, nullable, union, catch clause, or `as` cast - that resolves to no
+known type (primitive, declared class, interface, enum, type alias, in-scope
+generic type param, or built-in error class) is an error, at both check and
+compile time, so a typo in a type hint is caught before you run:
+
+```sh
+$ geblang check app.gb
+app.gb:1:8: error[semantic]: unknown type "Reqeust" in parameter req of function handle
+```
+
+A module-qualified type name (`mod.TypeName`) whose module is a resolved import
+but does not export that name is also flagged, as a `geblang check` warning (the
+runtime treats an unknown qualified annotation as unconstrained rather than
+rejecting it, so it is advisory rather than a hard error):
+
+```sh
+$ geblang check app.gb
+app.gb:8:13: warning[type]: image has no exported type NopeType
+```
+
 `--no-lint` disables warning rules while keeping parse, semantic, import, and
 module-layout validation. JSON output includes `severity`, `rule`, `file`,
 `line`, `column`, and `message` fields so tools can route errors and warnings

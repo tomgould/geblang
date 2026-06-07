@@ -1,0 +1,120 @@
+/**
+ * @title clib.curses
+ * @summary ncurses terminal UI binding. Default test resolves symbols only
+ * (TTY-safe). Set GEBLANG_CURSES_INTERACTIVE in a real terminal to run the
+ * interactive test. Requires --allow-ffi 'libncursesw*' --allow-ffi 'libncurses*'.
+ */
+import test;
+import clib.curses as curses;
+import ffi;
+import sys;
+import io;
+
+class ClibCursesTest extends test.Test {
+    func available(): bool {
+        try {
+            let lib = ffi.dlopen("libncursesw.so.6");
+            return true;
+        } catch (Error e) {
+            try {
+                let lib = ffi.dlopen("libncurses.so.6");
+                return true;
+            } catch (Error e2) {
+                io.println("skipping: libncurses not available");
+                return false;
+            }
+        }
+    }
+
+    /* Resolve the key symbols without ever calling initscr. TTY-safe. */
+    @test
+    func symbolResolution(): void {
+        if (!this.available()) { return; }
+        let lib = ffi.dlopen("libncursesw.so.6");
+        let initscr = lib.symbol("initscr", [], ffi.PTR);
+        let endwin = lib.symbol("endwin", [], ffi.INT32);
+        let addstr = lib.symbol("addstr", [ffi.CSTRING], ffi.INT32);
+        let refresh = lib.symbol("refresh", [], ffi.INT32);
+        let getch = lib.symbol("getch", [], ffi.INT32);
+        let clear = lib.symbol("clear", [], ffi.INT32);
+        let move = lib.symbol("move", [ffi.INT32, ffi.INT32], ffi.INT32);
+        let mvaddstr = lib.symbol("mvaddstr", [ffi.INT32, ffi.INT32, ffi.CSTRING], ffi.INT32);
+        let cbreak = lib.symbol("cbreak", [], ffi.INT32);
+        let noecho = lib.symbol("noecho", [], ffi.INT32);
+        let startColor = lib.symbol("start_color", [], ffi.INT32);
+        let initPair = lib.symbol("init_pair", [ffi.INT16, ffi.INT16, ffi.INT16], ffi.INT32);
+        let attron = lib.symbol("attron", [ffi.INT32], ffi.INT32);
+        let attroff = lib.symbol("attroff", [ffi.INT32], ffi.INT32);
+        let keypad = lib.symbol("keypad", [ffi.PTR, ffi.INT32], ffi.INT32);
+        let getmaxy = lib.symbol("getmaxy", [ffi.PTR], ffi.INT32);
+        let getmaxx = lib.symbol("getmaxx", [ffi.PTR], ffi.INT32);
+        this.assertTrue(true);
+    }
+
+    /* Verify colour constants are exported with correct ABI values. */
+    @test
+    func colourConstants(): void {
+        this.assertEquals(0, curses.BLACK);
+        this.assertEquals(1, curses.RED);
+        this.assertEquals(2, curses.GREEN);
+        this.assertEquals(3, curses.YELLOW);
+        this.assertEquals(4, curses.BLUE);
+        this.assertEquals(5, curses.MAGENTA);
+        this.assertEquals(6, curses.CYAN);
+        this.assertEquals(7, curses.WHITE);
+    }
+
+    /* Verify attribute constants are exported with correct ABI values. */
+    @test
+    func attrConstants(): void {
+        this.assertEquals(0, curses.A_NORMAL);
+        this.assertEquals(2097152, curses.A_BOLD);
+        this.assertEquals(131072, curses.A_UNDERLINE);
+        this.assertEquals(262144, curses.A_REVERSE);
+        this.assertEquals(1048576, curses.A_DIM);
+        this.assertEquals(524288, curses.A_BLINK);
+    }
+
+    /* Verify colorPair helper returns n*256. */
+    @test
+    func colorPairHelper(): void {
+        this.assertEquals(0, curses.colorPair(0));
+        this.assertEquals(256, curses.colorPair(1));
+        this.assertEquals(512, curses.colorPair(2));
+        this.assertEquals(2048, curses.colorPair(8));
+    }
+
+    /* Verify that calling a screen function before init() throws. */
+    @test
+    func uninitScreenFunctionThrows(): void {
+        if (!this.available()) { return; }
+        let threw = false;
+        try { curses.refresh(); }
+        catch (Error e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    /* Interactive test: real init/addStr/refresh/end cycle.
+     * Only runs when GEBLANG_CURSES_INTERACTIVE is set in a real terminal. */
+    @test
+    func interactiveCycle(): void {
+        let gate = sys.getenv("GEBLANG_CURSES_INTERACTIVE");
+        if (gate == null) {
+            io.println("skipping: set GEBLANG_CURSES_INTERACTIVE in a real terminal");
+            return;
+        }
+        if (!this.available()) { return; }
+        curses.init();
+        curses.clear();
+        let y = curses.maxY();
+        let x = curses.maxX();
+        let msg = "Hello from clib.curses";
+        let row = y / 2;
+        let col = (x - msg.length()) / 2;
+        curses.mvAddStr(row, col, msg);
+        curses.refresh();
+        curses.getCh();
+        curses.end();
+        this.assertTrue(true);
+    }
+}

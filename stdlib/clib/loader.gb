@@ -1,0 +1,44 @@
+module clib.loader;
+
+import ffi;
+import async.sync as sync;
+
+/**
+ * Shared support for clib.* C-library bindings: soname resolution
+ * against a candidate list, one dlopen per process per library name,
+ * and a Mutex factory for serialising calls on non-thread-safe native
+ * handles. Internal to the clib bindings; not a documented user API.
+ */
+
+let _cache = {};
+
+/**
+ * Open `name`'s shared object, trying `candidates` in order and
+ * returning the first that opens. Cached per `name`. Throws a single
+ * actionable error naming the library when every candidate fails.
+ */
+export func load(string name, list<string> candidates): ffi.Library {
+    if (_cache.hasKey(name)) {
+        return _cache.get(name) as ffi.Library;
+    }
+    ?ffi.Library opened = null;
+    for (cand in candidates) {
+        try {
+            opened = ffi.dlopen(cand as string);
+            break;
+        } catch (Error e) {
+            /* try next candidate */
+        }
+    }
+    if (opened == null) {
+        throw RuntimeError("clib." + name + ": could not load native library (tried: " + candidates.join(", ") + "). Install it and allow its path in geblang.yaml permissions.ffi (or pass --allow-ffi).");
+    }
+    _cache.set(name, opened as ffi.Library);
+    return opened as ffi.Library;
+}
+
+/** A fresh Mutex for a binding to serialise calls on a stateful,
+ *  non-thread-safe native handle. */
+export func guard(): sync.Mutex {
+    return sync.Mutex();
+}

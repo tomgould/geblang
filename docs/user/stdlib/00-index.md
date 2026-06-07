@@ -116,6 +116,17 @@ Operations, introspection, and extension:
 - [Vector Search and RAG](vectorstore-rag.html): in-memory and SQLite-backed
   vector stores with similarity search, plus retrieval-augmented-generation
   helpers (chunking, indexing, retrieval, prompt-context assembly).
+- [Zstd Compression](clib-zstd.html): fast Zstandard compression and
+  decompression via libzstd, with FFI capability gating.
+- [systemd Integration](clib-systemd.html): sd_notify readiness protocol
+  (READY, WATCHDOG, STATUS) and structured journald logging. Linux only.
+- [File Type and MIME Detection](clib-magic.html): content-based file type
+  and MIME detection via libmagic, accurate even when extensions are missing.
+- [Terminal UI](clib-curses.html): full-screen terminal UI via libncurses -
+  window init, cursor movement, keyboard input, and colour/attribute control.
+- [Image](image.html): portable native raster-image module (PNG, JPEG, GIF,
+  WebP decode; PNG/JPEG/GIF encode); load, blank, resize, crop, rotate, and
+  encode with no system library required.
 - [Utility Modules](utilities.html): miscellaneous result, option, and helper
   modules that do not fit one larger category.
 

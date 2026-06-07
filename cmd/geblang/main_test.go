@@ -2548,3 +2548,40 @@ func TestReplInsertSemicolonsRespectsNesting(t *testing.T) {
 		}
 	}
 }
+
+// TestUndefinedBareTypeFailsBothBackends proves the analyzer's
+// unknown-type error gates compilation on both the VM (`geblang <file>`)
+// and the evaluator (`geblang test <file>`), and that a valid program
+// runs clean on both.
+func TestUndefinedBareTypeFailsBothBackends(t *testing.T) {
+	gebBin := filepath.Join(t.TempDir(), "geblang")
+	if out, err := exec.Command("go", "build", "-o", gebBin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build geblang: %v\n%s", err, out)
+	}
+
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.gb")
+	if err := os.WriteFile(bad, []byte("func f(NotARealType x): void {}\nf(1);\n"), 0o644); err != nil {
+		t.Fatalf("write bad: %v", err)
+	}
+	good := filepath.Join(dir, "good.gb")
+	if err := os.WriteFile(good, []byte("import io;\nfunc f(int x): void { io.println(\"${x}\"); }\nf(1);\n"), 0o644); err != nil {
+		t.Fatalf("write good: %v", err)
+	}
+
+	for _, args := range [][]string{{bad}, {"test", bad}} {
+		out, err := exec.Command(gebBin, args...).CombinedOutput()
+		if err == nil {
+			t.Fatalf("expected %v to fail, got success:\n%s", args, out)
+		}
+		if !strings.Contains(string(out), "unknown type") || !strings.Contains(string(out), "NotARealType") {
+			t.Fatalf("expected unknown-type error for %v, got:\n%s", args, out)
+		}
+	}
+
+	for _, args := range [][]string{{good}, {"test", good}} {
+		if out, err := exec.Command(gebBin, args...).CombinedOutput(); err != nil {
+			t.Fatalf("expected %v to succeed, got: %v\n%s", args, err, out)
+		}
+	}
+}

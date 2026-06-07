@@ -1,0 +1,65 @@
+/**
+ * @title image
+ * @summary Native image module: blank/load/resize/crop/rotate/encode
+ * round-trips. Fixture-free - images are built with image.blank and
+ * round-tripped through encode/loadBytes so the test is deterministic
+ * on both backends.
+ */
+import test;
+import image;
+
+class ImageTest extends test.Test {
+    @test
+    func blankDimensions(): void {
+        let img = image.blank(20, 10);
+        this.assertEquals(20 as int, img.width());
+        this.assertEquals(10 as int, img.height());
+    }
+
+    @test
+    func resizeChangesDimensions(): void {
+        let img = image.blank(20, 10);
+        let small = img.resize(5, 5);
+        this.assertEquals(5 as int, small.width());
+        this.assertEquals(5 as int, small.height());
+        /* source unchanged */
+        this.assertEquals(20 as int, img.width());
+    }
+
+    @test
+    func cropRectangle(): void {
+        let img = image.blank(20, 10);
+        let c = img.crop(2, 2, 6, 4);
+        this.assertEquals(6 as int, c.width());
+        this.assertEquals(4 as int, c.height());
+    }
+
+    @test
+    func rotateSwapsAxesForOddQuarters(): void {
+        let img = image.blank(20, 10);
+        let r = img.rotate(90);
+        this.assertEquals(10 as int, r.width());
+        this.assertEquals(20 as int, r.height());
+        let r2 = img.rotate(180);
+        this.assertEquals(20 as int, r2.width());
+        this.assertEquals(10 as int, r2.height());
+    }
+
+    @test
+    func encodeDecodeRoundTrip(): void {
+        let img = image.blank(12, 7);
+        let png = img.encode("png");
+        this.assertTrue(png.length() > 0);
+        let back = image.loadBytes(png);
+        this.assertEquals(12 as int, back.width());
+        this.assertEquals(7 as int, back.height());
+    }
+
+    @test
+    func rotateRejectsNonQuarterTurns(): void {
+        let img = image.blank(4, 4);
+        let threw = false;
+        try { img.rotate(45); } catch (Error e) { threw = true; }
+        this.assertTrue(threw);
+    }
+}
