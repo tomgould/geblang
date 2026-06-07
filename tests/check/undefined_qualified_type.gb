@@ -1,0 +1,6 @@
+/* A module-qualified type name whose module is a resolved import but does
+   not export that name is flagged by geblang check (error[type]). image is
+   a real stdlib module; NopeType is not one of its exports. */
+import image;
+
+func resize(image.NopeType img): void {}

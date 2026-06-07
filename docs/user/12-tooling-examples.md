@@ -131,13 +131,11 @@ app.gb:1:8: error[semantic]: unknown type "Reqeust" in parameter req of function
 ```
 
 A module-qualified type name (`mod.TypeName`) whose module is a resolved import
-but does not export that name is also flagged, as a `geblang check` warning (the
-runtime treats an unknown qualified annotation as unconstrained rather than
-rejecting it, so it is advisory rather than a hard error):
+but does not export that name is also flagged, by `geblang check`:
 
 ```sh
 $ geblang check app.gb
-app.gb:8:13: warning[type]: image has no exported type NopeType
+app.gb:8:13: error[type]: image has no exported type NopeType
 ```
 
 `--no-lint` disables warning rules while keeping parse, semantic, import, and

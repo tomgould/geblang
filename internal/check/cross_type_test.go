@@ -26,6 +26,11 @@ func TestUndefinedQualifiedTypeFlagsMissingProjectType(t *testing.T) {
 	if !hasDiag(diags, "type", "shapes has no exported type Nope") {
 		t.Fatalf("expected qualified-type diagnostic, got %+v", diags)
 	}
+	for _, d := range diags {
+		if strings.Contains(d.Message, "has no exported type") && d.Severity != SeverityError {
+			t.Fatalf("qualified-type diagnostic must be an error, got severity %v", d.Severity)
+		}
+	}
 }
 
 func TestUndefinedQualifiedTypeAllowsRealType(t *testing.T) {

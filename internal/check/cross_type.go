@@ -66,13 +66,13 @@ func (c *crossTypeCollector) visit(ref *ast.TypeRef) {
 		return
 	}
 	c.diags = append(c.diags, Diagnostic{
-		Line:   ref.Token.Line,
+		Line: ref.Token.Line,
 		Column: ref.Token.Column,
-		// Advisory, not an error: an unknown qualified type annotation is
-		// not rejected by either backend at runtime (it is treated as
-		// unconstrained), so per the static-analysis contract it is a
-		// warning, never a hard error.
-		Severity: SeverityWarning,
+		// An unknown qualified type is uninhabitable at runtime: no value
+		// matches it, so every call that exercises the annotation is
+		// rejected on both backends. Same epistemic status as the
+		// unknown-member (P1) and unknown-method (P2) checks, so error.
+		Severity: SeverityError,
 		Rule:     "type",
 		Message:  fmt.Sprintf("%s has no exported type %s", alias.canonical, member),
 	})

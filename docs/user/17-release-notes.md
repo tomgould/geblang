@@ -35,8 +35,7 @@ a single-owner constraint.
   (primitive, declared class, interface, enum, type alias, in-scope generic type
   param, or built-in error class) is an error at both `geblang check` and compile
   time, so a typo in a type hint is caught before it runs. A module-qualified
-  type name whose module does not export that name is reported by `geblang check`
-  as a warning.
+  type name whose module does not export that name is flagged by `geblang check`.
 
 ### Documentation
 
