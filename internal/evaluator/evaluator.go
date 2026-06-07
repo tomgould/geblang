@@ -44,6 +44,7 @@ import (
 
 	"geblang/internal/ast"
 	"geblang/internal/concurrent"
+	"geblang/internal/desugar"
 	"geblang/internal/ffi"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
@@ -690,6 +691,34 @@ func (e *Evaluator) invokeInstanceMethod(instance *runtime.Instance, method stri
 	return result, true, nil
 }
 
+// displayString renders a value for interpolation/println via __string when
+// defined (VM-owned instances dispatch through the bridge), else Inspect.
+func (e *Evaluator) displayString(value runtime.Value) (string, error) {
+	instance, ok := value.(*runtime.Instance)
+	if !ok {
+		return value.Inspect(), nil
+	}
+	if result, handled, err := e.invokeInstanceMethod(instance, "__string", nil); err != nil {
+		return "", err
+	} else if handled {
+		if err := checkCastDunderReturn("string", result); err != nil {
+			return "", thrownError{value: e.withTrace(runtime.Error{Class: "RuntimeError", Message: err.Error()})}
+		}
+		return result.(runtime.String).Value, nil
+	}
+	if e.vmDispatcher != nil && e.vmDispatcher.HasInstanceMethod(instance, "__string") {
+		result, err := e.vmDispatcher.CallInstanceMethod(instance, "__string", nil)
+		if err != nil {
+			return "", err
+		}
+		if err := checkCastDunderReturn("string", result); err != nil {
+			return "", thrownError{value: e.withTrace(runtime.Error{Class: "RuntimeError", Message: err.Error()})}
+		}
+		return result.(runtime.String).Value, nil
+	}
+	return value.Inspect(), nil
+}
+
 func (e *Evaluator) SetMaxCallDepth(limit int) {
 	e.maxCallDepth = limit
 }
@@ -825,12 +854,18 @@ func (e *Evaluator) Eval(program *ast.Program) (result Result, err error) {
 			err = cleanupErr
 		}
 	}()
+	if err := desugar.Dataclasses(program); err != nil {
+		return Result{}, err
+	}
+	if err := desugar.Memoize(program); err != nil {
+		return Result{}, err
+	}
 	env := runtime.NewEnvironment()
 	if err := e.installBuiltinTypes(env); err != nil {
 		return Result{}, err
 	}
 	e.pushDeferFrame()
-	sig, err := e.evalStatements(program.Statements, env)
+	sig, err := e.evalTopLevelStatements(program.Statements, env)
 	if err != nil {
 		return Result{}, err
 	}
@@ -1124,22 +1159,63 @@ func cleanupProcess(process *processHandle) {
 
 func (e *Evaluator) evalStatements(stmts []ast.Statement, env *runtime.Environment) (signal, error) {
 	for _, stmt := range stmts {
-		e.callDebugHook(stmt, env, "step")
-		sig, err := e.evalStatement(stmt, env)
-		if err != nil {
-			var thrown thrownError
-			if errors.As(err, &thrown) {
-				errValue := e.withTrace(thrown.value)
-				return signal{kind: "throw", thrown: &errValue}, nil
-			}
-			errValue := e.withTrace(runtime.NewRecoverableError(err))
-			return signal{kind: "throw", thrown: &errValue}, nil
-		}
-		if sig.kind != "" || sig.exited {
+		if sig, stop := e.evalStatementInList(stmt, env); stop {
 			return sig, nil
 		}
 	}
 	return signal{}, nil
+}
+
+func (e *Evaluator) evalStatementInList(stmt ast.Statement, env *runtime.Environment) (signal, bool) {
+	e.callDebugHook(stmt, env, "step")
+	sig, err := e.evalStatement(stmt, env)
+	if err != nil {
+		var thrown thrownError
+		if errors.As(err, &thrown) {
+			errValue := e.withTrace(thrown.value)
+			return signal{kind: "throw", thrown: &errValue}, true
+		}
+		errValue := e.withTrace(runtime.NewRecoverableError(err))
+		return signal{kind: "throw", thrown: &errValue}, true
+	}
+	if sig.kind != "" || sig.exited {
+		return sig, true
+	}
+	return signal{}, false
+}
+
+// evalTopLevelStatements runs declarations (in source order) before imperative
+// statements so top-level code can call a function declared later, matching the
+// VM's compile-time hoisting.
+func (e *Evaluator) evalTopLevelStatements(stmts []ast.Statement, env *runtime.Environment) (signal, error) {
+	for _, stmt := range stmts {
+		if !isHoistedDeclaration(stmt) {
+			continue
+		}
+		if sig, stop := e.evalStatementInList(stmt, env); stop {
+			return sig, nil
+		}
+	}
+	for _, stmt := range stmts {
+		if isHoistedDeclaration(stmt) {
+			continue
+		}
+		if sig, stop := e.evalStatementInList(stmt, env); stop {
+			return sig, nil
+		}
+	}
+	return signal{}, nil
+}
+
+func isHoistedDeclaration(stmt ast.Statement) bool {
+	switch s := stmt.(type) {
+	case *ast.ModuleStatement, *ast.ImportStatement, *ast.FromImportStatement,
+		*ast.TypeAliasStatement, *ast.FunctionStatement:
+		return true
+	case *ast.ExportStatement:
+		return isHoistedDeclaration(s.Statement)
+	}
+	return false
 }
 
 func (e *Evaluator) evalImportStatement(stmt *ast.ImportStatement, env *runtime.Environment) (signal, error) {
@@ -1367,7 +1443,7 @@ func (e *Evaluator) loadUserModule(canonical, alias string) (*runtime.Module, er
 	previousPaths := e.modulePaths
 	moduleDir := filepath.Dir(path)
 	e.modulePaths = append([]string{moduleDir}, e.modulePaths...)
-	sig, err := e.evalStatements(program.Statements, moduleEnv)
+	sig, err := e.evalTopLevelStatements(program.Statements, moduleEnv)
 	e.modulePaths = previousPaths
 	if err != nil {
 		return nil, fmt.Errorf("evaluate module %s: %w", canonical, err)
@@ -1409,6 +1485,12 @@ func (e *Evaluator) parseAnalyzedModule(canonical string, path string) (*ast.Pro
 		if len(errorMessages) > 0 {
 			return nil, fmt.Errorf("analyze module %s: %s", canonical, strings.Join(errorMessages, "\n"))
 		}
+	}
+	if err := desugar.Dataclasses(program); err != nil {
+		return nil, fmt.Errorf("desugar module %s: %w", canonical, err)
+	}
+	if err := desugar.Memoize(program); err != nil {
+		return nil, fmt.Errorf("desugar module %s: %w", canonical, err)
 	}
 	e.modulePrograms[path] = program
 	return program, nil
@@ -2158,7 +2240,11 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			if s, ok := val.(runtime.String); ok {
 				sb.WriteString(s.Value)
 			} else {
-				sb.WriteString(val.Inspect())
+				text, err := e.displayString(val)
+				if err != nil {
+					return nil, err
+				}
+				sb.WriteString(text)
 			}
 		}
 		return runtime.String{Value: sb.String()}, nil
@@ -5442,7 +5528,15 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 			if strings.HasPrefix(member.Kind, "static ") {
 				return nil, fmt.Errorf("only static const and static let class members are supported")
 			}
-			class.Fields = append(class.Fields, runtime.Field{Name: member.Name.Value, Type: member.Type, Default: member.Value, Decorators: member.Decorators})
+			fieldDecs := member.Decorators
+			if hasImmutableFieldDecoratorEval(member.Decorators) {
+				if member.Value != nil {
+					return nil, fmt.Errorf("@immutable field %q may not declare a default value", member.Name.Value)
+				}
+				class.ImmutableFields = append(class.ImmutableFields, member.Name.Value)
+				fieldDecs = withoutImmutableDecoratorEval(member.Decorators)
+			}
+			class.Fields = append(class.Fields, runtime.Field{Name: member.Name.Value, Type: member.Type, Default: member.Value, Decorators: fieldDecs})
 		case *ast.FunctionStatement:
 			target := "method"
 			if member.Static {
@@ -5560,6 +5654,9 @@ func (e *Evaluator) instantiateClass(class *runtime.Class, args []runtime.Value)
 	}
 	if class.Immutable {
 		instance.Frozen = true
+	}
+	for _, f := range class.ImmutableFields {
+		instance.LockField(f)
 	}
 	if class.Destructor != nil {
 		e.destructibleInstances = append(e.destructibleInstances, instance)
@@ -5727,6 +5824,9 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 		if class.Immutable {
 			instance.Frozen = true
 		}
+		for _, f := range class.ImmutableFields {
+			instance.LockField(f)
+		}
 		if class.Destructor != nil {
 			e.destructibleInstances = append(e.destructibleInstances, instance)
 		}
@@ -5741,6 +5841,9 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 	if class.Immutable {
 		instance.Frozen = true
 	}
+	for _, f := range class.ImmutableFields {
+		instance.LockField(f)
+	}
 	if class.Destructor != nil {
 		e.destructibleInstances = append(e.destructibleInstances, instance)
 	}
@@ -5754,15 +5857,26 @@ func (e *Evaluator) applyAutoParentConstructor(instance *runtime.Instance, const
 	if evaluatorContainsParentConstructorCall(constructor.Body) {
 		return nil
 	}
-	parentConstructor, err := selectOverload(instance.Class.Parent.Name, instance.Class.Parent.Constructors, nil)
+	parent := instance.Class.Parent
+	parentConstructor, err := selectOverload(parent.Name, parent.Constructors, nil)
 	if err != nil {
 		return err
 	}
-	if err := e.applyAutoParentConstructor(&runtime.Instance{Class: instance.Class.Parent, Fields: instance.Fields, TypeBindings: instance.TypeBindings}, parentConstructor); err != nil {
+	if instance.LockedFields == nil {
+		instance.LockedFields = map[string]bool{}
+	}
+	// Share LockedFields with the throwaway so grandparent locks land on the real instance.
+	throwaway := &runtime.Instance{Class: parent, Fields: instance.Fields, LockedFields: instance.LockedFields, TypeBindings: instance.TypeBindings}
+	if err := e.applyAutoParentConstructor(throwaway, parentConstructor); err != nil {
 		return err
 	}
-	_, err = e.applyFunctionWithThis(parentConstructor, nil, instance)
-	return err
+	if _, err := e.applyFunctionWithThis(parentConstructor, nil, instance); err != nil {
+		return err
+	}
+	for _, f := range parent.ImmutableFields {
+		instance.LockField(f)
+	}
+	return nil
 }
 
 func evaluatorContainsParentConstructorCall(block *ast.BlockStatement) bool {
@@ -5912,6 +6026,26 @@ func evaluatorExpressionContainsParentConstructorCall(expr ast.Expression) bool 
 			evaluatorExpressionContainsParentConstructorCall(expr.ElseExpr)
 	}
 	return false
+}
+
+func hasImmutableFieldDecoratorEval(decorators []ast.Decorator) bool {
+	for _, dec := range decorators {
+		if dec.Name != nil && dec.Name.Value == "immutable" && len(dec.Arguments) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func withoutImmutableDecoratorEval(decorators []ast.Decorator) []ast.Decorator {
+	out := make([]ast.Decorator, 0, len(decorators))
+	for _, dec := range decorators {
+		if dec.Name != nil && dec.Name.Value == "immutable" && len(dec.Arguments) == 0 {
+			continue
+		}
+		out = append(out, dec)
+	}
+	return out
 }
 
 func (e *Evaluator) applyFieldDecorators(class *runtime.Class, name string, value runtime.Value, env *runtime.Environment) (runtime.Value, error) {
@@ -7400,6 +7534,9 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 		if err != nil {
 			return nil, err
 		}
+		for _, f := range parentClass.ImmutableFields {
+			this.LockField(f)
+		}
 		return runtime.Null{}, nil
 	}
 	if ident, ok := call.Callee.(*ast.Identifier); ok && ident.Value == "typeof" {
@@ -8038,7 +8175,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 	return map[string]map[string]builtinFunc{
 		"io": {
 			"print": func(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-				text, err := singlePrintableValue(call, args)
+				text, err := e.singlePrintableValue(call, args)
 				if err != nil {
 					return nil, err
 				}
@@ -8046,7 +8183,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 				return runtime.Null{}, err
 			},
 			"println": func(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-				text, err := singlePrintableValue(call, args)
+				text, err := e.singlePrintableValue(call, args)
 				if err != nil {
 					return nil, err
 				}
@@ -8116,7 +8253,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 				return runtime.Null{}, err
 			},
 			"stderrPrintln": func(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-				text, err := singlePrintableValue(call, args)
+				text, err := e.singlePrintableValue(call, args)
 				if err != nil {
 					return nil, err
 				}
@@ -26095,6 +26232,9 @@ func (e *Evaluator) assignSelector(expr *ast.SelectorExpression, newValue runtim
 		if instance.Frozen {
 			return thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen instance of " + instance.Class.Name}}
 		}
+		if instance.LockedFields[expr.Name.Value] {
+			return thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify immutable field " + expr.Name.Value + " of " + instance.Class.Name}}
+		}
 		transformed, err := e.applyFieldDecorators(instance.Class, expr.Name.Value, newValue, env)
 		if err != nil {
 			return err
@@ -27757,11 +27897,11 @@ func selectorName(expr ast.Expression) (string, string, bool) {
 	return ident.Value, selector.Name.Value, true
 }
 
-func singlePrintableValue(call *ast.CallExpression, args []runtime.Value) (string, error) {
+func (e *Evaluator) singlePrintableValue(call *ast.CallExpression, args []runtime.Value) (string, error) {
 	if len(args) != 1 {
 		return "", fmt.Errorf("%s expects exactly one argument", call.Callee.String())
 	}
-	return args[0].Inspect(), nil
+	return e.displayString(args[0])
 }
 
 func singleIntValue(call *ast.CallExpression, args []runtime.Value) (int64, error) {
@@ -28710,7 +28850,8 @@ func dictKey(value runtime.Value) string {
 	case *runtime.Interface:
 		return fmt.Sprintf("interface:%p", value)
 	case *runtime.Instance:
-		return fmt.Sprintf("instance:%p", value)
+		// Delegate so a frozen instance keys by value identically to the VM.
+		return native.DictKey(value)
 	default:
 		return fmt.Sprintf("%T:%p", value, &value)
 	}

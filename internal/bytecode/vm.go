@@ -148,6 +148,10 @@ type ModuleLoader interface {
 	// instance.Class.Name, which is necessary because instance is a
 	// subclass declared in another chunk.
 	CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error)
+	// ImmutableFieldsForModuleClass returns the set-once `@immutable`
+	// field names declared on a class in another module, so a subclass
+	// can lock them after its cross-module parent constructor runs.
+	ImmutableFieldsForModuleClass(module string, className string) []string
 	// FindClassByName looks up a class by its bare (unqualified) name
 	// across every loaded module. Returns nil when nothing matches.
 	// Used by reflect.class so framework code can resolve a user
@@ -203,6 +207,10 @@ type callFrame struct {
 	negateReturn     bool
 	isErrorClass     bool
 	isImmutableClass bool
+	// Set-once `@immutable` fields this constructor frame locks on its instance
+	// when it returns.
+	immutableFieldsToLock []string
+	lockInstance          *runtime.Instance
 	// isDestructibleConstructor is true when this frame is a class
 	// constructor for a class that declares a `~ClassName()`
 	// destructor. OpReturn registers the constructed instance in
@@ -532,6 +540,18 @@ func (vm *VM) invokeInstanceMethod(instance *runtime.Instance, method string, ar
 	if instance == nil || instance.Class == nil {
 		return nil, false, nil
 	}
+	// Cross-module instance: its class lives in another chunk, so dispatch
+	// through the module loader (mirrors the == operator's cross-module path).
+	if instance.Class.Module != vm.moduleName {
+		if vm.moduleLoader == nil || len(instance.Class.Methods[strings.ToLower(method)]) == 0 {
+			return nil, false, nil
+		}
+		result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, method, instance, args)
+		if err != nil {
+			return nil, false, err
+		}
+		return result, true, nil
+	}
 	classInfo, ok := vm.classInfo(instance.Class.Name)
 	if !ok {
 		return nil, false, nil
@@ -545,6 +565,21 @@ func (vm *VM) invokeInstanceMethod(instance *runtime.Instance, method string, ar
 		return nil, false, err
 	}
 	return result, true, nil
+}
+
+// displayString renders a value for println/print via __string when defined, else Inspect.
+func (vm *VM) displayString(value runtime.Value) (string, error) {
+	if instance, ok := value.(*runtime.Instance); ok {
+		if result, handled, err := vm.invokeInstanceMethod(instance, "__string", nil); err != nil {
+			return "", err
+		} else if handled {
+			if err := checkCastDunderReturn("string", result); err != nil {
+				return "", err
+			}
+			return result.(runtime.String).Value, nil
+		}
+	}
+	return value.Inspect(), nil
 }
 
 func NewVMWithModuleLoader(chunk Chunk, stdout io.Writer, loader ModuleLoader) *VM {
@@ -1457,11 +1492,8 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
-			// A definition is a fresh binding: replace the slot outright rather
-			// than writing into any cell a previous execution boxed. This makes
-			// a `let` re-run per loop iteration capture a distinct value (the
-			// evaluator's semantics), while OpSetLocal (assignment, loop-var
-			// update) still writes through a captured cell.
+			// Fresh binding: replace the slot rather than writing into a cell a
+			// prior iteration boxed, so a re-run `let` captures a distinct value.
 			if err := vm.defineLocalVM(slot, value); err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
@@ -2224,13 +2256,17 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
+			text, err := vm.displayString(value)
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
 			if vm.shouldRouteDirectPrint() {
-				if _, err := vm.statefulNativeCall("io", "println", []runtime.Value{value}, nil); err != nil {
+				if _, err := vm.statefulNativeCall("io", "println", []runtime.Value{runtime.String{Value: text}}, nil); err != nil {
 					return vm.runtimeError(instruction, "%s", err.Error())
 				}
 				continue
 			}
-			if _, err := fmt.Fprintln(vm.stdout, value.Inspect()); err != nil {
+			if _, err := fmt.Fprintln(vm.stdout, text); err != nil {
 				return err
 			}
 		case OpPrint:
@@ -2238,13 +2274,17 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(instruction, "%s", err.Error())
 			}
+			text, err := vm.displayString(value)
+			if err != nil {
+				return vm.runtimeError(instruction, "%s", err.Error())
+			}
 			if vm.shouldRouteDirectPrint() {
-				if _, err := vm.statefulNativeCall("io", "print", []runtime.Value{value}, nil); err != nil {
+				if _, err := vm.statefulNativeCall("io", "print", []runtime.Value{runtime.String{Value: text}}, nil); err != nil {
 					return vm.runtimeError(instruction, "%s", err.Error())
 				}
 				continue
 			}
-			if _, err := fmt.Fprint(vm.stdout, value.Inspect()); err != nil {
+			if _, err := fmt.Fprint(vm.stdout, text); err != nil {
 				return err
 			}
 		case OpJump:
@@ -2294,6 +2334,8 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			returnOverride := slot.returnOverride
 			isErrorClass := slot.isErrorClass
 			isImmutableClass := slot.isImmutableClass
+			immutableFieldsToLock := slot.immutableFieldsToLock
+			lockInstance := slot.lockInstance
 			isDestructibleConstructor := slot.isDestructibleConstructor
 			negateReturn := slot.negateReturn
 			vm.popLocalsStackFrame(slot)
@@ -2301,12 +2343,14 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			slot.generator = nil
 			slot.generatorDone = nil
 			slot.typeBindings = nil
+			slot.immutableFieldsToLock = nil
+			slot.lockInstance = nil
 			vm.frames = vm.frames[:frameIdx]
 			// Hot path: a regular return - no override, no error-class
-			// reification, no negate, no immutable freeze, not a
+			// reification, no negate, no immutable freeze/field-lock, not a
 			// destructor-bearing constructor. Push the VMValue
 			// straight back without converting through runtime.Value.
-			if returnOverride == nil && !isErrorClass && !isImmutableClass && !negateReturn && !isDestructibleConstructor {
+			if returnOverride == nil && !isErrorClass && !isImmutableClass && immutableFieldsToLock == nil && !negateReturn && !isDestructibleConstructor {
 				vm.pushVM(valueVM)
 				if inlineExitDepth >= 0 && len(vm.frames) <= inlineExitDepth {
 					return nil
@@ -2346,6 +2390,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if isImmutableClass {
 				if inst, ok := value.(*runtime.Instance); ok {
 					inst.Frozen = true
+				}
+			}
+			if len(immutableFieldsToLock) > 0 && lockInstance != nil {
+				for _, f := range immutableFieldsToLock {
+					lockInstance.LockField(f)
 				}
 			}
 			if negateReturn {
@@ -5303,6 +5352,8 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	frame.negateReturn = false
 	frame.isErrorClass = false
 	frame.isImmutableClass = false
+	frame.immutableFieldsToLock = nil
+	frame.lockInstance = nil
 	frame.isDestructibleConstructor = false
 	frame.typeBindings = nil
 	frame.generator = nil
@@ -5673,6 +5724,8 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	frame.negateReturn = false
 	frame.isErrorClass = false
 	frame.isImmutableClass = false
+	frame.immutableFieldsToLock = nil
+	frame.lockInstance = nil
 	frame.isDestructibleConstructor = false
 	frame.shared = function.SharesParentFrame
 	if function.IsGenerator && vm.generatorExecution {
@@ -5979,6 +6032,8 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	frame.negateReturn = false
 	frame.isErrorClass = false
 	frame.isImmutableClass = false
+	frame.immutableFieldsToLock = nil
+	frame.lockInstance = nil
 	frame.isDestructibleConstructor = false
 	frame.shared = function.SharesParentFrame
 	if function.IsGenerator && vm.generatorExecution {
@@ -6338,6 +6393,9 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 			if classInfo.Immutable {
 				instance.Frozen = true
 			}
+			for _, f := range classInfo.ImmutableFields {
+				instance.LockField(f)
+			}
 			if classInfo.DestructorIndex >= 0 {
 				vm.destructibleInstances = append(vm.destructibleInstances, instance)
 			}
@@ -6360,6 +6418,10 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 	}
 	if classInfo.Immutable && len(vm.frames) > 0 {
 		vm.frames[len(vm.frames)-1].isImmutableClass = true
+	}
+	if len(classInfo.ImmutableFields) > 0 && len(vm.frames) > 0 {
+		vm.frames[len(vm.frames)-1].immutableFieldsToLock = classInfo.ImmutableFields
+		vm.frames[len(vm.frames)-1].lockInstance = instance
 	}
 	// Mark the frame so OpReturn registers the constructed instance
 	// in the destructible-instances list once construction succeeds.
@@ -6706,6 +6768,9 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 	if instance.Frozen {
 		return vm.throwTyped(instruction, ip, "ImmutableError", "cannot modify frozen instance of "+instance.Class.Name)
 	}
+	if instance.LockedFields[name] {
+		return vm.throwTyped(instruction, ip, "ImmutableError", "cannot modify immutable field "+name+" of "+instance.Class.Name)
+	}
 	if classInfo, ok := vm.classInfo(instance.Class.Name); ok {
 		transformed, err := vm.applyFieldDecorators(instruction, classInfo, name, value)
 		if err != nil {
@@ -6831,6 +6896,9 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 			if _, err := vm.moduleLoader.CallParentInModule(module, parentClass, parentClass, instance, args); err != nil {
 				return 0, vm.runtimeError(instruction, "%s", err.Error())
 			}
+			for _, f := range vm.moduleLoader.ImmutableFieldsForModuleClass(module, parentClass) {
+				instance.LockField(f)
+			}
 			vm.push(runtime.Null{})
 			return ip, nil
 		}
@@ -6843,6 +6911,9 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 		if argc != 0 {
 			return 0, vm.runtimeError(instruction, "%s expects no constructor arguments", parent.Name)
 		}
+		for _, f := range parent.ImmutableFields {
+			instance.LockField(f)
+		}
 		vm.push(runtime.Null{})
 		return ip, nil
 	}
@@ -6851,7 +6922,12 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 		return 0, err
 	}
 	callArgs := append([]runtime.Value{instance}, args...)
-	return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, runtime.Null{})
+	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, runtime.Null{})
+	if err == nil && len(parent.ImmutableFields) > 0 && len(vm.frames) > 0 {
+		vm.frames[len(vm.frames)-1].immutableFieldsToLock = parent.ImmutableFields
+		vm.frames[len(vm.frames)-1].lockInstance = instance
+	}
+	return nextIP, err
 }
 
 func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
@@ -9099,23 +9175,31 @@ func (vm *VM) runDefers(instruction Instruction) error {
 		action := actions[i]
 		switch action.kind {
 		case deferKindPrint:
+			text, err := vm.displayString(action.value)
+			if err != nil {
+				return vm.runtimeError(instruction, "deferred print: %v", err)
+			}
 			if vm.shouldRouteDirectPrint() {
-				if _, err := vm.statefulNativeCall("io", "print", []runtime.Value{action.value}, nil); err != nil {
+				if _, err := vm.statefulNativeCall("io", "print", []runtime.Value{runtime.String{Value: text}}, nil); err != nil {
 					return vm.runtimeError(instruction, "deferred print: %v", err)
 				}
 				continue
 			}
-			if _, err := fmt.Fprint(vm.stdout, action.value.Inspect()); err != nil {
+			if _, err := fmt.Fprint(vm.stdout, text); err != nil {
 				return err
 			}
 		case deferKindPrintln:
+			text, err := vm.displayString(action.value)
+			if err != nil {
+				return vm.runtimeError(instruction, "deferred println: %v", err)
+			}
 			if vm.shouldRouteDirectPrint() {
-				if _, err := vm.statefulNativeCall("io", "println", []runtime.Value{action.value}, nil); err != nil {
+				if _, err := vm.statefulNativeCall("io", "println", []runtime.Value{runtime.String{Value: text}}, nil); err != nil {
 					return vm.runtimeError(instruction, "deferred println: %v", err)
 				}
 				continue
 			}
-			if _, err := fmt.Fprintln(vm.stdout, action.value.Inspect()); err != nil {
+			if _, err := fmt.Fprintln(vm.stdout, text); err != nil {
 				return err
 			}
 		case deferKindNative:
@@ -16551,9 +16635,8 @@ func (vm *VM) setLocalVM(slot int64, value runtime.VMValue) error {
 	return nil
 }
 
-// defineLocalVM binds slot to a fresh value, replacing any prior value
-// (including a boxed cell captured by an earlier closure). Used by
-// OpDefineLocal so a re-executed `let` starts a new binding.
+// defineLocalVM binds slot to a fresh value, replacing any cell an earlier
+// closure boxed, so a re-executed `let` starts a new binding.
 func (vm *VM) defineLocalVM(slot int64, value runtime.VMValue) error {
 	idx := vm.currentFrameBP + int(slot)
 	if idx >= len(vm.localsStack) {

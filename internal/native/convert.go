@@ -130,6 +130,7 @@ const (
 	dictKeyPrefixSet     = "S"
 	dictKeyPrefixDict    = "D"
 	dictKeyPrefixRange   = "r"
+	dictKeyPrefixFrozen  = "O"
 )
 
 func DictKey(value runtime.Value) string {
@@ -210,6 +211,23 @@ func DictKey(value runtime.Value) string {
 	case *runtime.Interface:
 		return fmt.Sprintf("interface:%p", value)
 	case *runtime.Instance:
+		// Frozen instances key by value (fields can't change); mutable ones by identity.
+		if value.Frozen {
+			names := make([]string, 0, len(value.Fields))
+			for name := range value.Fields {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			parts := make([]string, len(names))
+			for i, name := range names {
+				parts[i] = name + "=" + DictKey(value.Fields[name])
+			}
+			className := ""
+			if value.Class != nil {
+				className = value.Class.Name
+			}
+			return dictKeyPrefixFrozen + className + "{" + strings.Join(parts, ",") + "}"
+		}
 		return fmt.Sprintf("instance:%p", value)
 	default:
 		return fmt.Sprintf("%T:%p", value, &value)

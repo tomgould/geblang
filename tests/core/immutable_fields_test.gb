@@ -1,0 +1,93 @@
+/**
+ * @title Field-level @immutable (set-once fields) (1.12.0)
+ * @summary A field annotated `@immutable` is writable during construction and
+ * locked afterwards: a later assignment throws. Mutable siblings stay writable,
+ * the lock is inherited, and a default on an `@immutable` field is rejected.
+ */
+import test;
+
+class Account {
+    @immutable string id;
+    string label;
+
+    func Account(string id, string label) {
+        this.id = id;
+        this.label = label;
+    }
+}
+
+class Base {
+    @immutable string key;
+    func Base(string key = "auto") { this.key = key; }
+}
+
+class Sub extends Base {
+    string note;
+    func Sub(string key) { parent(key); this.note = "n"; }
+}
+
+class TamperSub extends Base {
+    func TamperSub(string key) { parent(key); this.key = "evil"; }
+}
+
+class AutoSub extends Base {
+    string note;
+    func AutoSub() { this.note = "auto"; }
+}
+
+class IntenseConstruction {
+    @immutable int x;
+    func IntenseConstruction() {
+        this.x = 1;
+        this.x = 2;   /* rewrites allowed while constructing */
+    }
+}
+
+class ImmutableFieldsTest extends test.Test {
+
+    @test
+    func setOnceInConstructorReadsBack(): void {
+        let a = Account("a1", "Checking");
+        this.assertEquals("a1", a.id);
+        this.assertEquals("Checking", a.label);
+    }
+
+    @test
+    func mutableSiblingStaysWritable(): void {
+        let a = Account("a1", "Checking");
+        a.label = "Savings";
+        this.assertEquals("Savings", a.label);
+    }
+
+    @test
+    func writeAfterConstructionThrows(): void {
+        let a = Account("a1", "Checking");
+        this.assertThrows(func(): void { a.id = "a2"; });
+    }
+
+    @test
+    func rewriteDuringConstructionAllowed(): void {
+        this.assertEquals(2, IntenseConstruction().x);
+    }
+
+    @test
+    func inheritedImmutableFieldIsLocked(): void {
+        let s = Sub("k1");
+        this.assertEquals("k1", s.key);
+        this.assertEquals("n", s.note);
+        this.assertThrows(func(): void { s.key = "k2"; });
+    }
+
+    @test
+    func subclassCannotRewriteParentFieldAfterParentCall(): void {
+        this.assertThrows(func(): void { TamperSub("k1"); });
+    }
+
+    @test
+    func autoParentConstructorLocksInheritedField(): void {
+        let a = AutoSub();
+        this.assertEquals("auto", a.key);
+        this.assertEquals("auto", a.note);
+        this.assertThrows(func(): void { a.key = "x"; });
+    }
+}

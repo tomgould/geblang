@@ -216,6 +216,44 @@
         ],
         "description": "@immutable class"
     },
+    "@dataclass": {
+        "prefix": "dataclass",
+        "body": [
+            "@dataclass",
+            "class ${1:Name} {",
+            "\t${2:int} ${3:field};",
+            "$0",
+            "}"
+        ],
+        "description": "@dataclass value class (generates constructor, ==, __string, with)"
+    },
+    "@override method": {
+        "prefix": "override",
+        "body": [
+            "@override",
+            "func ${1:name}(${2}): ${3:void} {",
+            "\t$0",
+            "}"
+        ],
+        "description": "@override method (asserts it overrides an ancestor)"
+    },
+    "@deprecated": {
+        "prefix": "deprecated",
+        "body": [
+            "@deprecated(\"${1:use ... instead}\")"
+        ],
+        "description": "@deprecated marker for a function, method, or class"
+    },
+    "@memoize function": {
+        "prefix": "memoize",
+        "body": [
+            "@memoize",
+            "func ${1:name}(${2}): ${3:int} {",
+            "\t$0",
+            "}"
+        ],
+        "description": "@memoize a pure top-level function (caches results by args)"
+    },
     "Defer call": {
         "prefix": "defer",
         "body": [

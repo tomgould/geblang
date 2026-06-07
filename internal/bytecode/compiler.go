@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"geblang/internal/ast"
+	"geblang/internal/desugar"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
 )
@@ -86,6 +87,12 @@ type finalizerContext struct {
 var AssertionsDisabled bool
 
 func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk, error) {
+	if err := desugar.Dataclasses(program); err != nil {
+		return Chunk{}, err
+	}
+	if err := desugar.Memoize(program); err != nil {
+		return Chunk{}, err
+	}
 	c := &Compiler{
 		chunk: Chunk{
 			SourceHash: SourceHash(source),
@@ -1085,9 +1092,8 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	c.chunk.Functions[index].Async = stmt.Async
 	c.inFunc++
 	c.returnTypes = append(c.returnTypes, c.chunk.Functions[index].ReturnType)
-	// Isolate loop/finalizer context: a `return` inside this body must emit
-	// only this function's finalizers, never the enclosing function's (e.g. an
-	// outer for-loop's iterator close, whose slot lives in a different frame).
+	// Isolate finalizers so a `return` here emits only this function's, not an
+	// enclosing for-loop's iterator close (whose slot lives in another frame).
 	savedLoops, savedFinalizers := c.loops, c.finalizers
 	c.loops, c.finalizers = nil, nil
 	defer func() { c.loops, c.finalizers = savedLoops, savedFinalizers }()
@@ -1228,7 +1234,15 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 			 * re-reading the AST. Frameworks consume them as
 			 * metadata - they are never auto-executed on field
 			 * access or assignment. */
-			class.FieldDecorators = appendFieldDecorators(class.FieldDecorators, len(class.FieldNames)-1, member.Decorators)
+			fieldDecs := member.Decorators
+			if hasImmutableFieldDecorator(member.Decorators) {
+				if member.Value != nil {
+					return c.withStatementLocation(member, fmt.Errorf("@immutable field %q may not declare a default value", member.Name.Value))
+				}
+				class.ImmutableFields = append(class.ImmutableFields, member.Name.Value)
+				fieldDecs = withoutImmutableDecorator(member.Decorators)
+			}
+			class.FieldDecorators = appendFieldDecorators(class.FieldDecorators, len(class.FieldNames)-1, fieldDecs)
 			if member.Value == nil {
 				class.FieldDefaults = append(class.FieldDefaults, -1)
 				continue
@@ -3768,9 +3782,7 @@ func (c *Compiler) compileFunctionLiteral(expr *ast.FunctionLiteral) error {
 
 	c.inFunc++
 	c.returnTypes = append(c.returnTypes, fn.ReturnType)
-	// Isolate loop/finalizer context (see compileFunctionWithPrologue): a
-	// `return` in this closure must not emit the enclosing for-loop's
-	// iterator close, whose slot belongs to a different frame.
+	// Isolate finalizers (see compileFunctionWithPrologue).
 	savedLoops, savedFinalizers := c.loops, c.finalizers
 	c.loops, c.finalizers = nil, nil
 	defer func() { c.loops, c.finalizers = savedLoops, savedFinalizers }()
@@ -6087,6 +6099,30 @@ func typeNameFromExpression(expr ast.Expression) (string, error) {
 // hasn't yet introduced the constants their decorator args
 // reference; the runtime simply sees an empty decorator list for
 // that field.
+// hasImmutableFieldDecorator reports whether a field is annotated `@immutable`
+// (no arguments) - the set-once field marker.
+func hasImmutableFieldDecorator(decorators []ast.Decorator) bool {
+	for _, dec := range decorators {
+		if dec.Name != nil && dec.Name.Value == "immutable" && len(dec.Arguments) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutImmutableDecorator returns decorators with the bare `@immutable`
+// removed, so it is not also stored as a reflectable/callable field decorator.
+func withoutImmutableDecorator(decorators []ast.Decorator) []ast.Decorator {
+	out := make([]ast.Decorator, 0, len(decorators))
+	for _, dec := range decorators {
+		if dec.Name != nil && dec.Name.Value == "immutable" && len(dec.Arguments) == 0 {
+			continue
+		}
+		out = append(out, dec)
+	}
+	return out
+}
+
 func appendFieldDecorators(existing [][]runtime.DecoratorMetadata, fieldIndex int, decorators []ast.Decorator) [][]runtime.DecoratorMetadata {
 	for len(existing) <= fieldIndex {
 		existing = append(existing, nil)

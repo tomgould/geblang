@@ -2050,6 +2050,28 @@ func (l *bytecodeModuleLoader) CallParentInModule(module string, className strin
 	return vm.CallMethodAs(className, instance, methodName, args)
 }
 
+func (l *bytecodeModuleLoader) ImmutableFieldsForModuleClass(module string, className string) []string {
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return nil
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunks[module]
+		if !ok {
+			return nil
+		}
+		chunk = c
+	}
+	for i := range chunk.Classes {
+		if chunk.Classes[i].Name == className {
+			return chunk.Classes[i].ImmutableFields
+		}
+	}
+	return nil
+}
+
 func (l *bytecodeModuleLoader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if module == "" {

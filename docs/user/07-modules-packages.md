@@ -170,6 +170,41 @@ The cached-on-first-import behaviour still applies: the module body (including
 the `init` block, if any) runs at most once. Subsequent imports reuse the
 exports.
 
+### Module-level mutable state across calls
+
+Treat a module's top-level `let`/typed variables as **initialised-once state**,
+not as a shared mutable store written by one exported function and read back by
+another from a different module.
+
+```gb
+module counter;
+let n = 0;
+export func bump(): void { n = n + 1; }
+export func get(): int { return n; }
+```
+
+```gb
+import counter;
+counter.bump();
+counter.bump();
+io.println(counter.get());   # do NOT rely on this being 2
+```
+
+Reading module-level constants and variables from an exported function is always
+fine. Mutating one and expecting the change to persist across later cross-module
+calls is **not portable between the runtimes**: the evaluator (`geblang test`)
+shares a single module environment, so it returns `2`, while the bytecode VM
+(`geblang run`, `geblang build`) runs each cross-module call against a fresh copy
+of the module's initialised state and returns `0`. The VM isolates module state
+per call on purpose - it is what keeps concurrent request handlers and async
+tasks from racing on shared module globals.
+
+The practical trap: a program that leans on mutable module globals can pass
+under `geblang test` (evaluator) and then behave differently as a built binary
+(VM). For state that genuinely needs to be shared and mutated, use an explicit,
+concurrency-safe holder - `store.Store` (see the async chapter) - or keep the
+state inside an instance you pass around, rather than a bare module variable.
+
 ### Init Blocks
 
 `init { ... }` is the single place imperative module setup lives:

@@ -414,3 +414,24 @@ Decorators are evaluated at declaration time. A decorator can be used as pure
 metadata for reflection, as a callable wrapper, or both. Framework code can scan
 metadata with `reflect` and register handlers without introducing framework
 syntax into the language.
+
+## @memoize
+
+`@memoize` caches a top-level function's result by its arguments: the body runs
+once per distinct argument tuple, and later calls with the same arguments return
+the stored result. Recursion through the function's own name is memoized too, so
+naive recursive definitions become efficient.
+
+```gb
+@memoize
+func fib(int n): int {
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);  // each fib(n) body runs once
+}
+```
+
+The cache key is the canonical form of the arguments (the same value identity
+used by dict keys), so equal values share a cache entry. The cache is unbounded
+and lives for the life of the process, so `@memoize` is intended for pure
+functions over a bounded input domain. Applying `@memoize` to a method, an
+`async` function, a generator, or a `void` function is a compile-time error.

@@ -1,4 +1,4 @@
-.PHONY: all test test-go test-lang check-lang build build-with-path install bench bench-docker run repl check doctor cache-stats clean fmt docs docker-build compose-build vscode-build vscode-install vscode-install-wsl vscode-install-native
+.PHONY: all test test-go test-lang test-pgvector check-lang build build-with-path install bench bench-docker run repl check doctor cache-stats clean fmt docs docker-build compose-build vscode-build vscode-install vscode-install-wsl vscode-install-native
 
 BINARY ?= geblang
 GO ?= go
@@ -41,6 +41,16 @@ test-lang: build
 	./$(BINARY) test \
 	  --allow-ffi 'libm.so.*' --allow-ffi 'libc.so.*' --allow-ffi 'libsqlite3*' \
 	  tests/
+
+# test-pgvector spins up a pgvector Postgres container (pgvector/pgvector:pg16),
+# points GEBLANG_PG_DSN at it, and runs the suite so the pgvector integration
+# tests - skipped by default when no database is configured - actually run.
+# FFI allow-flags are passed too, so nothing is skipped by default. Override the
+# image/port with PGVECTOR_IMAGE / PGVECTOR_PORT; pass a narrower target as
+# `make test-pgvector PG_TARGET=tests/stdlib/pgvector_integration_test.gb`.
+PG_TARGET ?= tests/
+test-pgvector: build
+	./scripts/test-pgvector.sh $(PG_TARGET)
 
 # check-lang statically checks every .gb file under tests/. The tests/check
 # subdirectory contains intentionally invalid files that must each emit at

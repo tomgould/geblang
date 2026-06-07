@@ -1055,6 +1055,9 @@ type Class struct {
 	Destructor *Function
 	Env        *Environment
 	Immutable  bool
+	// ImmutableFields names the fields declared `@immutable` on this class
+	// (not inherited); set-once, locked when this class's constructor completes.
+	ImmutableFields []string
 	// DefinitionModule / DefinitionLine / DefinitionColumn capture the
 	// source position of the class declaration, surfaced by
 	// reflect.location.
@@ -1084,6 +1087,9 @@ type Instance struct {
 	Fields       map[string]Value
 	TypeBindings map[string]string
 	Frozen       bool
+	// LockedFields holds set-once `@immutable` field names locked once their
+	// declaring class's constructor completed; assigning one throws.
+	LockedFields map[string]bool
 	// Destroyed is set by the runtime after the class destructor
 	// has run for this instance (via `del x` or the program-exit
 	// sweep). The flag is one-way; once set, neither the sweep nor
@@ -1098,6 +1104,15 @@ type Instance struct {
 
 func (v *Instance) TypeName() string { return v.Class.Name }
 func (v *Instance) Inspect() string  { return "<" + v.Class.Name + ">" }
+
+// LockField marks a set-once `@immutable` field locked. Called when its
+// declaring class's constructor completes; later writes throw.
+func (v *Instance) LockField(name string) {
+	if v.LockedFields == nil {
+		v.LockedFields = map[string]bool{}
+	}
+	v.LockedFields[name] = true
+}
 
 func IsCallableValue(value Value) bool {
 	switch value := value.(type) {

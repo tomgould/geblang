@@ -513,6 +513,123 @@ func TestFlowSensitiveNullableStillErrorsWithoutGuard(t *testing.T) {
 	}
 }
 
+func hasDiagnostic(diags []semantic.Diagnostic, substr string) bool {
+	for _, d := range diags {
+		if strings.Contains(d.Message, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestOverrideDecoratorValid accepts a method that genuinely overrides an
+// ancestor method (including through an intermediate class).
+func TestOverrideDecoratorValid(t *testing.T) {
+	input := `class A { func greet(): string { return "a"; } }
+class B extends A {}
+class C extends B { @override func greet(): string { return "c"; } }
+`
+	if diags := analyzeInput(t, input); len(diags) != 0 {
+		t.Fatalf("expected no diagnostics, got: %v", diags)
+	}
+}
+
+// TestOverrideDecoratorRejectsNonOverride errors when no ancestor declares the
+// method, and when the class has no parent at all.
+func TestOverrideDecoratorRejectsNonOverride(t *testing.T) {
+	noAncestor := `class A { func greet(): string { return "a"; } }
+class B extends A { @override func farewell(): string { return "b"; } }
+`
+	if diags := analyzeInput(t, noAncestor); !hasDiagnostic(diags, "no ancestor or interface of B declares it") {
+		t.Fatalf("expected override diagnostic, got: %v", diags)
+	}
+
+	noParent := `class A { @override func greet(): string { return "a"; } }
+`
+	if diags := analyzeInput(t, noParent); !hasDiagnostic(diags, "A has no parent class or interface") {
+		t.Fatalf("expected no-parent override diagnostic, got: %v", diags)
+	}
+}
+
+// TestOverrideDecoratorAcceptsInterfaceMethod accepts @override on a method that
+// implements an interface method, directly or through interface inheritance.
+func TestOverrideDecoratorAcceptsInterfaceMethod(t *testing.T) {
+	direct := `interface Greeter { func greet(): string; }
+class Person implements Greeter { @override func greet(): string { return "hi"; } }
+`
+	if diags := analyzeInput(t, direct); len(diags) != 0 {
+		t.Fatalf("expected no diagnostics for interface override, got: %v", diags)
+	}
+
+	inherited := `interface Base { func id(): int; }
+interface Both extends Base {}
+class Thing implements Both { @override func id(): int { return 1; } }
+`
+	if diags := analyzeInput(t, inherited); len(diags) != 0 {
+		t.Fatalf("expected no diagnostics for inherited-interface override, got: %v", diags)
+	}
+
+	// Still errors when the method matches neither a parent nor any interface.
+	noMatch := `interface I { func a(): int; }
+class C implements I { func a(): int { return 1; } @override func b(): int { return 2; } }
+`
+	if diags := analyzeInput(t, noMatch); !hasDiagnostic(diags, "no ancestor or interface of C declares it") {
+		t.Fatalf("expected override diagnostic, got: %v", diags)
+	}
+}
+
+// TestOverrideDecoratorSkipsUnresolvableParent does not error when the parent
+// class is not visible in the same program (e.g. imported from another module).
+func TestOverrideDecoratorSkipsUnresolvableParent(t *testing.T) {
+	input := `class B extends Outside { @override func greet(): string { return "b"; } }
+`
+	if diags := analyzeInput(t, input); hasDiagnostic(diags, "@override") {
+		t.Fatalf("expected no override diagnostic for unresolvable parent, got: %v", diags)
+	}
+}
+
+// TestDeprecatedDecoratorWarnsAtCallSites flags use of a deprecated function,
+// class, and method, each as a deprecated-rule warning carrying the message.
+func TestDeprecatedDecoratorWarnsAtCallSites(t *testing.T) {
+	input := `@deprecated("use newApi")
+func oldApi(): int { return 1; }
+func newApi(): int { return 2; }
+@deprecated
+class OldThing { int x; func OldThing(int x) { this.x = x; } }
+class Service {
+    @deprecated("use fetch")
+    func load(): int { return 1; }
+}
+init {
+    let a = oldApi();
+    let t = OldThing(1);
+    let s = Service();
+    let r = s.load();
+}
+`
+	diags := analyzeInput(t, input)
+	want := []string{
+		"use of deprecated oldApi: use newApi",
+		"use of deprecated OldThing",
+		"use of deprecated load: use fetch",
+	}
+	for _, w := range want {
+		if !hasDiagnostic(diags, w) {
+			t.Fatalf("missing deprecation warning %q in: %v", w, diags)
+		}
+	}
+	for _, d := range diags {
+		if strings.HasPrefix(d.Message, "use of deprecated") {
+			if d.Severity != semantic.SeverityWarning {
+				t.Errorf("deprecation should be a warning, got severity %d", d.Severity)
+			}
+			if d.Rule != "deprecated" {
+				t.Errorf("deprecation rule = %q, want \"deprecated\"", d.Rule)
+			}
+		}
+	}
+}
+
 func analyzeInput(t *testing.T, input string) []semantic.Diagnostic {
 	t.Helper()
 	p := parser.New(lexer.New(input))

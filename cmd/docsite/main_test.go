@@ -120,6 +120,43 @@ func TestLayoutIncludesGeblangSyntaxHighlighter(t *testing.T) {
 	}
 }
 
+func TestTableOfContentsListsHeadings(t *testing.T) {
+	body := markdownToHTML([]byte("# Title\n\n## First Section\n\ntext\n\n### Sub Detail\n\n## Second Section\n\nmore\n"))
+	toc := tableOfContents(body)
+	for _, want := range []string{
+		`class="toc"`,
+		"On this page",
+		`href="#first-section">First Section`,
+		`toc-sub"><a href="#sub-detail">Sub Detail`,
+		`href="#second-section">Second Section`,
+	} {
+		if !strings.Contains(toc, want) {
+			t.Fatalf("TOC missing %q: %q", want, toc)
+		}
+	}
+	// The h1 title is not a TOC entry.
+	if strings.Contains(toc, ">Title<") {
+		t.Errorf("TOC should not include the page h1: %q", toc)
+	}
+}
+
+func TestTableOfContentsEmptyForFewHeadings(t *testing.T) {
+	if toc := tableOfContents(markdownToHTML([]byte("# Only\n\n## One Section\n\ntext\n"))); toc != "" {
+		t.Errorf("expected no TOC for a single section, got: %q", toc)
+	}
+}
+
+func TestLayoutRendersTableOfContents(t *testing.T) {
+	body := markdownToHTML([]byte("# Guide\n\n## Alpha\n\na\n\n## Beta\n\nb\n"))
+	out := layout([]page{{Output: "guide.html", Title: "Guide", HTML: body}}, page{Output: "guide.html", Title: "Guide", HTML: body}, nil, nil)
+	if !strings.Contains(out, "On this page") || !strings.Contains(out, `href="#alpha"`) {
+		t.Fatalf("layout missing in-page TOC: %q", out)
+	}
+	if !strings.Contains(out, "col-lg-7") {
+		t.Errorf("layout should narrow the article when a TOC is present")
+	}
+}
+
 func TestLoadExamplePagesBuildsIndexGroupAndFilePages(t *testing.T) {
 	dir := t.TempDir()
 	appDir := filepath.Join(dir, "app")

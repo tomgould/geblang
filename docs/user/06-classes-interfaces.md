@@ -251,6 +251,149 @@ Produce modified copies using the *wither* pattern instead of mutation:
 See the `freeze` module documentation for `freeze.shallow`, `freeze.deep`,
 `freeze.isFrozen`, `.copy()`, and `const` collection auto-freeze behavior.
 
+### Set-once fields
+
+For finer control, annotate an individual field with `@immutable` instead of
+the whole class. A set-once field is freely writable while the constructor runs
+and locked once construction completes; a later assignment raises
+`ImmutableError`. Other fields stay mutable.
+
+```gb
+class User {
+    @immutable string id;   # set once, then locked
+    string name;            # mutable
+
+    func User(string id, string name) {
+        this.id = id;       # ok
+        this.name = name;
+    }
+}
+
+let u = User("u1", "Ada");
+u.name = "Ada L.";          # ok
+u.id = "u2";                # throws ImmutableError
+```
+
+A set-once field is locked at the end of construction, so the constructor may
+assign it more than once if it needs to; the lock applies afterwards. An
+`@immutable` field inherited from a parent class is locked too. An `@immutable`
+field may not declare a default value (`@immutable int x = 5;` is a compile
+error) - the constructor must set it.
+
+## Data Classes
+
+The `@dataclass` decorator generates the boilerplate that a value-style class
+usually needs, from its declared fields:
+
+- a constructor taking the fields in declaration order (generated only when the
+  class declares no constructor of its own),
+- value-based equality (`__eq`) comparing every field,
+- a readable `__string` rendering (`Point(x=1, y=2)`),
+- a `with(...)` copy helper that returns a new instance with named fields
+  replaced.
+
+```gb
+@dataclass
+class Point {
+    int x;
+    int y;
+}
+
+let p = Point(1, 2);
+io.println(p);              # Point(x=1, y=2)
+io.println(p == Point(1, 2));  # true
+let q = p.with({"y": 9});  # Point(x=1, y=9), p is unchanged
+```
+
+A field with a default becomes an optional constructor parameter:
+
+```gb
+@dataclass
+class Tag {
+    string name;
+    int weight = 1;
+}
+
+Tag("a");        # weight defaults to 1
+Tag("b", 3);
+```
+
+Any member you write yourself takes precedence over the generated one, so you
+can override `__string`, `__eq`, the constructor, or `with` as needed.
+
+`@dataclass(frozen: true)` additionally makes instances immutable (the same
+whole-instance freeze as `@immutable`), so a frozen data class is a true value
+object:
+
+```gb
+@dataclass(frozen: true)
+class Money {
+    int cents;
+}
+
+let m = Money(500);
+# m.cents = 0;  # throws ImmutableError
+let n = m.with({"cents": 250});  # build a changed copy instead
+```
+
+A frozen instance is also usable as a dict key or set member by value: two
+frozen instances with equal fields are the same key, so sets deduplicate them
+and dict lookups find them regardless of which instance you pass.
+
+```gb
+let prices = {Money(100), Money(100), Money(200)};
+io.println(prices.length());        # 2
+io.println(prices.contains(Money(100)));  # true
+```
+
+Only frozen instances key by value; a mutable instance keys by identity (so it
+cannot change out from under a dict). `@dataclass` operates on the class's own
+declared fields and is intended for flat value classes; a data class that
+extends another class must declare its own constructor.
+
+## @override
+
+Annotate a method with `@override` to assert that it overrides a method of the
+same name declared on an ancestor class or an implemented interface. If neither
+declares it, it is a compile-time error - which catches a parent or interface
+method that was renamed or removed out from under the override.
+
+```gb
+class Animal {
+    func speak(): string { return "..."; }
+}
+
+class Dog extends Animal {
+    @override
+    func speak(): string { return "woof"; }
+}
+```
+
+The check is by method name. When the parent class is not visible (for example,
+imported from another module the analyzer cannot resolve), the assertion is
+skipped rather than reported, so it never false-positives.
+
+## @deprecated
+
+Mark a function, method, or class `@deprecated` to flag it for removal. Every use
+site is reported by `geblang check` as a `warning[deprecated]`; an optional
+message points callers at the replacement. It is advisory only and never changes
+whether code runs.
+
+```gb
+@deprecated("use fetchUser instead")
+func getUser(int id): User { return fetchUser(id); }
+
+# geblang check: warning[deprecated]: use of deprecated getUser: use fetchUser instead
+let u = getUser(1);
+```
+
+## Other built-in decorators
+
+`@memoize` caches a function's result by its arguments. It applies to top-level
+functions only (not methods), so it is documented with the other function
+features in [Functions And Callables](05-functions-callables.md#memoize).
+
 ## Interfaces
 
 ```gb
@@ -889,6 +1032,18 @@ io.println(Money(0) as bool);  # false
 When the class does not define a dunder for the target primitive, the
 default cast logic runs (errors when the conversion is undefined for
 the receiver's type).
+
+`__string` also drives implicit string rendering: an instance that
+defines it is rendered through `__string` by string interpolation
+(`"${m}"`), `io.println`, and `io.print`, not only by an explicit
+`as string` cast. A class without `__string` falls back to the default
+inspection form (`<ClassName>`).
+
+```gb
+let m = Money(550);
+io.println(m);           # $550
+io.println("paid ${m}"); # paid $550
+```
 
 ## Destructors
 

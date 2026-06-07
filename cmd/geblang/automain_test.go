@@ -40,6 +40,15 @@ export func main(): void { io.println("void ran"); }
 io.println("script ran");
 `)
 
+	// Regression (F2): auto-injected main() merges into a pre-existing init that
+	// precedes the declarations; the evaluator used to crash before hoisting.
+	existingInit := write("existinginit.gb", `module main;
+import io;
+init { io.println("init:" + helper()); }
+export func main(): int { io.println("main ran"); return 7; }
+func helper(): string { return "h"; }
+`)
+
 	run := func(args ...string) (string, int) {
 		cmd := exec.Command(bin, args...)
 		out, err := cmd.CombinedOutput()
@@ -74,5 +83,19 @@ io.println("script ran");
 	// No exported main: plain script still runs.
 	if out, _ := run(script); !strings.Contains(out, "script ran") {
 		t.Errorf("script without main did not run; got %q", out)
+	}
+
+	// F2: existing init before declarations, on both backends. main runs once.
+	for _, mode := range [][]string{{existingInit}, {"--disable-vm", existingInit}} {
+		out, code := run(mode...)
+		if !strings.Contains(out, "init:h") || !strings.Contains(out, "main ran") {
+			t.Errorf("%v: init/main output missing; got %q", mode, out)
+		}
+		if n := strings.Count(out, "main ran"); n != 1 {
+			t.Errorf("%v: main ran %d times, want 1; got %q", mode, n, out)
+		}
+		if code != 7 {
+			t.Errorf("%v: exit code = %d, want 7", mode, code)
+		}
 	}
 }

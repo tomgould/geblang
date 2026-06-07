@@ -1,0 +1,34 @@
+/**
+ * @title @override and @deprecated (1.12.0)
+ * @summary @override is a static assertion that a method overrides an ancestor
+ * (a violation is rejected before either backend runs, so this file only
+ * exercises valid overrides). @deprecated is an advisory call-site warning that
+ * never blocks execution, so a deprecated function still runs normally.
+ */
+import test;
+
+class Animal {
+    func speak(): string { return "..."; }
+}
+
+class Dog extends Animal {
+    @override
+    func speak(): string { return "woof"; }
+}
+
+@deprecated("use modernValue")
+func legacyValue(): int { return 41; }
+
+class DecoratorsOverrideDeprecatedTest extends test.Test {
+
+    @test
+    func overrideDispatchesToSubclass(): void {
+        let a = Dog();
+        this.assertEquals("woof", a.speak());
+    }
+
+    @test
+    func deprecatedFunctionStillRuns(): void {
+        this.assertEquals(41, legacyValue());
+    }
+}

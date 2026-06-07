@@ -244,6 +244,10 @@ func (l fakeModuleLoader) CallParentInModule(module string, className string, me
 	return runtime.Null{}, fmt.Errorf("unexpected cross-module parent call %s.%s", className, methodName)
 }
 
+func (l fakeModuleLoader) ImmutableFieldsForModuleClass(module string, className string) []string {
+	return nil
+}
+
 func (l fakeModuleLoader) FindClassByName(name string) (runtime.Value, bool) {
 	return nil, false
 }

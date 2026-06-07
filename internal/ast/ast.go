@@ -517,6 +517,9 @@ type ClassStatement struct {
 	// type (which is reused for top-level variable declarations
 	// too).
 	FieldDecorators map[string][]Decorator
+	// DataclassDesugared guards the @dataclass member synthesis so it runs once
+	// even when the same AST is both compiled and evaluated (parity tests).
+	DataclassDesugared bool
 }
 
 func (*ClassStatement) statementNode()         {}

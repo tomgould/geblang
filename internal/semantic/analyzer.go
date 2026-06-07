@@ -29,6 +29,9 @@ type Diagnostic struct {
 	Line     int
 	Column   int
 	Severity Severity
+	// Rule categorizes the finding for tooling (e.g. "deprecated"). Empty
+	// defaults to the generic "semantic" rule downstream.
+	Rule string
 }
 
 type Analyzer struct {
@@ -51,6 +54,12 @@ type Analyzer struct {
 	// methodChecks enables the unknown-method checks (primitive + class).
 	// Off in the execution path; turned on by the check command.
 	methodChecks bool
+	// deprecated registries (from @deprecated): lowercased function name and
+	// class name -> message, and class -> lowercased method -> message. Empty
+	// message means no explanatory text was supplied.
+	deprecatedFuncs   map[string]string
+	deprecatedClasses map[string]string
+	deprecatedMethods map[string]map[string]string
 }
 
 // SetClassSurfaceResolver installs the cross-module class member
@@ -172,7 +181,7 @@ func (a *Analyzer) checkBuiltinModuleShadow(name *ast.Identifier, declaredType *
 }
 
 func New() *Analyzer {
-	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, aliases: map[string]typeInfo{}}
+	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, aliases: map[string]typeInfo{}, deprecatedFuncs: map[string]string{}, deprecatedClasses: map[string]string{}, deprecatedMethods: map[string]map[string]string{}}
 }
 
 func (a *Analyzer) Analyze(program *ast.Program) []Diagnostic {
@@ -182,6 +191,8 @@ func (a *Analyzer) Analyze(program *ast.Program) []Diagnostic {
 	a.validateInterfaceOverloads()
 	a.validateInterfaceImplementations()
 	a.validateCastDunderReturns(program.Statements)
+	a.collectDeprecations(program.Statements)
+	a.validateOverrides(program.Statements)
 	isModule := fileIsModule(program.Statements)
 	seenInit := false
 	for _, stmt := range program.Statements {
@@ -1322,6 +1333,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		a.checkTypedCollectionMethodCall(expr)
 		a.checkPrimitiveMethodCall(expr)
 		a.checkClassMethodCall(expr)
+		a.checkDeprecatedCall(expr)
 		if ident, ok := expr.Callee.(*ast.Identifier); ok {
 			if overloads := a.functions[strings.ToLower(ident.Value)]; len(overloads) > 0 {
 				a.checkGenericCallInference(expr, ident.Value, overloads)
@@ -2040,6 +2052,17 @@ func (a *Analyzer) warningAt(tok token.Token, format string, args ...any) {
 		Line:     tok.Line,
 		Column:   tok.Column,
 		Severity: SeverityWarning,
+	})
+}
+
+// ruleWarningAt is warningAt with an explicit rule category (e.g. "deprecated").
+func (a *Analyzer) ruleWarningAt(tok token.Token, rule, format string, args ...any) {
+	a.diagnostics = append(a.diagnostics, Diagnostic{
+		Message:  fmt.Sprintf(format, args...),
+		Line:     tok.Line,
+		Column:   tok.Column,
+		Severity: SeverityWarning,
+		Rule:     rule,
 	})
 }
 

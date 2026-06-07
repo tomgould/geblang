@@ -120,12 +120,16 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 		if sd.Severity == semantic.SeverityWarning {
 			severity = SeverityWarning
 		}
+		rule := "semantic"
+		if sd.Rule != "" {
+			rule = sd.Rule
+		}
 		diags = append(diags, Diagnostic{
 			File:     file,
 			Line:     sd.Line,
 			Column:   sd.Column,
 			Severity: severity,
-			Rule:     "semantic",
+			Rule:     rule,
 			Message:  sd.Message,
 		})
 	}

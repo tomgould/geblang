@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(69)
+	Version = uint16(70)
 )
 
 type Op byte
@@ -426,6 +426,9 @@ type ClassInfo struct {
 	MethodDecorators map[string][]runtime.DecoratorMetadata
 	StaticDecorators map[string][]runtime.DecoratorMetadata
 	Immutable        bool
+	// ImmutableFields names the fields declared `@immutable` on this class:
+	// set-once, writable during construction and locked afterwards.
+	ImmutableFields []string
 	// DefLine / DefColumn capture the source position of the `class`
 	// keyword, exposed by reflect.location.
 	DefLine   int64
@@ -645,6 +648,16 @@ func Encode(chunk Chunk) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
+		}
+		immByte := byte(0)
+		if class.Immutable {
+			immByte = 1
+		}
+		out = append(out, immByte)
+		out = binary.BigEndian.AppendUint16(out, uint16(len(class.ImmutableFields)))
+		for _, name := range class.ImmutableFields {
+			out = binary.BigEndian.AppendUint16(out, uint16(len(name)))
+			out = append(out, []byte(name)...)
 		}
 		out = binary.BigEndian.AppendUint64(out, uint64(class.DefLine))
 		out = binary.BigEndian.AppendUint64(out, uint64(class.DefColumn))
@@ -879,6 +892,14 @@ func Decode(data []byte) (Chunk, error) {
 			class.FieldDecorators = make([][]runtime.DecoratorMetadata, 0, fieldDecCount)
 			for j := 0; j < fieldDecCount; j++ {
 				class.FieldDecorators = append(class.FieldDecorators, reader.decoratorMetadata())
+			}
+		}
+		class.Immutable = reader.u8() != 0
+		immCount := int(reader.u16())
+		if immCount > 0 {
+			class.ImmutableFields = make([]string, 0, immCount)
+			for j := 0; j < immCount; j++ {
+				class.ImmutableFields = append(class.ImmutableFields, string(reader.read(int(reader.u16()))))
 			}
 		}
 		class.DefLine = int64(reader.u64())

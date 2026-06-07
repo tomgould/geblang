@@ -1,5 +1,55 @@
 # Release Notes
 
+## 1.12.0
+
+### Classes
+
+- Fields can be declared set-once with a field-level `@immutable` decorator. A
+  set-once field is writable while the constructor runs and locked afterwards; a
+  later assignment raises `ImmutableError`, while other fields stay mutable. The
+  lock is inherited by subclasses. An `@immutable` field may not declare a
+  default value.
+- A class that defines `__string` is now rendered through it by string
+  interpolation (`"${x}"`), `io.println`, and `io.print`, not only by an
+  explicit `as string` cast. Classes without `__string` keep the default
+  inspection form.
+- New `@dataclass` decorator generates a constructor, value-based equality, a
+  `__string` rendering, and a `with(...)` copy helper from a class's declared
+  fields. `@dataclass(frozen: true)` also makes instances immutable. Any member
+  written by hand overrides the generated one. Operates on the class's own
+  fields; a data class that extends another class declares its own constructor.
+- Frozen instances (whole-class `@immutable` or `@dataclass(frozen: true)`) are
+  now usable as dict keys and set members by value: two frozen instances with
+  equal fields are the same key. Mutable instances continue to key by identity.
+- New `@override` decorator asserts that a method overrides an ancestor method;
+  a method marked `@override` that overrides nothing is a compile-time error.
+  The check is by name and skips parents the analyzer cannot resolve.
+- New `@deprecated("message")` decorator marks a function, method, or class for
+  removal. `geblang check` reports every use site as `warning[deprecated]` with
+  the optional message. Advisory only; it never changes whether code runs.
+- New `@memoize` decorator caches a top-level function's result by its arguments
+  (unbounded, per-process); recursion through the function's own name is memoized
+  too. Applying it to a method, async function, generator, or void function is a
+  compile-time error.
+
+### Fixes
+
+- Field-level `@immutable` is now enforced across module boundaries: a subclass
+  inheriting a set-once field from a parent in another module can no longer
+  mutate it after the parent constructor runs. The field locks when its
+  declaring constructor completes, on both runtimes.
+- `__string` is now applied consistently across runtimes for implicit string
+  rendering; previously string interpolation rendered an instance through
+  `__string` under one runtime but used the default inspection form under the
+  other.
+
+- Whole-class `@immutable` is now preserved through the bytecode cache. It was
+  dropped when a class's compiled chunk was loaded from a `.gbc` cache or a
+  built binary (the class immutability flag was not serialized), so a frozen
+  instance could be mutated on a second run. Class immutability metadata now
+  round-trips through encode/decode. The bytecode format version increments, so
+  stale caches recompile automatically.
+
 ## 1.11.0
 
 ### Bundling

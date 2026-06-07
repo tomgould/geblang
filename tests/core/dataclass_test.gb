@@ -1,0 +1,95 @@
+/**
+ * @title @dataclass (1.12.0)
+ * @summary A @dataclass class gains a generated constructor (when it declares
+ * none), value-based equality, a readable __string rendering, and a with() copy
+ * helper. @dataclass(frozen: true) additionally makes instances immutable. A
+ * user-defined member always overrides the generated one.
+ */
+import test;
+
+@dataclass
+class Point {
+    int x;
+    int y;
+}
+
+@dataclass
+class Tag {
+    string name;
+    int weight = 1;
+}
+
+@dataclass(frozen: true)
+class Money {
+    int cents;
+}
+
+@dataclass
+class Labelled {
+    int n;
+    func __string(): string { return "L" + (this.n as string); }
+}
+
+class DataclassTest extends test.Test {
+
+    @test
+    func generatedConstructorAndEquality(): void {
+        let p = Point(1, 2);
+        this.assertEquals(1, p.x);
+        this.assertEquals(2, p.y);
+        this.assertTrue(p == Point(1, 2));
+        this.assertFalse(p == Point(1, 3));
+    }
+
+    @test
+    func generatedStringRendering(): void {
+        this.assertEquals("Point(x=1, y=2)", Point(1, 2) as string);
+        this.assertEquals("Point(x=1, y=2)", "${Point(1, 2)}");
+    }
+
+    @test
+    func withReturnsModifiedCopy(): void {
+        let p = Point(1, 2);
+        let q = p.with({"y": 9});
+        this.assertEquals(1, q.x);
+        this.assertEquals(9, q.y);
+        this.assertEquals(2, p.y);
+    }
+
+    @test
+    func fieldDefaultBecomesOptionalParam(): void {
+        this.assertEquals(1, Tag("a").weight);
+        this.assertEquals(3, Tag("b", 3).weight);
+    }
+
+    @test
+    func frozenDataclassRejectsMutation(): void {
+        let m = Money(100);
+        this.assertThrows(func(): void { m.cents = 5; });
+        this.assertTrue(m == Money(100));
+    }
+
+    @test
+    func userMemberOverridesGenerated(): void {
+        this.assertEquals("L7", Labelled(7) as string);
+        this.assertTrue(Labelled(7) == Labelled(7));
+    }
+
+    @test
+    func frozenInstanceKeysByValue(): void {
+        let s = {Money(100), Money(100), Money(200)};
+        this.assertEquals(2, s.length());
+        this.assertTrue(s.contains(Money(100)));
+        let d = {};
+        d[Money(100)] = "a";
+        d[Money(100)] = "b";
+        this.assertEquals(1, d.length());
+        this.assertEquals("b", d[Money(100)]);
+    }
+
+    @test
+    func nonFrozenInstanceKeysByIdentity(): void {
+        let s = {Point(1, 2), Point(1, 2)};
+        this.assertEquals(2, s.length());
+    }
+}

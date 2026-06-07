@@ -264,6 +264,19 @@ func (l *stdlibModuleLoader) CallParentInModule(module string, className string,
 	return vm.CallMethodAs(className, instance, methodName, args)
 }
 
+func (l *stdlibModuleLoader) ImmutableFieldsForModuleClass(module string, className string) []string {
+	chunk, ok := l.chunks[module]
+	if !ok {
+		return nil
+	}
+	for i := range chunk.Classes {
+		if chunk.Classes[i].Name == className {
+			return chunk.Classes[i].ImmutableFields
+		}
+	}
+	return nil
+}
+
 func (l *stdlibModuleLoader) ListAllClasses() []runtime.Value {
 	out := []runtime.Value{}
 	for module, chunk := range l.chunks {
@@ -10647,6 +10660,116 @@ io.println(Box(0) as bool);
 `, "Box(42)\n42\n42\ntrue\n42.0000000000\nBox(42)\nfalse\n")
 }
 
+// __string drives println and interpolation (not just `as string`); no __string falls back to Inspect.
+func TestParityImplicitStringDunder(t *testing.T) {
+	runParity(t, `import io;
+class Tag {
+    string name;
+    func Tag(string n) { this.name = n; }
+    func __string(): string { return "#" + this.name; }
+}
+class Plain { int x; func Plain(int x) { this.x = x; } }
+let t = Tag("alpha");
+io.println(t);
+io.println("tag is ${t}");
+io.print(t);
+io.println("");
+let p = Plain(1);
+io.println("${p}".contains("Plain"));
+`, "#alpha\ntag is #alpha\n#alpha\ntrue\n")
+}
+
+// @dataclass synthesizes a constructor, value __eq, __string, and with(); both
+// backends must produce identical results. frozen composes with immutability.
+func TestParityDataclass(t *testing.T) {
+	runParity(t, `import io;
+@dataclass
+class Point { int x; int y; }
+let p = Point(1, 2);
+io.println(p);
+io.println(p == Point(1, 2));
+io.println(p == Point(9, 2));
+io.println(p.with({"y": 5}));
+io.println(p == p.with({"x": 1}));
+`, "Point(x=1, y=2)\ntrue\nfalse\nPoint(x=1, y=5)\ntrue\n")
+
+	// Field default becomes an optional constructor parameter.
+	runParity(t, `import io;
+@dataclass
+class Tag { string name; int weight = 1; }
+io.println(Tag("a"));
+io.println(Tag("b", 3));
+`, "Tag(name=a, weight=1)\nTag(name=b, weight=3)\n")
+
+	// frozen dataclass: a post-construction write throws on both backends.
+	runParity(t, `import io;
+@dataclass(frozen: true)
+class Money { int cents; }
+let m = Money(100);
+try { m.cents = 5; io.println("MUTATED"); } catch (Error e) { io.println("frozen"); }
+io.println(m == Money(100));
+`, "frozen\ntrue\n")
+
+	// A user-defined __string wins over the generated one.
+	runParity(t, `import io;
+@dataclass
+class Box { int n; func __string(): string { return "box#" + (this.n as string); } }
+io.println(Box(7));
+io.println(Box(7) == Box(7));
+`, "box#7\ntrue\n")
+
+	// A frozen dataclass instance keys dicts/sets by value; a non-frozen one
+	// keys by identity. Both backends must agree.
+	runParity(t, `import io;
+@dataclass(frozen: true)
+class P { int x; int y; }
+let s = {P(1, 2), P(3, 4), P(1, 2)};
+io.println(s.length());
+io.println(s.contains(P(1, 2)));
+let d = {};
+d[P(1, 2)] = "a";
+d[P(1, 2)] = "b";
+io.println(d.length());
+io.println(d[P(1, 2)]);
+@dataclass
+class M { int x; }
+io.println({M(1), M(1)}.length());
+`, "2\ntrue\n1\nb\n2\n")
+}
+
+// @memoize runs the body once per distinct argument tuple; recursion is memoized too.
+func TestParityMemoize(t *testing.T) {
+	runParity(t, `import io;
+let calls = 0;
+@memoize
+func square(int n): int { calls = calls + 1; return n * n; }
+io.println(square(4));
+io.println(square(4));
+io.println(square(5));
+io.println(calls);
+`, "16\n16\n25\n2\n")
+
+	// Recursive memoization: each fib(n) body runs once.
+	runParity(t, `import io;
+let bodies = 0;
+@memoize
+func fib(int n): int { bodies = bodies + 1; if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }
+io.println(fib(10));
+io.println(bodies);
+`, "55\n11\n")
+
+	// Distinct argument tuples are cached independently.
+	runParity(t, `import io;
+let calls = 0;
+@memoize
+func add(int a, int b): int { calls = calls + 1; return a + b; }
+io.println(add(1, 2));
+io.println(add(1, 2));
+io.println(add(2, 1));
+io.println(calls);
+`, "3\n3\n3\n2\n")
+}
+
 func TestParityGeneratorMethodOnClass(t *testing.T) {
 	runParity(t, `import io;
 
@@ -12400,4 +12523,221 @@ let f = func(): int { return x; };
 x = 2;
 io.println("${f()}");
 `, "2\n")
+}
+
+// Field-level @immutable: set-once fields are writable during construction and
+// locked afterwards; mutable fields stay writable; a default on an @immutable
+// field is rejected. Eval/VM parity.
+func TestParityImmutableFields(t *testing.T) {
+	// Set in constructor, read back; mutable sibling still writable.
+	runParity(t, `import io;
+class U {
+    @immutable string id;
+    string name;
+    func U(string id, string n) { this.id = id; this.name = n; }
+}
+let u = U("a1", "Ada");
+u.name = "Ada L.";
+io.println(u.id + " " + u.name);
+`, "a1 Ada L.\n")
+
+	// Rewrite within the constructor is allowed (free during construction).
+	runParity(t, `import io;
+class U {
+    @immutable string id;
+    func U() { this.id = "first"; this.id = "second"; }
+}
+io.println(U().id);
+`, "second\n")
+
+	// Write after construction throws.
+	runParity(t, `import io;
+class U {
+    @immutable string id;
+    func U(string id) { this.id = id; }
+}
+let u = U("a1");
+try { u.id = "x"; io.println("MUTATED"); } catch (Error e) { io.println("blocked"); }
+`, "blocked\n")
+
+	// An immutable field inherited from a parent is locked too.
+	runParity(t, `import io;
+class Base { @immutable string id; func Base(string id) { this.id = id; } }
+class Sub extends Base { string extra; func Sub(string id) { parent(id); this.extra = "x"; } }
+let s = Sub("p1");
+try { s.id = "z"; io.println("MUTATED"); } catch (Error e) { io.println("blocked"); }
+`, "blocked\n")
+
+	// A subclass cannot rewrite a parent's @immutable field after parent(): the
+	// parent constructor locks it the moment it completes.
+	runParity(t, `import io;
+class Base { @immutable string id; func Base(string id) { this.id = id; } }
+class Sub extends Base { func Sub() { parent("p"); try { this.id = "q"; io.println("MUTATED"); } catch (Error e) { io.println("blocked"); } } }
+Sub();
+`, "blocked\n")
+
+	// Auto parent constructor (no explicit parent() call) still locks the
+	// parent's @immutable field once the subclass instance is built.
+	runParity(t, `import io;
+class Base { @immutable string id; func Base() { this.id = "auto"; } }
+class Sub extends Base { string extra; func Sub() { this.extra = "x"; } }
+let s = Sub();
+io.println(s.id);
+try { s.id = "z"; io.println("MUTATED"); } catch (Error e) { io.println("blocked"); }
+`, "auto\nblocked\n")
+}
+
+// A default value on an @immutable field is rejected by both backends: the VM
+// at compile time, the evaluator at class-build (runtime). Both carry the same
+// message. Not a runParity case because the rejection points differ by design.
+func TestImmutableFieldDefaultRejected(t *testing.T) {
+	src := `class U { @immutable int x = 5; func U() {} }
+let u = U();
+`
+	const want = "may not declare a default value"
+
+	p := parser.New(lexer.New(src))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	if _, err := bytecode.Compile(program, []byte(src), "test"); err == nil {
+		t.Error("VM: expected compile error for @immutable field default")
+	} else if !strings.Contains(err.Error(), want) {
+		t.Errorf("VM error missing %q: %v", want, err)
+	}
+
+	if _, err := evaluator.New(&bytes.Buffer{}).Eval(program); err == nil {
+		t.Error("evaluator: expected error for @immutable field default")
+	} else if !strings.Contains(err.Error(), want) {
+		t.Errorf("evaluator error missing %q: %v", want, err)
+	}
+}
+
+// A cross-module instance dispatches its cast/__string dunders on both backends
+// (println, interpolation, and `as` cast).
+func TestParityCrossModuleStringDunder(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "money.gb"), []byte(`module money;
+export class Money {
+    int cents;
+    func Money(int cents) { this.cents = cents; }
+    func __string(): string { return "$" + (this.cents as string); }
+    func __int(): int { return this.cents; }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write money: %v", err)
+	}
+	source := `import io;
+import money;
+let m = money.Money(7);
+io.println(m);
+io.println("paid ${m}");
+io.println(m as string);
+io.println(m as int);
+`
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+	const want = "$7\npaid $7\n$7\n7\n"
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: %q want %q", evOut.String(), want)
+	}
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: %q want %q", vmOut.String(), want)
+	}
+}
+
+// A cross-module inherited @immutable field locks after the parent ctor runs, on both backends.
+func TestParityCrossModuleImmutableField(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "base.gb"), []byte(`module base;
+export class Account {
+    @immutable string id;
+    func Account(string id) { this.id = id; }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	source := `import io;
+import base as basemod;
+class Savings extends basemod.Account {
+    string label;
+    func Savings(string id) { parent(id); this.label = "s"; }
+}
+let s = Savings("acct-1");
+io.println(s.id);
+try { s.id = "tampered"; io.println("MUTATED"); } catch (Error e) { io.println("blocked"); }
+`
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+	const want = "acct-1\nblocked\n"
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: %q want %q", evOut.String(), want)
+	}
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: %q want %q", vmOut.String(), want)
+	}
+}
+
+// Top-level code (init/let) can call a function declared later, on both
+// backends. Guards evaluator function hoisting matching the VM.
+func TestParityTopLevelFunctionHoisting(t *testing.T) {
+	runParity(t, `module m;
+import io;
+init { io.println(greet()); }
+export func greet(): string { return "hi"; }
+`, "hi\n")
+
+	// Mutually/forward referencing top-level functions called from an init.
+	runParity(t, `module m;
+import io;
+init { io.println("${a()}"); }
+func a(): int { return b() + 1; }
+func b(): int { return 10; }
+`, "11\n")
 }

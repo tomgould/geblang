@@ -1,0 +1,38 @@
+/**
+ * @title Implicit __string rendering (1.12.0)
+ * @summary An instance that defines __string renders through it for string
+ * interpolation, println/print, and the `as string` cast alike. A class with no
+ * __string falls back to the default inspection form.
+ */
+import test;
+
+class Tag {
+    string name;
+    func Tag(string n) { this.name = n; }
+    func __string(): string { return "#" + this.name; }
+}
+
+class Plain {
+    int x;
+    func Plain(int x) { this.x = x; }
+}
+
+class StringDunderRenderTest extends test.Test {
+
+    @test
+    func interpolationUsesStringDunder(): void {
+        let t = Tag("alpha");
+        this.assertEquals("tag #alpha", "tag ${t}");
+    }
+
+    @test
+    func castUsesStringDunder(): void {
+        this.assertEquals("#beta", Tag("beta") as string);
+    }
+
+    @test
+    func classWithoutDunderFallsBack(): void {
+        let rendered = "${Plain(1)}";
+        this.assertTrue(rendered.contains("Plain"));
+    }
+}

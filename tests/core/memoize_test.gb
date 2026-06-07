@@ -1,0 +1,60 @@
+/**
+ * @title @memoize (1.12.0)
+ * @summary @memoize on a top-level function caches its result by arguments, so
+ * the body runs once per distinct argument tuple. Recursion through the original
+ * name is memoized too. The cache is keyed by the canonical argument values.
+ */
+import test;
+
+let squareCalls = 0;
+
+@memoize
+func square(int n): int {
+    squareCalls = squareCalls + 1;
+    return n * n;
+}
+
+let addCalls = 0;
+
+@memoize
+func add(int a, int b): int {
+    addCalls = addCalls + 1;
+    return a + b;
+}
+
+let fibBodies = 0;
+
+@memoize
+func fib(int n): int {
+    fibBodies = fibBodies + 1;
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+
+class MemoizeTest extends test.Test {
+
+    @test
+    func repeatedCallReturnsCachedResult(): void {
+        squareCalls = 0;
+        this.assertEquals(16, square(4));
+        this.assertEquals(16, square(4));
+        this.assertEquals(25, square(5));
+        this.assertEquals(2, squareCalls);
+    }
+
+    @test
+    func distinctArgumentTuplesCacheSeparately(): void {
+        addCalls = 0;
+        this.assertEquals(3, add(1, 2));
+        this.assertEquals(3, add(1, 2));
+        this.assertEquals(3, add(2, 1));
+        this.assertEquals(2, addCalls);
+    }
+
+    @test
+    func recursionIsMemoized(): void {
+        fibBodies = 0;
+        this.assertEquals(55, fib(10));
+        this.assertEquals(11, fibBodies);
+    }
+}

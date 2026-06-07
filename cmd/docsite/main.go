@@ -7,6 +7,7 @@ import (
 	"html"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -598,6 +599,32 @@ func markdownToHTML(content []byte) string {
 	return result
 }
 
+var (
+	headingPattern = regexp.MustCompile(`(?s)<h([23]) id="([^"]+)">(.*?)</h[23]>`)
+	tagPattern     = regexp.MustCompile(`<[^>]+>`)
+)
+
+// tableOfContents builds an "On this page" nav from the h2/h3 headings; "" when fewer than two.
+func tableOfContents(body string) string {
+	matches := headingPattern.FindAllStringSubmatch(body, -1)
+	if len(matches) < 2 {
+		return ""
+	}
+	var items strings.Builder
+	for _, m := range matches {
+		label := strings.TrimSpace(tagPattern.ReplaceAllString(m[3], ""))
+		if label == "" {
+			continue
+		}
+		sub := ""
+		if m[1] == "3" {
+			sub = " toc-sub"
+		}
+		items.WriteString(`<li class="toc-item` + sub + `"><a href="#` + m[2] + `">` + label + `</a></li>`)
+	}
+	return `<nav class="toc"><div class="toc-title">On this page</div><ul class="toc-list">` + items.String() + `</ul></nav>`
+}
+
 func writePage(outDir string, pages []page, index int) error {
 	p := pages[index]
 	var prev, next *page
@@ -644,6 +671,16 @@ func layout(pages []page, current page, prev, next *page) string {
 	}
 	pager += `</div>`
 
+	articleClass := "col-lg-9"
+	tocAside := ""
+	if toc := tableOfContents(current.HTML); toc != "" {
+		articleClass = "col-lg-7"
+		tocAside = `
+      <aside class="col-lg-2 d-none d-lg-block">
+        <div class="toc-wrap">` + toc + `</div>
+      </aside>`
+	}
+
 	return `<!doctype html>
 <html lang="en">
 <head>
@@ -662,6 +699,12 @@ func layout(pages []page, current page, prev, next *page) string {
     .content h2 { margin-top: 2rem; padding-top: .5rem; border-top: 1px solid #edf0f2; }
     .list-group-item.nav-depth-1 { padding-left: 1.75rem; font-size: .94rem; }
     .list-group-item.nav-depth-2 { padding-left: 2.5rem; font-size: .9rem; }
+    .toc-wrap { position: sticky; top: 5rem; max-height: calc(100vh - 6rem); overflow: auto; }
+    .toc-title { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: #6c757d; font-weight: 600; margin-bottom: .5rem; }
+    .toc-list { list-style: none; padding-left: 0; margin: 0; border-left: 1px solid #dee2e6; }
+    .toc-item a { display: block; padding: .2rem 0 .2rem .75rem; font-size: .85rem; color: #495057; text-decoration: none; border-left: 2px solid transparent; margin-left: -1px; }
+    .toc-item a:hover { color: #0d6efd; border-left-color: #0d6efd; }
+    .toc-item.toc-sub a { padding-left: 1.5rem; font-size: .82rem; color: #6c757d; }
     pre { background: #15171a; color: #f8f9fa; padding: 1rem; border-radius: .5rem; overflow: auto; }
     code { color: #b02a37; }
     pre code { color: inherit; }
@@ -694,11 +737,11 @@ func layout(pages []page, current page, prev, next *page) string {
           <div class="list-group shadow-sm">` + nav.String() + `</div>
         </div>
       </aside>
-      <article class="col-lg-9">
+      <article class="` + articleClass + `">
         <div class="content p-4 p-lg-5 shadow-sm">
 ` + current.HTML + pager + `
         </div>
-      </article>
+      </article>` + tocAside + `
     </div>
   </main>
   <script>

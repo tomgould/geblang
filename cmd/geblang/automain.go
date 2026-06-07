@@ -8,13 +8,8 @@ import (
 	"geblang/internal/parser"
 )
 
-// appendMainInvocation makes `geblang <file>` auto-run an exported top-level
-// `main` when one is declared, so a module-style entry (export func main) both
-// runs directly and builds. The invocation goes inside an `init { }` block
-// (created, or merged into an existing one) so it is legal in module files and
-// runs after top-level setup; sys.exit propagates a returned value. Only
-// applied to a directly-run file, never to imported modules or the bundle/`-m`
-// wrappers (which call main themselves). Returns true when it transformed.
+// appendMainInvocation wraps a call to an exported top-level `main` in an
+// init block so a module-style entry runs directly as well as building.
 func appendMainInvocation(program *ast.Program) bool {
 	main := exportedMain(program)
 	if main == nil {
@@ -38,10 +33,8 @@ func appendMainInvocation(program *ast.Program) bool {
 		return false
 	}
 
-	// sys must be declared before the init runs (the evaluator resolves imports
-	// in source order, unlike the VM which hoists them). Insert it at the front,
-	// after a leading `module` statement when present. Node line numbers are
-	// per-token, so this does not shift reported positions for user code.
+	// sys must be imported before the init runs; the evaluator resolves imports in
+	// source order, so insert at the front (after a leading `module` if present).
 	if !importsSys(program) {
 		imp := parseStatements("import sys;\n")
 		at := 0
