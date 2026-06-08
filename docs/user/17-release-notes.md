@@ -27,15 +27,57 @@ they require FFI to be enabled in `geblang.yaml` (or `--allow-ffi`). Each is
 safe to call from any async task except where its docs note a per-handle lock or
 a single-owner constraint.
 
-### Tooling
+### Type checking
 
-- Unknown type names in annotations are now flagged. A bare type name used in
-  any annotation position (parameter, return, field, variable, generic argument,
+- Static type checking now runs on the compile path on both runtimes, not only
+  in `geblang check`. A type error is reported before execution by `geblang run`,
+  `geblang test`, and `geblang build` alike, and the two runtimes agree on what
+  they reject.
+- Type checking now extends into class method and constructor bodies. Argument
+  types, member access on `this.field` and on typed locals, and `return`
+  expressions are validated inside methods, not only in top-level and
+  free-function code. The checks reach across module boundaries: a call on a
+  class inherited from another module is validated against the inherited
+  signature.
+- Unknown type names in annotations are flagged. A bare type name used in any
+  annotation position (parameter, return, field, variable, generic argument,
   nullable, union, catch clause, or `as` cast) that resolves to no known type
   (primitive, declared class, interface, enum, type alias, in-scope generic type
   param, or built-in error class) is an error at both `geblang check` and compile
   time, so a typo in a type hint is caught before it runs. A module-qualified
   type name whose module does not export that name is flagged by `geblang check`.
+- Type-mismatch errors are clearer. A failed call now names the specific
+  parameter and the expected and actual types (for example,
+  `g expects int for parameter 'x', got string`) rather than a generic
+  "no matching overload". When an unknown-type error already explains a bad
+  signature, the redundant follow-on error is suppressed.
+
+### Language
+
+- A class imported with `from module import Name` can now be used directly as a
+  parent class, the same as the qualified `extends module.Name` form.
+- Cross-module inheritance now behaves identically on both runtimes in every
+  position. Calling an inherited method, reading or writing an inherited field,
+  `instanceof`, static members, and interface default methods all resolve
+  correctly when a class extends a class, or implements an interface, declared in
+  another module, including through a local intermediate subclass and across
+  multi-level chains.
+- An interface default method is now available on a subclass of the implementing
+  class on both runtimes.
+
+### Fixes
+
+- Multi-level `parent.method()` chains now resolve to the correct ancestor on
+  both runtimes. A method that calls `parent.method()` where that ancestor also
+  calls `parent.method()` no longer recurses on itself.
+- Several type-checker false positives were corrected: passing `null` to an `any`
+  parameter, assigning `null` to a nullable variable after a non-null narrowing,
+  and returning or assigning a value to a generic type parameter are no longer
+  wrongly rejected.
+- The JSON, XML, CSV, and YAML streaming readers, and the in-memory IO buffer,
+  stream, and capture objects, now work on the bytecode runtime (`geblang run`
+  and `geblang build`), matching the evaluator. `reader.next()` and
+  `reader.hasNext()` produce the same event stream on both.
 
 ### Documentation
 
@@ -43,6 +85,10 @@ a single-owner constraint.
   threading and thread-safety model: FFI calls run on the calling goroutine's OS
   thread, native library state is the caller's responsibility, and `errno` is
   valid only immediately after a call.
+- The language and standard-library reference received a broad accuracy pass:
+  corrected examples and signatures, a worked cross-module inheritance example,
+  the `ImmutableError` built-in, the JSON streaming-reader API, and the current
+  scope of `geblang check`.
 
 ## 1.12.0
 
