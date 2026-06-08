@@ -280,8 +280,7 @@ Never trust the payload from `jwtDecode` for access control - always use
 
 #### Deprecated per-algorithm helpers
 
-The earlier per-algorithm API stays as a thin shim and will be removed in
-1.5.0. Replace each call with the unified surface:
+The earlier per-algorithm API remains as a shim. Prefer the unified surface:
 
 | Deprecated | Replacement |
 |------------|-------------|
@@ -794,8 +793,8 @@ let result = crypt.generateSelfSignedCert({
     "validDays":   365
 });
 
-io.writeFile("server.crt", result["cert"]);
-io.writeFile("server.key", result["key"]);
+io.writeText("server.crt", result["cert"]);
+io.writeText("server.key", result["key"]);
 ```
 
 ## Provably-fair RNG (`secureRandom`)
@@ -867,7 +866,7 @@ import secureRandom;
 import json;
 import io;
 
-let published = json.parse(io.readFile("round-1234.json"));
+let published = json.parse(io.readText("round-1234.json"));
 if (!secureRandom.verifyCommitment(
         published["commitment"] as string,
         published["serverSeed"] as string)) {

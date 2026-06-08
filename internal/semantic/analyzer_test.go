@@ -936,7 +936,7 @@ count(ints);
 	diagnostics := analyzeInput(t, input)
 	found := false
 	for _, d := range diagnostics {
-		if strings.Contains(d.Message, "no matching overload for count with the given argument types") {
+		if strings.Contains(d.Message, "no matching overload for count: got (list<int>), expected (list<string>)") {
 			found = true
 		}
 	}

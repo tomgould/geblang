@@ -116,15 +116,15 @@ metrics.inc("http.requests");
 metrics.observe("http.latency_ms", 12.4);
 ```
 
-For distributed tracing, the `tracer` module emits OpenTelemetry spans:
+For distributed tracing, the `trace` module emits OpenTelemetry spans:
 
 ```gb
-import tracer;
-let span = tracer.start("loadUser");
+import trace;
+let span = trace.start("loadUser");
 try {
     return loadUser(id);
 } finally {
-    tracer.finish(span);
+    trace.end(span);
 }
 ```
 

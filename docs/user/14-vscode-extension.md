@@ -183,7 +183,7 @@ These limitations are expected to be lifted in a post-1.0.0 release.
 
 ## Settings
 
-Open **File to Preferences to Settings** (or Cmd+, on macOS) and search for
+Open **File > Preferences > Settings** (or Cmd+, on macOS) and search for
 `geblang`.
 
 | Setting | Default | Description |

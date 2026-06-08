@@ -1117,7 +1117,16 @@ func (a *Analyzer) checkMethodCallArgs(call *ast.CallExpression, selector *ast.S
 			return
 		}
 	}
-	a.errorAt(selector.Name.Token, "no matching overload for %s.%s with the given argument types", receiverType.name, selector.Name.Value)
+	a.errorAt(selector.Name.Token, "no matching overload for %s.%s: got (%s)", receiverType.name, selector.Name.Value, displayTypeInfos(args))
+}
+
+// displayTypeInfos renders an argument/parameter type list for diagnostics.
+func displayTypeInfos(infos []typeInfo) string {
+	parts := make([]string, len(infos))
+	for i, t := range infos {
+		parts[i] = t.display()
+	}
+	return strings.Join(parts, ", ")
 }
 
 // methodOverloadPossible reports whether one overload could accept args.
@@ -1436,7 +1445,14 @@ func (a *Analyzer) validateCallStatementArgs(expr ast.Expression) {
 		}
 	}
 	if baseMatch {
-		a.errorf("no matching overload for %s with the given argument types", ident.Value)
+		expected := ""
+		for _, overload := range overloads {
+			if a.callArgumentsBaseCompatible(args, overload.parameters, overload.minArgs) {
+				expected = displayTypeInfos(overload.parameters)
+				break
+			}
+		}
+		a.errorf("no matching overload for %s: got (%s), expected (%s)", ident.Value, displayTypeInfos(args), expected)
 	}
 }
 

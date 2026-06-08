@@ -53,8 +53,7 @@ something has changed since a known baseline.
 import io;
 import watch;
 
-let before = watch.snapshot("config/app.yaml");
-let changed = watch.wait("config/app.yaml", before, 5000);
+let changed = watch.wait("config/app.yaml", 5000);
 
 if (changed["changed"] as bool) {
     io.println("config changed");
@@ -63,10 +62,12 @@ if (changed["changed"] as bool) {
 
 Functions:
 
-- `snapshot(path)`: capture the current state for a file or
-  directory.
-- `wait(path, previousSnapshot, timeoutMilliseconds)`: wait until
-  the state differs or the timeout expires.
+- `snapshot(path)`: capture the current state of a file or
+  directory (returned as a dict).
+- `wait(path, timeoutMs = 30000, intervalMs = 250)`: take a fresh
+  snapshot, then poll until the path changes or the timeout expires.
+  Returns `{"changed": bool, "before": dict, "after": dict}`.
+  `intervalMs` controls the poll interval (default 250 ms).
 
 Polling is fine for low-volume workloads. For high-volume
 watching, prefer `watch.start`.

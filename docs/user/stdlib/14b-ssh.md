@@ -84,16 +84,22 @@ for (entry in c.sftpList("/srv")) {
 c.sftpMkdir("/srv/new", 0o755);
 c.sftpRemove("/srv/old.tmp");
 
-# Stream a remote file as a regular IOStream.
+# Stream a remote file as a regular IOStream (read mode, default).
 let remote = c.sftpOpen("/srv/log/app.log");
 for (line in remote) {
     io.println(line);
 }
 remote.close();
+
+# Write to a remote file.
+let out = c.sftpOpen("/srv/data/out.txt", "w");
+out.write("hello\n");
+out.close();
 ```
 
-`sftpOpen` returns a `streams.IOStream`, so you can pipe it
-through `streams.copy(remote, localFile)` or iterate line-by-line.
+`sftpOpen(remotePath, mode = "r")` returns a `streams.IOStream`. Pass `"w"` to
+open for writing. You can pipe it through `streams.copy(remote, localFile)` or
+iterate line-by-line.
 The underlying SFTP client is lazy-initialised and cached on the
 SSH connection - the first SFTP call pays the setup cost; later
 calls reuse it.

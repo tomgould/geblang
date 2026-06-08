@@ -6,6 +6,10 @@ across OpenAI, Anthropic, and AWS Bedrock.
 
 ```gb
 import llm;
+import sys;
+import io;
+
+let article = "Geblang is a typed scripting language with a dual-backend runtime.";
 
 let c = llm.client({
     "provider": "anthropic",

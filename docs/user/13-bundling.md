@@ -344,11 +344,12 @@ source: src
 ```gb
 module webapi.routes;
 
+import http;
 import web;
 
-export func register(web.Router router): void {
-    router.get("/", func(web.Request req, web.Response res): void {
-        res.json({"status": "ok"});
+export func register(any app): void {
+    web.get(app, "/", func(dict<string, any> request): dict<string, any> {
+        return http.jsonResponse({"status": "ok"});
     });
 }
 ```
@@ -359,16 +360,18 @@ export func register(web.Router router): void {
 module webapi.main;
 
 import io;
-import sys;
+import http;
 import web;
 import webapi.routes as routes;
 
 export func main(list<string> args): void {
     let port = args.length() > 0 ? args[0] : "8080";
-    let app = web.app();
-    routes.register(app.router());
+    let app = web.new();
+    routes.register(app);
     io.println("Listening on :" + port);
-    app.listen(":" + port);
+    http.serve("127.0.0.1:" + port, func(dict<string, any> request): dict<string, any> {
+        return web.handle(app, request);
+    });
 }
 ```
 

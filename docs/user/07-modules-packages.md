@@ -207,7 +207,16 @@ The practical trap: a program that leans on mutable module globals can pass
 under `geblang test` (evaluator) and then behave differently as a built binary
 (VM). For state that genuinely needs to be shared and mutated, use an explicit,
 concurrency-safe holder - `store.Store` (see the async chapter) - or keep the
-state inside an instance you pass around, rather than a bare module variable.
+state inside an instance you pass around, rather than a bare module variable:
+
+```gb
+# safe: state lives on an instance, not a module global
+class Counter {
+    int n = 0;
+    func bump(): void { this.n = this.n + 1; }
+    func get(): int { return this.n; }
+}
+```
 
 ### Init Blocks
 

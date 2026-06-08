@@ -103,6 +103,14 @@ let message = mailer.Message("Logo")
 
 ## SMTP Transport
 
+`mailer.SmtpTransport(host, port, username, password)` (class constructor) and
+`mailer.smtpTransport(host, port, username, password)` (factory function) are
+interchangeable - both return a `SmtpTransport`.
+
+For a one-call setup (transport + mailer in one), use
+`mailer.smtpMailer(host, port, username, password)`, which returns a ready-to-use
+`Mailer` and is equivalent to `mailer.Mailer(mailer.smtpTransport(...))`.
+
 `mailer.SmtpTransport(host, port, username, password)` configures SMTP.
 
 ```gb

@@ -334,7 +334,7 @@ decimal result = d * (f as decimal);
 
 ```gb
 decimal d = 3.75;
-int     i = d as int;     # 3  (truncates; error if d has fractional part and it's non-zero)
+int     i = d as int;     # 3  (truncates toward zero)
 float   f = d as float;   # 3.75 (approximate; may lose precision)
 string  s = d as string;  # "3.7500000000"
 
@@ -410,13 +410,16 @@ io.println(data.contains("middle")); # true
 io.println(data.hasKey("missing"));  # false
 ```
 
-Collection methods mutate when their name implies mutation:
+List mutation: `append` and `extend` modify the list in place and return `null`.
+`push` and `removeAt` return a new list; the original is unchanged. Dict
+mutators (`set`, `delete`) always modify in place.
 
 ```gb
-nums.push(4);
-nums.removeAt(0);
-scores.set("linus", 7);
-scores.delete("ada");
+nums.append(4);          # in place; nums is now [1, 2, 3, 4]
+nums = nums.push(5);     # returns new list; assign back to update nums
+nums = nums.removeAt(0); # returns new list without index 0
+scores.set("linus", 7);  # in place
+scores.delete("ada");    # in place
 ```
 
 Use `collections.map`, `collections.filter`, and related helpers when you want

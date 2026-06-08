@@ -14,8 +14,8 @@ Import `json`:
 - `stringify(value)` - serialize to JSON string (accepts dicts, lists,
   scalars, and user-defined class instances; classes can override with
   `__serialize()`)
-- `validate(text)` - returns `{"valid": bool, "error": string|null}`
-- `validateDetailed(text)` - returns more detailed error information
+- `validate(text)` - returns `bool` (`true` when valid)
+- `validateDetailed(text)` - returns `{"valid": bool, "error": string|null}` with detail
 - `reader(source)` - streaming reader (see below)
 - `stream(source, handler)` - streaming with a callback
 
@@ -38,7 +38,7 @@ Import `yaml`:
 
 - `parse(text)`, `parseAs(text, ClassRef)`, `tryParse(text)`,
   `stringify(value)`
-- `validate(text)`, `validateDetailed(text)`
+- `validate(text)` - returns `bool`; `validateDetailed(text)` - returns detail dict
 - `reader(source)`, `stream(source, handler)`
 
 ```gb
@@ -54,7 +54,7 @@ Import `toml`:
 
 - `parse(text)`, `parseAs(text, ClassRef)`, `tryParse(text)`,
   `stringify(value)`
-- `validate(text)`, `validateDetailed(text)`
+- `validate(text)` - returns `bool`; `validateDetailed(text)` - returns detail dict
 
 TOML is typically configuration-sized and does not expose a streaming reader.
 
@@ -71,7 +71,7 @@ Import `xml`:
 
 - `parse(text)`, `parseAs(text, ClassRef)`, `tryParse(text)`,
   `stringify(value)`
-- `validate(text)`, `validateDetailed(text)`
+- `validate(text)` - returns `bool`; `validateDetailed(text)` - returns detail dict
 - `reader(source)`, `stream(source, handler)`
 
 ## Class instances: stringify and parseAs
@@ -194,22 +194,47 @@ recover the typed Decimal.
 
 ## Streaming readers
 
-For large JSON, YAML, and XML files, use `reader` to pull records
-one at a time rather than loading the whole file into memory:
+`json.reader`, `yaml.reader`, and `xml.reader` return a token/event stream
+for large or unbounded documents. Each call to `next()` returns an event dict
+`{"type": string, "value": any}` or `null` at EOF. The reader also exposes
+`hasNext()` and `close()`.
+
+Event types for JSON: `startObject`, `endObject`, `startArray`, `endArray`,
+`key`, `value`, `error`. Structure events (`startObject` etc.) have `null`
+as their value; `key` carries a string; `value` carries the parsed scalar.
 
 ```gb
 import json;
 
-let reader = json.reader(io.open("events.jsonl", "r"));
-let record = reader.next();
-while (record != null) {
-    io.println(record["id"]);
-    record = reader.next();
+let r = json.reader("[1, 2, 3]");
+let ev = r.next();
+while (ev != null) {
+    io.println(ev["type"] as string);
+    ev = r.next();
 }
-reader.close();
+r.close();
+# startArray
+# value
+# value
+# value
+# endArray
 ```
 
-The reader object exposes `next()` and `close()`.
+Pull-style with `hasNext()`:
+
+```gb
+import json;
+
+let r = json.reader('{"a": 1}');
+while (r.hasNext()) {
+    let ev = r.next();
+    io.println(ev["type"] as string);
+}
+r.close();
+```
+
+The reader accepts a `string`, `bytes`, or an open `IOStream` (`io.open(...)`)
+as its source.
 
 ## Serde - format-agnostic serialization
 

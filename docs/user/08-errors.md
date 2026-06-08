@@ -144,6 +144,7 @@ and `class`.
 | `ParseError` | Parsing failures |
 | `MatchError` | Non-exhaustive match |
 | `AssertionError` | Failed `assert(...)` (1.6.0) |
+| `ImmutableError` | Mutation of a frozen value (whole-class `@immutable`, `@dataclass(frozen: true)`, or a set-once field after construction) (1.12.0) |
 | `FatalError` | Unrecoverable fault; never caught (1.7.0) |
 
 ## Catchable Errors vs FatalError (1.7.0)

@@ -1152,6 +1152,20 @@ first(10);
 	}
 }
 
+// A lone candidate whose parameter type the static arg cannot satisfy yields
+// the evaluator-matching detailed message, not the generic overload error.
+func TestCompileOverloadMismatchDetailMatchesEvaluator(t *testing.T) {
+	source := []byte(`func g(int x): int { return x; }
+g("s");
+`)
+	program := parseProgram(t, string(source))
+	_, err := bytecode.Compile(program, source, "test")
+	want := "g expects int for parameter 'x', got string"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("expected %q, got %v", want, err)
+	}
+}
+
 func TestCompileAndRunBytecodeRejectsExcessiveRecursion(t *testing.T) {
 	// Non-tail recursion: the `+ 0` keeps the call out of tail position
 	// so the new OpTailCall fast path does not collapse the frames.

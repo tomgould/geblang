@@ -170,6 +170,47 @@ class Child extends Base {
 io.println(Child().count); # 1
 ```
 
+### Cross-module inheritance
+
+A class can extend a parent defined in another module. Two forms are
+equivalent:
+
+```gb
+# shapes.gb
+module shapes;
+export class Shape {
+    string color;
+    func Shape(string color) { this.color = color; }
+    func area(): float { return 0.0f; }
+}
+```
+
+Qualified import - use the module prefix in the `extends` clause:
+
+```gb
+import shapes;
+
+class Circle extends shapes.Shape {
+    float radius;
+    func Circle(float radius) { parent("red"); this.radius = radius; }
+    func area(): float { return 3.14159f * this.radius * this.radius; }
+}
+```
+
+From-import - bring the name into scope first:
+
+```gb
+from shapes import Shape;
+
+class Square extends Shape {
+    float side;
+    func Square(float side) { parent("blue"); this.side = side; }
+    func area(): float { return this.side * this.side; }
+}
+```
+
+Both forms give the subclass full access to inherited fields and methods.
+
 Use inheritance for true specialization. Prefer composition when one object
 merely needs to use another service:
 

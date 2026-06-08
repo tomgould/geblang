@@ -29,7 +29,7 @@ caller unpacks them into multiple variables:
 func minMax(list<int> xs): list<int> {
     int lo = xs[0];
     int hi = xs[0];
-    for (var x in xs) {
+    for (x in xs) {
         if (x < lo) { lo = x; }
         if (x > hi) { hi = x; }
     }
@@ -153,7 +153,7 @@ receives a frozen shallow copy, not the original):
 ```gb
 func sum(const list<int> xs): int {
     int total = 0;
-    for (var x in xs) { total = total + x; }
+    for (x in xs) { total = total + x; }
     # xs.append(0);   # would raise ImmutableError
     return total;
 }
@@ -426,7 +426,7 @@ naive recursive definitions become efficient.
 @memoize
 func fib(int n): int {
     if (n < 2) { return n; }
-    return fib(n - 1) + fib(n - 2);  // each fib(n) body runs once
+    return fib(n - 1) + fib(n - 2);  # each fib(n) body runs once
 }
 ```
 

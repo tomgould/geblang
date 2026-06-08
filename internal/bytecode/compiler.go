@@ -4755,12 +4755,70 @@ func (c *Compiler) selectFunctionIndicesCallWithReturnFilter(name string, indice
 		orderedMatches = append(orderedMatches, orderedArgs)
 	}
 	if len(matches) == 0 {
+		if msg := c.overloadMismatchDetail(name, indices, args, paramOffset); msg != "" {
+			return 0, nil, fmt.Errorf("%s", msg)
+		}
 		return 0, nil, fmt.Errorf("no matching overload for %s", name)
 	}
 	if len(matches) > 1 {
 		return 0, nil, fmt.Errorf("ambiguous overload for %s", name)
 	}
 	return matches[0], orderedMatches[0], nil
+}
+
+// overloadMismatchDetail mirrors the evaluator's per-parameter error for the
+// lone arity-matching candidate; "" when it cannot pin one mismatch (caller
+// falls back to the generic overload message).
+func (c *Compiler) overloadMismatchDetail(name string, indices []int64, args []ast.CallArgument, paramOffset int) string {
+	var candidate *FunctionInfo
+	var ordered []ast.Expression
+	for _, index := range indices {
+		function := c.chunk.Functions[index]
+		if len(function.ParamNames) == 0 && len(args) > 0 {
+			continue
+		}
+		orderedArgs, err := c.orderFunctionArguments(function, args, paramOffset)
+		if err != nil {
+			continue
+		}
+		if candidate != nil {
+			return ""
+		}
+		fn := function
+		candidate = &fn
+		ordered = orderedArgs
+	}
+	if candidate == nil || len(candidate.ParamTypes) == 0 {
+		return ""
+	}
+	variadicIndex := -1
+	if candidate.Variadic {
+		variadicIndex = len(candidate.ParamTypes) - 1
+	}
+	for i, arg := range ordered {
+		if arg == nil {
+			continue
+		}
+		argType := c.expressionStaticType(arg)
+		if argType == "" {
+			continue
+		}
+		paramIndex := i + paramOffset
+		if paramIndex >= len(candidate.ParamTypes) {
+			if variadicIndex < 0 {
+				return ""
+			}
+			paramIndex = variadicIndex
+		}
+		if !c.staticFunctionParamAssignable(*candidate, candidate.ParamTypes[paramIndex], argType) {
+			paramName := ""
+			if paramIndex < len(candidate.ParamNames) {
+				paramName = candidate.ParamNames[paramIndex]
+			}
+			return fmt.Sprintf("%s expects %s for parameter '%s', got %s", name, candidate.ParamTypes[paramIndex], paramName, argType)
+		}
+	}
+	return ""
 }
 
 func (c *Compiler) staticArgumentsMayMatch(function FunctionInfo, args []ast.Expression, paramOffset int) bool {

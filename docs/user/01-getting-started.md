@@ -296,6 +296,16 @@ imports using the same path rules used at runtime. Lint warnings (unused imports
 unreachable statements) are reported but do not fail the command unless
 `--strict` is used.
 
+As of 1.13.0, `check` also performs type-level checks:
+
+- Unknown type names in any annotation position (parameter, return, field,
+  variable, generic argument, catch clause, or `as` cast) are errors:
+  `error[semantic]: unknown type "FakeType" in parameter x of function f`
+- Type checks run inside class method bodies: mismatched return types and
+  argument types against declared annotations are caught statically.
+- A module-qualified type name whose module does not export that name is
+  flagged: `error[type]: shapes has no exported type NonExistent`
+
 Static-analysis errors are also enforced by `geblang run`: a script that fails
 `check` because of a no-matching-overload call, a type mismatch, or any other
 hard error aborts before the first statement runs instead of executing partway

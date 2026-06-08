@@ -153,6 +153,7 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 			diags = append(diags, d)
 		}
 	}
+	diags = suppressRedundantOverloadErrors(diags)
 	if opts.Lint {
 		diags = append(diags, lintProgram(file, program)...)
 	}
@@ -242,6 +243,74 @@ func compileDiagnostic(file string, compileErr error) (Diagnostic, bool) {
 		Rule:     "type",
 		Message:  compileErr.Error(),
 	}, true
+}
+
+// suppressRedundantOverloadErrors drops a function's overload-mismatch error
+// when an unknown-type error for that same function already explains it.
+func suppressRedundantOverloadErrors(diags []Diagnostic) []Diagnostic {
+	unknownParamFns := map[string]bool{}
+	for _, d := range diags {
+		if name, ok := unknownTypeFunctionName(d.Message); ok {
+			unknownParamFns[name] = true
+		}
+	}
+	if len(unknownParamFns) == 0 {
+		return diags
+	}
+	out := diags[:0]
+	for _, d := range diags {
+		if name, ok := overloadErrorFunctionName(d.Message); ok && unknownParamFns[name] {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// stripLinePrefix removes a leading "line N:M: " that the bytecode compiler
+// prepends; analyzer messages carry no such prefix.
+func stripLinePrefix(msg string) string {
+	if !strings.HasPrefix(msg, "line ") {
+		return msg
+	}
+	if i := strings.Index(msg, ": "); i >= 0 {
+		return msg[i+len(": "):]
+	}
+	return msg
+}
+
+// unknownTypeFunctionName extracts F from `unknown type "X" in parameter p of
+// function F` (the analyzer's class-method context is also "function").
+func unknownTypeFunctionName(msg string) (string, bool) {
+	if !strings.HasPrefix(msg, "unknown type ") {
+		return "", false
+	}
+	idx := strings.Index(msg, " of function ")
+	if idx < 0 {
+		return "", false
+	}
+	return strings.TrimSpace(msg[idx+len(" of function "):]), true
+}
+
+// overloadErrorFunctionName extracts F from the two overload-mismatch forms:
+// the generic `no matching overload for F[...]` and the detailed `F expects
+// <type> for parameter ...`.
+func overloadErrorFunctionName(msg string) (string, bool) {
+	msg = stripLinePrefix(msg)
+	const prefix = "no matching overload for "
+	if strings.HasPrefix(msg, prefix) {
+		rest := msg[len(prefix):]
+		for _, sep := range []string{":", " with ", " returning "} {
+			if i := strings.Index(rest, sep); i >= 0 {
+				rest = rest[:i]
+			}
+		}
+		return strings.TrimSpace(rest), true
+	}
+	if i := strings.Index(msg, " expects "); i >= 0 && strings.Contains(msg, " for parameter '") {
+		return strings.TrimSpace(msg[:i]), true
+	}
+	return "", false
 }
 
 // parseParserError splits "line:col: message" into its parts. Parser

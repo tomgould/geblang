@@ -171,7 +171,7 @@ put it in a list, pass it to another function, or await it later.
 func awaitAll(list<Task<string>> tasks): list<string> {
     list<string> results = [];
     for (task in tasks) {
-        results.push(await task);
+        results = results.push(await task);
     }
     return results;
 }
@@ -531,9 +531,9 @@ for (var url in urls) {
 ```gb
 import async.atomic as atomic;
 let hits = atomic.AtomicInt(0);
-// in many tasks:
+# in many tasks:
 hits.add(1);
-// later:
+# later:
 io.println(hits.load());
 ```
 

@@ -197,6 +197,12 @@ type StatefulNativeCaller interface {
 	CallBuiltin(module, name string, args []runtime.Value, argNames []string) (runtime.Value, error)
 }
 
+// nativeObjectMethodCaller routes NativeObject methods to the stateful
+// native, which owns the underlying handle state.
+type nativeObjectMethodCaller interface {
+	NativeObjectMethod(obj runtime.NativeObject, name string, args []runtime.Value) (runtime.Value, error)
+}
+
 type directPrintStatefulNative interface {
 	HandleDirectPrint() bool
 }
@@ -12695,6 +12701,18 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			vm.push(result)
 			return ip, nil
 		}
+	}
+	if nativeObject, ok := receiver.(runtime.NativeObject); ok {
+		caller, ok := vm.statefulNative.(nativeObjectMethodCaller)
+		if !ok {
+			return 0, vm.runtimeError(instruction, "%s has no method %s", nativeObject.TypeName(), nameValue.Value)
+		}
+		result, err := caller.NativeObjectMethod(nativeObject, nameValue.Value, args)
+		if err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		vm.push(result)
+		return ip, nil
 	}
 	value, err := primitiveMethod(receiver, nameValue.Value, args)
 	if err != nil {

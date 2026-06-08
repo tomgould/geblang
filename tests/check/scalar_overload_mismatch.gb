@@ -1,0 +1,8 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag a scalar argument that matches no overload,
+ * naming the parameter and the expected type the way the runtime reports it
+ * (g expects int for parameter 'x', got string).
+ */
+func g(int x): int { return x; }
+g("s");

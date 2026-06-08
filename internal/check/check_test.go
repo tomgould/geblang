@@ -356,6 +356,35 @@ func TestSourceFlagsCollectionElementMismatch(t *testing.T) {
 	}
 }
 
+// A scalar overload mismatch surfaces the evaluator-matching detailed message
+// rather than the bare "no matching overload".
+func TestSourceOverloadMismatchDetailedMessage(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "func g(int x): int { return x; }\ng(\"s\");\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	if !hasDiag(diags, "type", "g expects int for parameter 'x', got string") {
+		t.Fatalf("expected detailed overload message, got %+v", diags)
+	}
+}
+
+// When an unknown parameter type already explains why no overload matches, the
+// redundant "no matching overload" error is suppressed.
+func TestSourceSuppressesRedundantOverloadAfterUnknownType(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "func f(Nope x): int { return 0; }\nf(1);\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	if !hasDiag(diags, "semantic", "unknown type \"Nope\" in parameter x of function f") {
+		t.Fatalf("expected unknown-type diagnostic, got %+v", diags)
+	}
+	for _, d := range diags {
+		if _, ok := overloadErrorFunctionName(d.Message); ok {
+			t.Fatalf("overload error should be suppressed, got %+v", d)
+		}
+	}
+}
+
 // TestSourceAllowsCovariantCollectionArgument verifies check does NOT
 // false-positive on a covariant collection argument (list<Dog> -> list<Animal>).
 func TestSourceAllowsCovariantCollectionArgument(t *testing.T) {

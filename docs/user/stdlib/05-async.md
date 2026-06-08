@@ -62,7 +62,7 @@ first error is re-thrown when the result is awaited.
 
 ```gb
 let pages = await async.all([fetchPage(1), fetchPage(2), fetchPage(3)]);
-io.println("got " + str(pages.length) + " pages");
+io.println("got " + (pages.length() as string) + " pages");
 ```
 
 `async.race([tasks])` returns the value of the first task to finish. The

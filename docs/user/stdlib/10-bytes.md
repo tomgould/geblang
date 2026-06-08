@@ -12,7 +12,8 @@ Import `bytes`:
 - `fromBase64Url(text)`, `toBase64Url(bytes)` - unpadded URL-safe
   base64 (RFC 4648 section 5; the variant JWT/JOSE uses). The
   decoder accepts both padded and unpadded input.
-- `concat(list<bytes>)`
+- `concat(left, right)` - concatenates two `bytes` values; call repeatedly or
+  use `list.reduce` to join many buffers
 
 Bytes values also expose `b.toHex()`, `b.toBase64()`, and
 `b.toBase64Url()` as methods, equivalent to the module helpers.

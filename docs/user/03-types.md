@@ -738,15 +738,15 @@ Generic collection type hints document and enforce call/declaration boundaries.
 The type binder infers `T` from the element type in the call arguments:
 
 ```gb
-func sum<T>(list<T> items, func(T): int selector): int {
+func sumBy<T>(list<T> items, func selector): int {
     int total = 0;
-    for (let item of items) {
-        total += selector(item);
+    for (item in items) {
+        total = total + selector(item);
     }
     return total;
 }
 
-let total = sum(orders, func(Order o): int { return o.amount; });
+let total = sumBy(orders, func(Order o): int { return o.amount; });
 ```
 
 ### Constraints

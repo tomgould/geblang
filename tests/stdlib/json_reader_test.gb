@@ -1,0 +1,64 @@
+/**
+ * @title JSON streaming reader test
+ * @summary json.reader next/hasNext/close over a full document.
+ */
+import test;
+import json;
+
+class JsonReaderTest extends test.Test {
+    @test
+    func nextWalksFullDocument(): void {
+        let reader = json.reader('[1, "two", {"k": true}, null]');
+        let types = [];
+        let ev = reader.next();
+        while (ev != null) {
+            types = types.push(ev["type"]);
+            ev = reader.next();
+        }
+        this.assertEquals(
+            ["startArray", "value", "value", "startObject", "key", "value", "endObject", "value", "endArray"],
+            types
+        );
+        reader.close();
+    }
+
+    @test
+    func nextReturnsNullAtEof(): void {
+        let reader = json.reader("[]");
+        this.assertEquals("startArray", reader.next()["type"]);
+        this.assertEquals("endArray", reader.next()["type"]);
+        this.assertEquals(null, reader.next());
+        this.assertEquals(null, reader.next());
+    }
+
+    @test
+    func hasNextGatesIteration(): void {
+        let reader = json.reader('{"a": 1, "b": 2}');
+        let count = 0;
+        while (reader.hasNext()) {
+            reader.next();
+            count = count + 1;
+        }
+        this.assertEquals(6, count);
+        this.assertEquals(false, reader.hasNext());
+    }
+
+    @test
+    func valueEventsCarryTypedValues(): void {
+        let reader = json.reader('[true, 42, "hi", null]');
+        this.assertEquals("startArray", reader.next()["type"]);
+        this.assertEquals(true, reader.next()["value"]);
+        this.assertEquals(42, reader.next()["value"]);
+        this.assertEquals("hi", reader.next()["value"]);
+        this.assertEquals(null, reader.next()["value"]);
+        this.assertEquals("endArray", reader.next()["type"]);
+    }
+
+    @test
+    func malformedDocumentEmitsErrorEvent(): void {
+        let reader = json.reader('[1, @]');
+        this.assertEquals("startArray", reader.next()["type"]);
+        this.assertEquals("value", reader.next()["type"]);
+        this.assertEquals("error", reader.next()["type"]);
+    }
+}

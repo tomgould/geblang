@@ -22706,6 +22706,26 @@ func (e *Evaluator) closeJSONReader(id int64) {
 	e.jsonMu.Unlock()
 }
 
+// NativeObjectMethod is the shared NativeObject dispatch the VM routes to for backend parity.
+func (e *Evaluator) NativeObjectMethod(nativeObject runtime.NativeObject, name string, args []runtime.Value) (runtime.Value, error) {
+	switch nativeObject.Kind {
+	case "IOBuffer":
+		return e.ioBufferMethod(nativeObject, name, args)
+	case "IOStream", "IOCapture":
+		return e.ioStreamMethod(nativeObject, name, args)
+	case "JsonReader":
+		return e.jsonReaderMethod(nativeObject, name, args)
+	case "XmlReader":
+		return e.xmlReaderMethod(nativeObject, name, args)
+	case "CsvReader":
+		return e.csvReaderMethod(nativeObject, name, args)
+	case "YamlReader":
+		return e.yamlReaderMethod(nativeObject, name, args)
+	default:
+		return nil, fmt.Errorf("%s has no method %s", nativeObject.TypeName(), name)
+	}
+}
+
 func (e *Evaluator) jsonReaderMethod(reader runtime.NativeObject, name string, args []runtime.Value) (runtime.Value, error) {
 	if reader.Kind != "JsonReader" {
 		return nil, fmt.Errorf("%s has no method %s", reader.TypeName(), name)
@@ -25825,22 +25845,7 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 		return nil, err
 	}
 	if nativeObject, ok := receiver.(runtime.NativeObject); ok {
-		switch nativeObject.Kind {
-		case "IOBuffer":
-			return e.ioBufferMethod(nativeObject, name, args)
-		case "IOStream", "IOCapture":
-			return e.ioStreamMethod(nativeObject, name, args)
-		case "JsonReader":
-			return e.jsonReaderMethod(nativeObject, name, args)
-		case "XmlReader":
-			return e.xmlReaderMethod(nativeObject, name, args)
-		case "CsvReader":
-			return e.csvReaderMethod(nativeObject, name, args)
-		case "YamlReader":
-			return e.yamlReaderMethod(nativeObject, name, args)
-		default:
-			return nil, fmt.Errorf("%s has no method %s", nativeObject.TypeName(), name)
-		}
+		return e.NativeObjectMethod(nativeObject, name, args)
 	}
 	if instant, ok := receiver.(runtime.DateTimeInstant); ok {
 		return native.DateTimeInstantMethod(instant, name, args)

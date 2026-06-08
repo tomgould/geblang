@@ -1497,6 +1497,29 @@ io.println(wrap(describe(99)));
 `, "int:42\nstr:hello\n[int:99]\n")
 }
 
+// Both backends reject a scalar-mismatch overload call with the identical
+// detailed message (compiler now mirrors the evaluator's runtime wording).
+func TestParityOverloadMismatchErrorText(t *testing.T) {
+	source := `func g(int x): int { return x; }
+g("s");
+`
+	want := "g expects int for parameter 'x', got string"
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+	var evOut bytes.Buffer
+	_, evErr := evaluator.New(&evOut).Eval(program)
+	if evErr == nil || !strings.Contains(evErr.Error(), want) {
+		t.Fatalf("evaluator: want %q, got %v", want, evErr)
+	}
+	_, vmErr := bytecode.Compile(program, []byte(source), "parity")
+	if vmErr == nil || !strings.Contains(vmErr.Error(), want) {
+		t.Fatalf("vm: want %q, got %v", want, vmErr)
+	}
+}
+
 func TestParityClosureNoCapture(t *testing.T) {
 	runParity(t, `import io;
 let double = func(int x): int { return x * 2; };
@@ -13109,4 +13132,52 @@ init { io.println("${a()}"); }
 func a(): int { return b() + 1; }
 func b(): int { return 10; }
 `, "11\n")
+}
+
+// next()-driven walk over a mixed/nested document, identical on both backends.
+func TestParityJSONReaderNextDrivenWalk(t *testing.T) {
+	runParityStateful(t, `
+import json;
+import io;
+let src = '[1, "two", {"k": true, "n": null}, [9]]';
+let reader = json.reader(src);
+let ev = reader.next();
+while (ev != null) {
+  io.println("${ev["type"]} | ${ev["value"]}");
+  ev = reader.next();
+}
+io.println("eof=${reader.next()}");
+reader.close();
+`, "startArray | null\nvalue | 1\nvalue | two\nstartObject | null\nkey | k\nvalue | true\nkey | n\nvalue | null\nendObject | null\nstartArray | null\nvalue | 9\nendArray | null\nendArray | null\neof=null\n")
+}
+
+// hasNext()-gated iteration, identical on both backends; hasNext() stays false past EOF.
+func TestParityJSONReaderHasNextLoop(t *testing.T) {
+	runParityStateful(t, `
+import json;
+import io;
+let reader = json.reader('{"a": 1, "b": [true, "x"]}');
+let count = 0;
+while (reader.hasNext()) {
+  let ev = reader.next();
+  io.println("${ev["type"]}=${ev["value"]}");
+  count = count + 1;
+}
+io.println("events=${count}");
+io.println("more=${reader.hasNext()}");
+`, "startObject=null\nkey=a\nvalue=1\nkey=b\nstartArray=null\nvalue=true\nvalue=x\nendArray=null\nendObject=null\nevents=9\nmore=false\n")
+}
+
+// A malformed document surfaces an error event identically on both backends.
+func TestParityJSONReaderErrorEvent(t *testing.T) {
+	runParityStateful(t, `
+import json;
+import io;
+let reader = json.reader('[1, @, 3]');
+let ev = reader.next();
+while (ev != null) {
+  io.println(ev["type"]);
+  ev = reader.next();
+}
+`, "startArray\nvalue\nerror\n")
 }

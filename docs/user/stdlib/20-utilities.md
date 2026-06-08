@@ -162,9 +162,10 @@ Import: `import maps;`
 
 Implement the `maps.DictInterface` interface to give a class dict-like
 behaviour. You provide two abstract methods - `__index(key)` (backs `obj[key]`)
-and `keys()` (the key set) - and inherit `contains`, `get`, `values`,
-`length`, `isEmpty`, and `__contains` (so `key in obj` works) as default
-implementations. For a mutable map, also define `__setIndex(key, value)` on the
+and `keys()` (the key set) - and inherit `contains`, `get(key, default)`,
+`values`, `length`, `isEmpty`, and `__contains` (so `key in obj` works) as
+default implementations. `get(key, default)` returns the value for `key` or
+`default` when absent. For a mutable map, also define `__setIndex(key, value)` on the
 class; it is intentionally not part of the interface, so read-only maps can omit
 it.
 
