@@ -1,5 +1,33 @@
 # Release Notes
 
+## 1.14.0
+
+### Standard library
+
+- New profiling context managers in the `profiler` module. `profiler.timer()`
+  brackets a block with `with` and reports wall-clock time afterwards
+  (`elapsedMs()` at microsecond precision, `elapsedNs()`); `profiler.profile()`
+  additionally captures CPU and memory (`elapsedMs()`, `cpuMs()`, `heapBytes()`,
+  `allocs()`, `gcCount()`, and a full `report()` dict). Create the object, run
+  the work inside `with (...)`, then read the results from the object after the
+  block.
+- New `time.monotonicNs()`: a monotonic nanosecond clock for high-resolution
+  duration measurement. The existing `time.monotonic()` is millisecond-grained.
+
+### Tooling
+
+- The editor now offers completion and hover for every standard-library module
+  written in Geblang, including their classes and methods. Many source-backed
+  modules (for example the async primitives, the string builder, and others)
+  were previously absent from completion.
+
+### Fixes
+
+- Context managers now run `__enter` and `__exit` for an object whose class is
+  defined in an imported module when running compiled bytecode. These were
+  previously skipped on that path, so a `with` block over an imported class
+  could leave its setup or cleanup unrun.
+
 ## 1.13.0
 
 ### Standard library
