@@ -1,0 +1,15 @@
+module creatures;
+
+import animals;
+
+/* WildAnimal extends animals.Animal - cross-module parent across two hops
+   when a test file does `from creatures import WildAnimal` */
+export class WildAnimal extends animals.Animal {
+    func WildAnimal(string kind) {
+        parent(kind);
+    }
+
+    func sound(): string {
+        return "roar";
+    }
+}

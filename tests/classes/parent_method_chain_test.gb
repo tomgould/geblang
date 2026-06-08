@@ -1,0 +1,62 @@
+/**
+ * @title Multi-level parent.method() chain test
+ * @summary parent.method() resolves against the lexically-enclosing class
+ *          across override chains, while this.method() stays polymorphic.
+ */
+import test;
+
+class Base {
+    int n;
+    func Base(int n) { this.n = n; }
+    func value(): int { return this.n + 1; }
+}
+
+class Sub extends Base {
+    func Sub(int n) { parent(n); }
+    func value(): int { return parent.value() + 10; }
+}
+
+class Leaf extends Sub {
+    func Leaf(int n) { parent(n); }
+    func value(): int { return parent.value() - 3; }
+}
+
+class Greeter {
+    func name(): string { return "base"; }
+    func greet(): string { return "hello " + this.name(); }
+}
+
+class MidGreeter extends Greeter {
+    func name(): string { return "mid"; }
+}
+
+class LeafGreeter extends MidGreeter {
+    func name(): string { return "leaf"; }
+    func describe(): string { return parent.greet() + " / " + this.name(); }
+}
+
+class ParentMethodChainTest extends test.Test {
+    @test
+    func twoLevelChain(): void {
+        this.assertEquals(16, Sub(5).value());
+    }
+
+    @test
+    func threeLevelChain(): void {
+        this.assertEquals(13, Leaf(5).value());
+    }
+
+    @test
+    func parentMethodKeepsDynamicDispatch(): void {
+        /* parent.greet() resolves to Greeter.greet lexically, but its
+         * this.name() call must dispatch to the runtime class. */
+        this.assertEquals("hello leaf / leaf", LeafGreeter().describe());
+    }
+
+    @test
+    func plainOverrideStaysPolymorphic(): void {
+        this.assertEquals("hello base", Greeter().greet());
+        this.assertEquals("hello mid", MidGreeter().greet());
+        this.assertEquals("hello leaf", LeafGreeter().greet());
+    }
+}

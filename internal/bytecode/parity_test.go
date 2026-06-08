@@ -277,6 +277,162 @@ func (l *stdlibModuleLoader) ImmutableFieldsForModuleClass(module string, classN
 	return nil
 }
 
+func (l *stdlibModuleLoader) ModuleClassDescendsFrom(module, className, targetSimpleName string) bool {
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return false
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunks[module]
+		if !ok {
+			return false
+		}
+		chunk = c
+	}
+	for i := range chunk.Classes {
+		if !strings.EqualFold(chunk.Classes[i].Name, className) {
+			continue
+		}
+		for ci := chunk.Classes[i]; ; {
+			if strings.EqualFold(ci.Name, targetSimpleName) {
+				return true
+			}
+			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
+				ci = chunk.Classes[ci.ParentIndex]
+				continue
+			}
+			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
+				return l.ModuleClassDescendsFrom(ci.ParentName[:dot], ci.ParentName[dot+1:], targetSimpleName)
+			}
+			return false
+		}
+	}
+	return false
+}
+
+func (l *stdlibModuleLoader) chunkForTest(module string) (bytecode.Chunk, bool) {
+	if module == "" {
+		if !l.hasMainChunk {
+			return bytecode.Chunk{}, false
+		}
+		return l.mainChunk, true
+	}
+	c, ok := l.chunks[module]
+	return c, ok
+}
+
+func (l *stdlibModuleLoader) StaticValueForModuleClass(module, className, name string) (runtime.Value, bool) {
+	chunk, ok := l.chunkForTest(module)
+	if !ok {
+		return nil, false
+	}
+	for i := range chunk.Classes {
+		if !strings.EqualFold(chunk.Classes[i].Name, className) {
+			continue
+		}
+		for ci := chunk.Classes[i]; ; {
+			if idx, present := ci.StaticValues[name]; present && idx >= 0 && int(idx) < len(chunk.Constants) {
+				return chunk.Constants[idx], true
+			}
+			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
+				ci = chunk.Classes[ci.ParentIndex]
+				continue
+			}
+			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
+				return l.StaticValueForModuleClass(ci.ParentName[:dot], ci.ParentName[dot+1:], name)
+			}
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
+func (l *stdlibModuleLoader) CallModuleStaticMethodByName(module, className, methodName string, args []runtime.Value) (runtime.Value, bool, error) {
+	chunk, ok := l.chunkForTest(module)
+	if !ok {
+		return nil, false, nil
+	}
+	for i := range chunk.Classes {
+		if !strings.EqualFold(chunk.Classes[i].Name, className) {
+			continue
+		}
+		for ci := chunk.Classes[i]; ; {
+			if _, present := ci.StaticMethods[strings.ToLower(methodName)]; present {
+				vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
+				vm.SetModuleName(module)
+				vm.SetModulePaths(l.modulePaths)
+				vm.SetStatefulNativeCaller(l.stateful)
+				vm.RestoreGlobals(l.globals[module])
+				vm.RestoreFunctionDecoratorState(l.decorators[module])
+				result, err := vm.CallStaticMethod(int64(i), methodName, args)
+				return result, true, err
+			}
+			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
+				ci = chunk.Classes[ci.ParentIndex]
+				continue
+			}
+			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
+				return l.CallModuleStaticMethodByName(ci.ParentName[:dot], ci.ParentName[dot+1:], methodName, args)
+			}
+			return nil, false, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (l *stdlibModuleLoader) UnimplementedAbstractMethods(module, className string) map[string]string {
+	chunk, ok := l.chunkForTest(module)
+	if !ok {
+		return nil
+	}
+	for i := range chunk.Classes {
+		if !strings.EqualFold(chunk.Classes[i].Name, className) {
+			continue
+		}
+		overridden := map[string]bool{}
+		abstractDecl := map[string]string{}
+		for ci := chunk.Classes[i]; ; {
+			for method := range ci.Methods {
+				isAbstract := false
+				for _, dec := range ci.MethodDecorators[method] {
+					if strings.EqualFold(dec.Name, "abstract") {
+						isAbstract = true
+						break
+					}
+				}
+				if isAbstract {
+					if !overridden[method] {
+						if _, seen := abstractDecl[method]; !seen {
+							abstractDecl[method] = ci.Name
+						}
+					}
+				} else {
+					overridden[method] = true
+					delete(abstractDecl, method)
+				}
+			}
+			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
+				ci = chunk.Classes[ci.ParentIndex]
+				continue
+			}
+			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
+				for method, owner := range l.UnimplementedAbstractMethods(ci.ParentName[:dot], ci.ParentName[dot+1:]) {
+					if !overridden[method] {
+						if _, seen := abstractDecl[method]; !seen {
+							abstractDecl[method] = owner
+						}
+					}
+				}
+			}
+			break
+		}
+		return abstractDecl
+	}
+	return nil
+}
+
 func (l *stdlibModuleLoader) ListAllClasses() []runtime.Value {
 	out := []runtime.Value{}
 	for module, chunk := range l.chunks {
@@ -7205,6 +7361,40 @@ io.println(caught);
 `, "kaboom\ntrue\n")
 }
 
+// TestParityParentMethodChain covers a multi-level override chain where each
+// level calls parent.method(). The evaluator must resolve parent against the
+// lexically-enclosing class, not the runtime class of `this`; resolving via
+// this.Class.Parent re-enters the same method and infinite-loops.
+func TestParityParentMethodChain(t *testing.T) {
+	runParity(t, `import io;
+class Base { int n; func Base(int n) { this.n = n; } func value(): int { return this.n + 1; } }
+class Sub extends Base { func Sub(int n) { parent(n); } func value(): int { return parent.value() + 10; } }
+class Leaf extends Sub { func Leaf(int n) { parent(n); } func value(): int { return parent.value() - 3; } }
+io.println(Sub(5).value());
+io.println(Leaf(5).value());
+`, "16\n13\n")
+}
+
+// TestParityParentMethodChainKeepsDynamicDispatch proves that while parent.X
+// resolves lexically, the parent method still invokes this.Y() polymorphically.
+func TestParityParentMethodChainKeepsDynamicDispatch(t *testing.T) {
+	runParity(t, `import io;
+class Base {
+  func name(): string { return "base"; }
+  func greet(): string { return "hello " + this.name(); }
+}
+class Sub extends Base { func name(): string { return "sub"; } }
+class Leaf extends Sub {
+  func name(): string { return "leaf"; }
+  func describe(): string { return parent.greet() + " / " + this.name(); }
+}
+io.println(Base().greet());
+io.println(Sub().greet());
+io.println(Leaf().greet());
+io.println(Leaf().describe());
+`, "hello base\nhello sub\nhello leaf\nhello leaf / leaf\n")
+}
+
 // TestParityVariadicClosure covers the fix where the bytecode compiler did
 // not set FunctionInfo.Variadic for closure literals (only for top-level
 // function statements). Variadic packing in startFunctionWithValidation
@@ -8096,6 +8286,73 @@ io.println(Loud("bo", 4).greet());
 	}
 }
 
+func TestParityCrossModuleInterfaceDefaultSubclass(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "contracts.gb"), []byte(`module contracts;
+export interface Stampable {
+    func stamp(): string;
+    func label(): string { return "L:" + this.stamp(); }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write contracts: %v", err)
+	}
+
+	source := `import io;
+import contracts;
+from contracts import Stampable;
+
+class Coin implements contracts.Stampable {
+    func stamp(): string { return "m"; }
+}
+class BigCoin extends Coin {}
+
+class Token implements Stampable {
+    func stamp(): string { return "c"; }
+}
+class BigToken extends Token {}
+
+io.println(Coin().label());
+io.println(BigCoin().label());
+io.println(Token().label());
+io.println(BigToken().label());
+`
+
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	want := "L:m\nL:m\nL:c\nL:c\n"
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: unexpected error: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: got %q, want %q", evOut.String(), want)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: unexpected error: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: got %q, want %q", vmOut.String(), want)
+	}
+}
+
 func TestParityInterfaceDefaults(t *testing.T) {
 	runParity(t, `import io;
 
@@ -8123,6 +8380,31 @@ io.println(u.upper());
 let l = Loud("ada");
 io.println(l.greet());
 `, "hello, ada\nADA\nHELLO, ada\n")
+}
+
+func TestParityInterfaceDefaultSubclass(t *testing.T) {
+	runParity(t, `import io;
+
+interface Stampable {
+    func stamp(): string;
+    func label(): string { return "L:" + this.stamp(); }
+}
+
+class Marker implements Stampable {
+    func mark(): string { return this.stamp(); }
+    func stamp(): string { return "s"; }
+}
+
+class SubMarker extends Marker {}
+
+class OverMarker extends Marker {
+    func stamp(): string { return "o"; }
+}
+
+io.println(Marker().label());
+io.println(SubMarker().label());
+io.println(OverMarker().label());
+`, "L:s\nL:s\nL:o\n")
 }
 
 func TestParityInterfaceDiamondConflict(t *testing.T) {
@@ -8317,6 +8599,72 @@ Sub().go();
 	}
 
 	want := "42\ncaught: bang\nend\n"
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: unexpected error: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: got %q, want %q", evOut.String(), want)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: unexpected error: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: got %q, want %q", vmOut.String(), want)
+	}
+}
+
+// TestParityCrossModuleParentMethodChain covers a multi-level parent.method()
+// override chain whose top class lives in another module. The lexical-class
+// resolution must hold across the module boundary on both backends.
+func TestParityCrossModuleParentMethodChain(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "basemod.gb"), []byte(`module basemod;
+export class Base {
+    int n;
+    func Base(int n) { this.n = n; }
+    func value(): int { return this.n + 1; }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write basemod: %v", err)
+	}
+
+	source := `import io;
+import basemod;
+
+class Sub extends basemod.Base {
+    func Sub(int n) { parent(n); }
+    func value(): int { return parent.value() + 10; }
+}
+class Leaf extends Sub {
+    func Leaf(int n) { parent(n); }
+    func value(): int { return parent.value() - 3; }
+}
+io.println(Sub(5).value());
+io.println(Leaf(5).value());
+`
+
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	want := "16\n13\n"
 
 	var evOut bytes.Buffer
 	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})

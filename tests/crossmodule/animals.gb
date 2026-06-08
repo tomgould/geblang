@@ -1,0 +1,72 @@
+module animals;
+
+export func trackClass(any cls): any {
+    return cls;
+}
+
+export class Animal {
+    string kind;
+
+    func Animal(string kind) {
+        this.kind = kind;
+    }
+
+    func sound(): string {
+        return "...";
+    }
+
+    /* template method: subclasses override sound() */
+    func describe(): string {
+        return this.kind + ":" + this.sound();
+    }
+
+    /* takes an arg; used by dimension-1 cross-module test */
+    func tag(string s): string {
+        return this.kind + ":" + s;
+    }
+
+    /* mutates then reads the inherited field; used by dimension-2 test */
+    func rename(string newKind): string {
+        this.kind = newKind;
+        return this.kind;
+    }
+}
+
+export class Pet extends Animal {
+    func Pet(string kind) {
+        parent(kind);
+    }
+
+    func sound(): string {
+        return "pet-noise";
+    }
+}
+
+export class Box<T> {
+    T item;
+
+    func Box(T v) {
+        this.item = v;
+    }
+
+    func get(): T {
+        return this.item;
+    }
+
+    func set(T v): void {
+        this.item = v;
+    }
+}
+
+@trackClass
+export class Tracked {
+    string label;
+
+    func Tracked(string label) {
+        this.label = label;
+    }
+
+    func identify(): string {
+        return "tracked:" + this.label;
+    }
+}

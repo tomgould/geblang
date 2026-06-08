@@ -175,6 +175,22 @@ type ModuleLoader interface {
 	FieldsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error)
 	LookupModuleInterface(module, name string) (InterfaceInfo, bool)
 	ListAllClasses() []runtime.Value
+	// ModuleClassDescendsFrom reports whether className in module is or
+	// descends from a class with simple name targetSimpleName, recursing
+	// across further module boundaries (cross-module instanceof).
+	ModuleClassDescendsFrom(module, className, targetSimpleName string) bool
+	// StaticValueForModuleClass resolves a static const/let declared on
+	// className in module or an ancestor, recursing across further module
+	// boundaries. found=false when no such static value exists.
+	StaticValueForModuleClass(module, className, name string) (runtime.Value, bool)
+	// CallModuleStaticMethodByName resolves and calls a static method on
+	// className in module or an ancestor, recursing across further module
+	// boundaries. found=false when no such static method exists.
+	CallModuleStaticMethodByName(module, className, methodName string, args []runtime.Value) (runtime.Value, bool, error)
+	// UnimplementedAbstractMethods returns the @abstract methods declared
+	// on className in module or an ancestor with no concrete override in
+	// the cross-module chain, keyed by method name to declaring class.
+	UnimplementedAbstractMethods(module, className string) map[string]string
 }
 
 type StatefulNativeCaller interface {
@@ -528,10 +544,8 @@ func (vm *VM) hasInstanceMethod(instance *runtime.Instance, name string) bool {
 			return true
 		}
 	}
-	if idx, ok := vm.classIndex[strings.ToLower(instance.Class.Name)]; ok {
-		if _, ok := vm.interfaceFallbacks[int64(idx)][strings.ToLower(name)]; ok {
-			return true
-		}
+	if _, ok := vm.lookupInterfaceFallback(instance.Class.Name, strings.ToLower(name)); ok {
+		return true
 	}
 	return false
 }
@@ -6948,27 +6962,39 @@ func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	// Cross-module parent: dispatch the named method into the parent's
-	// own chunk through the module loader. Mirrors callParentConstructor.
+	// `parent.method()`: lookup starts at the parent. Search the same-chunk
+	// parent chain first; on a miss, hop to a cross-module ancestor (which may
+	// sit above same-chunk intermediates, hence crossModuleBoundary).
 	if classIndex >= 0 && int(classIndex) < len(vm.chunk.Classes) {
 		classInfo := vm.chunk.Classes[classIndex]
-		if classInfo.ParentIndex < 0 && strings.Contains(classInfo.ParentName, ".") {
-			if vm.moduleLoader == nil {
-				return 0, vm.runtimeError(instruction, "cross-module parent method requires a module loader")
+		if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.chunk.Classes) {
+			parent := vm.chunk.Classes[classInfo.ParentIndex]
+			if indices, ok := vm.lookupMethod(parent, name.Value); ok {
+				functionIndex, err := vm.selectRuntimeFunction(instruction, name.Value, indices, args, 1)
+				if err != nil {
+					return 0, err
+				}
+				callArgs := append([]runtime.Value{instance}, args...)
+				return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, nil)
 			}
-			module, parentClass, ok := splitQualifiedClassName(classInfo.ParentName)
-			if !ok {
-				return 0, vm.runtimeError(instruction, "cross-module parent name %q is malformed", classInfo.ParentName)
-			}
+		}
+		boundary := classInfo
+		if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.chunk.Classes) {
+			boundary = vm.chunk.Classes[classInfo.ParentIndex]
+		}
+		if module, parentClass, ok := vm.crossModuleBoundary(boundary); ok && vm.moduleLoader != nil {
 			if _, err := vm.moduleLoader.LoadModule(module, module); err != nil {
 				return 0, vm.runtimeError(instruction, "load parent module %s: %s", module, err.Error())
 			}
 			result, err := vm.moduleLoader.CallParentInModule(module, parentClass, name.Value, instance, args)
-			if err != nil {
+			if err == nil {
+				vm.push(result)
+				return ip, nil
+			}
+			var notFound *runtime.MethodNotFoundError
+			if !errors.As(err, &notFound) {
 				return 0, vm.runtimeError(instruction, "%s", err.Error())
 			}
-			vm.push(result)
-			return ip, nil
 		}
 	}
 	parent, err := vm.parentClassInfo(instruction, classIndex)
@@ -7018,6 +7044,19 @@ func splitQualifiedClassName(qualified string) (string, string, bool) {
 	return qualified[:dot], qualified[dot+1:], true
 }
 
+// crossModuleBoundary finds the module+class to hop to when a cross-module
+// ancestor sits above one or more local intermediates, not just the direct parent.
+func (vm *VM) crossModuleBoundary(classInfo ClassInfo) (string, string, bool) {
+	top := classInfo
+	for top.ParentIndex >= 0 && int(top.ParentIndex) < len(vm.chunk.Classes) {
+		top = vm.chunk.Classes[top.ParentIndex]
+	}
+	if strings.Contains(top.ParentName, ".") {
+		return splitQualifiedClassName(top.ParentName)
+	}
+	return "", "", false
+}
+
 func (vm *VM) parentClassInfo(instruction Instruction, classIndex int64) (ClassInfo, error) {
 	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
 		return ClassInfo{}, vm.runtimeError(instruction, "class index out of range")
@@ -7044,6 +7083,13 @@ func (vm *VM) getStaticValue(instruction Instruction, ip int) (int, error) {
 	}
 	constantIndex, ok := vm.lookupStaticValue(vm.chunk.Classes[classIndex], name)
 	if !ok {
+		// Same-chunk walk exhausted: the static may live on a cross-module ancestor.
+		if module, parentClass, boundary := vm.crossModuleBoundary(vm.chunk.Classes[classIndex]); boundary && vm.moduleLoader != nil {
+			if value, found := vm.moduleLoader.StaticValueForModuleClass(module, parentClass, name); found {
+				vm.push(value)
+				return ip, nil
+			}
+		}
 		if indices, ok := vm.lookupStaticMethod(vm.chunk.Classes[classIndex], "__getStatic"); ok {
 			functionIndex, err := vm.selectRuntimeFunction(instruction, "__getStatic", indices, []runtime.Value{runtime.String{Value: name}}, 0)
 			if err != nil {
@@ -7127,6 +7173,16 @@ func (vm *VM) callStaticMethod(instruction Instruction, ip int) (int, error) {
 	}
 	indices, ok := vm.lookupStaticMethod(vm.chunk.Classes[classIndex], name)
 	if !ok {
+		// Same-chunk walk exhausted: the static method may live on a cross-module ancestor.
+		if module, parentClass, boundary := vm.crossModuleBoundary(vm.chunk.Classes[classIndex]); boundary && vm.moduleLoader != nil {
+			if result, found, err := vm.moduleLoader.CallModuleStaticMethodByName(module, parentClass, name, args); found {
+				if err != nil {
+					return 0, vm.runtimeError(instruction, "%s", err.Error())
+				}
+				vm.push(result)
+				return ip, nil
+			}
+		}
 		if fallbackIndices, ok := vm.lookupStaticMethod(vm.chunk.Classes[classIndex], "__callStatic"); ok {
 			functionIndex, err := vm.selectRuntimeFunction(instruction, "__callStatic", fallbackIndices, []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}}, 0)
 			if err != nil {
@@ -9301,6 +9357,10 @@ func (vm *VM) Exports() (map[string]runtime.Value, error) {
 			exports[export.Name] = classValue
 			continue
 		}
+		if export.InterfaceIndex >= 0 {
+			exports[export.Name] = vm.buildRuntimeInterface(export.Name, map[string]bool{})
+			continue
+		}
 		value, err := vm.getGlobal(export.Slot)
 		if err != nil {
 			return nil, fmt.Errorf("export %s: %w", export.Name, err)
@@ -10843,11 +10903,9 @@ func (vm *VM) CallMethodAs(className string, instance *runtime.Instance, name st
 				return runtime.Null{}, nil
 			}
 		} else {
-			if classInfo.ParentIndex < 0 && strings.Contains(classInfo.ParentName, ".") && vm.moduleLoader != nil {
-				if module, parentClass, mok := splitQualifiedClassName(classInfo.ParentName); mok {
-					if _, lerr := vm.moduleLoader.LoadModule(module, module); lerr == nil {
-						return vm.moduleLoader.CallParentInModule(module, parentClass, name, instance, args)
-					}
+			if module, parentClass, mok := vm.crossModuleBoundary(classInfo); mok && vm.moduleLoader != nil {
+				if _, lerr := vm.moduleLoader.LoadModule(module, module); lerr == nil {
+					return vm.moduleLoader.CallParentInModule(module, parentClass, name, instance, args)
 				}
 			}
 			return nil, &runtime.MethodNotFoundError{Class: className, Method: name}
@@ -10880,11 +10938,9 @@ func (vm *VM) CallMethod(instance *runtime.Instance, name string, args []runtime
 	}
 	indices, ok := vm.lookupMethod(classInfo, name)
 	if !ok {
-		if classInfo.ParentIndex < 0 && strings.Contains(classInfo.ParentName, ".") && vm.moduleLoader != nil {
-			if module, parentClass, mok := splitQualifiedClassName(classInfo.ParentName); mok {
-				if _, lerr := vm.moduleLoader.LoadModule(module, module); lerr == nil {
-					return vm.moduleLoader.CallParentInModule(module, parentClass, name, instance, args)
-				}
+		if module, parentClass, mok := vm.crossModuleBoundary(classInfo); mok && vm.moduleLoader != nil {
+			if _, lerr := vm.moduleLoader.LoadModule(module, module); lerr == nil {
+				return vm.moduleLoader.CallParentInModule(module, parentClass, name, instance, args)
 			}
 		}
 		if result, handled, derr := vm.callInterfaceDefaultValue(instance, strings.ToLower(name), args); handled {
@@ -11009,6 +11065,9 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 	callVM.decoratedFuncs = copyRuntimeValueMap(vm.decoratedFuncs)
 	callVM.decoratedClasses = copyRuntimeValueMap(vm.decoratedClasses)
 	callVM.decoratorsApplied = true
+	// Carry cross-module interface defaults so a function body run on this
+	// wrapper VM still dispatches them (built binaries hit this path).
+	callVM.RestoreInterfaceFallbackState(vm.InterfaceFallbackState())
 	callVM.rawFunctionCalls = copyBoolMap(vm.rawFunctionCalls)
 	callVM.methodReceiverFuncs = vm.methodReceiverFuncs
 	callVM.generatorExecution = vm.generatorExecution
@@ -12305,18 +12364,16 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			// own chunk (e.g. `class B extends mod.A` then `b.foo()`).
 			// Dispatch via the module loader so the parent's chunk
 			// handles the lookup and execution.
-			if classInfo.ParentIndex < 0 && strings.Contains(classInfo.ParentName, ".") && vm.moduleLoader != nil {
-				if module, parentClass, ok := splitQualifiedClassName(classInfo.ParentName); ok {
-					if _, err := vm.moduleLoader.LoadModule(module, module); err == nil {
-						result, err := vm.moduleLoader.CallParentInModule(module, parentClass, nameValue.Value, instance, args)
-						if err == nil {
-							vm.push(result)
-							return ip, nil
-						}
-						var notFound *runtime.MethodNotFoundError
-						if !errors.As(err, &notFound) {
-							return vm.propagateModuleError(instruction, ip, err)
-						}
+			if module, parentClass, ok := vm.crossModuleBoundary(classInfo); ok && vm.moduleLoader != nil {
+				if _, err := vm.moduleLoader.LoadModule(module, module); err == nil {
+					result, err := vm.moduleLoader.CallParentInModule(module, parentClass, nameValue.Value, instance, args)
+					if err == nil {
+						vm.push(result)
+						return ip, nil
+					}
+					var notFound *runtime.MethodNotFoundError
+					if !errors.As(err, &notFound) {
+						return vm.propagateModuleError(instruction, ip, err)
 					}
 				}
 			}
@@ -12878,12 +12935,22 @@ type extraField struct {
 	typ  string
 }
 
-func (vm *VM) callInterfaceDefault(instruction Instruction, ip int, instance *runtime.Instance, methodName string, args []runtime.Value) (int, error, bool) {
-	idx, ok := vm.classIndex[strings.ToLower(instance.Class.Name)]
+// Walks the parent chain so a subclass inherits an ancestor's interface default.
+func (vm *VM) lookupInterfaceFallback(className, methodName string) (crossModuleDefault, bool) {
+	idx, ok := vm.classIndex[strings.ToLower(className)]
 	if !ok {
-		return 0, nil, false
+		return crossModuleDefault{}, false
 	}
-	fallback, ok := vm.interfaceFallbacks[int64(idx)][methodName]
+	for ci := int64(idx); ci >= 0 && int(ci) < len(vm.chunk.Classes); ci = vm.chunk.Classes[ci].ParentIndex {
+		if fallback, ok := vm.interfaceFallbacks[ci][methodName]; ok {
+			return fallback, true
+		}
+	}
+	return crossModuleDefault{}, false
+}
+
+func (vm *VM) callInterfaceDefault(instruction Instruction, ip int, instance *runtime.Instance, methodName string, args []runtime.Value) (int, error, bool) {
+	fallback, ok := vm.lookupInterfaceFallback(instance.Class.Name, methodName)
 	if !ok {
 		return 0, nil, false
 	}
@@ -12904,11 +12971,7 @@ func (vm *VM) callInterfaceDefault(instruction Instruction, ip int, instance *ru
 // its value (the value-returning twin of callInterfaceDefault, for callers
 // outside the method-call opcode flow such as the `in` operator).
 func (vm *VM) callInterfaceDefaultValue(instance *runtime.Instance, methodName string, args []runtime.Value) (runtime.Value, bool, error) {
-	idx, ok := vm.classIndex[strings.ToLower(instance.Class.Name)]
-	if !ok {
-		return nil, false, nil
-	}
-	fallback, ok := vm.interfaceFallbacks[int64(idx)][methodName]
+	fallback, ok := vm.lookupInterfaceFallback(instance.Class.Name, methodName)
 	if !ok || vm.moduleLoader == nil {
 		return nil, false, nil
 	}
@@ -12979,7 +13042,7 @@ func (vm *VM) resolveCrossModuleInterfaceMembers(instruction Instruction, classI
 }
 
 // Reports (reason, true) when the class is @abstract or carries an
-// unoverridden @abstract method. Walks ParentIndex only.
+// unoverridden @abstract method, crossing module boundaries.
 func (vm *VM) classAbstractnessReason(classInfo ClassInfo) (string, bool) {
 	for _, dec := range classInfo.Decorators {
 		if strings.EqualFold(dec.Name, "abstract") {
@@ -13013,6 +13076,17 @@ func (vm *VM) classAbstractnessReason(classInfo ClassInfo) (string, bool) {
 	for ci := classInfo; ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(vm.chunk.Classes); {
 		ci = vm.chunk.Classes[ci.ParentIndex]
 		walk(ci)
+	}
+	// Same-chunk walk exhausted: abstract methods may be declared on a
+	// cross-module ancestor that this chunk's overrides must satisfy.
+	if module, parentClass, boundary := vm.crossModuleBoundary(classInfo); boundary && vm.moduleLoader != nil {
+		for method, owner := range vm.moduleLoader.UnimplementedAbstractMethods(module, parentClass) {
+			if !overridden[method] {
+				if _, seen := abstractDecl[method]; !seen {
+					abstractDecl[method] = owner
+				}
+			}
+		}
 	}
 	if len(abstractDecl) == 0 {
 		return "", false
@@ -13074,6 +13148,10 @@ func (vm *VM) classMatches(classInfo ClassInfo, target string) bool {
 	}
 	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.chunk.Classes) {
 		return vm.classMatches(vm.chunk.Classes[classInfo.ParentIndex], target)
+	}
+	// Same-chunk walk exhausted: a cross-module ancestor may still match.
+	if module, parentClass, ok := vm.crossModuleBoundary(classInfo); ok && vm.moduleLoader != nil {
+		return vm.moduleLoader.ModuleClassDescendsFrom(module, parentClass, target)
 	}
 	return false
 }

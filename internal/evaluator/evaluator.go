@@ -25923,14 +25923,20 @@ func (e *Evaluator) evalParentMethodCall(selector *ast.SelectorExpression, call 
 	if err != nil {
 		return nil, true, err
 	}
-	if this.Class.Parent == nil {
-		return nil, true, fmt.Errorf("%s has no parent class", this.Class.Name)
+	// Resolve parent from the lexically-enclosing class, not this.Class:
+	// a multi-level override chain otherwise re-enters the same method.
+	lexicalClass := this.Class
+	if len(e.classStack) > 0 {
+		lexicalClass = e.classStack[len(e.classStack)-1]
 	}
-	methods := lookupMethodOverloads(this.Class.Parent, selector.Name.Value)
+	if lexicalClass.Parent == nil {
+		return nil, true, fmt.Errorf("%s has no parent class", lexicalClass.Name)
+	}
+	methods := lookupMethodOverloads(lexicalClass.Parent, selector.Name.Value)
 	if len(methods) == 0 {
-		return nil, true, fmt.Errorf("unknown parent method %s.%s", this.Class.Parent.Name, selector.Name.Value)
+		return nil, true, fmt.Errorf("unknown parent method %s.%s", lexicalClass.Parent.Name, selector.Name.Value)
 	}
-	value, err := e.applyOverloadedFunction(this.Class.Parent.Name+"."+selector.Name.Value, methods, call, env, this, nil)
+	value, err := e.applyOverloadedFunction(lexicalClass.Parent.Name+"."+selector.Name.Value, methods, call, env, this, nil)
 	return value, true, err
 }
 

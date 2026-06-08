@@ -1,0 +1,81 @@
+/**
+ * @title Cross-module static members and abstract enforcement
+ * @summary Static const / static method / @abstract method declared on a
+ * cross-module ancestor, resolved through a local subclass (Mid, direct) and
+ * grandchild (Leaf), plus the abstract-unimplemented rejection across the
+ * module boundary.
+ */
+import test;
+import staticbase;
+
+/* direct cross-module subclass; does not implement area() */
+class Mid extends staticbase.Shape {}
+
+/* grandchild; implements area() so it is concrete */
+class Square extends Mid {
+    func area(): int {
+        return 4;
+    }
+}
+
+/* shadows the cross-module static; the local one must win */
+class Pentagon extends staticbase.Shape {
+    static const KIND = "penta";
+    func area(): int {
+        return 5;
+    }
+}
+
+class StaticAbstractTest extends test.Test {
+
+    @test
+    func staticValueViaDirectSubclass(): void {
+        this.assertEquals("shape-kind", Mid.KIND);
+        this.assertEquals(3, Mid.COUNT);
+    }
+
+    @test
+    func staticValueViaGrandchild(): void {
+        this.assertEquals("shape-kind", Square.KIND);
+        this.assertEquals(3, Square.COUNT);
+    }
+
+    @test
+    func localStaticShadowsCrossModule(): void {
+        this.assertEquals("penta", Pentagon.KIND);
+    }
+
+    @test
+    func staticMethodViaDirectSubclass(): void {
+        this.assertEquals("made:x:shape-kind", Mid.make("x"));
+    }
+
+    @test
+    func staticMethodViaGrandchild(): void {
+        this.assertEquals("made:y:shape-kind", Square.make("y"));
+    }
+
+    @test
+    func abstractSatisfiedByGrandchildIsConcrete(): void {
+        let s = Square();
+        this.assertEquals(4, s.area());
+        this.assertEquals("shape-kind:4", s.describe());
+    }
+
+    @test
+    func abstractUnimplementedDirectSubclassRejected(): void {
+        this.assertThrows(func(): void {
+            let m = Mid();
+        });
+    }
+
+    @test
+    func abstractUnimplementedGrandchildRejected(): void {
+        this.assertThrows(func(): void {
+            let l = LeafUnimpl();
+        });
+    }
+}
+
+/* grandchild that still does not implement area(): must reject construction */
+class LeafUnimpl extends Mid {}

@@ -1,0 +1,10 @@
+module contracts;
+
+/* Stampable: abstract stamp() + default label() using stamp() result */
+export interface Stampable {
+    func stamp(): string;
+
+    func label(): string {
+        return "label:" + this.stamp();
+    }
+}

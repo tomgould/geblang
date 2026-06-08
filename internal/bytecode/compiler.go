@@ -495,17 +495,20 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 			return err
 		}
 		if decl, ok := stmt.Statement.(*ast.DeclarationStatement); ok && decl.Name != nil {
-			c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: decl.Name.Value, Slot: c.globalSlot(decl.Name.Value), FunctionIndex: -1, ClassIndex: -1})
+			c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: decl.Name.Value, Slot: c.globalSlot(decl.Name.Value), FunctionIndex: -1, ClassIndex: -1, InterfaceIndex: -1})
 		}
 		if fn, ok := stmt.Statement.(*ast.FunctionStatement); ok && fn.Name != nil {
 			functionIndex, err := c.singleFunctionIndex(fn.Name.Value)
 			if err != nil {
 				return err
 			}
-			c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: fn.Name.Value, Slot: -1, FunctionIndex: functionIndex, ClassIndex: -1})
+			c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: fn.Name.Value, Slot: -1, FunctionIndex: functionIndex, ClassIndex: -1, InterfaceIndex: -1})
 		}
 		if class, ok := stmt.Statement.(*ast.ClassStatement); ok && class.Name != nil {
-			c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: class.Name.Value, Slot: -1, FunctionIndex: -1, ClassIndex: c.classes[strings.ToLower(class.Name.Value)]})
+			c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: class.Name.Value, Slot: -1, FunctionIndex: -1, ClassIndex: c.classes[strings.ToLower(class.Name.Value)], InterfaceIndex: -1})
+		}
+		if iface, ok := stmt.Statement.(*ast.InterfaceStatement); ok && iface.Name != nil {
+			c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: iface.Name.Value, Slot: -1, FunctionIndex: -1, ClassIndex: -1, InterfaceIndex: c.interfaces[strings.ToLower(iface.Name.Value)]})
 		}
 		return nil
 	case *ast.InitStatement:
@@ -3200,23 +3203,36 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					return fmt.Errorf("%s has no parent class", currentClass.Name)
 				}
 				var orderedArgs []ast.Expression
+				crossModuleAncestor := ""
 				if !isCrossModuleParent {
 					parent := c.chunk.Classes[currentClass.ParentIndex]
 					indices, ok := c.lookupMethod(parent, selector.Name.Value)
 					if !ok {
-						return fmt.Errorf("unknown parent method %s.%s", parent.Name, selector.Name.Value)
+						// Method may live in a cross-module ancestor above this
+						// same-chunk parent; defer overload selection to runtime.
+						if qualified, boundary := c.crossModuleBoundary(parent); boundary {
+							crossModuleAncestor = qualified
+						} else {
+							return fmt.Errorf("unknown parent method %s.%s", parent.Name, selector.Name.Value)
+						}
+					} else {
+						var err error
+						_, orderedArgs, err = c.selectFunctionIndicesCall(selector.Name.Value, indices, expr.Arguments, 1)
+						if err != nil {
+							return err
+						}
 					}
-					var err error
-					_, orderedArgs, err = c.selectFunctionIndicesCall(selector.Name.Value, indices, expr.Arguments, 1)
-					if err != nil {
-						return err
-					}
-				} else {
+				}
+				if isCrossModuleParent || crossModuleAncestor != "" {
 					// Cross-module parent method: positional args; overload
 					// selection runs in the parent module's VM at runtime.
 					orderedArgs = positionalArguments(expr.Arguments)
 					if orderedArgs == nil && len(expr.Arguments) > 0 {
-						return fmt.Errorf("parent method %s.%s does not accept named arguments", currentClass.ParentName, selector.Name.Value)
+						ancestor := currentClass.ParentName
+						if crossModuleAncestor != "" {
+							ancestor = crossModuleAncestor
+						}
+						return fmt.Errorf("parent method %s.%s does not accept named arguments", ancestor, selector.Name.Value)
 					}
 				}
 				resolved, ok := c.resolveName("this")
@@ -5146,6 +5162,19 @@ func (c *Compiler) lookupMethod(classInfo ClassInfo, name string) ([]int64, bool
 		return c.lookupMethod(c.chunk.Classes[classInfo.ParentIndex], name)
 	}
 	return nil, false
+}
+
+// crossModuleBoundary reports whether classInfo's same-chunk ancestor chain
+// terminates in a cross-module parent, returning that qualified name.
+func (c *Compiler) crossModuleBoundary(classInfo ClassInfo) (string, bool) {
+	top := classInfo
+	for top.ParentIndex >= 0 && int(top.ParentIndex) < len(c.chunk.Classes) {
+		top = c.chunk.Classes[top.ParentIndex]
+	}
+	if strings.Contains(top.ParentName, ".") {
+		return top.ParentName, true
+	}
+	return "", false
 }
 
 func (c *Compiler) emitConstant(value runtime.Value, line int, column int) {

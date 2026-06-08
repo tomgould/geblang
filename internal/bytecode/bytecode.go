@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(70)
+	Version = uint16(71)
 )
 
 type Op byte
@@ -447,10 +447,11 @@ type InterfaceInfo struct {
 }
 
 type ExportInfo struct {
-	Name          string
-	Slot          int64
-	FunctionIndex int64
-	ClassIndex    int64
+	Name           string
+	Slot           int64
+	FunctionIndex  int64
+	ClassIndex     int64
+	InterfaceIndex int64
 }
 
 func SourceHash(source []byte) [32]byte {
@@ -715,6 +716,7 @@ func Encode(chunk Chunk) ([]byte, error) {
 		out = binary.BigEndian.AppendUint64(out, uint64(export.Slot))
 		out = binary.BigEndian.AppendUint64(out, uint64(export.FunctionIndex))
 		out = binary.BigEndian.AppendUint64(out, uint64(export.ClassIndex))
+		out = binary.BigEndian.AppendUint64(out, uint64(export.InterfaceIndex))
 	}
 	return out, nil
 }
@@ -950,10 +952,11 @@ func Decode(data []byte) (Chunk, error) {
 	chunk.Exports = make([]ExportInfo, 0, exportCount)
 	for i := 0; i < exportCount; i++ {
 		chunk.Exports = append(chunk.Exports, ExportInfo{
-			Name:          string(reader.read(int(reader.u16()))),
-			Slot:          int64(reader.u64()),
-			FunctionIndex: int64(reader.u64()),
-			ClassIndex:    int64(reader.u64()),
+			Name:           string(reader.read(int(reader.u16()))),
+			Slot:           int64(reader.u64()),
+			FunctionIndex:  int64(reader.u64()),
+			ClassIndex:     int64(reader.u64()),
+			InterfaceIndex: int64(reader.u64()),
 		})
 	}
 	if reader.err != nil {

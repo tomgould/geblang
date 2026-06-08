@@ -2109,6 +2109,154 @@ func (l *bytecodeModuleLoader) ImmutableFieldsForModuleClass(module string, clas
 	return nil
 }
 
+func (l *bytecodeModuleLoader) chunkFor(module string) (bytecode.Chunk, bool) {
+	if module == "" {
+		if !l.hasMainChunk {
+			return bytecode.Chunk{}, false
+		}
+		return l.mainChunk, true
+	}
+	c, ok := l.chunks[module]
+	return c, ok
+}
+
+func (l *bytecodeModuleLoader) ModuleClassDescendsFrom(module, className, targetSimpleName string) bool {
+	chunk, ok := l.chunkFor(module)
+	if !ok {
+		return false
+	}
+	for i := range chunk.Classes {
+		if !strings.EqualFold(chunk.Classes[i].Name, className) {
+			continue
+		}
+		for ci := chunk.Classes[i]; ; {
+			if strings.EqualFold(ci.Name, targetSimpleName) {
+				return true
+			}
+			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
+				ci = chunk.Classes[ci.ParentIndex]
+				continue
+			}
+			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
+				return l.ModuleClassDescendsFrom(ci.ParentName[:dot], ci.ParentName[dot+1:], targetSimpleName)
+			}
+			return false
+		}
+	}
+	return false
+}
+
+func (l *bytecodeModuleLoader) StaticValueForModuleClass(module, className, name string) (runtime.Value, bool) {
+	chunk, ok := l.chunkFor(module)
+	if !ok {
+		return nil, false
+	}
+	for i := range chunk.Classes {
+		if !strings.EqualFold(chunk.Classes[i].Name, className) {
+			continue
+		}
+		for ci := chunk.Classes[i]; ; {
+			if idx, present := ci.StaticValues[name]; present && idx >= 0 && int(idx) < len(chunk.Constants) {
+				return chunk.Constants[idx], true
+			}
+			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
+				ci = chunk.Classes[ci.ParentIndex]
+				continue
+			}
+			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
+				return l.StaticValueForModuleClass(ci.ParentName[:dot], ci.ParentName[dot+1:], name)
+			}
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
+func (l *bytecodeModuleLoader) CallModuleStaticMethodByName(module, className, methodName string, args []runtime.Value) (runtime.Value, bool, error) {
+	chunk, ok := l.chunkFor(module)
+	if !ok {
+		return nil, false, nil
+	}
+	for i := range chunk.Classes {
+		if !strings.EqualFold(chunk.Classes[i].Name, className) {
+			continue
+		}
+		for ci := chunk.Classes[i]; ; {
+			if _, present := ci.StaticMethods[strings.ToLower(methodName)]; present {
+				vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
+				vm.SetModuleName(module)
+				vm.SetModulePaths(l.modulePaths)
+				vm.SetStatefulNativeCaller(l.stateful)
+				vm.RestoreGlobals(l.globals[module])
+				vm.RestoreFunctionDecoratorState(l.decorators[module])
+				vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(module))
+				result, err := vm.CallStaticMethod(int64(i), methodName, args)
+				return result, true, err
+			}
+			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
+				ci = chunk.Classes[ci.ParentIndex]
+				continue
+			}
+			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
+				return l.CallModuleStaticMethodByName(ci.ParentName[:dot], ci.ParentName[dot+1:], methodName, args)
+			}
+			return nil, false, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (l *bytecodeModuleLoader) UnimplementedAbstractMethods(module, className string) map[string]string {
+	chunk, ok := l.chunkFor(module)
+	if !ok {
+		return nil
+	}
+	for i := range chunk.Classes {
+		if !strings.EqualFold(chunk.Classes[i].Name, className) {
+			continue
+		}
+		overridden := map[string]bool{}
+		abstractDecl := map[string]string{}
+		for ci := chunk.Classes[i]; ; {
+			for method := range ci.Methods {
+				isAbstract := false
+				for _, dec := range ci.MethodDecorators[method] {
+					if strings.EqualFold(dec.Name, "abstract") {
+						isAbstract = true
+						break
+					}
+				}
+				if isAbstract {
+					if !overridden[method] {
+						if _, seen := abstractDecl[method]; !seen {
+							abstractDecl[method] = ci.Name
+						}
+					}
+				} else {
+					overridden[method] = true
+					delete(abstractDecl, method)
+				}
+			}
+			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
+				ci = chunk.Classes[ci.ParentIndex]
+				continue
+			}
+			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
+				for method, owner := range l.UnimplementedAbstractMethods(ci.ParentName[:dot], ci.ParentName[dot+1:]) {
+					if !overridden[method] {
+						if _, seen := abstractDecl[method]; !seen {
+							abstractDecl[method] = owner
+						}
+					}
+				}
+			}
+			break
+		}
+		return abstractDecl
+	}
+	return nil
+}
+
 func (l *bytecodeModuleLoader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if module == "" {

@@ -36,6 +36,21 @@ class Loud implements Greetable {
     func describe(): string { return "LOUD"; }
 }
 
+/* subclass of an implementer; does not re-declare implements */
+class PowerUser extends User {
+    func PowerUser(string n, int a) {
+        parent(n, a);
+    }
+}
+
+/* subclass that overrides the abstract method but inherits the default */
+class SuperUser extends User {
+    func SuperUser(string n, int a) {
+        parent(n, a);
+    }
+    func describe(): string { return "super " + this.name; }
+}
+
 interface A { func foo(): string { return "A"; } }
 interface B { func foo(): string { return "B"; } }
 
@@ -72,5 +87,20 @@ class InterfaceDefaultsTest extends test.Test {
     @test
     func diamondResolvedByExplicitOverride(): void {
         this.assertEquals("C", C().foo());
+    }
+
+    /* subclass of an implementer inherits the interface default method */
+    @test
+    func subclassOfImplementerInheritsDefault(): void {
+        let p = PowerUser("ada", 36);
+        this.assertEquals("hello, ada (36)", p.greet());
+    }
+
+    /* subclass overriding the abstract method still inherits the default */
+    @test
+    func subclassOverridesAbstractInheritsDefault(): void {
+        let s = SuperUser("bo", 7);
+        this.assertEquals("hello, bo (7)", s.greet());
+        this.assertEquals("super bo", s.describe());
     }
 }

@@ -1,0 +1,22 @@
+module staticbase;
+
+/* Cross-module base carrying static members and an abstract method, used by
+   static_abstract_test.gb to verify a local subclass / grandchild resolves
+   statics and abstract enforcement across the module boundary. */
+export class Shape {
+    static const KIND = "shape-kind";
+    static const COUNT = 3;
+
+    static func make(string n): string {
+        return "made:" + n + ":" + Shape.KIND;
+    }
+
+    @abstract
+    func area(): int {
+        return 0;
+    }
+
+    func describe(): string {
+        return Shape.KIND + ":${this.area()}";
+    }
+}

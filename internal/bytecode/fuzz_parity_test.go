@@ -176,18 +176,87 @@ func (g *fuzzGen) faultStmt() string {
 	return "try { " + body + " io.println(\"ok\"); } catch (Error e) { io.println(e.class); }"
 }
 
+// classBlock emits a valid random class hierarchy: a base class with a
+// typed int field + two methods (one calling this.other() so override
+// dispatch is exercised), one or two subclasses overriding a method and
+// calling parent.method()/parent(...), plus a generic Box<int>. Method
+// bodies print nothing and return ints/bools/strings the caller prints,
+// so output is value-only with no type-formatting ambiguity. Dispatch is
+// the recurring eval/VM bug source, so this is the high-value path.
+func (g *fuzzGen) classBlock() (decls string, calls []string) {
+	base := g.intLit()
+	bump := g.intLit()
+	var d strings.Builder
+	// Base: field, value(), labeled() that calls this.value() (override-dispatched).
+	d.WriteString("class Base {\n")
+	d.WriteString("  int n;\n")
+	d.WriteString("  string tag;\n")
+	d.WriteString("  func Base(int n) { this.n = n; this.tag = \"base\"; }\n")
+	d.WriteString("  func value(): int { return (this.n + " + base + "); }\n")
+	d.WriteString("  func labeled(): int { return (this.value() * 2); }\n")
+	d.WriteString("  func name(): string { return this.tag; }\n")
+	d.WriteString("}\n")
+	// Sub: overrides value() via parent.value(), overrides name().
+	d.WriteString("class Sub extends Base {\n")
+	d.WriteString("  func Sub(int n) { parent(n); this.tag = \"sub\"; }\n")
+	d.WriteString("  func value(): int { return (parent.value() + " + bump + "); }\n")
+	d.WriteString("  func name(): string { return (parent.name() + \"!\"); }\n")
+	d.WriteString("}\n")
+	// Leaf: two levels deep; overrides value() chaining parent.value().
+	d.WriteString("class Leaf extends Sub {\n")
+	d.WriteString("  func Leaf(int n) { parent(n); }\n")
+	d.WriteString("  func value(): int { return (parent.value() - 3); }\n")
+	d.WriteString("}\n")
+	// Generic box.
+	d.WriteString("class Box<T> {\n")
+	d.WriteString("  T item;\n")
+	d.WriteString("  func Box(T v) { this.item = v; }\n")
+	d.WriteString("  func get(): T { return this.item; }\n")
+	d.WriteString("}\n")
+	ctors := []string{"Base", "Sub", "Leaf"}
+	c := ctors[g.rng.Intn(len(ctors))]
+	inst := "let inst = " + c + "(" + g.intLit() + ");"
+	calls = append(calls,
+		inst,
+		"io.println(inst.value());",     // override dispatch
+		"io.println(inst.labeled());",   // base method calling overridden this.value()
+		"io.println(inst.name());",
+		"io.println(inst.n);",           // field read (inherited)
+		"io.println(inst instanceof Base);",
+		"let bx = Box(" + g.intLit() + "); io.println(bx.get());",
+	)
+	return d.String(), calls
+}
+
 func (g *fuzzGen) program() string {
 	var b strings.Builder
 	b.WriteString("import io;\n")
+	// Roughly half the programs exercise the class/dispatch surface.
+	emitClasses := g.rng.Intn(2) == 0
+	var classCalls []string
+	if emitClasses {
+		decls, calls := g.classBlock()
+		b.WriteString(decls)
+		classCalls = calls
+	}
 	stmts := 3 + g.rng.Intn(5)
 	for i := 0; i < stmts; i++ {
-		if g.rng.Intn(3) == 0 {
+		if emitClasses && i < len(classCalls) {
+			b.WriteString(classCalls[i])
+		} else if g.rng.Intn(3) == 0 {
 			b.WriteString(g.faultStmt())
 		} else {
 			t := fuzzScalarTypes[g.rng.Intn(len(fuzzScalarTypes))]
 			b.WriteString("io.println(" + g.expr(t, 3) + ");")
 		}
 		b.WriteByte('\n')
+	}
+	// Ensure all class calls run even if the statement budget was small.
+	if emitClasses {
+		for i := stmts; i < len(classCalls); i++ {
+			b.WriteString(classCalls[i])
+			b.WriteByte('\n')
+		}
 	}
 	return b.String()
 }

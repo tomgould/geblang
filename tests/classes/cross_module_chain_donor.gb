@@ -9,7 +9,9 @@ export interface Greetable {
 }
 
 export class Base {
+    int n;
     func Base() {}
     func describe(): string { return "from-base"; }
     func boom(): void { throw RuntimeError("base-boom"); }
+    func value(): int { return this.n + 1; }
 }

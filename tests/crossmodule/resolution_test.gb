@@ -1,0 +1,215 @@
+/**
+ * @title Cross-module resolution suite
+ * @summary Covers five resolution dimensions across module boundaries:
+ * inherited method with args, inherited typed field mutation, generic
+ * class set/get with two type args, interface default method, and a
+ * register-style decorated class.
+ */
+import test;
+import animals;
+import contracts;
+from contracts import Stampable;
+
+/* ---- dimension 1: inherited method WITH args across module boundary ---- */
+
+class TaggedDog extends animals.Animal {
+    func TaggedDog() {
+        parent("dog");
+    }
+
+    func sound(): string {
+        return "woof";
+    }
+}
+
+/* ---- dimension 2: inherited typed field mutation across module boundary ---- */
+
+class RenamableBird extends animals.Animal {
+    func RenamableBird() {
+        parent("bird");
+    }
+
+    func sound(): string {
+        return "tweet";
+    }
+}
+
+/* ---- dimension 3: generic Box used with two different type args ---- */
+
+/* uses animals.Box<string> and animals.Box<int> directly */
+
+/* ---- dimension 4: cross-module interface with a default method ---- */
+
+class Coin implements contracts.Stampable {
+    func Coin() {}
+
+    func stamp(): string {
+        return "heads";
+    }
+    /* label() is inherited from the default implementation */
+}
+
+class CustomCoin implements contracts.Stampable {
+    func CustomCoin() {}
+
+    func stamp(): string {
+        return "tails";
+    }
+
+    /* override the default label() */
+    func label(): string {
+        return "custom:" + this.stamp();
+    }
+}
+
+/* subclass of a cross-module-interface implementer inherits the default */
+class GoldCoin extends Coin {
+    func GoldCoin() {
+        parent();
+    }
+}
+
+/* from-imported interface: bare name resolves to the cross-module interface */
+class Token implements Stampable {
+    func Token() {}
+
+    func stamp(): string {
+        return "tok";
+    }
+}
+
+/* subclass of a from-import-interface implementer inherits the default */
+class BigToken extends Token {
+    func BigToken() {
+        parent();
+    }
+}
+
+/* ---- dimension 5: decorated cross-module class ---- */
+
+/* animals.Tracked carries @trackClass (register-style: returns class unchanged) */
+
+class ResolutionTest extends test.Test {
+
+    /* dim 1: inherited tag(string) resolves with argument across module boundary */
+    @test
+    func inheritedMethodWithArgsAcrossModule(): void {
+        let d = TaggedDog();
+        this.assertEquals("dog:x", d.tag("x"));
+    }
+
+    /* dim 1: direct base instance also works with arg */
+    @test
+    func baseMethodWithArgsDirectInstance(): void {
+        let a = animals.Animal("cat");
+        this.assertEquals("cat:hello", a.tag("hello"));
+    }
+
+    /* dim 2: inherited field mutation via inherited method, read back */
+    @test
+    func inheritedFieldMutationAcrossModule(): void {
+        let b = RenamableBird();
+        let result = b.rename("sparrow");
+        this.assertEquals("sparrow", result);
+        this.assertEquals("sparrow", b.kind);
+    }
+
+    /* dim 2: mutation does not affect a different instance */
+    @test
+    func inheritedFieldMutationIsolated(): void {
+        let b1 = RenamableBird();
+        let b2 = RenamableBird();
+        b1.rename("crow");
+        this.assertEquals("bird", b2.kind);
+    }
+
+    /* dim 3: Box<string> set then get round-trips the new value */
+    @test
+    func genericBoxSetGetString(): void {
+        let b = animals.Box("initial");
+        b.set("updated");
+        this.assertEquals("updated", b.get());
+    }
+
+    /* dim 3: Box<int> set then get with integer type arg */
+    @test
+    func genericBoxSetGetInt(): void {
+        let b = animals.Box(10);
+        b.set(99);
+        this.assertEquals(99, b.get());
+    }
+
+    /* dim 3: two distinct Box instances with different type args are independent */
+    @test
+    func genericBoxTwoTypesAreIndependent(): void {
+        let bs = animals.Box("hello");
+        let bi = animals.Box(42);
+        bs.set("world");
+        bi.set(7);
+        this.assertEquals("world", bs.get());
+        this.assertEquals(7, bi.get());
+    }
+
+    /* dim 4: implementing class inherits cross-module interface default method */
+    @test
+    func crossModuleInterfaceDefaultMethodInherited(): void {
+        let c = Coin();
+        this.assertEquals("label:heads", c.label());
+    }
+
+    /* dim 4: abstract method is implemented by the class */
+    @test
+    func crossModuleInterfaceAbstractMethodImplemented(): void {
+        let c = Coin();
+        this.assertEquals("heads", c.stamp());
+    }
+
+    /* dim 4: overriding the default method wins */
+    @test
+    func crossModuleInterfaceDefaultMethodOverridden(): void {
+        let c = CustomCoin();
+        this.assertEquals("custom:tails", c.label());
+    }
+
+    /* dim 4: instanceof check against the cross-module interface */
+    @test
+    func crossModuleInterfaceInstanceOf(): void {
+        let c = Coin();
+        this.assertTrue(c instanceof contracts.Stampable);
+    }
+
+    /* dim 4: subclass of an implementer inherits the cross-module default */
+    @test
+    func crossModuleInterfaceDefaultInheritedBySubclass(): void {
+        let g = GoldCoin();
+        this.assertEquals("label:heads", g.label());
+    }
+
+    /* dim 4: from-imported interface name resolves, default dispatches */
+    @test
+    func fromImportInterfaceDefaultMethod(): void {
+        let t = Token();
+        this.assertEquals("label:tok", t.label());
+    }
+
+    /* dim 4: subclass of a from-import-interface implementer inherits default */
+    @test
+    func fromImportInterfaceDefaultInheritedBySubclass(): void {
+        let b = BigToken();
+        this.assertEquals("label:tok", b.label());
+    }
+
+    /* dim 5: decorated cross-module class instantiates and dispatches correctly */
+    @test
+    func decoratedCrossModuleClassDispatch(): void {
+        let t = animals.Tracked("foo");
+        this.assertEquals("tracked:foo", t.identify());
+    }
+
+    /* dim 5: decorated class field is accessible */
+    @test
+    func decoratedCrossModuleClassField(): void {
+        let t = animals.Tracked("bar");
+        this.assertEquals("bar", t.label);
+    }
+}

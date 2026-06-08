@@ -44,6 +44,10 @@ func TestEncodeDecodeChunk(t *testing.T) {
 		Classes: []bytecode.ClassInfo{
 			{Name: "User", ParentName: "Base", ParentIndex: -1, FieldNames: []string{"name"}, FieldDefaults: []int64{1}, ConstructorIndices: []int64{0}, Methods: map[string][]int64{"label": []int64{0}}, StaticValues: map[string]int64{"KIND": 1}, StaticMethods: map[string][]int64{"make": []int64{0}}, Decorators: []runtime.DecoratorMetadata{{Name: "service", Target: "class", NamedArgs: map[string]runtime.Value{"name": runtime.String{Value: "users"}}}}, MethodDecorators: map[string][]runtime.DecoratorMetadata{"label": []runtime.DecoratorMetadata{{Name: "route", Target: "method", Args: []runtime.Value{runtime.String{Value: "GET"}}, NamedArgs: map[string]runtime.Value{}}}}, StaticDecorators: map[string][]runtime.DecoratorMetadata{"make": []runtime.DecoratorMetadata{{Name: "route", Target: "staticMethod", Args: []runtime.Value{runtime.String{Value: "POST"}}, NamedArgs: map[string]runtime.Value{}}}}},
 		},
+		Exports: []bytecode.ExportInfo{
+			{Name: "User", Slot: 0, FunctionIndex: -1, ClassIndex: 0, InterfaceIndex: -1},
+			{Name: "Marker", Slot: 2, FunctionIndex: -1, ClassIndex: -1, InterfaceIndex: 3},
+		},
 	}
 
 	encoded, err := bytecode.Encode(chunk)
@@ -87,6 +91,9 @@ func TestEncodeDecodeChunk(t *testing.T) {
 	}
 	if decoded.Classes[0].MethodDecorators["label"][0].Args[0].Inspect() != "GET" || decoded.Classes[0].StaticDecorators["make"][0].Args[0].Inspect() != "POST" {
 		t.Fatalf("decoded class method decorators mismatch: %#v %#v", decoded.Classes[0].MethodDecorators, decoded.Classes[0].StaticDecorators)
+	}
+	if len(decoded.Exports) != 2 || decoded.Exports[1].Name != "Marker" || decoded.Exports[1].InterfaceIndex != 3 || decoded.Exports[1].ClassIndex != -1 || decoded.Exports[1].FunctionIndex != -1 || decoded.Exports[1].Slot != 2 || decoded.Exports[0].ClassIndex != 0 || decoded.Exports[0].InterfaceIndex != -1 {
+		t.Fatalf("decoded exports mismatch: %#v", decoded.Exports)
 	}
 }
 
@@ -273,6 +280,22 @@ func (l fakeModuleLoader) LookupModuleInterface(module, name string) (bytecode.I
 }
 
 func (l fakeModuleLoader) ListAllClasses() []runtime.Value { return nil }
+
+func (l fakeModuleLoader) ModuleClassDescendsFrom(module, className, targetSimpleName string) bool {
+	return false
+}
+
+func (l fakeModuleLoader) StaticValueForModuleClass(module, className, name string) (runtime.Value, bool) {
+	return nil, false
+}
+
+func (l fakeModuleLoader) CallModuleStaticMethodByName(module, className, methodName string, args []runtime.Value) (runtime.Value, bool, error) {
+	return nil, false, nil
+}
+
+func (l fakeModuleLoader) UnimplementedAbstractMethods(module, className string) map[string]string {
+	return nil
+}
 
 func TestVMRunsStatefulNativeBridge(t *testing.T) {
 	source := []byte(`import io;

@@ -1,0 +1,240 @@
+/**
+ * @title Cross-module inheritance suite
+ * @summary Covers qualified import inheritance, from-import inheritance,
+ * own-plus-inherited members, multi-level chains, and generic base classes
+ * across module boundaries.
+ */
+import test;
+import animals;
+from creatures import WildAnimal;
+
+/* qualified: extends animals.Animal, overrides sound() */
+class Dog extends animals.Animal {
+    func Dog() {
+        parent("dog");
+    }
+
+    func sound(): string {
+        return "woof";
+    }
+}
+
+/* qualified: extends animals.Pet (which itself extends animals.Animal) */
+class Cat extends animals.Pet {
+    func Cat() {
+        parent("cat");
+    }
+
+    func sound(): string {
+        return "meow";
+    }
+
+    func label(): string {
+        return "cat:" + this.kind;
+    }
+}
+
+/* multi-level chain: Puppy > Dog > animals.Animal (two module hops) */
+class Puppy extends Dog {
+    func Puppy() {
+        parent();
+    }
+
+    func sound(): string {
+        return "yip";
+    }
+}
+
+/* explicit parent.method() into a cross-module grandparent: ExplicitPuppy >
+ * Dog > animals.Animal; the called methods live only on animals.Animal, not on
+ * the local intermediate Dog */
+class ExplicitPuppy extends Dog {
+    func ExplicitPuppy() {
+        parent();
+    }
+
+    func sound(): string {
+        return "yip";
+    }
+
+    /* parent.tag(...) resolves to animals.Animal.tag through the boundary */
+    func taggedViaParent(string s): string {
+        return "via:" + parent.tag(s);
+    }
+
+    /* parent.describe() is a cross-module template method; this.sound()
+     * inside it must stay polymorphic and pick this subclass's override */
+    func describeViaParent(): string {
+        return parent.describe();
+    }
+}
+
+/* from-import: extends WildAnimal (imported via from creatures import) */
+class Parrot extends WildAnimal {
+    func Parrot() {
+        parent("parrot");
+    }
+
+    func sound(): string {
+        return "squawk";
+    }
+}
+
+class InheritanceTest extends test.Test {
+
+    /* template method: base describe() calls overridden sound() */
+    @test
+    func qualifiedInheritanceTemplateMethod(): void {
+        let d = Dog();
+        this.assertEquals("dog:woof", d.describe());
+    }
+
+    /* inherited field this.kind is accessible on the subclass */
+    @test
+    func qualifiedInheritanceInheritedField(): void {
+        let d = Dog();
+        this.assertEquals("dog", d.kind);
+    }
+
+    /* two-level qualified: Cat > animals.Pet > animals.Animal */
+    @test
+    func twoLevelQualifiedInheritanceTemplateMethod(): void {
+        let c = Cat();
+        this.assertEquals("meow", c.sound());
+        this.assertEquals("cat:meow", c.describe());
+    }
+
+    /* own method + inherited field + inherited template method */
+    @test
+    func ownMethodPlusInheritedMembers(): void {
+        let c = Cat();
+        this.assertEquals("cat:cat", c.label());
+        this.assertEquals("cat", c.kind);
+        this.assertEquals("cat:meow", c.describe());
+    }
+
+    /* multi-level chain: Puppy > Dog > animals.Animal */
+    @test
+    func multiLevelChainDeepestOverrideWins(): void {
+        let p = Puppy();
+        this.assertEquals("yip", p.sound());
+    }
+
+    /* multi-level: inherited base template method resolves through full chain */
+    @test
+    func multiLevelChainInheritedBaseMethod(): void {
+        let p = Puppy();
+        this.assertEquals("dog:yip", p.describe());
+    }
+
+    /* multi-level: inherited field accessible at deepest level */
+    @test
+    func multiLevelChainInheritedField(): void {
+        let p = Puppy();
+        this.assertEquals("dog", p.kind);
+    }
+
+    /* multi-level: a grandparent method not redefined in the local
+     * intermediate still dispatches through the module boundary (the
+     * VM previously only hopped on the instance's direct parent) */
+    @test
+    func multiLevelChainGrandparentOwnMethod(): void {
+        let p = Puppy();
+        this.assertEquals("dog:tagged", p.tag("tagged"));
+    }
+
+    /* multi-level: grandparent template method calls this.sound(),
+     * which must resolve polymorphically to the deepest override */
+    @test
+    func multiLevelChainGrandparentTemplateMethodPolymorphic(): void {
+        let p = Puppy();
+        this.assertEquals("dog:yip", p.describe());
+    }
+
+    /* explicit parent.method() resolving to a cross-module grandparent,
+     * skipping the local intermediate that lacks the method */
+    @test
+    func explicitParentMethodIntoCrossModuleGrandparent(): void {
+        let p = ExplicitPuppy();
+        this.assertEquals("via:dog:hi", p.taggedViaParent("hi"));
+    }
+
+    /* explicit parent.method() into a cross-module template method whose
+     * this.sound() stays polymorphic to the deepest override */
+    @test
+    func explicitParentTemplateMethodPolymorphic(): void {
+        let p = ExplicitPuppy();
+        this.assertEquals("dog:yip", p.describeViaParent());
+    }
+
+    /* from-import: Parrot extends WildAnimal (imported via from creatures import) */
+    @test
+    func fromImportInheritanceTemplateMethod(): void {
+        let r = Parrot();
+        this.assertEquals("parrot:squawk", r.describe());
+    }
+
+    /* from-import: inherited field accessible */
+    @test
+    func fromImportInheritanceInheritedField(): void {
+        let r = Parrot();
+        this.assertEquals("parrot", r.kind);
+    }
+
+    /* from-import: direct WildAnimal instance uses its own sound */
+    @test
+    func fromImportDirectInstance(): void {
+        let w = WildAnimal("lion");
+        this.assertEquals("lion:roar", w.describe());
+    }
+
+    /* generic base across module: Box<string>.get() returns the value */
+    @test
+    func genericBaseGetReturnsValue(): void {
+        let b = animals.Box("hello");
+        this.assertEquals("hello", b.get());
+    }
+
+    /* generic base: type-specific value round-trips correctly */
+    @test
+    func genericBaseIntValue(): void {
+        let b = animals.Box(42);
+        this.assertEquals(42, b.get());
+    }
+
+    /* instanceof against a direct cross-module parent (Dog > animals.Animal) */
+    @test
+    func instanceofCrossModuleDirectParent(): void {
+        this.assertTrue(Dog() instanceof animals.Animal);
+    }
+
+    /* instanceof against a cross-module grandparent via a local intermediate
+       (Puppy > Dog > animals.Animal) */
+    @test
+    func instanceofCrossModuleMultiLevel(): void {
+        this.assertTrue(Puppy() instanceof animals.Animal);
+    }
+
+    /* instanceof against a two-hop cross-module ancestor
+       (Cat > animals.Pet > animals.Animal) */
+    @test
+    func instanceofCrossModuleTwoModuleHops(): void {
+        this.assertTrue(Cat() instanceof animals.Animal);
+        this.assertTrue(Cat() instanceof animals.Pet);
+    }
+
+    /* instanceof through a from-imported intermediate that itself extends a
+       cross-module parent (Parrot > creatures.WildAnimal > animals.Animal) */
+    @test
+    func instanceofCrossModuleFromImportChain(): void {
+        this.assertTrue(Parrot() instanceof animals.Animal);
+        this.assertTrue(Parrot() instanceof WildAnimal);
+    }
+
+    /* negative: an unrelated class is not an instance of the cross-module parent */
+    @test
+    func instanceofCrossModuleNegative(): void {
+        let b = animals.Box(1);
+        this.assertFalse(b instanceof animals.Animal);
+    }
+}

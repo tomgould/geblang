@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,7 +10,7 @@ import (
 	"testing"
 )
 
-func buildCMBinary(t *testing.T) string {
+func buildCMBinary(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "geblang")
@@ -115,5 +117,87 @@ func TestCrossModuleAnalysisSkippedOnCacheHit(t *testing.T) {
 	}
 	if !strings.Contains(coldOut, "has no export") {
 		t.Fatalf("control run did not report the stale-export error:\n%s", coldOut)
+	}
+}
+
+// gbcSnapshot captures mtime + content for every .gbc in a cache dir subtree.
+type gbcSnapshot map[string]struct {
+	modTime int64
+	content []byte
+}
+
+func snapshotGBC(root string) (gbcSnapshot, error) {
+	snap := gbcSnapshot{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || filepath.Ext(path) != ".gbc" {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		snap[path] = struct {
+			modTime int64
+			content []byte
+		}{info.ModTime().UnixNano(), data}
+		return nil
+	})
+	return snap, err
+}
+
+// TestCrossModuleWarmCacheNoRecompile asserts that a cache-hit run leaves all
+// .gbc files byte-for-byte identical and with unchanged mtimes: the binary
+// must not re-run the compiler or re-write the cache on a warm hit.
+func TestCrossModuleWarmCacheNoRecompile(t *testing.T) {
+	bin := buildCMBinary(t)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "base.gb"), []byte(cmrBaseGb), 0644)
+	os.WriteFile(filepath.Join(dir, "main.gb"), []byte(cmrMainGb), 0644)
+
+	cacheDir := filepath.Join(dir, ".geblang-cache")
+	run := func(label string) {
+		cmd := exec.Command(bin, "main.gb")
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: run failed: %v\n%s", label, err, out)
+		}
+	}
+
+	run("cold")
+
+	before, err := snapshotGBC(cacheDir)
+	if err != nil {
+		t.Fatalf("snapshot failed: %v", err)
+	}
+	if len(before) == 0 {
+		t.Fatalf("no .gbc files found after cold run in %s", cacheDir)
+	}
+
+	run("warm")
+
+	after, err := snapshotGBC(cacheDir)
+	if err != nil {
+		t.Fatalf("post-warm snapshot failed: %v", err)
+	}
+
+	if len(after) != len(before) {
+		t.Fatalf("warm run changed the number of .gbc files: before=%d after=%d", len(before), len(after))
+	}
+	for path, bsnap := range before {
+		asnap, ok := after[path]
+		if !ok {
+			t.Errorf("warm run removed .gbc: %s", path)
+			continue
+		}
+		if asnap.modTime != bsnap.modTime {
+			t.Errorf("warm run modified .gbc mtime: %s", path)
+		}
+		if !bytes.Equal(asnap.content, bsnap.content) {
+			t.Errorf("warm run modified .gbc content: %s", path)
+		}
 	}
 }

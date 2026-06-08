@@ -19,7 +19,8 @@ class User implements donor.Greetable {
 }
 
 class Leaf extends mid.Middle {
-    func Leaf() { parent(); }
+    func Leaf(int n) { parent(); this.n = n; }
+    func value(): int { return parent.value() - 3; }
 }
 
 class CrossModuleFeaturesTest extends test.Test {
@@ -37,13 +38,21 @@ class CrossModuleFeaturesTest extends test.Test {
 
     @test
     func twoHopCrossModuleDispatchResolvesInheritedMethod(): void {
-        let leaf = Leaf();
+        let leaf = Leaf(0);
         this.assertEquals("from-base", leaf.describe());
     }
 
     @test
+    func multiLevelParentMethodChainAcrossModules(): void {
+        /* Leaf.value (this module) -> mid.Middle.value -> donor.Base.value;
+         * each hop is parent.value(), resolved by lexical class. */
+        this.assertEquals(8, Leaf(0).value());
+        this.assertEquals(13, Leaf(5).value());
+    }
+
+    @test
     func inheritedThrowFromAnotherModuleReachesUserTryCatch(): void {
-        let leaf = Leaf();
+        let leaf = Leaf(0);
         bool caught = false;
         string seenMessage = "";
         try {
