@@ -7663,16 +7663,11 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 		return nil, fmt.Errorf("module %q has not been imported", module)
 	}
 
-	/* Prefer the env-local Module binding's `Canonical` over the
-	 * shared `e.importNames` map: different files may legitimately
-	 * alias the same identifier to different canonical modules
-	 * (e.g. a user file `import web.websocket as websocket;` while
-	 * stdlib `import websocket;` keeps the native), and the shared
-	 * map only holds the last write. The env-local binding is what
-	 * the current scope sees, so it's the authoritative source. */
+	// An env-local Module binding is authoritative; do not consult the global
+	// last-write-wins importNames alias map when one is present in scope.
 	canonical, hasImportName := e.importNames[module]
 	if envValue, ok := env.Get(module); ok {
-		if mod, ok := envValue.(*runtime.Module); ok && mod.Canonical != "" {
+		if mod, ok := envValue.(*runtime.Module); ok {
 			canonical = mod.Canonical
 			hasImportName = true
 		}

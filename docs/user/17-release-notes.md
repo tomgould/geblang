@@ -1,5 +1,17 @@
 # Release Notes
 
+## 1.15.0
+
+### Fixes
+
+- Deep-cloning a module value now preserves the module's canonical identity.
+  Previously, contexts that deep-clone a captured environment (per-request
+  request handlers, `clone.deep`, goroutine isolation) dropped it, so a native
+  function called through an aliased import (for example a module imported under
+  a short alias) could resolve against the wrong module and fail with an
+  "unknown function" error. Cloned handlers now resolve aliased native calls
+  correctly.
+
 ## 1.14.0
 
 ### Standard library

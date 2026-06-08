@@ -184,7 +184,7 @@ func (s *cloneState) cloneModule(module *Module) *Module {
 	if cloned, ok := s.modules[module]; ok {
 		return cloned
 	}
-	cloned := &Module{Name: module.Name, Exports: map[string]Value{}}
+	cloned := &Module{Name: module.Name, Canonical: module.Canonical, Exports: map[string]Value{}}
 	s.modules[module] = cloned
 	for name, value := range module.Exports {
 		cloned.Exports[name] = s.cloneValue(value)

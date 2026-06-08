@@ -32,6 +32,34 @@ func TestCloneFunctionDeepCopiesCapturedEnvironment(t *testing.T) {
 	}
 }
 
+func TestCloneModulePreservesCanonical(t *testing.T) {
+	module := &Module{Name: "native", Canonical: "async.sync", Exports: map[string]Value{}}
+	cloned, ok := CloneValue(module).(*Module)
+	if !ok {
+		t.Fatalf("CloneValue returned %T, want *Module", cloned)
+	}
+	if cloned.Canonical != "async.sync" {
+		t.Fatalf("cloned module Canonical = %q, want %q", cloned.Canonical, "async.sync")
+	}
+
+	env := NewEnvironment()
+	if err := env.Define("native", module, false); err != nil {
+		t.Fatal(err)
+	}
+	fn := CloneFunction(Function{Name: "handler", Env: env})
+	got, ok := fn.Env.Get("native")
+	if !ok {
+		t.Fatal("cloned environment is missing the native alias binding")
+	}
+	gotModule, ok := got.(*Module)
+	if !ok {
+		t.Fatalf("cloned binding has type %T, want *Module", got)
+	}
+	if gotModule.Canonical != "async.sync" {
+		t.Fatalf("cloned env module Canonical = %q, want %q", gotModule.Canonical, "async.sync")
+	}
+}
+
 func TestCloneFunctionPreservesEnvironmentCycles(t *testing.T) {
 	env := NewEnvironment()
 	fn := Function{Name: "handler", Env: env}
