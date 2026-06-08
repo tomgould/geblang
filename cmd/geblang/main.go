@@ -23,7 +23,6 @@ import (
 	"geblang/internal/native"
 	"geblang/internal/parser"
 	"geblang/internal/runtime"
-	"geblang/internal/semantic"
 	geblangver "geblang/internal/version"
 )
 
@@ -249,24 +248,8 @@ doneFlags:
 	if appendMainInvocation(program) {
 		source = append(source, []byte("\n/*__geb_automain__*/\n")...)
 	}
-	if diagnostics := semantic.New().Analyze(program); len(diagnostics) > 0 {
-		hasError := false
-		for _, diagnostic := range diagnostics {
-			prefix := "error: "
-			if diagnostic.Severity == semantic.SeverityWarning {
-				prefix = "warning: "
-			} else {
-				hasError = true
-			}
-			fmt.Fprintf(os.Stderr, "%s%s\n", prefix, diagnostic.Message)
-		}
-		// Errors abort before any execution. Warnings still print but
-		// don't block - the program runs normally.
-		if hasError {
-			os.Exit(1)
-		}
-	}
-
+	// Cross-module analysis runs inside runScript: gated on the .gbc
+	// cache miss for the VM, every invocation for the evaluator.
 	exitCode, err := runScript(args[0], args[1:], source, program, mode, allowFFI, os.Stdout, traceWriter(traceExec, os.Stderr))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -1149,8 +1132,16 @@ func discoverGeblangFiles(path string) ([]string, error) {
 }
 
 func runScript(sourcePath string, scriptArgs []string, source []byte, program *ast.Program, mode executionMode, allowFFI []string, stdout io.Writer, trace io.Writer) (int, error) {
+	// Analysis warnings are advisory diagnostics; keep them off the program's
+	// stdout (the entry path historically wrote them to stderr).
+	analyze := crossModuleAnalyzer(sourcePath, program, modules.NewResolver([]string{filepath.Dir(sourcePath)}), os.Stderr, "warning: ")
+	// On the VM path the cross-module analysis runs inside the compile
+	// (cache-miss) step; track whether it ran so the eval fallback does
+	// not re-run it.
+	analyzedDuringCompile := false
 	if mode != executionEvaluatorOnly {
-		chunk, err := loadOrCompileBytecode(sourcePath, source, program)
+		chunk, err := loadOrCompileBytecode(sourcePath, source, program, analyze)
+		analyzedDuringCompile = true
 		if err == nil {
 			traceExecution(trace, "vm", "")
 			loader := newBytecodeModuleLoader(stdout, []string{filepath.Dir(sourcePath)})
@@ -1183,6 +1174,12 @@ func runScript(sourcePath string, scriptArgs []string, source []byte, program *a
 		if mode == executionVMStrict {
 			return 1, err
 		}
+		// A cross-module analysis error is a hard error on both backends;
+		// never fall back to the evaluator on it.
+		var aerr analysisError
+		if errors.As(err, &aerr) {
+			return 1, err
+		}
 		// Bytecode-compile errors that are NOT parity gaps are real
 		// static-analysis errors (type mismatches, no-matching-overload,
 		// undeclared identifiers). Abort instead of falling back to the
@@ -1194,6 +1191,14 @@ func runScript(sourcePath string, scriptArgs []string, source []byte, program *a
 		traceExecution(trace, "evaluator", err.Error())
 	} else {
 		traceExecution(trace, "evaluator", "--disable-vm")
+	}
+	// The evaluator has no .gbc cache, so the analysis must run every
+	// invocation to reject uncalled cross-module errors runtime alone
+	// misses. Skip only when the VM compile step already analyzed.
+	if !analyzedDuringCompile {
+		if err := analyze(); err != nil {
+			return 1, err
+		}
 	}
 	return runEvaluator(sourcePath, scriptArgs, program, allowFFI, stdout)
 }
@@ -1211,15 +1216,15 @@ if (__geb_result != null) {
     sys.exit(__geb_result as int);
 }
 `, moduleName, alias, alias))
-	program, err := parseAndAnalyze(string(source))
-	if err != nil {
-		return 1, err
-	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return 1, err
 	}
 	sourcePath := filepath.Join(wd, "__geblang_module__.gb")
+	program, err := parseAndAnalyze(sourcePath, string(source))
+	if err != nil {
+		return 1, err
+	}
 	return runScript(sourcePath, moduleArgs, source, program, mode, nil, stdout, traceWriter(traceExec, stderr))
 }
 
@@ -1487,7 +1492,7 @@ func runTestFile(path string, tags []string, classFilter string, methodFilters [
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(path, string(source))
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -1505,7 +1510,7 @@ func runTestFile(path string, tags []string, classFilter string, methodFilters [
 		return 0, 0, 0, nil
 	}
 	runner := buildTestRunner(classes, tags, methodFilters, format)
-	program, err = parseAndAnalyze(string(source) + "\n" + runner)
+	program, err = parseAndAnalyze(path, string(source)+"\n"+runner)
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -1530,26 +1535,33 @@ func runTestFile(path string, tags []string, classFilter string, methodFilters [
 	return parseTestSummary(out.String())
 }
 
-func parseAndAnalyze(source string) (*ast.Program, error) {
+// analyzeCrossModule runs the cross-module static checks (unknown members,
+// methods, and qualified types) in the compile path, returning the first
+// error-severity diagnostic as a Go error. Warnings are ignored (the compile
+// path is not --strict). resolver must resolve imports as geblang check does.
+func analyzeCrossModule(file string, program *ast.Program, resolver *modules.Resolver) error {
+	opts := check.Options{
+		Resolver:      resolver,
+		CrossModule:   true,
+		NativeSymbols: evaluator.NativeModuleSymbols(),
+		ModuleCache:   check.NewModuleCache(),
+	}
+	for _, d := range check.CrossModuleAnalysis(file, program, opts) {
+		if d.Severity == check.SeverityError {
+			return fmt.Errorf("%s:%d:%d: error[%s]: %s", file, d.Line, d.Column, d.Rule, d.Message)
+		}
+	}
+	return nil
+}
+
+func parseAndAnalyze(file, source string) (*ast.Program, error) {
 	p := parser.New(lexer.New(source))
 	program := p.ParseProgram()
 	if len(p.Errors()) > 0 {
 		return nil, fmt.Errorf("%s", strings.Join(p.Errors(), "\n"))
 	}
-	if diagnostics := semantic.New().Analyze(program); len(diagnostics) > 0 {
-		messages := make([]string, 0, len(diagnostics))
-		for _, diagnostic := range diagnostics {
-			/* Warnings are advisory; only hard errors block
-			 * compilation. The user-facing `geblang check` command
-			 * reports both via its own pretty-printer. */
-			if diagnostic.Severity != semantic.SeverityError {
-				continue
-			}
-			messages = append(messages, diagnostic.Message)
-		}
-		if len(messages) > 0 {
-			return nil, fmt.Errorf("%s", strings.Join(messages, "\n"))
-		}
+	if err := analyzeCrossModule(file, program, modules.NewResolver([]string{filepath.Dir(file)})); err != nil {
+		return nil, err
 	}
 	return program, nil
 }
@@ -1694,7 +1706,35 @@ func printTestOutput(output string) {
 	}
 }
 
-func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Program) (bytecode.Chunk, error) {
+// crossModuleAnalyzer returns a closure that runs the cross-module static
+// analysis for the given file, prints warnings to stdout, and returns the
+// first error-severity diagnostic. It is invoked only on a cache miss, so a
+// .gbc hit provably implies a prior clean analysis.
+// analysisError tags a cross-module analysis failure so the run path treats
+// it as a hard error, not a VM parity gap (the message can contain words like
+// "export" that the parity heuristic matches).
+type analysisError struct{ msg string }
+
+func (e analysisError) Error() string { return e.msg }
+
+func crossModuleAnalyzer(sourcePath string, program *ast.Program, resolver *modules.Resolver, stdout io.Writer, warnPrefix string) func() error {
+	return func() error {
+		opts := check.Options{Resolver: resolver, CrossModule: true, NativeSymbols: evaluator.NativeModuleSymbols(), ModuleCache: check.NewModuleCache()}
+		var firstError error
+		for _, d := range check.CrossModuleAnalysis(sourcePath, program, opts) {
+			if d.Severity == check.SeverityWarning {
+				fmt.Fprintf(stdout, "%s%s\n", warnPrefix, d.Message)
+				continue
+			}
+			if firstError == nil {
+				firstError = analysisError{msg: d.Message}
+			}
+		}
+		return firstError
+	}
+}
+
+func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Program, analyze func() error) (bytecode.Chunk, error) {
 	cacheDir := bytecodeCacheDir()
 	cachePath := bytecode.CachePath(cacheDir, sourcePath, source, version)
 	// --no-assert mutates the compiled chunk in a way the cache key
@@ -1706,6 +1746,13 @@ func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Pro
 			if err == nil && chunk.Compiler == version && chunk.SourceHash == bytecode.SourceHash(source) {
 				return chunk, nil
 			}
+		}
+	}
+	// Cache miss: analyze before compiling so a cached chunk always
+	// reflects a clean prior analysis; abort without caching on error.
+	if analyze != nil {
+		if err := analyze(); err != nil {
+			return bytecode.Chunk{}, err
 		}
 	}
 	chunk, err := bytecode.Compile(astProgram, source, version)
@@ -1806,21 +1853,11 @@ func (l *bytecodeModuleLoader) LoadModule(canonical string, alias string) (*runt
 	if len(p.Errors()) > 0 {
 		return nil, fmt.Errorf("parse module %s: %s", canonical, strings.Join(p.Errors(), "\n"))
 	}
-	if diagnostics := semantic.New().Analyze(program); len(diagnostics) > 0 {
-		errorMessages := make([]string, 0, len(diagnostics))
-		for _, diagnostic := range diagnostics {
-			if diagnostic.Severity == semantic.SeverityWarning {
-				fmt.Fprintf(l.stdout, "warning: module %s: %s\n", canonical, diagnostic.Message)
-				continue
-			}
-			errorMessages = append(errorMessages, diagnostic.Message)
-		}
-		if len(errorMessages) > 0 {
-			return nil, fmt.Errorf("analyze module %s: %s", canonical, strings.Join(errorMessages, "\n"))
-		}
-	}
-
-	chunk, err := loadOrCompileBytecode(path, source, program)
+	resolverPaths := append([]string{filepath.Dir(path)}, l.modulePaths...)
+	// Analysis runs on a .gbc cache miss inside loadOrCompileBytecode, so
+	// a cache hit (already-analyzed source) skips it.
+	analyze := crossModuleAnalyzer(path, program, modules.NewResolver(resolverPaths), l.stdout, fmt.Sprintf("warning: module %s: ", canonical))
+	chunk, err := loadOrCompileBytecode(path, source, program, analyze)
 	if err != nil {
 		return nil, fmt.Errorf("compile module %s: %w", canonical, err)
 	}

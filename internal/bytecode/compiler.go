@@ -52,6 +52,8 @@ type Compiler struct {
 	// import so module-recognition sites can translate `Y.fn(...)` calls
 	// back to the canonical `X.fn` dispatch.
 	moduleAliases map[string]string
+	// fromImports: from-import local/alias name -> fully-qualified class name.
+	fromImports map[string]string
 	// AssertionsDisabled elides assert(...) call sites at compile time
 	// (no code emitted; arguments are not evaluated). Set via the
 	// --no-assert CLI flag on `geblang` and `geblang build`.
@@ -117,6 +119,7 @@ func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk
 		reflectMethods:     map[string]map[string]runtime.DecoratorTarget{},
 		reflectStatics:     map[string]map[string]runtime.DecoratorTarget{},
 		moduleAliases:      map[string]string{},
+		fromImports:        map[string]string{},
 	}
 	// A top-level `del name` removes the binding, so a later same-name
 	// declaration is a legal re-bind (the evaluator allows it at runtime).
@@ -143,6 +146,7 @@ func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk
 					if msg := c.claimGlobalKind(local, "import", canonical+"."+n.Name.Value); msg != "" {
 						return Chunk{}, fmt.Errorf("line %d:%d: %s", from.Token.Line, from.Token.Column, msg)
 					}
+					c.fromImports[local] = canonical + "." + n.Name.Value
 				}
 			}
 		}
@@ -435,7 +439,7 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		return nil
 	case *ast.ImportStatement:
 		if isEvaluatorOnlyBuiltinImport(stmt.Path) {
-			return c.withStatementLocation(stmt, fmt.Errorf("bytecode compiler does not support builtin module %s yet", strings.Join(stmt.Path, ".")))
+			return c.withStatementLocation(stmt, parityErrorf("bytecode compiler does not support builtin module %s yet", strings.Join(stmt.Path, ".")))
 		}
 		c.declareNativeInterfacesForImport(stmt.Path)
 		if !isBytecodeImportModule(stmt.Path) {
@@ -465,7 +469,7 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		return nil
 	case *ast.FromImportStatement:
 		if isEvaluatorOnlyBuiltinImport(stmt.Path) {
-			return c.withStatementLocation(stmt, fmt.Errorf("bytecode compiler does not support builtin module %s yet", strings.Join(stmt.Path, ".")))
+			return c.withStatementLocation(stmt, parityErrorf("bytecode compiler does not support builtin module %s yet", strings.Join(stmt.Path, ".")))
 		}
 		canonical := strings.Join(stmt.Path, ".")
 		native := isBytecodeImportModule(stmt.Path)
@@ -661,7 +665,7 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("bytecode compiler does not support %T yet", stmt)
+		return parityErrorf("bytecode compiler does not support %T yet", stmt)
 	}
 }
 
@@ -1177,6 +1181,8 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 			// the alias prefix to its canonical module so the VM can look
 			// up the parent class at runtime via the module loader.
 			class.ParentName = c.resolveQualifiedClassName(stmt.Extends.Name)
+		} else if qual, ok := c.fromImports[stmt.Extends.Name]; ok {
+			class.ParentName = qual
 		} else {
 			return fmt.Errorf("bytecode compiler parent class %s is not declared", stmt.Extends.Name)
 		}
@@ -1190,7 +1196,12 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 	}
 	for _, ifaceRef := range stmt.Implements {
 		if _, ok := c.interfaces[strings.ToLower(ifaceRef.Name)]; !ok {
-			if !strings.Contains(ifaceRef.Name, ".") {
+			if strings.Contains(ifaceRef.Name, ".") {
+				// dotted cross-module interface: pass through as-is
+			} else if qual, ok := c.fromImports[ifaceRef.Name]; ok {
+				class.Implements = append(class.Implements, qual)
+				continue
+			} else {
 				return fmt.Errorf("bytecode compiler interface %s is not declared", ifaceRef.Name)
 			}
 		}
@@ -1313,7 +1324,7 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 				class.MethodDecorators[key] = append(class.MethodDecorators[key], methodDec...)
 			}
 		default:
-			return c.withStatementLocation(member, fmt.Errorf("bytecode compiler does not support class member %T yet", member))
+			return c.withStatementLocation(member, parityErrorf("bytecode compiler does not support class member %T yet", member))
 		}
 	}
 	if stmt.Destructor != nil {
@@ -1487,7 +1498,7 @@ func (c *Compiler) compileSimpleStatement(stmt *ast.SimpleStatement) error {
 		c.emitAt(OpThrow, stmt.Token.Line, stmt.Token.Column)
 		return nil
 	default:
-		return fmt.Errorf("bytecode compiler does not support %s statements yet", stmt.Kind)
+		return parityErrorf("bytecode compiler does not support %s statements yet", stmt.Kind)
 	}
 }
 
@@ -1937,6 +1948,21 @@ func (c *Compiler) compileBlock(block *ast.BlockStatement) error {
 	}
 	return nil
 }
+
+// parityError marks a compiler failure that is a VM capability gap rather
+// than a genuine static error in the user's code. IsParityError detects it.
+type parityError struct{ err error }
+
+func (e parityError) Error() string { return e.err.Error() }
+func (e parityError) Unwrap() error { return e.err }
+
+func parityErrorf(format string, args ...any) error {
+	return parityError{err: fmt.Errorf(format, args...)}
+}
+
+// NewParityError wraps err as a VM capability gap so that IsParityError
+// returns true. Intended for tests that need to synthesize a parity error.
+func NewParityError(err error) error { return parityError{err: err} }
 
 type locatedError struct {
 	line   int
@@ -2451,7 +2477,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			c.emitConstant(runtime.Null{}, expr.Token.Line, expr.Token.Column)
 			return nil
 		default:
-			return fmt.Errorf("bytecode compiler does not support literal %T", value)
+			return parityErrorf("bytecode compiler does not support literal %T", value)
 		}
 	case *ast.ListLiteral:
 		if !listHasSpread(expr.Elements) {
@@ -2770,7 +2796,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		case ">>":
 			c.emitAt(OpRShift, expr.Token.Line, expr.Token.Column)
 		default:
-			return fmt.Errorf("bytecode compiler does not support operator %q", expr.Operator)
+			return parityErrorf("bytecode compiler does not support operator %q", expr.Operator)
 		}
 		return nil
 	case *ast.PrefixExpression:
@@ -2785,7 +2811,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		case "~":
 			c.emitAt(OpBitNot, expr.Token.Line, expr.Token.Column)
 		default:
-			return fmt.Errorf("bytecode compiler does not support prefix operator %q", expr.Operator)
+			return parityErrorf("bytecode compiler does not support prefix operator %q", expr.Operator)
 		}
 		return nil
 	case *ast.PostfixExpression:
@@ -2828,7 +2854,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 		case "--":
 			c.emitAt(OpSub, expr.Token.Line, expr.Token.Column)
 		default:
-			return fmt.Errorf("bytecode compiler does not support postfix operator %q", expr.Operator)
+			return parityErrorf("bytecode compiler does not support postfix operator %q", expr.Operator)
 		}
 		if resolved.kind == "local" {
 			c.emitAt(OpSetLocal, expr.Token.Line, expr.Token.Column, resolved.slot)
@@ -3453,7 +3479,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 	case *ast.TernaryExpression:
 		return c.compileTernaryExpression(expr)
 	default:
-		return fmt.Errorf("bytecode compiler does not support %T yet", expr)
+		return parityErrorf("bytecode compiler does not support %T yet", expr)
 	}
 }
 
@@ -3932,7 +3958,7 @@ func (c *Compiler) compileBuiltinCall(expr *ast.CallExpression, module, name str
 		c.emitAt(OpNativeCallNamed, expr.Token.Line, expr.Token.Column, operands...)
 		return nil
 	default:
-		return fmt.Errorf("bytecode compiler does not support %s.%s; use --disable-vm to run with the tree-walking evaluator", module, name)
+		return parityErrorf("bytecode compiler does not support %s.%s; use --disable-vm to run with the tree-walking evaluator", module, name)
 	}
 }
 
@@ -4058,7 +4084,7 @@ func (c *Compiler) compileReflectCall(expr *ast.CallExpression, name string) err
 		c.emitAt(OpNativeCall, expr.Token.Line, expr.Token.Column, nameIndex, 0)
 		return nil
 	default:
-		return fmt.Errorf("bytecode compiler does not support reflect.%s", name)
+		return parityErrorf("bytecode compiler does not support reflect.%s", name)
 	}
 }
 
@@ -5558,7 +5584,7 @@ func (c *Compiler) singleFunctionIndex(name string) (int64, error) {
 		return 0, fmt.Errorf("unknown bytecode function %s", name)
 	}
 	if len(indices) > 1 {
-		return 0, fmt.Errorf("bytecode compiler does not support exporting overloaded function %s yet", name)
+		return 0, parityErrorf("bytecode compiler does not support exporting overloaded function %s yet", name)
 	}
 	return indices[0], nil
 }
@@ -6374,33 +6400,12 @@ func (c *Compiler) selectFunctionCallSpread(name string) (int64, error) {
 	return indices[0], nil
 }
 
-// IsParityError reports whether a bytecode compiler error represents a
-// known VM parity gap (a feature the bytecode compiler doesn't support
-// yet) rather than a genuine type or overload error in the user's
-// code. Callers that want to fall back to the evaluator on parity
-// gaps - but abort on real static errors - use this to decide.
-//
-// The classifier matches phrases that the compiler uses for "I don't
-// know how to compile this yet" failures. Genuine type / overload /
-// identifier errors don't match and surface to the user.
+// IsParityError reports whether err is a VM capability gap (a construct the
+// bytecode compiler doesn't support yet) rather than a genuine static error.
 func IsParityError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	parityPhrases := []string{
-		"bytecode compiler does not support",
-		"not yet implemented",
-		"not supported in bytecode",
-		"not supported by the VM",
-		"generator",
-		"async",
-		"export",
-	}
-	for _, phrase := range parityPhrases {
-		if strings.Contains(msg, phrase) {
-			return true
-		}
-	}
-	return false
+	var pe parityError
+	return errors.As(err, &pe)
 }

@@ -101,6 +101,14 @@ the receiver's type is not a statically known class, when the class (or any
 ancestor) defines `__call`, when the class carries decorators that may inject
 members, or when any part of the hierarchy cannot be resolved.
 
+These checks also run inside class method and constructor bodies, not just
+top-level and free-function code. Inside a method, `this` is typed as the
+enclosing class, so member access and argument types on `this.field` and on
+typed locals are validated, and a `return` expression is checked against the
+method's declared return type. Calls on `this` stay conservative: a missing
+method on `this` is not flagged (a subclass may provide it), while the
+arguments of a method that does exist are still validated.
+
 A typo on a built-in type's method - for example `"x".fooBar()` or
 `(42).nope()` - is also an error, checked against the authoritative
 built-in method set for each type:

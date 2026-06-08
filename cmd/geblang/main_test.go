@@ -1312,7 +1312,7 @@ class User {
 User u = User("Ada");
 io.println(u.label());
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1352,7 +1352,7 @@ io.println("about to call describe with a float");
 io.println(describe(1.0f));
 io.println("unreachable");
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1391,7 +1391,7 @@ func TestRunScriptRunsAliasedNativeImportOnVM(t *testing.T) {
 import path as natpath;
 io.println(natpath.clean("/a/../b"));
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1430,7 +1430,7 @@ func TestRunScriptVMStrictAcceptsAliasedNativeImport(t *testing.T) {
 import path as natpath;
 io.println(natpath.clean("/a/../b"));
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1472,7 +1472,7 @@ class Foo {
     int x = compute();
 }
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1533,7 +1533,7 @@ io.println(util.shout("ok"));
 let user = util.User("Ada");
 io.println(user.label());
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1661,7 +1661,7 @@ import util;
 let bang = util.suffixer("!");
 io.println(bang("ok"));
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1721,7 +1721,7 @@ io.println(util.greet("Bob"));
 io.println(reflect.decorators(util.greet)[0]["name"]);
 io.println(reflect.decorators(util.greet)[0]["args"][0]);
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1781,7 +1781,7 @@ let task = async.run(util.greet);
 io.println(typeof(task));
 io.println(await task);
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1867,7 +1867,7 @@ let staticMethod = reflect.staticMethod(util.Greeter, "label");
 io.println(reflect.decorators(staticMethod)[0]["name"]);
 io.println(reflect.decorators(staticMethod)[0]["args"][0]);
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1912,7 +1912,7 @@ metrics.inc("hits");
 metrics.inc("hits", 2);
 io.println(metrics.get("hits"));
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -1967,7 +1967,7 @@ io.println(response["status"]);
 io.println(response["body"]);
 io.println(response["headers"]["X-App"]);
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -2117,7 +2117,7 @@ io.println(decorated["headers"]["Set-Cookie"]);
 io.println(sessionData["user"]);
 io.println(auth.verifyCsrf(csrfRequest, "secret"));
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -2193,7 +2193,7 @@ ws.close(conn);
 http.shutdown(server, 1000);
 http.close(server);
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -2287,7 +2287,7 @@ let profile = client.hgetAll("profile");
 io.println(profile["role"]);
 client.close();
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -2328,7 +2328,7 @@ func TestRunScriptTraceExecReportsEngine(t *testing.T) {
 	source := []byte(`import io;
 io.println("fast");
 `)
-	program, err := parseAndAnalyze(string(source))
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

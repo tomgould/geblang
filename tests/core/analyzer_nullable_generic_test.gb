@@ -1,0 +1,65 @@
+import test;
+
+/* Box<T> holds any value and returns it typed as T */
+class Box<T> {
+    any v;
+
+    func Box(any v) {
+        this.v = v;
+    }
+
+    func get(): T {
+        return this.v;
+    }
+}
+
+/* Sender tests null being passed to an any parameter */
+class Sender {
+    func send(any body): int {
+        if (body == null) { return 0; }
+        return 1;
+    }
+
+    func sendNull(): int {
+        return this.send(null);
+    }
+}
+
+/* Counter counts down from n to 0 using a nullable loop variable */
+class Counter {
+    func countDown(int start): int {
+        ?int n = start;
+        int steps = 0;
+        while (n != null) {
+            steps = steps + 1;
+            if (n == 1) {
+                n = null;
+            } else {
+                n = n - 1;
+            }
+        }
+        return steps;
+    }
+}
+
+class AnalyzerNullableGenericTest extends test.Test {
+
+    @test
+    func genericGetReturnsStoredValue(): void {
+        let b = Box(42);
+        this.assertEquals(42, b.get());
+    }
+
+    @test
+    func nullPassedToAnyParamReturnsZero(): void {
+        let s = Sender();
+        this.assertEquals(0, s.sendNull());
+    }
+
+    @test
+    func nullableLoopVarCountsCorrectly(): void {
+        let c = Counter();
+        this.assertEquals(3, c.countDown(3));
+        this.assertEquals(1, c.countDown(1));
+    }
+}

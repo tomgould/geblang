@@ -258,13 +258,13 @@ if (__geb_result != null) {
 }
 `, entry))
 
-	program, err := parseAndAnalyze(string(source))
+	sourcePath := filepath.Join(srcDir, "__geblang_bundle__.gb")
+	program, err := parseAndAnalyze(sourcePath, string(source))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 
-	sourcePath := filepath.Join(srcDir, "__geblang_bundle__.gb")
 	exitCode, err := runScript(sourcePath, args, source, program, executionAuto, nil, os.Stdout, nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

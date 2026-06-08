@@ -1,0 +1,50 @@
+/**
+ * @title Method-body type checking (Phase 2)
+ * @summary Class method and constructor bodies are type-checked. Valid patterns
+ * - field-typed receivers, the template-method pattern on `this`, and covariant
+ * method returns - analyze cleanly and run correctly.
+ */
+import test;
+
+class Animal { func speak(): string { return "..."; } }
+class Dog extends Animal { func speak(): string { return "woof"; } }
+
+class Kennel {
+    list<string> names;
+
+    func Kennel() { this.names = []; }
+    func add(string n): void { this.names = this.names.push(n); }
+    func count(): int { return this.names.length(); }
+    /* template method: calls label(), which a subclass overrides */
+    func describe(): string { return this.label() + ":" + "${this.count()}"; }
+    func label(): string { return "kennel"; }
+}
+
+class NamedKennel extends Kennel {
+    func NamedKennel() { parent(); }
+    func label(): string { return "named"; }
+    /* covariant return: declares Animal, returns Dog */
+    func mascot(): Animal { return Dog(); }
+}
+
+class MethodBodyTypingTest extends test.Test {
+    @test
+    func testFieldTypedReceiver(): void {
+        let k = Kennel();
+        k.add("rex");
+        k.add("fido");
+        this.assertEquals(2, k.count());
+    }
+
+    @test
+    func testTemplateMethodOnThis(): void {
+        let nk = NamedKennel();
+        this.assertEquals("named:0", nk.describe());
+    }
+
+    @test
+    func testCovariantMethodReturn(): void {
+        let nk = NamedKennel();
+        this.assertEquals("woof", nk.mascot().speak());
+    }
+}

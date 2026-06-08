@@ -1,6 +1,8 @@
 package check
 
 import (
+	"strings"
+
 	"geblang/internal/ast"
 	"geblang/internal/semantic"
 )
@@ -83,6 +85,14 @@ func (g *classGraph) merge(model semantic.ModuleModel) {
 	}
 }
 
+// simpleName strips a module qualifier so "base.Base" -> "Base"; graph keys are simple names.
+func simpleName(name string) string {
+	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		return name[dot+1:]
+	}
+	return name
+}
+
 // surface returns the full member set (methods + fields, including
 // inherited and interface-provided members) for a class, plus whether
 // the class resolved cleanly. ok is false on any uncertainty (unknown
@@ -108,11 +118,11 @@ func (g *classGraph) surface(className string) (map[string]bool, bool) {
 			members[f] = true
 		}
 		for _, iface := range decl.Implements {
-			if !g.addInterfaceMembers(iface, members, map[string]bool{}) {
+			if !g.addInterfaceMembers(simpleName(iface), members, map[string]bool{}) {
 				return nil, false
 			}
 		}
-		name = decl.Parent
+		name = simpleName(decl.Parent)
 	}
 	return members, true
 }
@@ -136,9 +146,32 @@ func (g *classGraph) methodSignatures(className, methodLower string) ([]semantic
 		if sigs, found := decl.MethodSigs[methodLower]; found && len(sigs) > 0 {
 			return sigs, decl.TypeParams, true
 		}
-		name = decl.Parent
+		name = simpleName(decl.Parent)
 	}
 	return nil, nil, false
+}
+
+// fieldType returns the declared type of a field, walking ancestors; ok=false on any uncertainty.
+func (g *classGraph) fieldType(className, fieldLower string) (*ast.TypeRef, bool) {
+	seen := map[string]bool{}
+	for name := className; name != ""; {
+		if g.ambiguous[name] || seen[name] {
+			return nil, false
+		}
+		seen[name] = true
+		decl, ok := g.classes[name]
+		if !ok || decl.HasCall || decl.Decorated {
+			return nil, false
+		}
+		if ref, found := decl.FieldTypes[fieldLower]; found {
+			if ref == nil {
+				return nil, false
+			}
+			return ref, true
+		}
+		name = simpleName(decl.Parent)
+	}
+	return nil, false
 }
 
 func (g *classGraph) addInterfaceMembers(name string, members, seen map[string]bool) bool {
@@ -160,7 +193,7 @@ func (g *classGraph) addInterfaceMembers(name string, members, seen map[string]b
 		members[f] = true
 	}
 	for _, parent := range decl.Parents {
-		if !g.addInterfaceMembers(parent, members, seen) {
+		if !g.addInterfaceMembers(simpleName(parent), members, seen) {
 			return false
 		}
 	}

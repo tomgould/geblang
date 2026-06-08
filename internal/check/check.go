@@ -80,6 +80,52 @@ func NewDefaultResolver(file string) *modules.Resolver {
 	return modules.NewResolver([]string{filepath.Dir(file)})
 }
 
+// CrossModuleAnalysis runs the semantic analyzer (wired for cross-module
+// class-method checks when opts.CrossModule and opts.Resolver are set) plus
+// the standalone cross-module walkers (P1 unknown members, P5 unknown qualified
+// types) over an already-parsed program. It does NOT run bytecode.Compile or
+// lint; callers run those separately.
+func CrossModuleAnalysis(file string, program *ast.Program, opts Options) []Diagnostic {
+	diags := []Diagnostic{}
+	analyzer := semantic.New()
+	if opts.CrossModule {
+		analyzer.EnableMethodChecks()
+		if opts.Resolver != nil {
+			cache := opts.ModuleCache
+			if cache == nil {
+				cache = NewModuleCache()
+			}
+			graph := buildClassGraph(program, opts, cache)
+			analyzer.SetClassSurfaceResolver(graph.surface)
+			analyzer.SetClassMethodSignatureResolver(graph.methodSignatures)
+			analyzer.SetClassFieldTypeResolver(graph.fieldType)
+		}
+	}
+	for _, sd := range analyzer.Analyze(program) {
+		severity := SeverityError
+		if sd.Severity == semantic.SeverityWarning {
+			severity = SeverityWarning
+		}
+		rule := "semantic"
+		if sd.Rule != "" {
+			rule = sd.Rule
+		}
+		diags = append(diags, Diagnostic{
+			File: file, Line: sd.Line, Column: sd.Column,
+			Severity: severity, Rule: rule, Message: sd.Message,
+		})
+	}
+	if opts.Resolver != nil {
+		diags = append(diags, checkReservedNames(file, program, opts)...)
+		diags = append(diags, checkImports(file, program, opts)...)
+		if opts.CrossModule {
+			diags = append(diags, checkCrossModuleSymbols(file, program, opts)...)
+			diags = append(diags, checkCrossModuleTypes(file, program, opts)...)
+		}
+	}
+	return diags
+}
+
 // Source runs the configured checks against a single source file.
 // Returns the parsed program (or nil on parse failure) and the
 // accumulated diagnostics.
@@ -101,49 +147,10 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 		}
 		return nil, diags
 	}
-	diags := []Diagnostic{}
-	analyzer := semantic.New()
-	if opts.CrossModule {
-		analyzer.EnableMethodChecks()
-		if opts.Resolver != nil {
-			cache := opts.ModuleCache
-			if cache == nil {
-				cache = NewModuleCache()
-			}
-			graph := buildClassGraph(program, opts, cache)
-			analyzer.SetClassSurfaceResolver(graph.surface)
-			analyzer.SetClassMethodSignatureResolver(graph.methodSignatures)
-		}
-	}
-	for _, sd := range analyzer.Analyze(program) {
-		severity := SeverityError
-		if sd.Severity == semantic.SeverityWarning {
-			severity = SeverityWarning
-		}
-		rule := "semantic"
-		if sd.Rule != "" {
-			rule = sd.Rule
-		}
-		diags = append(diags, Diagnostic{
-			File:     file,
-			Line:     sd.Line,
-			Column:   sd.Column,
-			Severity: severity,
-			Rule:     rule,
-			Message:  sd.Message,
-		})
-	}
+	diags := CrossModuleAnalysis(file, program, opts)
 	if _, compileErr := bytecode.Compile(program, []byte(source), file); compileErr != nil {
 		if d, ok := compileDiagnostic(file, compileErr); ok {
 			diags = append(diags, d)
-		}
-	}
-	if opts.Resolver != nil {
-		diags = append(diags, checkReservedNames(file, program, opts)...)
-		diags = append(diags, checkImports(file, program, opts)...)
-		if opts.CrossModule {
-			diags = append(diags, checkCrossModuleSymbols(file, program, opts)...)
-			diags = append(diags, checkCrossModuleTypes(file, program, opts)...)
 		}
 	}
 	if opts.Lint {

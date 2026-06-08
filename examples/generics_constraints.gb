@@ -23,7 +23,7 @@ class Score implements Sortable {
     }
 
     func compareTo(any other): int {
-        Score o = other;
+        Score o = other as Score;
         if (this.value < o.value) { return -1; }
         if (this.value > o.value) { return 1; }
         return 0;

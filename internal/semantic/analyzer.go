@@ -55,6 +55,8 @@ type Analyzer struct {
 	// the declaring class's generic parameter names) for static argument
 	// validation. Injected by the check command alongside classSurface.
 	classMethodSigs func(className, methodLower string) ([]MethodSignature, []string, bool)
+	// classFieldType resolves a field's declared type across parents/modules; nil disables field-receiver typing.
+	classFieldType func(className, fieldLower string) (*ast.TypeRef, bool)
 	// methodChecks enables the unknown-method checks (primitive + class).
 	// Off in the execution path; turned on by the check command.
 	methodChecks bool
@@ -64,6 +66,8 @@ type Analyzer struct {
 	deprecatedFuncs   map[string]string
 	deprecatedClasses map[string]string
 	deprecatedMethods map[string]map[string]string
+	// from-import local names, treated as known types.
+	importedNames map[string]bool
 }
 
 // SetClassSurfaceResolver installs the cross-module class member
@@ -78,6 +82,12 @@ func (a *Analyzer) SetClassMethodSignatureResolver(fn func(string, string) ([]Me
 	a.classMethodSigs = fn
 }
 
+// SetClassFieldTypeResolver installs the field-type resolver used to type
+// field receivers (e.g. `obj.field`) for the member/method checks. Call before Analyze.
+func (a *Analyzer) SetClassFieldTypeResolver(fn func(string, string) (*ast.TypeRef, bool)) {
+	a.classFieldType = fn
+}
+
 // EnableMethodChecks turns on the unknown-method diagnostics (primitive
 // method typos and, when a class resolver is set, class methods). Call
 // before Analyze.
@@ -89,6 +99,8 @@ type typeInfo struct {
 	name     string
 	nullable bool
 	known    bool
+	// declaredNullable tracks that the declared type was nullable, preserved through non-null narrowing.
+	declaredNullable bool
 	// args carries generic type arguments. For `list<int>`, args = [int].
 	// For `dict<string, User>`, args = [string, User]. For non-generic types,
 	// args is nil. Element- and call-argument validation walks these.
@@ -185,7 +197,7 @@ func (a *Analyzer) checkBuiltinModuleShadow(name *ast.Identifier, declaredType *
 }
 
 func New() *Analyzer {
-	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, enums: map[string]struct{}{}, aliases: map[string]typeInfo{}, typeParamScope: map[string]int{}, deprecatedFuncs: map[string]string{}, deprecatedClasses: map[string]string{}, deprecatedMethods: map[string]map[string]string{}}
+	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, enums: map[string]struct{}{}, aliases: map[string]typeInfo{}, typeParamScope: map[string]int{}, deprecatedFuncs: map[string]string{}, deprecatedClasses: map[string]string{}, deprecatedMethods: map[string]map[string]string{}, importedNames: map[string]bool{}}
 }
 
 func (a *Analyzer) Analyze(program *ast.Program) []Diagnostic {
@@ -387,6 +399,12 @@ func (a *Analyzer) collectTypeDeclarations(stmts []ast.Statement) {
 			a.interfaces[info.name] = info
 		case *ast.EnumStatement:
 			a.enums[stmt.Name.Value] = struct{}{}
+		case *ast.FromImportStatement:
+			for _, item := range stmt.Names {
+				if local := item.Local(); local != "" {
+					a.importedNames[local] = true
+				}
+			}
 		}
 	}
 }
@@ -745,6 +763,7 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		}
 	case *ast.ClassStatement:
 		a.declare(stmt.Name.Value, typeInfo{name: stmt.Name.Value, known: true})
+		a.analyzeClassMembers(stmt)
 	case *ast.InterfaceStatement:
 		a.declare(stmt.Name.Value, typeInfo{name: stmt.Name.Value, known: true})
 	case *ast.EnumStatement:
@@ -777,6 +796,9 @@ func (a *Analyzer) analyzeBlockWithNarrowing(block *ast.BlockStatement, fn *ast.
 	a.pushScope()
 	defer a.popScope()
 	for name, typ := range narrowing {
+		if prev, ok := a.lookup(name); ok {
+			typ.declaredNullable = prev.nullable || prev.declaredNullable
+		}
 		a.declare(name, typ)
 	}
 	for _, stmt := range block.Statements {
@@ -787,10 +809,40 @@ func (a *Analyzer) analyzeBlockWithNarrowing(block *ast.BlockStatement, fn *ast.
 			if a.blockAlwaysExits(ifStmt.Consequence) {
 				_, altNarrowing := a.narrowingsForCondition(ifStmt.Condition)
 				for name, typ := range altNarrowing {
+					if prev, ok := a.lookup(name); ok {
+						typ.declaredNullable = prev.nullable || prev.declaredNullable
+					}
 					a.declare(name, typ)
 				}
 			}
 		}
+	}
+}
+
+func (a *Analyzer) analyzeClassMembers(stmt *ast.ClassStatement) {
+	popTypeParams := a.pushTypeParams(stmt.Generics)
+	defer popTypeParams()
+	members := stmt.Members
+	if stmt.Destructor != nil {
+		members = append(append([]ast.Statement{}, members...), stmt.Destructor)
+	}
+	for _, member := range members {
+		method, ok := member.(*ast.FunctionStatement)
+		if !ok {
+			continue
+		}
+		a.pushScope()
+		if !method.Static {
+			a.declare("this", typeInfo{name: stmt.Name.Value, known: true})
+		}
+		for _, param := range method.Parameters {
+			a.declare(param.Name.Value, a.typeInfoFromRef(param.Type))
+			if param.Default != nil {
+				a.checkAssignable(param.Type, param.Default, fmt.Sprintf("cannot use %s default for %s parameter %s", a.expressionTypeName(param.Default).display(), param.Type.String(), param.Name.Value))
+			}
+		}
+		a.analyzeBlock(method.Body, method)
+		a.popScope()
 	}
 }
 
@@ -862,6 +914,9 @@ func (a *Analyzer) isKnownTypeName(name string) bool {
 		return true
 	}
 	if _, ok := a.enums[name]; ok {
+		return true
+	}
+	if a.importedNames[name] {
 		return true
 	}
 	if _, ok := a.lookup(name); ok {
@@ -1017,10 +1072,19 @@ func (a *Analyzer) checkClassMethodCall(call *ast.CallExpression) {
 		return
 	}
 	if !members[strings.ToLower(selector.Name.Value)] {
+		if isSelfReceiver(selector.Object) {
+			return
+		}
 		a.errorAt(selector.Name.Token, "%s has no method %s", receiverType.name, selector.Name.Value)
 		return
 	}
 	a.checkMethodCallArgs(call, selector, receiverType)
+}
+
+// a subclass may define the method, so existence on this/parent isn't sound
+func isSelfReceiver(obj ast.Expression) bool {
+	ident, ok := obj.(*ast.Identifier)
+	return ok && (ident.Value == "this" || ident.Value == "parent")
 }
 
 // checkMethodCallArgs flags `obj.method(args)` when the method is resolvable
@@ -1228,12 +1292,17 @@ func (a *Analyzer) analyzeReturn(stmt *ast.ReturnStatement, fn *ast.FunctionStat
 		}
 		return
 	}
+	a.analyzeExpression(stmt.Value)
 	a.validateCallExpression(stmt.Value, a.typeInfoFromRef(fn.ReturnType))
 	a.checkAssignable(fn.ReturnType, stmt.Value, fmt.Sprintf("cannot return %s from %s returning %s", a.expressionTypeName(stmt.Value).display(), fn.Name.Value, fn.ReturnType.String()))
 }
 
 func (a *Analyzer) checkAssignable(target *ast.TypeRef, expr ast.Expression, message string) {
 	if target == nil || target.Operator != "" {
+		return
+	}
+	// generic type params are unconstrained at the definition site
+	if target.Name != "" && a.typeParamScope[target.Name] > 0 {
 		return
 	}
 	targetInfo := a.typeInfoFromRef(target)
@@ -1501,7 +1570,7 @@ func (a *Analyzer) callArgumentsCompatible(args, parameters []typeInfo, minArgs 
 			return false
 		}
 		if arg.name == "null" {
-			if !parameters[i].nullable {
+			if !parameters[i].nullable && parameters[i].name != "any" {
 				return false
 			}
 			continue
@@ -1636,7 +1705,7 @@ func (a *Analyzer) analyzeAssignment(expr *ast.AssignmentExpression) {
 		return
 	}
 	if actual.name == "null" {
-		if !target.nullable {
+		if !target.nullable && !target.declaredNullable {
 			a.errorf("cannot assign null to %s %s", target.name, ident.Value)
 		}
 		return
@@ -1815,6 +1884,19 @@ func (a *Analyzer) expressionTypeName(expr ast.Expression) typeInfo {
 		default:
 			return typeInfo{}
 		}
+	case *ast.SelectorExpression:
+		if expr.Name == nil || a.classFieldType == nil {
+			return typeInfo{}
+		}
+		recv := a.expressionTypeName(expr.Object)
+		if !recv.known || recv.nullable {
+			return typeInfo{}
+		}
+		ref, ok := a.classFieldType(recv.name, strings.ToLower(expr.Name.Value))
+		if !ok {
+			return typeInfo{}
+		}
+		return a.typeInfoFromRef(ref)
 	default:
 		return typeInfo{}
 	}

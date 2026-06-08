@@ -41,6 +41,10 @@ The form is module-as-source, not module-as-binding: `from crypt
 import passwordHash` does not bind `crypt` itself. Use `import
 crypt;` alongside if you need both the namespace and a hoisted name.
 
+A class imported this way can be used directly as a parent: `from
+shapes import Shape; class Circle extends Shape { ... }` works the same
+as the qualified `extends shapes.Shape`.
+
 `from` is a soft keyword: existing identifiers named `from` (function
 parameters, class fields) keep working unchanged.
 

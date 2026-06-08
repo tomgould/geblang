@@ -3,9 +3,8 @@
  * @summary Built-in collections (list/set/dict) are covariant in their
  * element types: a list<Dog> is accepted where list<Animal> is expected,
  * and list<int> where list<any> is expected. An unrelated element type
- * (list<int> where list<string> is expected) is rejected at runtime, with
- * the offending element reported. User generic classes stay invariant
- * (see invariance_test).
+ * (list<int> where list<string> is expected) is rejected at compile time
+ * (static error). User generic classes stay invariant (see invariance_test).
  */
 import test;
 
@@ -18,7 +17,6 @@ class Dog extends Animal {
 
 func countAnimals(list<Animal> xs): int { return xs.length(); }
 func countAny(list<any> xs): int { return xs.length(); }
-func countStrings(list<string> xs): int { return xs.length(); }
 
 class CollectionCovarianceTest extends test.Test {
     @test
@@ -31,20 +29,5 @@ class CollectionCovarianceTest extends test.Test {
     func acceptsAnyElement(): void {
         let list<int> ints = [1, 2, 3];
         this.assertEquals(3, countAny(ints));
-    }
-
-    @test
-    func rejectsUnrelatedElement(): void {
-        let list<int> ints = [1, 2, 3];
-        let threw = false;
-        let message = "";
-        try {
-            countStrings(ints);
-        } catch (RuntimeError e) {
-            threw = true;
-            message = e.message;
-        }
-        this.assertTrue(threw);
-        this.assertTrue(message.contains("list<string>"));
     }
 }

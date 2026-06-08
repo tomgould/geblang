@@ -26,6 +26,8 @@ type ClassDecl struct {
 	MethodSigs map[string][]MethodSignature
 	// TypeParams are the class's declared generic parameter names.
 	TypeParams []string
+	// FieldTypes maps lowercased field name -> declared type, nil where untyped.
+	FieldTypes map[string]*ast.TypeRef
 }
 
 // methodSignatureFromFunc captures a method's parameter types + arity for
@@ -101,6 +103,7 @@ func ExtractModel(program *ast.Program) ModuleModel {
 				Name:       s.Name.Value,
 				Methods:    map[string]bool{},
 				Fields:     map[string]bool{},
+				FieldTypes: map[string]*ast.TypeRef{},
 				Decorated:  len(s.Decorators) > 0,
 				MethodSigs: map[string][]MethodSignature{},
 			}
@@ -129,7 +132,9 @@ func ExtractModel(program *ast.Program) ModuleModel {
 					}
 				case *ast.DeclarationStatement:
 					if m.Name != nil {
-						decl.Fields[strings.ToLower(m.Name.Value)] = true
+						lower := strings.ToLower(m.Name.Value)
+						decl.Fields[lower] = true
+						decl.FieldTypes[lower] = m.Type
 					}
 				}
 			}

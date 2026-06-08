@@ -1,0 +1,27 @@
+/**
+ * @title Top-level function hoisting (1.12.0)
+ * @summary Top-level functions are usable before their declaration: top-level
+ * code (here a module-level let, and an init block) can call a function
+ * declared later, matching the bytecode VM which hoists functions at compile
+ * time.
+ */
+import test;
+
+let earlyResult = computeValue();
+
+func computeValue(): int { return 42; }
+
+init {
+    earlyResult = computeValue() + forwardChain();
+}
+
+func forwardChain(): int { return tail(); }
+func tail(): int { return 8; }
+
+class TopLevelFunctionHoistingTest extends test.Test {
+    @test
+    func letInitializerCalledLaterFunction(): void {
+        /* let + init both ran during load using functions declared after them */
+        this.assertEquals(50, earlyResult);
+    }
+}

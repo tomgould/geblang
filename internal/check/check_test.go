@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"geblang/internal/bytecode"
 	"geblang/internal/modules"
 )
 
@@ -441,6 +442,126 @@ func TestSourceFromImportMarksAliasAsUsed(t *testing.T) {
 	}
 }
 
+func TestSourceFieldReceiverMethodTypoErrors(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "class Box {\n    list<string> items;\n}\nBox b = Box();\nb.items.smoosh();\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	if !hasDiag(diags, "semantic", "list has no method smoosh") {
+		t.Fatalf("expected field-receiver method typo, got %+v", diags)
+	}
+}
+
+func TestSourceFieldReceiverMethodTypoCrossFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "models.gb"),
+		[]byte("module models;\nexport class Bag {\n    list<string> tags;\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "main.gb")
+	src := "from models import Bag;\nBag g = Bag();\ng.tags.smoosh();\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	if !hasDiag(diags, "semantic", "list has no method smoosh") {
+		t.Fatalf("expected cross-file field-receiver method typo, got %+v", diags)
+	}
+}
+
+func TestSourceAnalyzesMethodBodyArgErrors(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "class Greeter {\n" +
+		"    func greet(string name): string { return \"hi \" + name; }\n" +
+		"    func bad(): string { return this.greet(42); }\n" +
+		"    func ok(): string { return this.greet(\"x\"); }\n" +
+		"}\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	if !hasDiag(diags, "semantic", "no matching overload for Greeter.greet") {
+		t.Fatalf("expected method-body arg mismatch, got %+v", diags)
+	}
+	got := 0
+	for _, d := range diags {
+		if strings.Contains(d.Message, "no matching overload for Greeter.greet") {
+			got++
+		}
+	}
+	if got != 1 {
+		t.Fatalf("expected exactly one overload error (ok() must not flag), got %d: %+v", got, diags)
+	}
+}
+
+func TestSourceSkipsExistenceOnThisReceiver(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	// existence skipped for missing this.step(), args still checked for this.greet()
+	src := "class Tmpl {\n" +
+		"    func run(): void { this.step(); }\n" +
+		"    func greet(string name): string { return name; }\n" +
+		"    func bad(): string { return this.greet(42); }\n" +
+		"}\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	for _, d := range diags {
+		if strings.Contains(d.Message, "has no method step") {
+			t.Fatalf("template-method this.step() must not flag: %+v", d)
+		}
+	}
+	if !hasDiag(diags, "semantic", "no matching overload for Tmpl.greet") {
+		t.Fatalf("arg validation on this must still fire, got %+v", diags)
+	}
+}
+
+func TestSourceFlagsMethodArgCrossModuleQualifiedParent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "base.gb"),
+		[]byte("module base;\nexport class Base {\n    func tag(string s): string { return s; }\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "main.gb")
+	src := "import base;\nclass Sub extends base.Base {\n    func go(): string { return this.tag(99); }\n}\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	if !hasDiag(diags, "semantic", "no matching overload") {
+		t.Fatalf("expected cross-module qualified-parent method arg error, got %+v", diags)
+	}
+}
+
+// TestSourceFlagsCollectionMismatchInMethodBody verifies check catches a
+// list<int> passed to a list<string> param inside a class method body.
+func TestSourceFlagsCollectionMismatchInMethodBody(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "func countStrings(list<string> xs): int { return xs.length(); }\n" +
+		"class Tester {\n" +
+		"    func run(): void {\n" +
+		"        let list<int> ints = [1, 2, 3];\n" +
+		"        countStrings(ints);\n" +
+		"    }\n" +
+		"}\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	if !hasDiag(diags, "semantic", "no matching overload for countStrings") {
+		t.Fatalf("expected collection element-mismatch error in method body, got %+v", diags)
+	}
+}
+
+// TestSourceFlagsInvariantGenericArgMismatch verifies check rejects
+// Container<Sub> passed where Container<Base> is expected (invariant generics).
+func TestSourceFlagsInvariantGenericArgMismatch(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "class Base { int n; func Base(int n) { this.n = n; } }\n" +
+		"class Sub extends Base { func Sub(int n) { parent(n); } }\n" +
+		"class Container<T> {\n" +
+		"    list<T> items;\n" +
+		"    func Container() { this.items = []; }\n" +
+		"    func add(T item): void { this.items = this.items.push(item); }\n" +
+		"}\n" +
+		"func consume(Container<Base> c): void { c.add(Base(0)); }\n" +
+		"let subs = Container<Sub>();\n" +
+		"consume(subs);\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	if !hasDiag(diags, "semantic", "no matching overload for consume") {
+		t.Fatalf("expected invariant-generic arg mismatch error, got %+v", diags)
+	}
+}
+
 func hasDiag(diags []Diagnostic, rule, contains string) bool {
 	for _, d := range diags {
 		if d.Rule == rule && strings.Contains(d.Message, contains) {
@@ -451,7 +572,7 @@ func hasDiag(diags []Diagnostic, rule, contains string) bool {
 }
 
 func TestCompileDiagnosticClassifiesVMGapsAsWarnings(t *testing.T) {
-	gap := errors.New("bytecode compiler does not support some.thing yet")
+	gap := bytecode.NewParityError(errors.New("bytecode compiler does not support some.thing yet"))
 	d, ok := compileDiagnostic("f.gb", gap)
 	if !ok {
 		t.Fatal("expected a diagnostic for a non-nil error")
@@ -475,5 +596,67 @@ func TestCompileDiagnosticClassifiesGenuineErrorsAsErrors(t *testing.T) {
 func TestCompileDiagnosticIgnoresNil(t *testing.T) {
 	if _, ok := compileDiagnostic("f.gb", nil); ok {
 		t.Fatal("nil error must not produce a diagnostic")
+	}
+}
+
+func TestSourceFlagsMethodArgFromImportParent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "base.gb"),
+		[]byte("module base;\nexport class Base {\n    func tag(string s): string { return s; }\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "main.gb")
+	src := "from base import Base;\nclass Sub extends Base {\n    func go(): string { return this.tag(99); }\n}\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	if !hasDiag(diags, "semantic", "no matching overload") {
+		t.Fatalf("expected from-import-parent method arg error, got %+v", diags)
+	}
+}
+
+func TestSourceAllowsNullForAnyMethodParam(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "class C {\n    func send(any body): int { return 1; }\n    func go(): int { return this.send(null); }\n}\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	for _, d := range diags {
+		if strings.Contains(d.Message, "no matching overload") {
+			t.Fatalf("null must be accepted for an any param: %+v", d)
+		}
+	}
+}
+
+func TestSourceAllowsNullAssignToNullableAfterNarrowing(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "class C {\n    func loop(): void {\n        ?int n = 5;\n        while (n != null) {\n            if (n == 1) { n = null; } else { n = n - 1; }\n        }\n    }\n}\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	for _, d := range diags {
+		if strings.Contains(d.Message, "cannot assign null") {
+			t.Fatalf("null assign to a declared-nullable var must be allowed: %+v", d)
+		}
+	}
+}
+
+func TestSourceAllowsNullAssignAfterGuardNarrowing(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "class C {\n    func f(): void {\n        ?int x = 5;\n        if (x == null) { return; }\n        x = null;\n    }\n}\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	for _, d := range diags {
+		if strings.Contains(d.Message, "cannot assign null") {
+			t.Fatalf("null assign to a declared-nullable var after guard narrowing must be allowed: %+v", d)
+		}
+	}
+}
+
+func TestSourceAllowsAnyReturnToGenericParam(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := "class Box<T> {\n    any v;\n    func get(): T { return this.v; }\n}\n"
+	_, diags := Source(file, src, classCheckOpts(dir))
+	for _, d := range diags {
+		if strings.Contains(d.Message, "cannot return any") {
+			t.Fatalf("any->generic-param return must be allowed: %+v", d)
+		}
 	}
 }

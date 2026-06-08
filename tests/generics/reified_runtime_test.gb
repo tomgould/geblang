@@ -16,8 +16,9 @@ class ReifiedRuntimeTest extends test.Test {
     @test
     func listRejectsWrongElement(): void {
         let threw = false;
+        list<any> src = [1, "two", 3];
         try {
-            list<int> bad = [1, "two", 3];
+            list<int> bad = src;
         } catch (RuntimeError e) {
             threw = true;
         }
@@ -27,8 +28,9 @@ class ReifiedRuntimeTest extends test.Test {
     @test
     func dictRejectsMismatchedValue(): void {
         let threw = false;
+        dict<string, any> src = {"a": "not an int"};
         try {
-            dict<string, int> bad = {"a": "not an int"};
+            dict<string, int> bad = src;
         } catch (RuntimeError e) {
             threw = true;
         }
@@ -46,8 +48,9 @@ class ReifiedRuntimeTest extends test.Test {
     @test
     func nestedGenericMismatchRejected(): void {
         let threw = false;
+        list<list<any>> src = [[1, 2], [3, "four"]];
         try {
-            list<list<int>> bad = [[1, 2], [3, "four"]];
+            list<list<int>> bad = src;
         } catch (RuntimeError e) {
             threw = true;
         }

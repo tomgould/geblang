@@ -3,6 +3,8 @@
  * @summary Calling a method that doesn't exist on an instance throws
  *          a RuntimeError that user code can catch with `try/catch`.
  *          Previously this was a non-catchable engine error.
+ *          The receiver is held as `any` so the unknown call reaches the
+ *          runtime check (a statically-typed receiver is rejected at compile time).
  */
 import test;
 
@@ -19,7 +21,7 @@ class UnknownMethodCatchableTest extends test.Test {
 
     @test
     func unknownMethodCallIsCatchableAsRuntimeError(): void {
-        let p = Plain();
+        any p = Plain();
         bool caught = false;
         try {
             p.notThere();
@@ -31,7 +33,7 @@ class UnknownMethodCatchableTest extends test.Test {
 
     @test
     func unknownMethodErrorMentionsClassAndMethodName(): void {
-        let p = Plain();
+        any p = Plain();
         this.assertThrowsOf(func(): void {
             p.notThere("arg");
         }, "RuntimeError", "unknown method Plain.notThere");
@@ -39,7 +41,7 @@ class UnknownMethodCatchableTest extends test.Test {
 
     @test
     func executionContinuesAfterCatch(): void {
-        let p = Plain();
+        any p = Plain();
         let history = [];
         try {
             p.notThere();

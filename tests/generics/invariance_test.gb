@@ -2,10 +2,9 @@
  * @title Generic invariance test
  * @summary User-defined generic class types are invariant in their type
  * parameters. Container<Sub> is not assignable to Container<Base> even
- * when Sub extends Base. Explicit type arguments at the call site bind
- * T strictly, both for class construction and for generic function
- * calls. The runtime invariance error includes the reified bindings of
- * the offending value.
+ * when Sub extends Base, and is rejected at compile time (static error).
+ * Explicit type arguments at the call site bind T strictly, both for
+ * class construction and for generic function calls.
  */
 import test;
 
@@ -37,24 +36,6 @@ class InvarianceTest extends test.Test {
         let c = Container<Sub>();
         c.add(Sub(1));
         this.assertEquals(1, c.items.length());
-    }
-
-    @test
-    func runtimeRejectsVariantContainerArg(): void {
-        let subs = Container<Sub>();
-        let threw = false;
-        let message = "";
-        try {
-            consume(subs);
-        } catch (RuntimeError e) {
-            threw = true;
-            message = e.message;
-        }
-        this.assertTrue(threw);
-        /* The error message includes the reified bindings, not just the
-         * bare class name. */
-        this.assertTrue(message.contains("Container<Sub>"));
-        this.assertTrue(message.contains("Container<Base>"));
     }
 
     @test
