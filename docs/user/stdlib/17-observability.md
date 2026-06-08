@@ -509,3 +509,42 @@ import io;
 let p = profiler.peak();
 io.println("peak memory: " + p["peak_alloc"] as string + " bytes");
 ```
+
+### Context Managers (1.14.0)
+
+`profiler.timer()` and `profiler.profile()` return context managers for use with `with`. Declare the handle before the block and read its accessors after the block exits.
+
+```gb
+import profiler;
+import io;
+
+let t = profiler.timer();
+with (t) {
+    /* work to measure */
+}
+io.println("elapsed: " + (t.elapsedMs() as string) + " ms");
+
+let p = profiler.profile();
+with (p) {
+    /* work to measure */
+}
+io.println("cpu: " + (p.cpuMs() as string) + " ms, heap: " + (p.heapBytes() as string) + " bytes");
+```
+
+**Timer methods**
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `elapsedNs()` | `int` | Elapsed nanoseconds for the block (0 before the block exits) |
+| `elapsedMs()` | `float` | Elapsed milliseconds, microsecond precision |
+
+**Profile methods**
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `elapsedMs()` | `float` | Wall-clock milliseconds for the block |
+| `cpuMs()` | `float` | CPU milliseconds (user + sys) for the block |
+| `heapBytes()` | `int` | Net heap bytes allocated during the block |
+| `allocs()` | `int` | Total bytes allocated during the block |
+| `gcCount()` | `int` | GC cycles during the block |
+| `report()` | `dict` | Full measurement dict: `elapsed_ms`, `cpu_ms`, `heap_alloc`, `allocs`, `gc_count` |

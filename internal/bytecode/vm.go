@@ -4811,6 +4811,21 @@ func (vm *VM) withEnter(instruction Instruction) error {
 	}
 	classInfo, ok := vm.classInfo(instance.Class.Name)
 	if !ok {
+		// Cross-module instance: dispatch via the module loader.
+		if vm.moduleLoader != nil && instance.Class.Module != vm.moduleName {
+			for _, name := range []string{"__enter", "__enter__"} {
+				result, cerr := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, name, instance, nil)
+				var notFound *runtime.MethodNotFoundError
+				if errors.As(cerr, &notFound) {
+					continue
+				}
+				if cerr != nil {
+					return vm.runtimeError(instruction, "with: %s: %s", name, cerr.Error())
+				}
+				vm.push(result)
+				return nil
+			}
+		}
 		vm.push(value)
 		return nil
 	}
@@ -4843,6 +4858,20 @@ func (vm *VM) withExit(instruction Instruction) error {
 	}
 	classInfo, ok := vm.classInfo(instance.Class.Name)
 	if !ok {
+		// Cross-module instance: dispatch via the module loader.
+		if vm.moduleLoader != nil && instance.Class.Module != vm.moduleName {
+			for _, name := range []string{"__exit", "__exit__"} {
+				_, cerr := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, name, instance, nil)
+				var notFound *runtime.MethodNotFoundError
+				if errors.As(cerr, &notFound) {
+					continue
+				}
+				if cerr != nil {
+					return vm.runtimeError(instruction, "with: %s: %s", name, cerr.Error())
+				}
+				return nil
+			}
+		}
 		return nil
 	}
 	if indices, name, ok := vm.lookupDunder(classInfo, "__exit", "__exit__"); ok && len(indices) > 0 {

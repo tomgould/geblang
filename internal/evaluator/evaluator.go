@@ -8573,6 +8573,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"elapsed":      e.registryBuiltin("time", "elapsed"),
 			"sleep":        e.registryBuiltin("time", "sleep"),
 			"monotonic":    e.registryBuiltin("time", "monotonic"),
+			"monotonicNs":  e.registryBuiltin("time", "monotonicNs"),
 			"unix":         e.registryBuiltin("time", "unix"),
 			"unixMilli":    e.registryBuiltin("time", "unixMilli"),
 			"unixMicro":    e.registryBuiltin("time", "unixMicro"),

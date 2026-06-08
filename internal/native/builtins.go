@@ -2195,6 +2195,12 @@ func registerTime(r *Registry) {
 		// source for measuring durations, timeouts, and TTLs.
 		return runtime.NewInt64(time.Since(monoClockStart).Milliseconds()), nil
 	})
+	r.Register("time", "monotonicNs", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("time.monotonicNs expects no arguments")
+		}
+		return runtime.NewInt64(time.Since(monoClockStart).Nanoseconds()), nil
+	})
 	r.Register("time", "unixMilli", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 0 {
 			return nil, fmt.Errorf("time.unixMilli expects no arguments")

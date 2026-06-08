@@ -228,7 +228,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"choice": {}, "shuffle": {}, "Generator": {},
 	},
 	"time": {
-		"now": {}, "elapsed": {}, "sleep": {}, "monotonic": {},
+		"now": {}, "elapsed": {}, "sleep": {}, "monotonic": {}, "monotonicNs": {},
 		"unix": {}, "unixMilli": {}, "unixMicro": {}, "unixNano": {},
 		"unixFloat": {}, "unixDecimal": {}, "elapsedFloat": {}, "humanize": {},
 	},

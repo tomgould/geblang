@@ -1,0 +1,45 @@
+/**
+ * @title profiler timer context manager
+ * @summary profiler.timer() brackets a block via `with`; elapsed is readable
+ * after the block as int ns and float ms. The native primitives still work
+ * through the same module name.
+ */
+import test;
+import profiler;
+
+class ProfilerTimerTest extends test.Test {
+    @test
+    func timerMeasuresElapsed(): void {
+        let t = profiler.timer();
+        with (t) {
+            let x = 0;
+            for (i in range(0, 200000)) { x = x + i; }
+        }
+        /* strictly positive proves __exit ran (a 200k loop is never 0 ns) */
+        this.assertTrue(t.elapsedNs() > 0);
+        this.assertTrue(t.elapsedMs() > 0.0f);
+    }
+
+    @test
+    func nativeStillResolvesThroughSameName(): void {
+        /* dual-name: native snapshot/delta fall through the stdlib module */
+        let s = profiler.snapshot();
+        this.assertTrue(s.hasKey("wall_ns"));
+    }
+
+    @test
+    func profileCapturesResources(): void {
+        let p = profiler.profile();
+        with (p) {
+            let xs = [];
+            for (i in range(0, 50000)) { xs = xs.push(i); }
+        }
+        this.assertTrue(p.elapsedMs() >= 0.0f);
+        this.assertTrue(p.cpuMs() >= 0.0f);
+        let r = p.report();
+        this.assertTrue(r.hasKey("elapsed_ms"));
+        this.assertTrue(r.hasKey("cpu_ms"));
+        this.assertTrue(r.hasKey("heap_alloc"));
+        this.assertEquals(p.elapsedMs(), r["elapsed_ms"] as float);
+    }
+}

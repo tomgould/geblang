@@ -3301,7 +3301,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			}
 			if module, name, ok := selectorName(expr.Callee); ok {
 				canonical := c.canonicalModule(module)
-				if isBytecodeCallableModule(canonical) {
+				if isBytecodeCallableModule(canonical) && !isDualNameSourceModule(canonical) {
 					// resolveName uses the *original* identifier so a local
 					// variable shadowing the alias still wins over module
 					// dispatch (the established precedence).
@@ -6394,7 +6394,13 @@ func isBytecodeCallableModule(name string) bool {
 }
 
 func isBytecodeImportModule(path []string) bool {
-	return len(path) == 1 && isBytecodeCallableModule(path[0])
+	return len(path) == 1 && isBytecodeCallableModule(path[0]) && !isDualNameSourceModule(path[0])
+}
+
+// isDualNameSourceModule: root native modules that also have a stdlib source,
+// so the VM must load them via OpImportModule to reach the source exports.
+func isDualNameSourceModule(name string) bool {
+	return name == "profiler"
 }
 
 func isEvaluatorOnlyBuiltinImport(path []string) bool {

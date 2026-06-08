@@ -743,10 +743,9 @@ io.println(dump(true));
 }
 
 func TestParityProfilerModule(t *testing.T) {
-	// profiler must work on both backends (it was VM-only before being
-	// wired into the evaluator). Values are non-deterministic, so assert
-	// the result shape rather than contents.
-	runParity(t, `import io;
+	// profiler is a dual-name module (source stdlib + native fallback).
+	// Values are non-deterministic, so assert result shape only.
+	runParityWithStdlib(t, `import io;
 import profiler;
 io.println(typeof(profiler.snapshot()));
 io.println(typeof(profiler.memory()));
@@ -754,6 +753,35 @@ io.println(typeof(profiler.cpu()));
 io.println(typeof(profiler.peak()));
 io.println(typeof(profiler.delta(profiler.snapshot())));
 `, "dict\ndict\ndict\ndict\ndict\n")
+}
+
+func TestParityProfilerTimerContextManager(t *testing.T) {
+	runParityWithStdlib(t, `import profiler;
+import io;
+let t = profiler.timer();
+with (t) {
+    let x = 0;
+    for (i in range(0, 300000)) { x = x + i; }
+}
+io.println(t.elapsedNs() > 0);
+io.println(t.elapsedMs() > 0.0f);
+io.println(typeof(t.elapsedNs()) == int);
+`, "true\ntrue\ntrue\n")
+}
+
+func TestParityProfilerProfileContextManager(t *testing.T) {
+	runParityWithStdlib(t, `import profiler;
+import io;
+let p = profiler.profile();
+with (p) {
+    let xs = [];
+    for (i in range(0, 30000)) { xs = xs.push(i); }
+}
+io.println(p.report().hasKey("elapsed_ms"));
+io.println(p.report().hasKey("cpu_ms"));
+io.println(p.report().hasKey("heap_alloc"));
+io.println(p.elapsedMs() >= 0.0f);
+`, "true\ntrue\ntrue\ntrue\n")
 }
 
 func TestParityTestingAssertions(t *testing.T) {
@@ -12301,6 +12329,17 @@ io.println(time.humanize(7501000));
 io.println(time.humanize(90061000));
 io.println(time.humanize(-1500));
 `, "45ms\n999ms\n1s\n1.5s\n1.2s\n45s\n1m\n3m 4s\n2h 5m\n1d 1h\n-1.5s\n")
+}
+
+func TestParityTimeMonotonicNs(t *testing.T) {
+	runParity(t, `import time;
+import io;
+let a = time.monotonicNs();
+let b = time.monotonicNs();
+io.println(a >= 0);
+io.println(b >= a);
+io.println(typeof(a) == int);
+`, "true\ntrue\ntrue\n")
 }
 
 // time.stopwatch.Stopwatch is a pure stdlib class; assert its structural

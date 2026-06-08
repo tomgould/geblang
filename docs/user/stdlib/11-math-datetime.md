@@ -660,6 +660,7 @@ a block, throttle a loop, or pause execution synchronously. Reach for
 |----------|---------|-------------|
 | `time.now()` | `int` | Wall-clock milliseconds since the Unix epoch. Good for timestamps; can jump backwards on clock correction, so do not use it to measure durations. |
 | `time.monotonic()` | `int` | Monotonic milliseconds since process start; never decreases (1.7.0). The correct source for measuring durations, timeouts, and TTLs - immune to wall-clock jumps. |
+| `time.monotonicNs()` | `int` | Monotonic nanoseconds since process start; high-resolution duration source for sub-millisecond timing (1.14.0). |
 | `time.elapsed(start)` | `int` | Convenience for `time.now() - start`. Returns milliseconds elapsed since the `start` value (also in ms). |
 | `time.sleep(ms)` | `null` | Pauses the current thread for `ms` milliseconds. Use `async.sleep` instead inside async tasks where you want cooperative scheduling. |
 | `time.humanize(ms)` | `string` | Compact human-readable duration: `45ms`, `1.5s`, `3m 4s`, `2h 5m`, `1d 1h`. Shows the largest one or two units. |

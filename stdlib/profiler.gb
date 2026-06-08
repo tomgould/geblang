@@ -1,0 +1,97 @@
+module profiler;
+
+import time;
+import profiler as native;
+
+/* Wall-clock timer usable as a `with` context manager. */
+export class Timer {
+    int _start;
+    int _elapsedNs;
+
+    func Timer() {
+        this._start = 0;
+        this._elapsedNs = 0;
+    }
+
+    func __enter(): Timer {
+        this._start = time.monotonicNs();
+        return this;
+    }
+
+    func __exit(): void {
+        this._elapsedNs = time.monotonicNs() - this._start;
+    }
+
+    /* Elapsed nanoseconds for the bracketed block (0 before exit). */
+    func elapsedNs(): int {
+        return this._elapsedNs;
+    }
+
+    /* Elapsed milliseconds (microsecond precision). */
+    func elapsedMs(): float {
+        return (this._elapsedNs as float) / 1000000.0f;
+    }
+}
+
+export func timer(): Timer {
+    return Timer();
+}
+
+/* Context manager capturing wall time, CPU, and memory for a block. */
+export class Profile {
+    any _snap;
+    dict<string, any> _delta;
+
+    func Profile() {
+        this._snap = null;
+        this._delta = {};
+    }
+
+    func __enter(): Profile {
+        this._snap = native.snapshot();
+        return this;
+    }
+
+    func __exit(): void {
+        this._delta = native.delta(this._snap);
+    }
+
+    /* Wall-clock milliseconds for the block (0 before exit). */
+    func elapsedMs(): float {
+        let v = this._delta["elapsed_ms"];
+        return (v != null ? v as float : 0.0f);
+    }
+
+    /* CPU milliseconds (user + sys) for the block. */
+    func cpuMs(): float {
+        let v = this._delta["cpu_ms"];
+        return (v != null ? v as float : 0.0f);
+    }
+
+    /* Net heap bytes allocated during the block. */
+    func heapBytes(): int {
+        let v = this._delta["heap_alloc"];
+        return (v != null ? v as int : 0);
+    }
+
+    /* Total bytes allocated during the block. */
+    func allocs(): int {
+        let v = this._delta["allocs"];
+        return (v != null ? v as int : 0);
+    }
+
+    /* GC cycles during the block. */
+    func gcCount(): int {
+        let v = this._delta["gc_count"];
+        return (v != null ? v as int : 0);
+    }
+
+    /* Full measurement dict (elapsed_ms, cpu_ms, heap_alloc, allocs, gc_count). */
+    func report(): dict<string, any> {
+        return this._delta;
+    }
+}
+
+export func profile(): Profile {
+    return Profile();
+}
