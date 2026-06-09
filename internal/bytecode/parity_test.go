@@ -3395,6 +3395,29 @@ typed ok
 `)
 }
 
+// Guards the call fast path's skip-leading-param zeroing: an
+// uninitialized local must read null even when its frame reuses
+// locals-stack slots dirtied by earlier calls.
+func TestParityUninitializedLocalIsNullAfterFrameReuse(t *testing.T) {
+	runParity(t, `import io;
+func probe(int n): ?int {
+    ?int local;
+    if (n > 100) { local = n; }
+    return local;
+}
+func fill(int n): int {
+    int a = n;
+    int b = n * 2;
+    int c = n * 3;
+    if (n > 0) { return fill(n - 1) + a + b + c; }
+    return 0;
+}
+io.println(fill(5));
+io.println(probe(1) == null);
+io.println("${probe(2)}");
+`, "90\ntrue\nnull\n")
+}
+
 func TestParityAsyncTaskDoneMethod(t *testing.T) {
 	runParity(t, `import io;
 async func noop(): void {}

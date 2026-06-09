@@ -814,6 +814,13 @@ func (vm *VM) releaseCallArgsBuffer(buf []runtime.Value) {
 }
 
 func (vm *VM) pushLocalsStackFrame(frame *callFrame, localCount int, shares bool) {
+	vm.pushLocalsStackFrameSkip(frame, localCount, shares, 0)
+}
+
+// pushLocalsStackFrameSkip is pushLocalsStackFrame with the first
+// skipLeading slots left unzeroed; the caller must overwrite them
+// before any opcode runs (the fast call path's param copy).
+func (vm *VM) pushLocalsStackFrameSkip(frame *callFrame, localCount int, shares bool, skipLeading int) {
 	if shares {
 		frame.basePointer = vm.currentFrameBP
 	} else {
@@ -821,10 +828,14 @@ func (vm *VM) pushLocalsStackFrame(frame *callFrame, localCount int, shares bool
 	}
 	frame.localCount = localCount
 	vm.currentFrameBP = frame.basePointer
-	vm.ensureLocalsStack(frame.basePointer + localCount)
+	vm.ensureLocalsStackFrom(frame.basePointer+localCount, frame.basePointer+skipLeading)
 }
 
 func (vm *VM) ensureLocalsStack(end int) {
+	vm.ensureLocalsStackFrom(end, 0)
+}
+
+func (vm *VM) ensureLocalsStackFrom(end, clearFrom int) {
 	cur := len(vm.localsStack)
 	if end <= cur {
 		return
@@ -840,7 +851,12 @@ func (vm *VM) ensureLocalsStack(end int) {
 		return
 	}
 	vm.localsStack = vm.localsStack[:end]
-	clear(vm.localsStack[cur:end])
+	if clearFrom < cur {
+		clearFrom = cur
+	}
+	if clearFrom < end {
+		clear(vm.localsStack[clearFrom:end])
+	}
 }
 
 func (vm *VM) popLocalsStackFrame(frame *callFrame) {
@@ -5846,7 +5862,16 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	// (nested function statement) or allocate a fresh frame slice for
 	// the callee. Fresh slice avoids the per-call snapshot copy that
 	// previously dominated recursion overhead for small functions.
-	vm.pushLocalsStackFrame(frame, int(function.LocalCount), function.SharesParentFrame)
+	// Params occupying the leading slots get overwritten by the copy
+	// below, so skip zeroing them on frame reuse.
+	skipLeading := paramCount
+	for i := 0; i < paramCount; i++ {
+		if int(function.ParamSlots[i]) != i {
+			skipLeading = 0
+			break
+		}
+	}
+	vm.pushLocalsStackFrameSkip(frame, int(function.LocalCount), function.SharesParentFrame, skipLeading)
 	bp := frame.basePointer
 	for i := 0; i < paramCount; i++ {
 		vm.localsStack[bp+int(function.ParamSlots[i])] = stackArgs[i]
