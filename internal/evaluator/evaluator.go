@@ -85,6 +85,7 @@ type Evaluator struct {
 	stdinReader          *bufio.Reader
 	imports              map[string]bool
 	importNames          map[string]string
+	currentModule        string
 	modulePaths          []string
 	modules              map[string]*runtime.Module
 	loading              map[string]bool
@@ -112,6 +113,9 @@ type Evaluator struct {
 	// class registers here at definition time so reflect.class(name)
 	// from any module can find it.
 	globalClasses map[string]*runtime.Class
+	// Cross-module function registry mirroring globalClasses, so
+	// reflect.function(name) resolves an imported module's export.
+	globalFunctions map[string]runtime.Function
 	// Identifier name -> original class name for class identifiers
 	// that a class decorator rebound to a callable. Used by
 	// applyCallableValue to stamp the returned instance.
@@ -597,7 +601,7 @@ func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []st
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, decoratedClassIdents: map[string]string{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
 	e.builtins = e.builtinModules()
 	// Register an InstanceInvoker so native code (e.g.
 	// convert.go's __serialize__ dispatch) can call class
@@ -1195,6 +1199,9 @@ func (e *Evaluator) evalTopLevelStatements(stmts []ast.Statement, env *runtime.E
 		if sig, stop := e.evalStatementInList(stmt, env); stop {
 			return sig, nil
 		}
+		// Only top-level functions are reflectable by bare name (matches
+		// the VM); nested declarations never reach this pass.
+		e.registerTopLevelFunction(stmt, env)
 	}
 	for _, stmt := range stmts {
 		if isHoistedDeclaration(stmt) {
@@ -1450,7 +1457,11 @@ func (e *Evaluator) loadUserModule(canonical, alias string) (*runtime.Module, er
 	previousPaths := e.modulePaths
 	moduleDir := filepath.Dir(path)
 	e.modulePaths = append([]string{moduleDir}, e.modulePaths...)
+	// Declarations record their declaring module so reflect.location reports it.
+	prevModule := e.currentModule
+	e.currentModule = canonical
 	sig, err := e.evalTopLevelStatements(program.Statements, moduleEnv)
+	e.currentModule = prevModule
 	e.modulePaths = previousPaths
 	if err != nil {
 		return nil, fmt.Errorf("evaluate module %s: %w", canonical, err)
@@ -2023,7 +2034,7 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 		if stmt.Static {
 			return signal{}, fmt.Errorf("static functions are parsed but not evaluated yet")
 		}
-		fn := runtime.Function{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), TypeParamConstraints: typeParamConstraints(stmt.Generics), Parameters: e.resolveParameters(stmt.Parameters), ReturnType: e.resolveTypeRef(stmt.ReturnType), Body: stmt.Body, Env: env, Decorators: stmt.Decorators, Target: "function", Async: stmt.Async, IsGenerator: blockContainsYield(stmt.Body), DefinitionLine: stmt.Token.Line, DefinitionColumn: stmt.Token.Column}
+		fn := runtime.Function{Name: stmt.Name.Value, Doc: stmt.Doc, TypeParameters: typeParameterNames(stmt.Generics), TypeParamConstraints: typeParamConstraints(stmt.Generics), Parameters: e.resolveParameters(stmt.Parameters), ReturnType: e.resolveTypeRef(stmt.ReturnType), Body: stmt.Body, Env: env, Decorators: stmt.Decorators, Target: "function", Async: stmt.Async, IsGenerator: blockContainsYield(stmt.Body), DefinitionModule: e.currentModule, DefinitionLine: stmt.Token.Line, DefinitionColumn: stmt.Token.Column}
 		decorated, err := e.applyCallableFunctionDecorators(fn, stmt.Decorators, env)
 		if err != nil {
 			return signal{}, err
@@ -5463,6 +5474,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 		StaticMethods:        map[string][]runtime.Function{},
 		StaticValues:         map[string]runtime.Value{},
 		Env:                  env,
+		DefinitionModule:     e.currentModule,
 		DefinitionLine:       stmt.Token.Line,
 		DefinitionColumn:     stmt.Token.Column,
 	}
@@ -5720,6 +5732,29 @@ func (e *Evaluator) registerGlobalClass(class *runtime.Class) {
 		return
 	}
 	e.globalClasses[class.Name] = class
+}
+
+func (e *Evaluator) registerTopLevelFunction(stmt ast.Statement, env *runtime.Environment) {
+	if exp, ok := stmt.(*ast.ExportStatement); ok {
+		stmt = exp.Statement
+	}
+	fnStmt, ok := stmt.(*ast.FunctionStatement)
+	if !ok || fnStmt.Name == nil {
+		return
+	}
+	value, found := env.Get(fnStmt.Name.Value)
+	if !found {
+		return
+	}
+	switch v := value.(type) {
+	case runtime.Function:
+		e.globalFunctions[fnStmt.Name.Value] = v
+	case runtime.OverloadedFunction:
+		// Last-write-wins by bare name, mirroring globalClasses.
+		if n := len(v.Overloads); n > 0 {
+			e.globalFunctions[fnStmt.Name.Value] = v.Overloads[n-1]
+		}
+	}
 }
 
 // errorParentChain returns the parent class name list (immediate parent
@@ -7814,6 +7849,12 @@ func (e *Evaluator) evalReflectLookupCall(call *ast.CallExpression, env *runtime
 		// user's program still needs to reflect on them).
 		if class, found := e.globalClasses[targetName.Value]; found {
 			return class, nil
+		}
+	}
+	if !ok && name == "function" {
+		// Mirror the class fallback for an imported module's export (matches the VM).
+		if function, found := e.globalFunctions[targetName.Value]; found {
+			return function, nil
 		}
 	}
 	if !ok {

@@ -242,16 +242,22 @@ io.println(math.mode([1, 1, 2, 2, 3])); # 1
 import datetime;
 ```
 
-The `datetime` module works with two representations:
+The `datetime` module offers two ways to work with a moment in time:
 
+- **`Instant`** - the canonical datetime object. It is immutable: every
+  operation returns a new `Instant`, never mutating in place. Construct one
+  directly with `datetime.Instant(...)` (see below), then format it, shift it
+  into a timezone, read its parts, do arithmetic, or compare it. This is the
+  representation to reach for in most code.
 - **Unix seconds** (`int`) - a raw integer timestamp. Lightweight and
-  interoperable. Most module-level functions take and return Unix seconds.
-- **`Instant`** - an object with chainable methods. Useful when you need to
-  apply several operations in sequence without passing the timestamp through
-  every call.
+  interoperable. The module-level functions (`datetime.make`, `datetime.parse`,
+  `datetime.addDays`, `datetime.diff`, ...) take and return Unix seconds, which
+  is handy when you are passing a timestamp through storage or an API boundary.
 
-Both representations are exact to the second. Sub-second precision is not
-currently supported.
+The two are interchangeable: `instant.unix()` gives the Unix seconds, and
+`datetime.Instant(unixSeconds)` wraps an integer back into an `Instant`. Both
+representations are exact to the second. Sub-second precision is not currently
+supported.
 
 ### Current time
 
@@ -260,7 +266,7 @@ import datetime;
 
 let ts = datetime.nowUnix();             # int: current Unix seconds
 let parts = datetime.now();              # dict with year, month, day, etc.
-let instant = datetime.nowInstant();     # Instant object
+let instant = datetime.Instant();        # Instant object for the current moment
 
 io.println(ts);
 io.println(parts["year"]);
@@ -313,9 +319,42 @@ io.println(datetime.formatHTTP(1700000000));
 # Tue, 14 Nov 2023 22:13:20 GMT
 ```
 
-### Constructing timestamps
+### Constructing an `Instant`
 
-`datetime.make(year, month, day)` or `datetime.make(year, month, day, hour, minute, second)` builds a Unix timestamp from components:
+`datetime.Instant(...)` is overloaded; it is the one entry point for building a
+datetime object, in the style of a constructor:
+
+```gb
+let now      = datetime.Instant();                    # current moment
+let cal      = datetime.Instant(2025, 12, 25);        # year, month, day (UTC midnight)
+let calTime  = datetime.Instant(2025, 12, 25, 9, 30); # ... + hour, minute (second optional)
+let fromUnix = datetime.Instant(1735128600);          # from Unix seconds
+let fromStr  = datetime.Instant("2025-12-25T09:30:00Z");  # from an RFC3339 string
+let copy     = datetime.Instant(now);                 # copy of another Instant
+```
+
+The calendar-component form (3 to 6 ints: `year, month, day[, hour, minute,
+second]`) is interpreted in **UTC** and uses Go-style normalization, identical
+to `datetime.make`: out-of-range fields roll over rather than erroring. For
+example, month 13 becomes January of the next year:
+
+```gb
+let rolled = datetime.Instant(2024, 13, 1);
+io.println("${rolled.year()} ${rolled.month()}");   # 2025 1
+```
+
+Because an `Instant` is immutable, passing one to `datetime.Instant(other)`
+simply returns an equal `Instant`. The same is available as a method:
+
+```gb
+let snapshot = original.copy();
+```
+
+### Constructing a Unix timestamp
+
+When you want a raw `int` instead of an object, `datetime.make(year, month,
+day)` or `datetime.make(year, month, day, hour, minute, second)` builds a Unix
+timestamp from components (UTC, same normalization as `Instant`):
 
 ```gb
 let ts = datetime.make(2025, 12, 25);            # midnight UTC
@@ -326,14 +365,6 @@ let ts2 = datetime.make(2025, 12, 25, 9, 30, 0); # 09:30 UTC
 
 ```gb
 io.println(datetime.unix(0));   # 1970-01-01T00:00:00Z
-```
-
-`datetime.Instant(ts_or_string)` wraps a Unix timestamp or RFC3339 string as
-an `Instant` object:
-
-```gb
-let a = datetime.Instant(1735128600);                # from Unix seconds
-let b = datetime.Instant("2025-12-25T09:30:00Z");   # from RFC3339
 ```
 
 `datetime.Duration(seconds)` wraps a number of seconds as a `Duration` object:
@@ -430,18 +461,38 @@ io.println(d["seconds"]);  # 0
 The `diff` result is always non-negative; the order of arguments does not
 matter.
 
-### The `Instant` class
+### The `Instant` object
 
-`Instant` is an object-oriented interface to the same timestamp. Methods chain
-and always return `Instant` or a value - they never mutate in place.
+`Instant` is the canonical datetime object (construct it with
+`datetime.Instant(...)`, above). It is **immutable**: arithmetic and conversion
+methods always return a new `Instant` or a plain value, never mutating the
+receiver. That makes instants safe to share and lets calls chain cleanly:
 
 ```gb
-let appt = datetime.nowInstant()
+let appt = datetime.Instant()
     .addDays(7)
     .addSeconds(3600);
 
 io.println(appt.formatRFC3339());   # one week and one hour from now
 io.println(appt.unix());            # as Unix seconds
+```
+
+Use `.copy()` when you want an explicit, independent copy of an instant
+(equivalent to `datetime.Instant(other)`):
+
+```gb
+let snapshot = appt.copy();
+```
+
+`dir` lists the full method surface of any instant:
+
+```gb
+io.println("${dir(datetime.Instant(0))}");
+# ["add", "addDays", "addMonths", "addSeconds", "addYears", "copy", "day",
+#  "dayOfYear", "diff", "equals", "format", "formatHTTP", "formatRFC3339",
+#  "hour", "inZone", "isAfter", "isBefore", "isWeekend", "minute", "month",
+#  "parts", "second", "sub", "toLocal", "toString", "toUnix", "toUnixMillis",
+#  "toUnixNanos", "toUtc", "unix", "weekday", "year"]
 ```
 
 **Formatting methods:**
@@ -451,12 +502,17 @@ let i = datetime.Instant("2025-12-25T09:30:00Z");
 
 i.toString();           # "2025-12-25T09:30:00Z"  (same as formatRFC3339)
 i.formatRFC3339();      # "2025-12-25T09:30:00Z"
+i.formatHTTP();         # "Thu, 25 Dec 2025 09:30:00 GMT"  (RFC1123 GMT)
 i.toUtc();              # "2025-12-25T09:30:00Z"
 i.format("Jan 2, 2006 15:04");          # "Dec 25, 2025 09:30"
 i.toLocal("America/New_York");          # "2025-12-25T04:30:00-05:00"
 ```
 
-**Arithmetic methods** (each returns a new `Instant`):
+`format` accepts the same three layout forms as `datetime.format` (strftime
+tokens, a preset name, or a Go reference-time layout).
+
+**Arithmetic methods** (the instant is immutable, so each returns a new
+`Instant` and leaves the receiver unchanged):
 
 ```gb
 i.add(datetime.Duration(3600));   # add one hour
@@ -488,7 +544,8 @@ i.weekday();     # 4  (Thursday, ISO 1=Mon..7=Sun)
 i.dayOfYear();   # 359
 i.isWeekend();   # false
 i.parts();       # dict with year, month, day, hour, minute, second, weekday, timestamp
-i.inZone(datetime.Zone("America/New_York"));  # parts dict in the zone
+i.inZone("America/New_York");                 # parts dict shifted into the zone
+i.inZone(datetime.Zone("America/New_York"));  # ... a Zone object works too
 ```
 
 **Comparison** methods return `bool`; `diff` returns an absolute `Duration`:
@@ -506,7 +563,7 @@ Full chained example - schedule a reminder for 9 AM next Monday:
 ```gb
 import datetime;
 
-func nextMonday(Instant from): Instant {
+func nextMonday(datetime.Instant from): datetime.Instant {
     let parts = from.parts();
     let daysUntilMonday = (8 - parts["weekday"]) % 7;
     if (daysUntilMonday == 0) { daysUntilMonday = 7; }
@@ -514,7 +571,7 @@ func nextMonday(Instant from): Instant {
                .add(datetime.Duration(9 * 3600 - (parts["hour"] * 3600 + parts["minute"] * 60 + parts["second"])));
 }
 
-let reminder = nextMonday(datetime.nowInstant());
+let reminder = nextMonday(datetime.Instant());
 io.println(reminder.formatRFC3339());
 ```
 
@@ -567,7 +624,7 @@ io.println(tz.name());           # "America/Los_Angeles"
 io.println(tz.toString());       # "America/Los_Angeles"
 io.println(tz.offset());         # current offset in seconds (accounts for DST now)
 
-let now = datetime.nowInstant();
+let now = datetime.Instant();
 let offset = tz.offsetAt(now);   # offset in seconds, e.g. -28800 (UTC-8)
 io.println(offset / 3600);       # -8
 ```
@@ -621,7 +678,7 @@ import io;
 # Build a human-readable countdown to a deadline
 func countdown(string deadline): string {
     let target = datetime.Instant(deadline);
-    let now    = datetime.nowInstant();
+    let now    = datetime.Instant();
     let diff   = now.diff(target);
     let parts  = diff.toDict();
 

@@ -1,0 +1,30 @@
+/**
+ * @title Reflect over imported module members (1.15.0)
+ * @summary reflect.function resolves a function exported by an imported
+ * module by bare name, and reflect.location of a qualified-name class
+ * lookup reports the declaring module and source position. Both behave
+ * identically on the evaluator and the VM.
+ */
+import test;
+import reflect;
+import reflectmod;
+
+class ImportedReflectTest extends test.Test {
+    @test
+    func reflectFunctionResolvesImported(): void {
+        let f = reflect.function("helper");
+        this.assertTrue(f != null);
+        this.assertEquals("int", reflect.returnType(f));
+        let loc = reflect.location(f);
+        this.assertEquals("reflectmod", loc["module"]);
+    }
+
+    @test
+    func reflectQualifiedClassHasLocation(): void {
+        let c = reflect.class("reflectmod.Widget");
+        this.assertTrue(c != null);
+        let loc = reflect.location(c);
+        this.assertTrue(loc != null);
+        this.assertEquals("reflectmod", loc["module"]);
+    }
+}

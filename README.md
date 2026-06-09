@@ -65,7 +65,7 @@ The full language and stdlib reference is in
 [docs/user/](docs/user/) - start with
 [01-getting-started.md](docs/user/01-getting-started.md). The
 release notes are at
-[docs/user/17-release-notes.md](docs/user/17-release-notes.md).
+[docs/user/18-release-notes.md](docs/user/18-release-notes.md).
 The same reference is rendered as a browsable HTML site at
 [geblang.davegebler.com](https://geblang.davegebler.com/index.html).
 

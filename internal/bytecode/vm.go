@@ -9406,11 +9406,14 @@ func (vm *VM) Exports() (map[string]runtime.Value, error) {
 			classValue := runtime.BytecodeClass{Name: export.Name, Index: export.ClassIndex, Decorators: decorators, MethodDecorators: methodDecorators, StaticDecorators: staticDecorators, MethodMetadata: methodMetadata, StaticMetadata: staticMetadata}
 			if int(export.ClassIndex) < len(vm.chunk.Classes) {
 				classInfo := vm.chunk.Classes[export.ClassIndex]
+				classValue.Module = vm.moduleName
 				classValue.Doc = classInfo.Doc
 				classValue.Parent = classInfo.ParentName
 				classValue.Fields = append([]string(nil), classInfo.FieldNames...)
 				classValue.Interfaces = append([]string(nil), classInfo.Implements...)
 				classValue.ConstructorMetadata = vm.constructorFunctionMetadata(classInfo.ConstructorIndices)
+				classValue.DefLine = classInfo.DefLine
+				classValue.DefColumn = classInfo.DefColumn
 				sort.Strings(classValue.Fields)
 				sort.Strings(classValue.Interfaces)
 			}

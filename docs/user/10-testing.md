@@ -47,19 +47,81 @@ failure and continues to the next method.
 | `assertFalse(value)` | `value` must be `false` |
 | `assertNull(value)` | `value` must be `null` |
 | `assertNotNull(value)` | `value` must not be `null` |
-| `assertContains(container, needle)` | String/list/dict contains check |
+| `assertContains(container, needle)` | String/list/dict/set contains check |
 | `assertNotContains(container, needle)` | Inverse |
-| `assertEmpty(value)` | Empty string/list/dict/set/null |
+| `assertEmpty(value)` | Empty string/list/dict/set/range, or `null` |
 | `assertNotEmpty(value)` | Inverse |
 | `assertGreaterThan(threshold, actual)` | Numeric / string ordering |
 | `assertGreaterThanOrEqual(threshold, actual)` | |
 | `assertLessThan(threshold, actual)` | |
 | `assertLessThanOrEqual(threshold, actual)` | |
+| `assertThrows(callable[, substring])` | `callable` must raise; optional message substring |
+| `assertThrowsOf(callable, classOrName[, substring])` | `callable` must raise an error of that class |
 | `fail([message])` | Unconditional failure |
+| `skip([reason])` | Stop and record the method as skipped, not failed |
 
 Equality uses Geblang's value-equality rules: lists, dicts, sets, and
 class instances are compared field by field; enum variants compare on
-their name and payload.
+their name and payload. Numbers compare by exact value across `int`,
+`decimal`, and `float`.
+
+A few methods have shorter aliases: `assertEqual` for `assertEquals`,
+`assertNotEqual` for `assertNotEquals`, `isTrue` / `isFalse` for
+`assertTrue` / `assertFalse`, `notNull` for `assertNotNull`, and
+`equal(actual, expected)` (note the argument order: actual first).
+Prefer the `assert*` forms in new tests for consistency.
+
+### Asserting that code raises
+
+`assertThrows` takes a zero-argument callable and fails unless it
+raises. Pass a second string argument to also require the error
+message contain a substring. `assertThrowsOf` additionally checks the
+error class, walking the parent chain like a `catch` clause. The class
+is given as a class value or a name string, so built-in error classes
+work without reifying them:
+
+```geblang
+import test;
+
+func divide(int a, int b): int {
+    if (b == 0) {
+        throw RuntimeError("division by zero");
+    }
+    return a / b;
+}
+
+class DivideTest extends test.Test {
+    @test
+    func rejectsZeroDivisor(): void {
+        this.assertThrows(func(): int { return divide(1, 0); });
+        this.assertThrows(func(): int { return divide(1, 0); }, "by zero");
+        this.assertThrowsOf(func(): int { return divide(1, 0); }, "RuntimeError");
+        this.assertThrowsOf(
+            func(): int { return divide(1, 0); }, "RuntimeError", "by zero");
+    }
+}
+```
+
+## Skipping a test
+
+Call `this.skip()` (optionally with a reason) to abandon the current
+method without failing it. The runner records it as skipped and moves
+on. Statements after `skip` do not run:
+
+```geblang
+class PlatformTest extends test.Test {
+    @test
+    func usesAFeatureNotAlwaysPresent(): void {
+        if (!featureAvailable()) {
+            this.skip("feature not available on this host");
+        }
+        this.assertTrue(useFeature());
+    }
+}
+```
+
+Skipped methods appear as `SKIP` in verbose output and are counted
+separately in the summary line (see Running tests in CI below).
 
 ## Setup and teardown
 
@@ -93,6 +155,62 @@ class DatabaseTest extends test.Test {
 }
 ```
 
+## Mocking and patching
+
+The `test` module can swap stdlib functions for the duration of a
+single `@test` method. `test.mock(moduleName, replacements)` takes a
+module name and a dict mapping function names to replacement
+callables; calls to those functions, including from code nested deep
+inside the unit under test, see the replacement.
+
+```geblang
+import test;
+import datetime;
+
+class ClockTest extends test.Test {
+    @test
+    func usesAFixedTime(): void {
+        test.mock("datetime", {"nowUnix": func(): int { return 1700000000; }});
+        this.assertEquals(1700000000, datetime.nowUnix());
+    }
+}
+```
+
+Patches are scoped to the method that installs them. They roll back
+automatically before the next method runs, so one test cannot leak a
+mock into another:
+
+```geblang
+@test
+func seesRealTimeAgain(): void {
+    # the patch from the previous method is already gone
+    this.assertTrue(datetime.nowUnix() > 1_000_000_000);
+}
+```
+
+Replacement callables receive the real arguments, so a mock can return
+different values per input:
+
+```geblang
+test.mock("crypt", {
+    "sha256": func(string s): string {
+        if (s == "key") { return "matched"; }
+        return "default";
+    }
+});
+```
+
+To clear patches before the method ends, use `test.restore(moduleName,
+fname)` to drop a single patch or `test.restoreAll()` to clear every
+active patch. Mocking a module or function that was never registered
+is harmless: the patch simply sits unused.
+
+| Function | Meaning |
+|----------|---------|
+| `test.mock(module, {name: callable, ...})` | Patch one or more functions on a module |
+| `test.restore(module, name)` | Remove a single patch |
+| `test.restoreAll()` | Clear every active patch |
+
 ## Tags and selective runs
 
 Decorate `@test` methods with `@tag("name")` to put them into a category:
@@ -122,6 +240,39 @@ geblang test --tag integration --tag slow tests/
 `geblang test` runs only methods that carry at least one of the supplied
 tags. Without `--tag` it runs every `@test` method.
 
+To narrow a run further, `--class ClassName` restricts to one test
+class and `--method methodName` restricts to one method (repeat
+`--method` for several). These combine with `--tag` and with each
+other:
+
+```sh
+geblang test --class UserTest --method login tests/user_test.gb
+```
+
+## Data-driven tests
+
+There is no separate parameterized-test decorator; a plain loop over a
+table of cases inside one `@test` method does the job. Each iteration
+asserts, and a failure reports which row failed via the assertion
+message:
+
+```geblang
+class LengthTest extends test.Test {
+    @test
+    func countsCharacters(): void {
+        let cases = [
+            {"input": "abc", "expected": 3},
+            {"input": "", "expected": 0},
+            {"input": "hello", "expected": 5}
+        ];
+        for (row in cases) {
+            let input = row["input"] as string;
+            this.assertEquals(row["expected"] as int, input.length());
+        }
+    }
+}
+```
+
 ## Verbose output
 
 Pass `--verbose` (or `-v`) to print each test class and method as it
@@ -137,8 +288,9 @@ FunctoolsTest
   PASS pipeLeftToRight
   PASS pipeIdentityForEmpty
   PASS composeRightToLeft
+  SKIP memoizeOnHugeInput: skipped under CI
   FAIL memoizeLruEvictsOldest: expected 4, got 3
-tests: total=8 failed=1 passed=7
+tests: total=8 failed=1 passed=6 skipped=1
 ```
 
 Without `--verbose`, only the failure lines and the summary are
@@ -192,8 +344,12 @@ Geblang reference repo's own `Makefile` is a working example.
 
 `geblang test` exits with code 0 if every test passes, 1 if any test
 fails, and 2 on usage errors. The summary line prints
-`tests: total=<N> failed=<M> passed=<N-M>` on stdout, so CI scripts can
-both rely on the exit code and parse the summary if they need it.
+`tests: total=<N> failed=<M> passed=<P> skipped=<S>` on stdout, so CI
+scripts can both rely on the exit code and parse the summary if they
+need it. Skipped tests do not cause a non-zero exit.
+
+For JetBrains IDE test runners, `--format teamcity` emits
+`##teamcity[...]` service messages instead of the plain summary.
 
 ## Test layout convention
 

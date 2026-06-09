@@ -300,6 +300,9 @@ dicts, modest loops) the difference is hopefully invisible.
   built-in assertions, `geblang test` runner, CI integration.
 - Standard library reference: native modules and bundled source modules.
 - Web development: HTTP, routing, middleware, sessions, cache, SSR helpers.
+- Reflection: `typeof`, `.type`, `instanceof`, reified generics, and the
+  `reflect` module for inspecting classes, functions, decorators, and modules
+  at runtime.
 - Tooling and examples: CLI commands, tests, docs, Docker builds.
 - Bundling and standalone executables: `geblang build`, bundle format, package
   layout, first-run extraction, limitations.

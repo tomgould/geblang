@@ -34,6 +34,14 @@
   `reflect.class` / `reflect.function` over a native module; both now match the
   interpreter (a native module's class exports are reflectable; native functions
   remain non-reflectable and return null).
+- Reflection over imported user-module members is now consistent on both
+  backends. `reflect.location(target).module` reports the declaring module's
+  canonical name on the interpreter (it previously left it blank); `reflect.function("name")`
+  resolves a function exported by an imported module by bare name on the
+  interpreter (it previously returned null); and `reflect.location` of a
+  qualified-name class lookup (`reflect.class("module.Class")`) reports the
+  declaring module and source position on the bytecode backend (it previously
+  returned null).
 
 ## 1.14.0
 
