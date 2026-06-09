@@ -7890,23 +7890,29 @@ func (e *Evaluator) evalDumpCall(call *ast.CallExpression, env *runtime.Environm
 	return runtime.String{Value: native.DumpValue(value)}, nil
 }
 
+// Union of native functions and source exports, since dual-name modules make
+// both reachable via `module.<member>`.
 func (e *Evaluator) dirImportedModule(alias string) ([]string, bool) {
 	canonical, ok := e.importNames[alias]
 	if !ok {
 		return nil, false
 	}
-	functions, ok := e.builtins[canonical]
-	if !ok {
-		functions, ok = e.builtins[alias]
+	members := map[string]struct{}{}
+	for _, name := range native.ModuleDirNames(canonical, CachedNativeModuleSymbols()) {
+		members[name] = struct{}{}
 	}
-	if !ok {
+	if path, perr := e.resolveModulePath(canonical); perr == nil && !e.loading[path] {
+		if module, err := e.loadUserModule(canonical, alias); err == nil {
+			for name := range module.Exports {
+				members[name] = struct{}{}
+			}
+		}
+	}
+	if len(members) == 0 {
 		return nil, false
 	}
-	names := make([]string, 0, len(functions))
-	for name := range functions {
-		names = append(names, name)
-	}
-	for _, name := range e.builtinModuleTypeExportNames(canonical) {
+	names := make([]string, 0, len(members))
+	for name := range members {
 		names = append(names, name)
 	}
 	sort.Strings(names)

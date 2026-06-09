@@ -148,7 +148,7 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 		return nil, diags
 	}
 	diags := CrossModuleAnalysis(file, program, opts)
-	if _, compileErr := bytecode.Compile(program, []byte(source), file); compileErr != nil {
+	if _, compileErr := bytecode.CompileWithOptions(program, []byte(source), file, bytecode.CompileOptions{NativeSymbols: opts.NativeSymbols}); compileErr != nil {
 		if d, ok := compileDiagnostic(file, compileErr); ok {
 			diags = append(diags, d)
 		}

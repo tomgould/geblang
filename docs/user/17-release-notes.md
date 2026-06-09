@@ -11,6 +11,14 @@
   a short alias) could resolve against the wrong module and fail with an
   "unknown function" error. Cloned handlers now resolve aliased native calls
   correctly.
+- Using a module name as a value (assigning it to a variable, passing it to a
+  function, returning it, or storing it in a collection) is now a clear
+  compile-time error on both backends. Reference a module's members with
+  `module.member` or alias the import with `import module as name`. Module
+  introspection by name uses `reflect.module("name")` (a string).
+- `dir(<module>)` now works on both backends (it previously failed to compile a
+  bare module name on the bytecode backend). Under the evaluator it lists a
+  module's full accessible member surface.
 
 ## 1.14.0
 

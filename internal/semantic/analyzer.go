@@ -68,6 +68,8 @@ type Analyzer struct {
 	deprecatedMethods map[string]map[string]string
 	// from-import local names, treated as known types.
 	importedNames map[string]bool
+	// import aliases (module names): legal only in qualified access, dir, reflect.module.
+	moduleAliases map[string]bool
 }
 
 // SetClassSurfaceResolver installs the cross-module class member
@@ -197,7 +199,7 @@ func (a *Analyzer) checkBuiltinModuleShadow(name *ast.Identifier, declaredType *
 }
 
 func New() *Analyzer {
-	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, enums: map[string]struct{}{}, aliases: map[string]typeInfo{}, typeParamScope: map[string]int{}, deprecatedFuncs: map[string]string{}, deprecatedClasses: map[string]string{}, deprecatedMethods: map[string]map[string]string{}, importedNames: map[string]bool{}}
+	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, enums: map[string]struct{}{}, aliases: map[string]typeInfo{}, typeParamScope: map[string]int{}, deprecatedFuncs: map[string]string{}, deprecatedClasses: map[string]string{}, deprecatedMethods: map[string]map[string]string{}, importedNames: map[string]bool{}, moduleAliases: map[string]bool{}}
 }
 
 func (a *Analyzer) Analyze(program *ast.Program) []Diagnostic {
@@ -399,6 +401,8 @@ func (a *Analyzer) collectTypeDeclarations(stmts []ast.Statement) {
 			a.interfaces[info.name] = info
 		case *ast.EnumStatement:
 			a.enums[stmt.Name.Value] = struct{}{}
+		case *ast.ImportStatement:
+			a.moduleAliases[stmt.ModuleName()] = true
 		case *ast.FromImportStatement:
 			for _, item := range stmt.Names {
 				if local := item.Local(); local != "" {
@@ -1618,6 +1622,9 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 	switch expr := expr.(type) {
 	case *ast.Identifier:
 		a.checkBindingNotDestroyed(expr)
+		if _, shadowed := a.lookup(expr.Value); a.moduleAliases[expr.Value] && !shadowed {
+			a.errorAt(expr.Token, "'%s' is a module, not a value; reference its members as '%s.<name>' or alias the import with 'import %s as <name>'", expr.Value, expr.Value, expr.Value)
+		}
 	case *ast.AssignmentExpression:
 		a.analyzeAssignment(expr)
 	case *ast.InfixExpression:
@@ -1628,13 +1635,19 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 	case *ast.PostfixExpression:
 		a.analyzeExpression(expr.Left)
 	case *ast.SelectorExpression:
-		a.analyzeExpression(expr.Object)
+		if !a.isModuleValueRef(expr.Object) {
+			a.analyzeExpression(expr.Object)
+		}
 	case *ast.IndexExpression:
 		a.analyzeExpression(expr.Left)
 		a.analyzeExpression(expr.Index)
 	case *ast.CallExpression:
 		a.analyzeExpression(expr.Callee)
+		moduleArgAllowed := callAcceptsModuleArg(expr.Callee)
 		for _, arg := range expr.Arguments {
+			if moduleArgAllowed && a.isModuleValueRef(arg.Value) {
+				continue
+			}
 			a.analyzeExpression(arg.Value)
 		}
 		a.checkTypedCollectionMethodCall(expr)
@@ -1660,6 +1673,17 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 			a.analyzeExpression(element)
 		}
 	}
+}
+
+func (a *Analyzer) isModuleValueRef(expr ast.Expression) bool {
+	ident, ok := expr.(*ast.Identifier)
+	return ok && a.moduleAliases[ident.Value]
+}
+
+// dir(M) accepts a module name as its argument.
+func callAcceptsModuleArg(callee ast.Expression) bool {
+	ident, ok := callee.(*ast.Identifier)
+	return ok && ident.Value == "dir"
 }
 
 // checkBindingNotDestroyed emits a diagnostic when the identifier

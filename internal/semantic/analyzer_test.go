@@ -1066,3 +1066,75 @@ func f(foo.Bar x): void {}`},
 		})
 	}
 }
+
+func TestAnalyzerRejectsModuleAsValue(t *testing.T) {
+	cases := []string{
+		"import math;\nlet x = math;\n",
+		"import math;\nfunc f(any v): void {}\nf(math);\n",
+		"import math;\nfunc g(): any { return math; }\n",
+		"import math;\nlet xs = [math];\n",
+		"import math;\nlet d = {\"k\": math};\n",
+		"import math as m;\nlet x = m;\n",
+		"import reflect;\nimport math;\nlet m = reflect.module(math);\n",
+	}
+	for _, input := range cases {
+		p := parser.New(lexer.New(input))
+		program := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Fatalf("parse errors for %q: %v", input, p.Errors())
+		}
+		diags := semantic.New().Analyze(program)
+		found := false
+		for _, d := range diags {
+			if strings.Contains(d.Message, "is a module, not a value") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected module-as-value diagnostic for %q, got %v", input, diags)
+		}
+	}
+}
+
+func TestAnalyzerAllowsLegalModuleUses(t *testing.T) {
+	cases := []string{
+		"import math;\nlet x = math.sqrt(16.0);\n",
+		"import math as m;\nlet x = m.sqrt(16.0);\n",
+		"import sys;\nlet names = dir(sys);\n",
+		"import reflect;\nlet m = reflect.module(\"math\");\n",
+	}
+	for _, input := range cases {
+		p := parser.New(lexer.New(input))
+		program := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Fatalf("parse errors for %q: %v", input, p.Errors())
+		}
+		diags := semantic.New().Analyze(program)
+		for _, d := range diags {
+			if strings.Contains(d.Message, "is a module, not a value") {
+				t.Errorf("unexpected module-as-value diagnostic for %q: %q", input, d.Message)
+			}
+		}
+	}
+}
+
+func TestAnalyzerAllowsShadowedModuleName(t *testing.T) {
+	cases := []string{
+		"import math;\nfunc f(): int { let math = 5; return math + 1; }\n",
+		"import math;\nfunc g(int math): int { return math + 1; }\n",
+	}
+	for _, input := range cases {
+		p := parser.New(lexer.New(input))
+		program := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Fatalf("parse errors for %q: %v", input, p.Errors())
+		}
+		diags := semantic.New().Analyze(program)
+		for _, d := range diags {
+			if strings.Contains(d.Message, "is a module, not a value") {
+				t.Errorf("unexpected module-as-value diagnostic for %q: %q", input, d.Message)
+			}
+		}
+	}
+}

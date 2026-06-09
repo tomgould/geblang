@@ -9,6 +9,7 @@ import (
 	"geblang/internal/bundle"
 	"geblang/internal/bytecode"
 	"geblang/internal/check"
+	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
 	"geblang/internal/notices"
@@ -117,7 +118,7 @@ func runBuild(args []string) {
 		p := parser.New(lexer.New(string(src)))
 		prog := p.ParseProgram()
 		if len(p.Errors()) == 0 {
-			chunk, err := bytecode.Compile(prog, src, version)
+			chunk, err := bytecode.CompileWithOptions(prog, src, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols()})
 			if err == nil {
 				encoded, err := bytecode.Encode(chunk)
 				if err == nil {

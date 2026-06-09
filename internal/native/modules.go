@@ -1,5 +1,7 @@
 package native
 
+import "sort"
+
 // NativeModuleNames is the canonical set of module names that ship as
 // Geblang natives. Both `geblang check` and the LSP read this so an
 // `import foo;` to a name in this set is never flagged as unresolved,
@@ -38,4 +40,19 @@ func NativeModuleList() []string {
 		out = append(out, name)
 	}
 	return out
+}
+
+// ModuleDirNames returns the sorted member names dir() reports for a module,
+// from the authoritative native-symbols map. Returns nil if the module is absent.
+func ModuleDirNames(canonical string, symbols map[string]map[string]struct{}) []string {
+	set, ok := symbols[canonical]
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(set))
+	for name := range set {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

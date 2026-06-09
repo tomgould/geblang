@@ -9,15 +9,32 @@ import web.router as router;
 
 Module paths are dot-separated. Imports can use aliases.
 
-An import binds a module value into the current scope. Imported module bindings
-are constants, so importing the same module twice under the same name is
-idempotent, but assigning a new value to that name is not allowed.
+An import binds a module under that name for qualified access (`name.member`).
+Imported module bindings are constants and cannot be reassigned, so importing
+the same module twice under the same name is idempotent.
 
 ```gb
 import json;
 import json; # harmless
 
 # json = {}; # invalid: imported module bindings are constant
+```
+
+A module name is not a first-class value. Use `module.member` to reach its
+members, alias it with `import module as alias;`, or pass it to `dir(module)`
+to list its members. Assigning, passing, returning, or storing the module name
+itself is a compile-time error. To introspect a module by name at runtime, use
+`reflect.module("name")` (a string).
+
+```gb
+import math;
+
+let r = math.sqrt(16.0);        # ok: qualified member access
+let names = dir(math);          # ok: list a module's members
+
+# let x = math;                 # error: a module is not a value
+# someFunc(math);               # error: cannot pass a module
+let h = reflect.module("math"); # ok: introspect by name string
 ```
 
 ## Selective imports

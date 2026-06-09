@@ -1755,7 +1755,7 @@ func loadOrCompileBytecode(sourcePath string, source []byte, astProgram *ast.Pro
 			return bytecode.Chunk{}, err
 		}
 	}
-	chunk, err := bytecode.Compile(astProgram, source, version)
+	chunk, err := bytecode.CompileWithOptions(astProgram, source, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols()})
 	if err != nil {
 		return bytecode.Chunk{}, err
 	}

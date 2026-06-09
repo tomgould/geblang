@@ -2,10 +2,25 @@ package evaluator
 
 import (
 	"io"
+	"sync"
 
 	"geblang/internal/native"
 	"geblang/internal/runtime"
 )
+
+var (
+	cachedNativeSymbols     map[string]map[string]struct{}
+	cachedNativeSymbolsOnce sync.Once
+)
+
+// CachedNativeModuleSymbols returns the process-wide native-symbols set,
+// built once. dir(module) reads it so the evaluator and VM agree.
+func CachedNativeModuleSymbols() map[string]map[string]struct{} {
+	cachedNativeSymbolsOnce.Do(func() {
+		cachedNativeSymbols = NativeModuleSymbols()
+	})
+	return cachedNativeSymbols
+}
 
 // reflectDynamicMembers are reflect members dispatched ahead of the
 // builtinModules table (so they are not enumerable from e.builtins).

@@ -52,8 +52,13 @@ type Compiler struct {
 	// import so module-recognition sites can translate `Y.fn(...)` calls
 	// back to the canonical `X.fn` dispatch.
 	moduleAliases map[string]string
+	// sourceModuleAliases marks aliases imported via OpImportModule, whose
+	// dir() lists the runtime source Exports rather than the native symbols.
+	sourceModuleAliases map[string]bool
 	// fromImports: from-import local/alias name -> fully-qualified class name.
 	fromImports map[string]string
+	// nativeSymbols sources the compile-time dir(<moduleAlias>) member list.
+	nativeSymbols map[string]map[string]struct{}
 	// AssertionsDisabled elides assert(...) call sites at compile time
 	// (no code emitted; arguments are not evaluated). Set via the
 	// --no-assert CLI flag on `geblang` and `geblang build`.
@@ -88,7 +93,18 @@ type finalizerContext struct {
 // neither the condition nor the message is evaluated. Off by default.
 var AssertionsDisabled bool
 
+// CompileOptions carries optional compile-time inputs.
+type CompileOptions struct {
+	// NativeSymbols sources the compile-time dir(<moduleAlias>) member list;
+	// nil falls back to the runtime OpDir path.
+	NativeSymbols map[string]map[string]struct{}
+}
+
 func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk, error) {
+	return CompileWithOptions(program, source, compilerVersion, CompileOptions{})
+}
+
+func CompileWithOptions(program *ast.Program, source []byte, compilerVersion string, opts CompileOptions) (Chunk, error) {
 	if err := desugar.Dataclasses(program); err != nil {
 		return Chunk{}, err
 	}
@@ -96,30 +112,32 @@ func Compile(program *ast.Program, source []byte, compilerVersion string) (Chunk
 		return Chunk{}, err
 	}
 	c := &Compiler{
+		nativeSymbols: opts.NativeSymbols,
 		chunk: Chunk{
 			SourceHash: SourceHash(source),
 			Compiler:   compilerVersion,
 		},
-		AssertionsDisabled: AssertionsDisabled,
-		globals:            map[string]int64{},
-		globalTypes:        map[string]string{},
-		globalDeclKinds:    map[string]globalDecl{},
-		deletedGlobals:     map[string]bool{},
-		declaredDecls:      map[string]bool{},
-		scopes:             []map[string]binding{{}},
-		funcs:              map[string][]int64{},
-		functionCursors:    map[string]int{},
-		classes:            map[string]int64{},
-		interfaces:         map[string]int64{},
-		interfaceAST:       map[string]*ast.InterfaceStatement{},
-		enums:              map[string]int64{},
-		typeAliases:        map[string]*ast.TypeRef{},
-		reflectFuncs:       map[string]runtime.DecoratorTarget{},
-		reflectClasses:     map[string]runtime.DecoratorTarget{},
-		reflectMethods:     map[string]map[string]runtime.DecoratorTarget{},
-		reflectStatics:     map[string]map[string]runtime.DecoratorTarget{},
-		moduleAliases:      map[string]string{},
-		fromImports:        map[string]string{},
+		AssertionsDisabled:  AssertionsDisabled,
+		globals:             map[string]int64{},
+		globalTypes:         map[string]string{},
+		globalDeclKinds:     map[string]globalDecl{},
+		deletedGlobals:      map[string]bool{},
+		declaredDecls:       map[string]bool{},
+		scopes:              []map[string]binding{{}},
+		funcs:               map[string][]int64{},
+		functionCursors:     map[string]int{},
+		classes:             map[string]int64{},
+		interfaces:          map[string]int64{},
+		interfaceAST:        map[string]*ast.InterfaceStatement{},
+		enums:               map[string]int64{},
+		typeAliases:         map[string]*ast.TypeRef{},
+		reflectFuncs:        map[string]runtime.DecoratorTarget{},
+		reflectClasses:      map[string]runtime.DecoratorTarget{},
+		reflectMethods:      map[string]map[string]runtime.DecoratorTarget{},
+		reflectStatics:      map[string]map[string]runtime.DecoratorTarget{},
+		moduleAliases:       map[string]string{},
+		sourceModuleAliases: map[string]bool{},
+		fromImports:         map[string]string{},
 	}
 	// A top-level `del name` removes the binding, so a later same-name
 	// declaration is a legal re-bind (the evaluator allows it at runtime).
@@ -453,6 +471,7 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 			// their canonical `module.Class` form for cross-module
 			// parent-class dispatch.
 			c.moduleAliases[alias] = canonical
+			c.sourceModuleAliases[alias] = true
 			canonicalIndex := int64(len(c.chunk.Constants))
 			c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: canonical})
 			aliasIndex := int64(len(c.chunk.Constants))
@@ -2924,6 +2943,21 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			if strings.EqualFold(ident.Value, "dir") {
 				if len(expr.Arguments) != 1 || expr.Arguments[0].Name != nil {
 					return fmt.Errorf("dir(value) expects one positional argument; dir() scope introspection is evaluator/REPL-only")
+				}
+				// A pure-native module alias is not a VM value, so emit its
+				// member list as a compile-time string list. Source-backed
+				// aliases ARE global module values: fall through to OpDir so
+				// their runtime Exports (the external surface) are listed.
+				if arg, ok := expr.Arguments[0].Value.(*ast.Identifier); ok && c.nativeSymbols != nil && !c.sourceModuleAliases[arg.Value] {
+					if canonical, isModule := c.moduleAliases[arg.Value]; isModule {
+						if names := native.ModuleDirNames(canonical, c.nativeSymbols); names != nil {
+							for _, name := range names {
+								c.emitConstant(runtime.String{Value: name}, expr.Token.Line, expr.Token.Column)
+							}
+							c.emitAt(OpBuildList, expr.Token.Line, expr.Token.Column, int64(len(names)))
+							return nil
+						}
+					}
 				}
 				if err := c.compileExpression(expr.Arguments[0].Value); err != nil {
 					return err
