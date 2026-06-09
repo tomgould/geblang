@@ -30,9 +30,9 @@ func TestDirModuleParity(t *testing.T) {
 		// primitives are accessible, so the comprehensive dir lists both.
 		{"sync", "import async.sync as sync;", "sync",
 			[]string{"Mutex", "mutexNew"}, false},
-		// datetime is dual-name: the DateTime class export plus native functions.
+		// datetime is pure-native: native functions plus its native class exports.
 		{"datetime", "import datetime;", "datetime",
-			[]string{"DateTime", "addDays"}, false},
+			[]string{"Instant", "addDays"}, true},
 		// strings is source-backed: dir must list its source exports.
 		{"strings", "import strings as s;", "s",
 			[]string{"StringBuilder"}, false},

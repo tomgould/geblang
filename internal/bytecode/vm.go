@@ -8393,6 +8393,12 @@ func vmDirValue(value runtime.Value) runtime.Value {
 		names = vmPrimitiveMethodNamesFor("float")
 	case runtime.Bool:
 		names = vmPrimitiveMethodNamesFor("bool")
+	case runtime.DateTimeInstant:
+		names = append([]string(nil), native.DateTimeInstantMethods...)
+	case runtime.DateTimeDuration:
+		names = append([]string(nil), native.DateTimeDurationMethods...)
+	case runtime.DateTimeZone:
+		names = append([]string(nil), native.DateTimeZoneMethods...)
 	case runtime.Function, runtime.OverloadedFunction:
 		names = []string{"call"}
 	default:

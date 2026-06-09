@@ -33,9 +33,7 @@ func stdlibDirForDispatchGuard() string {
 // native module on import; their stdlib .gb source is a reference-only class
 // reachable solely by direct file import, so the VM never loads the source
 // and there are no source exports to diverge on.
-var nativeWinsNoSourceExports = map[string]bool{
-	"datetime": true,
-}
+var nativeWinsNoSourceExports = map[string]bool{}
 
 // TestDualNameRootModulesRouteToSource guards the dual-name dispatch trap:
 // a root module that is both bytecode-callable and has resolvable stdlib

@@ -1606,25 +1606,42 @@ func registerDatetime(r *Registry) {
 		return runtime.DateTimeInstant{Unix: time.Now().Unix()}, nil
 	})
 	r.Register("datetime", "Instant", func(args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 1 {
-			return nil, fmt.Errorf("datetime.Instant expects unix seconds or RFC3339 string")
-		}
-		switch value := args[0].(type) {
-		case runtime.SmallInt:
-			return runtime.DateTimeInstant{Unix: value.Value}, nil
-		case runtime.Int:
-			if !value.Value.IsInt64() {
-				return nil, fmt.Errorf("datetime.Instant unix seconds must fit int64")
+		switch len(args) {
+		case 0:
+			return runtime.DateTimeInstant{Unix: time.Now().Unix()}, nil
+		case 1:
+			switch value := args[0].(type) {
+			case runtime.DateTimeInstant:
+				return value, nil // value type: returning it is the copy
+			case runtime.SmallInt:
+				return runtime.DateTimeInstant{Unix: value.Value}, nil
+			case runtime.Int:
+				if !value.Value.IsInt64() {
+					return nil, fmt.Errorf("datetime.Instant unix seconds must fit int64")
+				}
+				return runtime.DateTimeInstant{Unix: value.Value.Int64()}, nil
+			case runtime.String:
+				parsed, err := time.Parse(time.RFC3339, value.Value)
+				if err != nil {
+					return nil, fmt.Errorf("datetime.Instant: %v", err)
+				}
+				return runtime.DateTimeInstant{Unix: parsed.Unix()}, nil
+			default:
+				return nil, fmt.Errorf("datetime.Instant expects int, string, or datetime.Instant")
 			}
-			return runtime.DateTimeInstant{Unix: value.Value.Int64()}, nil
-		case runtime.String:
-			parsed, err := time.Parse(time.RFC3339, value.Value)
-			if err != nil {
-				return nil, fmt.Errorf("datetime.Instant: %v", err)
+		case 3, 4, 5, 6:
+			ints := make([]int64, 6)
+			for i, a := range args {
+				v, ok := AsInt64(a)
+				if !ok {
+					return nil, fmt.Errorf("datetime.Instant calendar arguments must be int")
+				}
+				ints[i] = v
 			}
-			return runtime.DateTimeInstant{Unix: parsed.Unix()}, nil
+			t := time.Date(int(ints[0]), time.Month(ints[1]), int(ints[2]), int(ints[3]), int(ints[4]), int(ints[5]), 0, time.UTC)
+			return runtime.DateTimeInstant{Unix: t.Unix()}, nil
 		default:
-			return nil, fmt.Errorf("datetime.Instant expects int or string")
+			return nil, fmt.Errorf("datetime.Instant expects 0 args (now), 1 (unix/string/Instant), or 3-6 (year, month, day[, hour, minute, second])")
 		}
 	})
 	r.Register("datetime", "Duration", func(args []runtime.Value) (runtime.Value, error) {
@@ -1725,6 +1742,11 @@ func registerDatetime(r *Registry) {
 
 func DateTimeInstantMethod(receiver runtime.DateTimeInstant, name string, args []runtime.Value) (runtime.Value, error) {
 	switch name {
+	case "copy":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("datetime.Instant.copy expects no arguments")
+		}
+		return receiver, nil // value type: the returned value is the copy
 	case "unix", "toUnix":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("datetime.Instant.%s expects no arguments", name)

@@ -141,6 +141,43 @@ class DateTimeTest extends test.Test {
     }
 
     @test
+    func instantFromComponents(): void {
+        let a = datetime.Instant(2024, 1, 15, 10, 30, 0);
+        this.assertEquals(2024, a.year());
+        this.assertEquals(1, a.month());
+        this.assertEquals(15, a.day());
+        this.assertEquals(10, a.hour());
+    }
+
+    @test
+    func instantFromDateOnly(): void {
+        let a = datetime.Instant(2024, 6, 1);
+        this.assertEquals(2024, a.year());
+        this.assertEquals(0, a.hour());
+    }
+
+    @test
+    func instantNow(): void {
+        let a = datetime.Instant();
+        this.assertTrue(a.year() >= 2024);
+    }
+
+    @test
+    func instantCopy(): void {
+        let a = datetime.Instant(1700000000);
+        let b = a.copy();
+        this.assertTrue(a.equals(b));
+        let c = datetime.Instant(a);
+        this.assertTrue(a.equals(c));
+    }
+
+    @test
+    func instantLegacyForms(): void {
+        this.assertEquals(2023, datetime.Instant(1700000000).year());
+        this.assertEquals(2023, datetime.Instant("2023-11-14T22:13:20Z").year());
+    }
+
+    @test
     func zoneOffset(): void {
         let est = datetime.Zone("America/New_York");
         /* EST is UTC-5 (-18000s) on 2023-11-14. */

@@ -17,7 +17,7 @@ var (
 		"add", "sub", "addSeconds", "addDays", "addMonths", "addYears",
 		"diff", "isBefore", "isAfter", "equals",
 		"year", "month", "day", "hour", "minute", "second",
-		"weekday", "dayOfYear", "isWeekend",
+		"weekday", "dayOfYear", "isWeekend", "copy",
 	}
 	DateTimeDurationMethods = []string{
 		"seconds", "inSeconds", "inMillis", "inNanos",

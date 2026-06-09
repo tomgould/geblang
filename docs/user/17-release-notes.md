@@ -2,6 +2,15 @@
 
 ## 1.15.0
 
+### Standard library
+
+- `datetime.Instant` is the canonical datetime object: construct it from calendar
+  components (`datetime.Instant(2024, 1, 15)`), the current time
+  (`datetime.Instant()`), a unix timestamp, or an RFC3339 string; copy it with
+  `.copy()`; and list its methods with `dir`. It is immutable - every operation
+  returns a new instant. The unused interpreter-only `DateTime` reference class
+  was removed; use `datetime.Instant`.
+
 ### Fixes
 
 - Deep-cloning a module value now preserves the module's canonical identity.

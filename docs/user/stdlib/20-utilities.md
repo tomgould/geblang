@@ -106,19 +106,6 @@ Point a = Point(1, 2);
 Point b = a.withX(10);   # new immutable Point(10, 2)
 ```
 
-### `stdlib/datetime.gb` reference implementation
-
-`stdlib/datetime.gb` provides `@immutable class DateTime` as a reference
-implementation of the wither pattern. Import it like any source-stdlib module:
-
-```geblang
-import datetime;
-
-DateTime dt = DateTime(2026, 5, 17, 12, 0, 0);
-DateTime next = dt.withMonth(6);
-io.println(next.toString());   # 2026-06-17 12:00:00
-```
-
 ---
 
 ## clone - Deep Copies

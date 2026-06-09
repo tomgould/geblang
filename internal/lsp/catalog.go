@@ -1198,6 +1198,7 @@ var stdlibCatalog = map[string]moduleDoc{
 			"weekday":       fn([]string{}, "int", "ISO weekday (1=Monday .. 7=Sunday)."),
 			"dayOfYear":     fn([]string{}, "int", "Day of the year (1-366)."),
 			"isWeekend":     fn([]string{}, "bool", "Reports whether the day is Saturday or Sunday."),
+			"copy":          fn([]string{}, "Instant", "Returns an identical Instant (immutable, so a structural copy)."),
 			"toString":      fn([]string{}, "string", "Default string rendering (RFC3339)."),
 		},
 		"Duration": {

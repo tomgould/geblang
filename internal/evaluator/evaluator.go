@@ -8011,6 +8011,12 @@ func dirValue(value runtime.Value) []string {
 		names = primitiveMethodNamesFor("bool")
 	case runtime.NativeObject:
 		names = nativeObjectMethods(value.Kind)
+	case runtime.DateTimeInstant:
+		names = append([]string(nil), native.DateTimeInstantMethods...)
+	case runtime.DateTimeDuration:
+		names = append([]string(nil), native.DateTimeDurationMethods...)
+	case runtime.DateTimeZone:
+		names = append([]string(nil), native.DateTimeZoneMethods...)
 	case runtime.Function, runtime.OverloadedFunction:
 		names = []string{"call"}
 	default:
