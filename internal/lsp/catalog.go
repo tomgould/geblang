@@ -724,6 +724,7 @@ var stdlibCatalog = map[string]moduleDoc{
 			"withHeaders":   fn([]string{"dict<string, string> headers"}, "Builder", "Returns a new builder with the headers merged in."),
 			"withQuery":     fn([]string{"string name", "string value"}, "Builder", "Returns a new builder with a query-string parameter appended."),
 			"withBody":      fn([]string{"string body"}, "Builder", "Returns a new builder with the body set."),
+			"withBodyFile":  fn([]string{"string path"}, "Builder", "Returns a new builder that streams the file at path as the request body (Content-Length from the file size; the body never loads into memory)."),
 			"withJson":      fn([]string{"any payload"}, "Builder", "Returns a new builder with a JSON body and Content-Type set."),
 			"withBearer":    fn([]string{"string token"}, "Builder", "Returns a new builder with a Bearer Authorization header."),
 			"withBasicAuth": fn([]string{"string user", "string password"}, "Builder", "Returns a new builder with a Basic Authorization header."),

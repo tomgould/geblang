@@ -16,6 +16,10 @@ typed handler parameters without any framework syntax in the language itself.
 import reflect;
 ```
 
+The import is optional (1.16.0): an unshadowed bare `reflect.X(...)`
+dispatches ambiently on both backends. Importing it explicitly remains
+the documented style.
+
 ## Type introspection
 
 `typeof(x)` returns the runtime type name of any value as a string:

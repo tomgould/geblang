@@ -8,6 +8,7 @@
  */
 import test;
 import http;
+import io;
 
 class HttpRequestBuilderTest extends test.Test {
     @tag("integration")
@@ -63,5 +64,32 @@ class HttpRequestBuilderTest extends test.Test {
         this.assertTrue(r.error() != null);
         /* Back-compat: the message is also reachable via ["error"]. */
         this.assertTrue(r["error"] != null);
+    }
+
+    @test
+    func withBodyFileStreamsTheFile(): void {
+        let path = io.tempDir() + "/gb_builder_upload_test.bin";
+        io.writeText(path, "abc".repeat(500));
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+            let body = req["body"] as string;
+            return {"status": 200, "body": (body.length() as string) + ":" + body.slice(0, 3), "headers": {}};
+        });
+        let resp = http.request("http://" + http.serverAddr(server) + "/up")
+            .withMethod("PUT")
+            .withBodyFile(path)
+            .send();
+        http.close(server);
+        io.remove(path);
+        this.assertEquals("1500:abc", resp.text());
+    }
+
+    @test
+    func withBodyFileMissingFileErrors(): void {
+        let builder = http.request("http://127.0.0.1:1/up")
+            .withMethod("PUT")
+            .withBodyFile("/nonexistent/gb_upload.bin");
+        this.assertThrows(func(): void {
+            builder.send();
+        });
     }
 }

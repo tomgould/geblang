@@ -3497,6 +3497,44 @@ match ([1, 99]) {
 `, "mid 2\nzeros\nbig go 50\ngo 5\nneg 7\nflag on\nends nine 4\nother\nstmt 99\n")
 }
 
+// withBodyFile streams a file from disk as the request body (1.16.0):
+// the body never loads into a Geblang string and Content-Length comes
+// from the file size. Round-trips over a real socket on both backends.
+func TestParityRequestBuilderBodyFileStreams(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "upload.bin")
+	source := `
+import io;
+import http;
+let path = ` + strconv.Quote(path) + `;
+io.writeText(path, "stream-me-".repeat(200));
+let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+    let body = request["body"] as string;
+    let lenHeader = (request["headers"] as dict<string, any>)["Content-Length"] as string;
+    return {"status": 200, "body": "len:" + (body.length() as string) + " cl:" + lenHeader + " head:" + body.slice(0, 9)};
+}, {});
+let resp = http.request("http://" + http.serverAddr(server) + "/up")
+    .withMethod("PUT")
+    .withBodyFile(path)
+    .send();
+io.println(resp.text());
+http.close(server);
+`
+	runParityWithStdlib(t, source, "len:2000 cl:2000 head:stream-me\n")
+}
+
+// Bare reflect.* without `import reflect` is ambient on both backends,
+// for ALL reflect functions (the evaluator previously special-cased only
+// function/class/module/classes).
+func TestParityAmbientReflectWithoutImport(t *testing.T) {
+	runParity(t, `import io;
+import math;
+let f = reflect.function("math.sqrt");
+io.println(f != null);
+io.println("${reflect.parameters(f)}");
+io.println(reflect.typeOf(3));
+`, "true\n[]\nint\n")
+}
+
 func TestParityAsyncTaskDoneMethod(t *testing.T) {
 	runParity(t, `import io;
 async func noop(): void {}

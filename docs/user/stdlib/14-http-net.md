@@ -100,13 +100,27 @@ io.println(r.status());
 ```
 
 Available builder methods: `withMethod`, `withHeader`, `withHeaders`,
-`withQuery`, `withBody`, `withJson`, `withBearer`, `withBasicAuth`,
-`withTimeout`, and `send`. Because each step is immutable, sibling
-requests never leak each other's headers:
+`withQuery`, `withBody`, `withBodyFile`, `withJson`, `withBearer`,
+`withBasicAuth`, `withTimeout`, and `send`. Because each step is
+immutable, sibling requests never leak each other's headers:
 
 ```gb
 let base = http.request(url).withMethod("POST").withJson(payload);
 let withAuth = base.withBearer(token);   # base is unchanged
+```
+
+`withBodyFile(path)` streams a file from disk as the request body
+(1.16.0). The file is opened at `send()` time, `Content-Length` comes
+from the file size, and the contents never load into memory - use it for
+large uploads. `withBody`, `withJson`, and `withBodyFile` replace each
+other; the last one set wins:
+
+```gb
+let resp = http.request(uploadUrl)
+    .withMethod("PUT")
+    .withHeader("Content-Type", "application/octet-stream")
+    .withBodyFile("/var/backups/archive.tar.gz")
+    .send();
 ```
 
 The older mutating builder from `http.build(url)` (`.method`, `.header`,

@@ -45,6 +45,13 @@
   the bare type-parameter name. The bytecode VM already behaved this way;
   the evaluator now matches.
 
+### HTTP
+
+- The request builder gains `withBodyFile(path)`: the file streams from
+  disk as the request body with `Content-Length` taken from the file
+  size, so large uploads never load into memory. `withBody`, `withJson`,
+  and `withBodyFile` replace each other.
+
 ### Reflection
 
 - `reflect.function` now resolves native module functions by qualified name
@@ -58,6 +65,10 @@
   raising on the bytecode VM.
 - `reflect.module` resolves pure native modules even in loader-less
   embeddings of the VM.
+- All `reflect.*` functions dispatch without `import reflect` on the
+  evaluator, matching the VM (previously only `reflect.function`,
+  `reflect.class`, `reflect.module`, and `reflect.classes` were ambient
+  there; `reflect.parameters` and the rest required the import).
 
 ### Fixes
 
