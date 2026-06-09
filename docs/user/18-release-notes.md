@@ -2,6 +2,26 @@
 
 ## 1.16.0
 
+### Breaking: in-place collection mutators
+
+- List mutators now mutate the receiver and return it instead of
+  allocating a copy: `push`, `pop`, `prepend`, `unshift`, `insert`,
+  `removeAt`, `remove`, `reverse`, `sort`, and `sortBy`. Accumulation
+  loops are amortised O(1) per element; `xs = xs.push(v)` keeps working
+  (the reassignment is now a no-op). Code that relied on the receiver
+  being left unchanged must take a copy: `reversed()` and `sorted()` are
+  the copy variants, and `copy()` / `deepCopy()` cover the rest
+  (`xs.copy().sortBy(...)`).
+- `set.add` and `set.remove` mutate in place and return the receiver.
+- All in-place mutators raise `ImmutableError` on frozen receivers, and
+  the growth methods enforce the declared element type (`TypeError`),
+  including the compiler's fused `xs = xs.push(v)` fast path, which
+  previously skipped both checks.
+- `pop()` returns the receiver, not the removed element; use `last()`
+  before `pop()` to peek.
+- A function value now satisfies a `callable` element type in list
+  growth checks (`list<callable>.push(fn)`).
+
 ### Language
 
 - `for-in` loops and comprehensions now iterate dicts, sets, and strings

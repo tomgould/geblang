@@ -2779,7 +2779,7 @@ let e = a.removeAt(1);
 io.println(e.length() as string);
 let f = a.concat([4, 5]);
 io.println(f.length() as string);
-`, "1\n3\n1\ntrue\n4\n3\n99\n2\n5\n")
+`, "1\n3\n1\ntrue\n4\n3\n99\n3\n5\n")
 }
 
 func TestParityCollectionsModule(t *testing.T) {
@@ -3316,6 +3316,82 @@ m-int: unknown method int.bogus
 op-strmod: unsupported operands for %: string and list
 op-strminus: unsupported operands for -: string and int
 op-listplus: unsupported operands for +: list and int
+`)
+}
+
+func TestParityListMutatorsInPlace(t *testing.T) {
+	runParity(t, `import io;
+let a = [3, 1, 2];
+let b = a.push(4);
+io.println("${a} ${b}");
+b.prepend(0);
+io.println("${a}");
+a.insert(2, 9);
+io.println("${a}");
+a.removeAt(2);
+a.remove(0);
+io.println("${a}");
+a.pop();
+io.println("${a}");
+a.reverse();
+io.println("${a}");
+io.println("${a.sort()}");
+io.println("${a}");
+let c = [5, 6].push(7).push(8);
+io.println("${c}");
+let orig = [3, 1];
+let copySorted = orig.sorted();
+let copyRev = orig.reversed();
+io.println("${orig} ${copySorted} ${copyRev}");
+`, `[3, 1, 2, 4] [3, 1, 2, 4]
+[0, 3, 1, 2, 4]
+[0, 3, 9, 1, 2, 4]
+[3, 1, 2, 4]
+[3, 1, 2]
+[2, 1, 3]
+[1, 2, 3]
+[1, 2, 3]
+[5, 6, 7, 8]
+[3, 1] [1, 3] [1, 3]
+`)
+}
+
+func TestParityListMutatorGuards(t *testing.T) {
+	runParity(t, `import io;
+import freeze;
+let f = freeze.shallow([1, 2]);
+try { f.push(3); } catch (ImmutableError e) { io.println("frozen: ${e.message}"); }
+try { f.sort(); } catch (ImmutableError e) { io.println("frozen2: ${e.message}"); }
+list<int> typed = [1, 2];
+any bad = "x";
+try { typed.push(bad); } catch (TypeError e) { io.println("typed: ${e.message}"); }
+let s = {1, 2};
+let s2 = s.add(3);
+io.println("${s} ${s2}");
+s.remove(1);
+io.println("${s}");
+`, `frozen: cannot modify frozen list
+frozen2: cannot modify frozen list
+typed: cannot push string to list<int>
+set{1, 2, 3} set{1, 2, 3}
+set{2, 3}
+`)
+}
+
+func TestParityFusedAccumulatorChecksGuards(t *testing.T) {
+	runParity(t, `import io;
+import freeze;
+let xs = freeze.shallow([1]);
+try { xs = xs.push(2); } catch (ImmutableError e) { io.println("caught ${e.message}"); }
+io.println("${xs}");
+list<int> nums = [1];
+any bad2 = "bad";
+try { nums = nums.push(bad2); } catch (TypeError e) { io.println("typed ok"); }
+io.println("${nums}");
+`, `caught cannot modify frozen list
+[1]
+typed ok
+[1]
 `)
 }
 
@@ -6294,46 +6370,50 @@ io.println(r);
 }
 
 func TestParityListCopyMethods(t *testing.T) {
-	// reverse returns a new list; original unchanged.
+	// reverse mutates in place and returns the receiver (1.16.0).
 	runParity(t, `import io;
 let xs = [1, 2, 3];
 io.println(xs.reverse());
 io.println(xs);
-`, "[3, 2, 1]\n[1, 2, 3]\n")
+`, "[3, 2, 1]\n[3, 2, 1]\n")
 
-	// reversed is an alias of reverse.
+	// reversed is the copy variant; original unchanged.
 	runParity(t, `import io;
-io.println([1, 2, 3].reversed());
-`, "[3, 2, 1]\n")
+let xs = [1, 2, 3];
+io.println(xs.reversed());
+io.println(xs);
+`, "[3, 2, 1]\n[1, 2, 3]\n")
 
 	// reverse on empty.
 	runParity(t, `import io; io.println(([] as list<int>).reverse());`, "[]\n")
 
-	// reverse chains after sorted.
+	// reverse chains after sorted (sorted copies, so the source survives).
 	runParity(t, `import io;
-io.println([3, 1, 4, 1, 5].sorted().reverse());
-`, "[5, 4, 3, 1, 1]\n")
+let src = [3, 1, 4, 1, 5];
+io.println(src.sorted().reverse());
+io.println(src);
+`, "[5, 4, 3, 1, 1]\n[3, 1, 4, 1, 5]\n")
 
-	// prepend returns a new list with value at the front.
+	// prepend mutates in place and returns the receiver.
 	runParity(t, `import io;
 let xs = [2, 3];
 io.println(xs.prepend(1));
 io.println(xs);
-`, "[1, 2, 3]\n[2, 3]\n")
+`, "[1, 2, 3]\n[1, 2, 3]\n")
 
 	// unshift is an alias of prepend.
 	runParity(t, `import io;
 io.println([2, 3].unshift(1));
 `, "[1, 2, 3]\n")
 
-	// remove drops the first matching element.
+	// remove drops the first matching element in place.
 	runParity(t, `import io;
 let xs = [3, 1, 4, 1, 5];
 io.println(xs.remove(1));
 io.println(xs);
-`, "[3, 4, 1, 5]\n[3, 1, 4, 1, 5]\n")
+`, "[3, 4, 1, 5]\n[3, 4, 1, 5]\n")
 
-	// remove with no match returns an equivalent list.
+	// remove with no match leaves the list unchanged.
 	runParity(t, `import io;
 io.println([1, 2, 3].remove(99));
 `, "[1, 2, 3]\n")

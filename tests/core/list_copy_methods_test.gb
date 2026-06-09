@@ -1,28 +1,31 @@
 /**
- * @title Copy-and-return list methods (1.5.3)
+ * @title In-place list mutators and their copy variants (1.16.0)
  * @summary list.reverse(), list.prepend(v), list.unshift(v) and
- * list.remove(v) return a new list without mutating the receiver,
- * matching the sort / sorted family.
+ * list.remove(v) mutate the receiver and return it; reversed() and
+ * sorted() are the copy-and-return variants that leave the receiver
+ * unchanged.
  */
 import test;
 
 class ListCopyMethodsTest extends test.Test {
 
     @test
-    func reverseReturnsNewList(): void {
+    func reverseMutatesAndReturnsReceiver(): void {
         let xs = [1, 2, 3];
         let ys = xs.reverse();
         this.assertEquals(3, ys[0]);
         this.assertEquals(2, ys[1]);
         this.assertEquals(1, ys[2]);
-        this.assertEquals(1, xs[0]);
-        this.assertEquals(3, xs[2]);
+        this.assertEquals(3, xs[0]);
+        this.assertEquals(1, xs[2]);
     }
 
     @test
-    func reversedAliasMatches(): void {
+    func reversedIsTheCopyVariant(): void {
         let xs = [1, 2, 3];
-        this.assertEquals(xs.reverse(), xs.reversed());
+        let ys = xs.reversed();
+        this.assertEquals([3, 2, 1], ys);
+        this.assertEquals([1, 2, 3], xs);
     }
 
     @test
@@ -43,20 +46,22 @@ class ListCopyMethodsTest extends test.Test {
         let xs = [3, 1, 4, 1, 5];
         let desc = xs.sorted().reverse();
         this.assertEquals([5, 4, 3, 1, 1], desc);
+        this.assertEquals([3, 1, 4, 1, 5], xs);
     }
 
     @test
-    func prependReturnsNewList(): void {
+    func prependMutatesAndReturnsReceiver(): void {
         let xs = [2, 3];
         let ys = xs.prepend(1);
         this.assertEquals([1, 2, 3], ys);
-        this.assertEquals([2, 3], xs);
+        this.assertEquals([1, 2, 3], xs);
     }
 
     @test
     func unshiftIsAliasOfPrepend(): void {
         let xs = [2, 3];
-        this.assertEquals(xs.prepend(1), xs.unshift(1));
+        xs.unshift(1);
+        this.assertEquals([1, 2, 3], xs);
     }
 
     @test
@@ -66,14 +71,14 @@ class ListCopyMethodsTest extends test.Test {
     }
 
     @test
-    func removeFirstOccurrence(): void {
+    func removeFirstOccurrenceInPlace(): void {
         let xs = [3, 1, 4, 1, 5];
         this.assertEquals([3, 4, 1, 5], xs.remove(1));
-        this.assertEquals([3, 1, 4, 1, 5], xs);
+        this.assertEquals([3, 4, 1, 5], xs);
     }
 
     @test
-    func removeMissingReturnsEquivalent(): void {
+    func removeMissingLeavesUnchanged(): void {
         let xs = [1, 2, 3];
         this.assertEquals([1, 2, 3], xs.remove(99));
     }
@@ -82,5 +87,14 @@ class ListCopyMethodsTest extends test.Test {
     func removeFromEmpty(): void {
         let xs = [] as list<int>;
         this.assertEquals(0, xs.remove(1).length());
+    }
+
+    @test
+    func pushAliasesAndChains(): void {
+        let a = [1];
+        let b = a.push(2);
+        b.push(3);
+        this.assertEquals([1, 2, 3], a);
+        this.assertEquals([4, 5, 6], [4].push(5).push(6));
     }
 }

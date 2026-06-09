@@ -410,17 +410,21 @@ io.println(data.contains("middle")); # true
 io.println(data.hasKey("missing"));  # false
 ```
 
-List mutation: `append` and `extend` modify the list in place and return `null`.
-`push` and `removeAt` return a new list; the original is unchanged. Dict
-mutators (`set`, `delete`) always modify in place.
+List mutation works in place (1.16.0): `push`, `removeAt`, and the other
+mutators modify the receiver and return it, so calls chain. `append` and
+`extend` also mutate in place but return `null`. Dict mutators (`set`,
+`delete`) modify in place too.
 
 ```gb
 nums.append(4);          # in place; nums is now [1, 2, 3, 4]
-nums = nums.push(5);     # returns new list; assign back to update nums
-nums = nums.removeAt(0); # returns new list without index 0
+nums.push(5);            # in place; returns nums, so pushes chain
+nums.removeAt(0);        # in place; removes index 0
 scores.set("linus", 7);  # in place
 scores.delete("ada");    # in place
 ```
+
+Use `copy()` (or `sorted()` / `reversed()`) when you need a modified copy
+that leaves the original untouched.
 
 Use `collections.map`, `collections.filter`, and related helpers when you want
 to return a transformed collection rather than update the original.

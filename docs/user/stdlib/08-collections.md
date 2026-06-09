@@ -45,17 +45,21 @@ to another variable, passing it to a function, or storing it in a field shares
 the same underlying list. In-place mutations are visible through every
 reference.
 
-Two flavours of mutation method exist:
+Mutation methods work in place (1.16.0):
 
-- **In-place methods** mutate the receiver and return `null`. Aliases of the
-  same list see the change. These are `set`, `append`, `extend`, and `clear`,
-  plus index assignment (`xs[0] = v`). On a frozen list they raise
-  `ImmutableError`.
+- **In-place methods returning the receiver** mutate the list and return it,
+  so calls chain and aliases see the change. These are `push`, `pop`,
+  `prepend`, `unshift`, `insert`, `removeAt`, `remove`, `reverse`, `sort`,
+  and `sortBy`. Growth methods amortise like a dynamic array: a `push` loop
+  is O(1) per element.
+- **In-place methods returning `null`**: `set`, `append`, `extend`, and
+  `clear`, plus index assignment (`xs[0] = v`).
 - **Copy-and-return methods** allocate a new list and leave the receiver
-  unchanged. These are `push`, `pop`, `prepend`, `insert`, `concat`, `reverse`,
-  `sort`, `slice`, `map`, `filter`, and friends. To accumulate, either reassign
-  the result (`xs = xs.push(item);`) or use the in-place `append` for
-  amortised O(1) growth.
+  unchanged: `reversed`, `sorted`, `copy`, `deepCopy`, `concat`, `slice`,
+  `map`, `filter`, and the other transforms. Use `xs.copy().sortBy(...)`
+  when you need a sorted copy keyed by a selector.
+
+All in-place mutators raise `ImmutableError` on a frozen list.
 
 Generic annotations such as `list<int>` are checked when values cross typed
 declaration and function/method call boundaries. They are not a permanent
@@ -140,21 +144,26 @@ io.println("geblang"[::-1]); # gnalbeg
 | `extend(other)` | `null` | Append every element of `other` |
 | `clear()` | `null` | Empty the list |
 
+**In-place, returning the receiver** (1.16.0):
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `push(value)` | `list<T>` | Append `value`; returns the same list |
+| `pop()` | `list<T>` | Remove the last element (no-op when empty) |
+| `prepend(value)` | `list<T>` | Insert `value` at the front |
+| `unshift(value)` | `list<T>` | Alias for `prepend` |
+| `insert(index, value)` | `list<T>` | Insert `value` before `index` |
+| `removeAt(index)` | `list<T>` | Remove the element at `index` |
+| `remove(value)` | `list<T>` | Remove the first occurrence of `value`; no-op if absent |
+
 **Copy-and-return** (allocate a new list; receiver unchanged):
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `push(value)` | `list<T>` | New list with `value` appended |
-| `pop()` | `list<T>` | New list with the last element removed |
-| `prepend(value)` | `list<T>` | New list with `value` at the front |
-| `unshift(value)` | `list<T>` | Alias for `prepend` |
-| `insert(index, value)` | `list<T>` | New list with `value` inserted before `index` |
-| `removeAt(index)` | `list<T>` | New list with the element at `index` removed |
-| `remove(value)` | `list<T>` | New list with the first occurrence of `value` removed. Returns an equivalent list if `value` is absent |
 | `copy()` | `list<T>` | New list with the same elements (shallow copy) |
 | `deepCopy()` | `list<T>` | New list with nested containers and objects cloned recursively |
-| `reverse()` | `list<T>` | New list with elements in reverse order |
-| `reversed()` | `list<T>` | Alias for `reverse` |
+| `reversed()` | `list<T>` | New list with elements in reverse order |
+| `sorted([callback])` | `list<T>` | Sorted copy |
 
 ```gb
 import io;
@@ -169,21 +178,23 @@ io.println(words);          # [a, b, c, d, e, f]
 words.set(0, "z");
 io.println(words);          # [z, b, c, d, e, f]
 
-# Copy-and-return: receiver unchanged.
-let bigger = words.push("g");
-io.println(words);          # [z, b, c, d, e, f]
-io.println(bigger);         # [z, b, c, d, e, f, g]
+# push mutates in place and returns the receiver, so it chains.
+let same = words.push("g");
+io.println(words);          # [z, b, c, d, e, f, g]
+io.println(same);           # [z, b, c, d, e, f, g] (alias of words)
+words.push("h").push("i");
+io.println(words.length()); # 9
 
 # Aliases see in-place mutations.
 let alias = words;
 words.append("X");
-io.println(alias);          # [z, b, c, d, e, f, X]
+io.println(alias.last());   # X
 
-# Reassign the result of a copy-and-return method to accumulate
-# without the in-place fast path.
-let snapshot = ["start"];
-snapshot = snapshot.push("end");
-io.println(snapshot);       # [start, end]
+# Copy first when you need to keep the original.
+let snapshot = ["a", "b"];
+let extendedCopy = snapshot.copy().push("c");
+io.println(snapshot);       # [a, b]
+io.println(extendedCopy);   # [a, b, c]
 
 # clear empties the list (and every alias of it).
 words.clear();
@@ -194,11 +205,11 @@ io.println(words);          # []
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `reverse()` | `list<T>` | New list with elements in reverse order |
-| `reversed()` | `list<T>` | Alias for `reverse` |
-| `sort([callback])` | `list<T>` | Sorted copy; optional `(a,b)->bool` less-than or `(a,b)->int` comparator |
-| `sorted([callback])` | `list<T>` | Alias for `sort` |
-| `sortBy(selector[, descending])` | `list<T>` | Sorted copy by selector key; `true` for descending |
+| `reverse()` | `list<T>` | Reverse in place; returns the receiver |
+| `reversed()` | `list<T>` | New reversed list; receiver unchanged |
+| `sort([callback])` | `list<T>` | Sort in place; optional `(a,b)->bool` less-than or `(a,b)->int` comparator; returns the receiver |
+| `sorted([callback])` | `list<T>` | Sorted copy; receiver unchanged |
+| `sortBy(selector[, descending])` | `list<T>` | Sort in place by selector key (`true` for descending); returns the receiver |
 | `binarySearch(value)` | `int` | Index of `value` in a sorted list, or -1 |
 | `binarySearchBy(selector, key)` | `int` | Index whose selector key equals `key` in a list sorted by it, or -1 |
 | `concat(other)` | `list<T>` | New list with `other` appended |
@@ -519,8 +530,8 @@ io.println(s.contains("grape"));  # false
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `add(value)` | `set<T>` | New set with `value` included |
-| `remove(value)` | `set<T>` | New set with `value` excluded |
+| `add(value)` | `set<T>` | Add `value` in place; returns the receiver (1.16.0) |
+| `remove(value)` | `set<T>` | Remove `value` in place; returns the receiver (1.16.0) |
 
 ```gb
 import io;

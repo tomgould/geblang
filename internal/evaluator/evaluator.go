@@ -3050,6 +3050,9 @@ func typeNameSatisfies(have, want string) bool {
 		}
 		return false
 	}
+	if isCallableTypeName(want) && isCallableTypeName(have) {
+		return true
+	}
 	return typeNamesEqual(have, want)
 }
 
@@ -7444,6 +7447,37 @@ func (e *Evaluator) resolveUserIterator(instance *runtime.Instance) (*runtime.In
 		current = inst
 	}
 	return nil, nil, true, fmt.Errorf("__iter chain too deep")
+}
+
+// sortElements stably sorts elements in place, via the optional
+// less/comparator callback in args.
+func (e *Evaluator) sortElements(elements []runtime.Value, args []runtime.Value) error {
+	var sortErr error
+	sort.SliceStable(elements, func(i, j int) bool {
+		if sortErr != nil {
+			return false
+		}
+		if len(args) == 1 {
+			result, err := e.callValue(args[0], []runtime.Value{elements[i], elements[j]})
+			if err != nil {
+				sortErr = err
+				return false
+			}
+			less, err := native.SortLess(result)
+			if err != nil {
+				sortErr = err
+				return false
+			}
+			return less
+		}
+		cmp, err := e.compareValues(elements[i], elements[j])
+		if err != nil {
+			sortErr = err
+			return false
+		}
+		return cmp < 0
+	})
+	return sortErr
 }
 
 func (e *Evaluator) iterableValues(value runtime.Value) ([]runtime.Value, error) {
@@ -23695,16 +23729,20 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 1 {
 				return nil, fmt.Errorf("set.add expects one argument")
 			}
-			elements := cloneSetEntries(value.Elements)
-			elements[dictKey(args[0])] = runtime.SetEntry{Value: args[0]}
-			return runtime.Set{Elements: elements}, nil
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen set"}}
+			}
+			value.Elements[dictKey(args[0])] = runtime.SetEntry{Value: args[0]}
+			return value, nil
 		case "remove":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("set.remove expects one argument")
 			}
-			elements := cloneSetEntries(value.Elements)
-			delete(elements, dictKey(args[0]))
-			return runtime.Set{Elements: elements}, nil
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen set"}}
+			}
+			delete(value.Elements, dictKey(args[0]))
+			return value, nil
 		case "toList":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("set.toList expects no arguments")
@@ -23905,10 +23943,14 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.push expects one argument")
 			}
-			newElements := make([]runtime.Value, len(value.Elements)+1)
-			copy(newElements, value.Elements)
-			newElements[len(value.Elements)] = args[0]
-			return &runtime.List{Elements: newElements}, nil
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
+			}
+			if len(value.ElementTypes) > 0 && !typeNameSatisfies(args[0].TypeName(), value.ElementTypes[0]) {
+				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot push %s to list<%s>", args[0].TypeName(), value.ElementTypes[0])}}
+			}
+			value.Elements = append(value.Elements, args[0])
+			return value, nil
 		case "append":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.append expects one argument")
@@ -23964,12 +24006,13 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.pop expects no arguments")
 			}
-			if len(value.Elements) == 0 {
-				return &runtime.List{Elements: nil}, nil
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 			}
-			newElements := make([]runtime.Value, len(value.Elements)-1)
-			copy(newElements, value.Elements[:len(value.Elements)-1])
-			return &runtime.List{Elements: newElements}, nil
+			if len(value.Elements) > 0 {
+				value.Elements = value.Elements[:len(value.Elements)-1]
+			}
+			return value, nil
 		case "insert":
 			if len(args) != 2 {
 				return nil, fmt.Errorf("list.insert expects two arguments (index, item)")
@@ -23987,11 +24030,16 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if i > len(value.Elements) {
 				i = len(value.Elements)
 			}
-			newElements := make([]runtime.Value, len(value.Elements)+1)
-			copy(newElements, value.Elements[:i])
-			newElements[i] = args[1]
-			copy(newElements[i+1:], value.Elements[i:])
-			return &runtime.List{Elements: newElements}, nil
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
+			}
+			if len(value.ElementTypes) > 0 && !typeNameSatisfies(args[1].TypeName(), value.ElementTypes[0]) {
+				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot insert %s to list<%s>", args[1].TypeName(), value.ElementTypes[0])}}
+			}
+			value.Elements = append(value.Elements, nil)
+			copy(value.Elements[i+1:], value.Elements[i:])
+			value.Elements[i] = args[1]
+			return value, nil
 		case "removeAt":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.removeAt expects one argument")
@@ -24006,10 +24054,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if i < 0 || i >= len(value.Elements) {
 				return nil, fmt.Errorf("list index out of range")
 			}
-			newElements := make([]runtime.Value, len(value.Elements)-1)
-			copy(newElements, value.Elements[:i])
-			copy(newElements[i:], value.Elements[i+1:])
-			return &runtime.List{Elements: newElements}, nil
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
+			}
+			value.Elements = append(value.Elements[:i], value.Elements[i+1:]...)
+			return value, nil
 		case "concat":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.concat expects one argument")
@@ -24124,40 +24173,33 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) > 1 {
 				return nil, fmt.Errorf("list.%s expects zero or one argument", name)
 			}
+			if name == "sort" {
+				if value.Frozen {
+					return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
+				}
+				if sortErr := e.sortElements(value.Elements, args); sortErr != nil {
+					return nil, sortErr
+				}
+				return value, nil
+			}
 			newElements := make([]runtime.Value, len(value.Elements))
 			copy(newElements, value.Elements)
-			var sortErr error
-			sort.SliceStable(newElements, func(i, j int) bool {
-				if sortErr != nil {
-					return false
-				}
-				if len(args) == 1 {
-					result, err := e.callValue(args[0], []runtime.Value{newElements[i], newElements[j]})
-					if err != nil {
-						sortErr = err
-						return false
-					}
-					less, err := native.SortLess(result)
-					if err != nil {
-						sortErr = err
-						return false
-					}
-					return less
-				}
-				cmp, err := e.compareValues(newElements[i], newElements[j])
-				if err != nil {
-					sortErr = err
-					return false
-				}
-				return cmp < 0
-			})
-			if sortErr != nil {
+			if sortErr := e.sortElements(newElements, args); sortErr != nil {
 				return nil, sortErr
 			}
 			return &runtime.List{Elements: newElements}, nil
 		case "reverse", "reversed":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.%s expects no arguments", name)
+			}
+			if name == "reverse" {
+				if value.Frozen {
+					return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
+				}
+				for i, j := 0, len(value.Elements)-1; i < j; i, j = i+1, j-1 {
+					value.Elements[i], value.Elements[j] = value.Elements[j], value.Elements[i]
+				}
+				return value, nil
 			}
 			newElements := make([]runtime.Value, len(value.Elements))
 			for i, el := range value.Elements {
@@ -24168,13 +24210,22 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.%s expects one argument", name)
 			}
-			newElements := make([]runtime.Value, len(value.Elements)+1)
-			newElements[0] = args[0]
-			copy(newElements[1:], value.Elements)
-			return &runtime.List{Elements: newElements, ElementTypes: value.ElementTypes}, nil
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
+			}
+			if len(value.ElementTypes) > 0 && !typeNameSatisfies(args[0].TypeName(), value.ElementTypes[0]) {
+				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot %s %s to list<%s>", name, args[0].TypeName(), value.ElementTypes[0])}}
+			}
+			value.Elements = append(value.Elements, nil)
+			copy(value.Elements[1:], value.Elements)
+			value.Elements[0] = args[0]
+			return value, nil
 		case "remove":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.remove expects one argument")
+			}
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 			}
 			for i, el := range value.Elements {
 				eq, err := e.valuesEqual(el, args[0])
@@ -24182,15 +24233,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					return nil, err
 				}
 				if eq {
-					newElements := make([]runtime.Value, len(value.Elements)-1)
-					copy(newElements, value.Elements[:i])
-					copy(newElements[i:], value.Elements[i+1:])
-					return &runtime.List{Elements: newElements, ElementTypes: value.ElementTypes}, nil
+					value.Elements = append(value.Elements[:i], value.Elements[i+1:]...)
+					break
 				}
 			}
-			newElements := make([]runtime.Value, len(value.Elements))
-			copy(newElements, value.Elements)
-			return &runtime.List{Elements: newElements, ElementTypes: value.ElementTypes}, nil
+			return value, nil
 		case "flatten":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("list.flatten expects no arguments")
@@ -24637,6 +24684,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 1 && len(args) != 2 {
 				return nil, fmt.Errorf("list.sortBy expects a selector and an optional descending flag")
 			}
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
+			}
 			descending := false
 			if len(args) == 2 {
 				b, ok := args[1].(runtime.Bool)
@@ -24675,11 +24725,10 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if sortErr != nil {
 				return nil, sortErr
 			}
-			result := make([]runtime.Value, len(pairs))
 			for i, p := range pairs {
-				result[i] = p.el
+				value.Elements[i] = p.el
 			}
-			return &runtime.List{Elements: result}, nil
+			return value, nil
 		case "topBy":
 			if len(args) != 2 {
 				return nil, fmt.Errorf("list.topBy expects two arguments (function, count)")

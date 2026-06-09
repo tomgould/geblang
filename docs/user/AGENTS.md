@@ -98,8 +98,8 @@ dict<string, int>  d  = {"a": 1, "b": 2};
 set<string>        s  = {"x", "y"} as set<string>;
 ```
 
-- **Lists are immutable**. `xs.push(x)` returns a NEW list.
-  Reassign: `xs = xs.push(x);`.
+- **List mutators work in place** (1.16.0). `xs.push(x)` appends to
+  `xs` and returns it, so pushes chain; no reassignment needed.
 - **Dicts iterate in insertion order**. The same applies to
   `.keys()`, `.values()`, `.items()`, and `for ... in dict`.
 - **Sets need an explicit type cast** at construction because
@@ -296,7 +296,7 @@ chain.
 - **Joint dict iteration**: `for (k, v in d.items()) { }`.
 - **List filter inline**: `xs.filter(func(int n): bool { return n > 0; })`.
 - **Null coalesce**: `let v = maybe ?? fallback;`.
-- **Reassign through immutable list**: `xs = xs.push(item);`.
+- **Accumulate with push**: `xs.push(item);` mutates in place (1.16.0).
 - **Single-token YAML/parameter**: a `"%key%"` string that wraps
   exactly one marker preserves the referenced value's native type.
 
@@ -370,7 +370,8 @@ Run with `geblang test path/`. Asserters:
 
 1. **`//` is integer division**, not a comment.
 2. **Don't shadow stdlib module filenames** in your source files.
-3. **Lists are immutable**. `xs.push(item)` returns a new list.
+3. **List mutators are in-place** (1.16.0). `xs.push(item)` mutates
+   `xs` and returns it; use `copy()`/`sorted()`/`reversed()` for copies.
 4. **`as` is a cast, not a type test**. It throws on mismatch.
    Use `instanceof` for tests.
 5. **Dict iteration is insertion order**, not alphabetical, not

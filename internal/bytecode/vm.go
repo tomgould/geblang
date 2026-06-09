@@ -1280,6 +1280,15 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 		case OpAppendLocalList, OpAppendGlobalList:
 			if err := vm.appendListSlot(instruction); err != nil {
+				var typed vmTypedError
+				if errors.As(err, &typed) {
+					nextIP, throwErr := vm.throwTyped(instruction, ip, typed.class, typed.message)
+					if throwErr != nil {
+						return throwErr
+					}
+					ip = nextIP
+					continue
+				}
 				return err
 			}
 		case OpJumpIfNotLessInt, OpJumpIfNotLessEqualInt, OpJumpIfNotGreaterInt,
@@ -3876,6 +3885,12 @@ func (vm *VM) appendListSlot(instruction Instruction) error {
 	list, ok := current.(*runtime.List)
 	if !ok {
 		return vm.runtimeError(instruction, "list append requires list, got %s", current.TypeName())
+	}
+	if list.Frozen {
+		return vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
+	}
+	if len(list.ElementTypes) > 0 && !vmTypeNameSatisfies(value.TypeName(), list.ElementTypes[0]) {
+		return vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot push %s to list<%s>", value.TypeName(), list.ElementTypes[0])}
 	}
 	list.Elements = append(list.Elements, value)
 	switch instruction.Op {
@@ -9812,6 +9827,37 @@ func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Valu
 	}
 }
 
+// sortElements stably sorts elements in place, via the optional
+// less/comparator callback in args.
+func (vm *VM) sortElements(elements []runtime.Value, args []runtime.Value) error {
+	var sortErr error
+	sort.SliceStable(elements, func(i, j int) bool {
+		if sortErr != nil {
+			return false
+		}
+		if len(args) == 1 {
+			result, err := vm.callCallable(args[0], []runtime.Value{elements[i], elements[j]})
+			if err != nil {
+				sortErr = err
+				return false
+			}
+			less, err := native.SortLess(result)
+			if err != nil {
+				sortErr = err
+				return false
+			}
+			return less
+		}
+		cmp, err := valuesCompare(elements[i], elements[j])
+		if err != nil {
+			sortErr = err
+			return false
+		}
+		return cmp < 0
+	})
+	return sortErr
+}
+
 func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List, name string, args []runtime.Value) (runtime.Value, bool, error) {
 	switch name {
 	case "map":
@@ -9912,42 +9958,28 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			}
 		}
 		return runtime.NewInt64(int64(n)), true, nil
-	case "sorted", "sort":
+	case "sorted":
 		if len(args) > 1 {
 			return nil, true, fmt.Errorf("list.%s expects zero or one argument", name)
 		}
 		newElements := make([]runtime.Value, len(list.Elements))
 		copy(newElements, list.Elements)
-		var sortErr error
-		sort.SliceStable(newElements, func(i, j int) bool {
-			if sortErr != nil {
-				return false
-			}
-			if len(args) == 1 {
-				result, err := vm.callCallable(args[0], []runtime.Value{newElements[i], newElements[j]})
-				if err != nil {
-					sortErr = err
-					return false
-				}
-				less, err := native.SortLess(result)
-				if err != nil {
-					sortErr = err
-					return false
-				}
-				return less
-			}
-			cmp, err := valuesCompare(newElements[i], newElements[j])
-			if err != nil {
-				sortErr = err
-				return false
-			}
-			return cmp < 0
-		})
-		if sortErr != nil {
+		if sortErr := vm.sortElements(newElements, args); sortErr != nil {
 			return nil, true, sortErr
 		}
 		return &runtime.List{Elements: newElements}, true, nil
-	case "reverse", "reversed":
+	case "sort":
+		if len(args) > 1 {
+			return nil, true, fmt.Errorf("list.%s expects zero or one argument", name)
+		}
+		if list.Frozen {
+			return nil, true, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
+		}
+		if sortErr := vm.sortElements(list.Elements, args); sortErr != nil {
+			return nil, true, sortErr
+		}
+		return list, true, nil
+	case "reversed":
 		if len(args) != 0 {
 			return nil, true, fmt.Errorf("list.%s expects no arguments", name)
 		}
@@ -9956,29 +9988,45 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 			newElements[len(list.Elements)-1-i] = el
 		}
 		return &runtime.List{Elements: newElements, ElementTypes: list.ElementTypes}, true, nil
+	case "reverse":
+		if len(args) != 0 {
+			return nil, true, fmt.Errorf("list.%s expects no arguments", name)
+		}
+		if list.Frozen {
+			return nil, true, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
+		}
+		for i, j := 0, len(list.Elements)-1; i < j; i, j = i+1, j-1 {
+			list.Elements[i], list.Elements[j] = list.Elements[j], list.Elements[i]
+		}
+		return list, true, nil
 	case "prepend", "unshift":
 		if len(args) != 1 {
 			return nil, true, fmt.Errorf("list.%s expects one argument", name)
 		}
-		newElements := make([]runtime.Value, len(list.Elements)+1)
-		newElements[0] = args[0]
-		copy(newElements[1:], list.Elements)
-		return &runtime.List{Elements: newElements, ElementTypes: list.ElementTypes}, true, nil
+		if list.Frozen {
+			return nil, true, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
+		}
+		if len(list.ElementTypes) > 0 && !vmTypeNameSatisfies(args[0].TypeName(), list.ElementTypes[0]) {
+			return nil, true, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot %s %s to list<%s>", name, args[0].TypeName(), list.ElementTypes[0])}
+		}
+		list.Elements = append(list.Elements, nil)
+		copy(list.Elements[1:], list.Elements)
+		list.Elements[0] = args[0]
+		return list, true, nil
 	case "remove":
 		if len(args) != 1 {
 			return nil, true, fmt.Errorf("list.remove expects one argument")
 		}
+		if list.Frozen {
+			return nil, true, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
+		}
 		for i, el := range list.Elements {
 			if valuesEqual(el, args[0]) {
-				newElements := make([]runtime.Value, len(list.Elements)-1)
-				copy(newElements, list.Elements[:i])
-				copy(newElements[i:], list.Elements[i+1:])
-				return &runtime.List{Elements: newElements, ElementTypes: list.ElementTypes}, true, nil
+				list.Elements = append(list.Elements[:i], list.Elements[i+1:]...)
+				break
 			}
 		}
-		newElements := make([]runtime.Value, len(list.Elements))
-		copy(newElements, list.Elements)
-		return &runtime.List{Elements: newElements, ElementTypes: list.ElementTypes}, true, nil
+		return list, true, nil
 	case "flatten":
 		if len(args) != 0 {
 			return nil, true, fmt.Errorf("list.flatten expects no arguments")
@@ -10415,6 +10463,9 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		if len(args) != 1 && len(args) != 2 {
 			return nil, true, fmt.Errorf("list.sortBy expects a selector and an optional descending flag")
 		}
+		if list.Frozen {
+			return nil, true, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
+		}
 		descending := false
 		if len(args) == 2 {
 			b, ok := args[1].(runtime.Bool)
@@ -10453,11 +10504,10 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		if sortErr != nil {
 			return nil, true, sortErr
 		}
-		result := make([]runtime.Value, len(pairs))
 		for i, p := range pairs {
-			result[i] = p.el
+			list.Elements[i] = p.el
 		}
-		return &runtime.List{Elements: result}, true, nil
+		return list, true, nil
 	case "topBy":
 		if len(args) != 2 {
 			return nil, true, fmt.Errorf("list.topBy expects two arguments (function, count)")
@@ -11621,7 +11671,14 @@ func vmTypeNameSatisfies(have, want string) bool {
 		}
 		return false
 	}
+	if vmCallableTypeName(want) && vmCallableTypeName(have) {
+		return true
+	}
 	return strings.EqualFold(have, want)
+}
+
+func vmCallableTypeName(name string) bool {
+	return strings.EqualFold(name, "func") || strings.EqualFold(name, "callable") || strings.EqualFold(name, "function")
 }
 
 func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
@@ -12781,6 +12838,10 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if list, ok := receiver.(*runtime.List); ok {
 		result, handled, err := vm.listHigherOrderMethod(instruction, list, nameValue.Value, args)
 		if err != nil {
+			var typed vmTypedError
+			if errors.As(err, &typed) {
+				return vm.throwTyped(instruction, ip, typed.class, typed.message)
+			}
 			return 0, vm.runtimeError(instruction, "%s", err.Error())
 		}
 		if handled {
@@ -15187,11 +15248,16 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			if i > len(list.Elements) {
 				i = len(list.Elements)
 			}
-			newElements := make([]runtime.Value, len(list.Elements)+1)
-			copy(newElements, list.Elements[:i])
-			newElements[i] = args[1]
-			copy(newElements[i+1:], list.Elements[i:])
-			return &runtime.List{Elements: newElements, ElementTypes: list.ElementTypes}, nil
+			if list.Frozen {
+				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
+			}
+			if len(list.ElementTypes) > 0 && !vmTypeNameSatisfies(args[1].TypeName(), list.ElementTypes[0]) {
+				return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot insert %s to list<%s>", args[1].TypeName(), list.ElementTypes[0])}
+			}
+			list.Elements = append(list.Elements, nil)
+			copy(list.Elements[i+1:], list.Elements[i:])
+			list.Elements[i] = args[1]
+			return list, nil
 		}
 		return nil, fmt.Errorf("%s has no method insert", receiver.TypeName())
 	case "add":
@@ -15202,18 +15268,22 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if !ok {
 			return nil, fmt.Errorf("%s has no method add", receiver.TypeName())
 		}
-		elements := cloneSetEntries(value.Elements)
-		elements[native.DictKey(args[0])] = runtime.SetEntry{Value: args[0]}
-		return runtime.Set{Elements: elements}, nil
+		if value.Frozen {
+			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen set"}
+		}
+		value.Elements[native.DictKey(args[0])] = runtime.SetEntry{Value: args[0]}
+		return value, nil
 	case "remove":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("remove expects one argument")
 		}
 		switch v := receiver.(type) {
 		case runtime.Set:
-			elements := cloneSetEntries(v.Elements)
-			delete(elements, native.DictKey(args[0]))
-			return runtime.Set{Elements: elements}, nil
+			if v.Frozen {
+				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen set"}
+			}
+			delete(v.Elements, native.DictKey(args[0]))
+			return v, nil
 		case runtime.Dict:
 			if v.Frozen {
 				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen dict"}
@@ -15405,10 +15475,14 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if !ok {
 			return nil, fmt.Errorf("%s has no method push", receiver.TypeName())
 		}
-		newElements := make([]runtime.Value, len(list.Elements)+1)
-		copy(newElements, list.Elements)
-		newElements[len(list.Elements)] = args[0]
-		return &runtime.List{Elements: newElements}, nil
+		if list.Frozen {
+			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
+		}
+		if len(list.ElementTypes) > 0 && !vmTypeNameSatisfies(args[0].TypeName(), list.ElementTypes[0]) {
+			return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot push %s to list<%s>", args[0].TypeName(), list.ElementTypes[0])}
+		}
+		list.Elements = append(list.Elements, args[0])
+		return list, nil
 	case "append":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("list.append expects one argument")
@@ -15487,12 +15561,13 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if !ok {
 			return nil, fmt.Errorf("%s has no method pop", receiver.TypeName())
 		}
-		if len(list.Elements) == 0 {
-			return &runtime.List{Elements: []runtime.Value{}}, nil
+		if list.Frozen {
+			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 		}
-		newElements := make([]runtime.Value, len(list.Elements)-1)
-		copy(newElements, list.Elements)
-		return &runtime.List{Elements: newElements}, nil
+		if len(list.Elements) > 0 {
+			list.Elements = list.Elements[:len(list.Elements)-1]
+		}
+		return list, nil
 	case "removeat":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("list.removeAt expects one argument")
@@ -15511,10 +15586,11 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if i < 0 || i >= len(list.Elements) {
 			return nil, fmt.Errorf("list.removeAt: index out of range")
 		}
-		newElements := make([]runtime.Value, len(list.Elements)-1)
-		copy(newElements, list.Elements[:i])
-		copy(newElements[i:], list.Elements[i+1:])
-		return &runtime.List{Elements: newElements}, nil
+		if list.Frozen {
+			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
+		}
+		list.Elements = append(list.Elements[:i], list.Elements[i+1:]...)
+		return list, nil
 	case "concat":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("list.concat expects one argument")
