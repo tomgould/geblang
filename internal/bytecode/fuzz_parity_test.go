@@ -151,10 +151,8 @@ func (g *fuzzGen) leaf(t fuzzType) string {
 }
 
 // faultStmt emits a try/catch around a fault-prone operation, printing
-// "ok" on success or the caught class on failure - the error model is
-// where eval/VM diverged this session, so this is the highest-value
-// generator path. Output is class names / "ok", never raw values, so
-// there is no type-formatting ambiguity to cause false positives.
+// "ok" on success or the caught class AND message on failure - error
+// class dispatch and message text are both guarded parity surfaces.
 func (g *fuzzGen) faultStmt() string {
 	// Operands come from `.toInt()` of a string literal so the bytecode
 	// compiler cannot constant-fold (and thus reject at compile time) a
@@ -163,17 +161,24 @@ func (g *fuzzGen) faultStmt() string {
 	// for constant faults is a known, accepted difference.
 	rt := func(n int) string { return "(\"" + strconv.Itoa(n) + "\".toInt())" }
 	var body string
-	switch g.rng.Intn(4) {
+	switch g.rng.Intn(6) {
 	case 0:
 		body = "let q = " + g.intLit() + " / " + rt(g.rng.Intn(3)) + ";"
 	case 1:
 		body = "let r = " + g.intLit() + " % " + rt(g.rng.Intn(3)) + ";"
 	case 2:
 		body = "let xs = [1, 2, 3]; let v = xs[" + rt(g.rng.Intn(6)) + "];"
+	case 3:
+		receivers := []string{"[1, 2]", "{1, 2}", "{\"k\": 1}", g.stringLit(), g.intLit()}
+		body = "let m = (" + receivers[g.rng.Intn(len(receivers))] + ").bogusMethod();"
+	case 4:
+		lefts := []string{g.stringLit(), "[1]", "true"}
+		ops := []string{"-", "*", "%"}
+		body = "let o = " + lefts[g.rng.Intn(len(lefts))] + " " + ops[g.rng.Intn(len(ops))] + " " + rt(1+g.rng.Intn(3)) + ";"
 	default:
 		body = "let n = " + g.stringLit() + ".toInt();"
 	}
-	return "try { " + body + " io.println(\"ok\"); } catch (Error e) { io.println(e.class); }"
+	return "try { " + body + " io.println(\"ok\"); } catch (Error e) { io.println(e.class); io.println(e.message); }"
 }
 
 // classBlock emits a valid random class hierarchy: a base class with a

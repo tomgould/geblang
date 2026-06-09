@@ -1,0 +1,72 @@
+/**
+ * @title Direct iteration over dict, set, and string (1.16.0)
+ * @summary `for-in` and comprehensions iterate dicts as insertion-ordered
+ * [key, value] pairs (destructurable into two binders), sets in their
+ * sorted toList() order, and strings per character (matching .chars()).
+ * Identical on both backends.
+ */
+import test;
+
+class IterablesTest extends test.Test {
+    @test
+    func dictYieldsInsertionOrderedPairs(): void {
+        let d = {"z": 1, "a": 2};
+        d["m"] = 3;
+        list<string> seen = [];
+        for (pair in d) {
+            seen = seen.push("${pair[0]}=${pair[1]}");
+        }
+        this.assertEquals(["z=1", "a=2", "m=3"], seen);
+    }
+
+    @test
+    func dictDestructuresIntoTwoBinders(): void {
+        list<string> seen = [];
+        for (k, v in {"x": 10, "y": 20}) {
+            seen = seen.push("${k}:${v}");
+        }
+        this.assertEquals(["x:10", "y:20"], seen);
+    }
+
+    @test
+    func setIteratesInSortedOrder(): void {
+        list<int> seen = [];
+        for (n in {3, 1, 2}) {
+            seen = seen.push(n);
+        }
+        this.assertEquals([1, 2, 3], seen);
+        this.assertEquals({3, 1, 2}.toList(), seen);
+    }
+
+    @test
+    func stringIteratesPerCharacter(): void {
+        let text = "héllo";
+        list<string> seen = [];
+        for (c in text) {
+            seen = seen.push(c);
+        }
+        this.assertEquals(text.chars(), seen);
+    }
+
+    @test
+    func comprehensionsAcceptAllThree(): void {
+        let d = {"b": 2, "a": 1};
+        this.assertEquals([["b", 2], ["a", 1]], [p for p in d]);
+        this.assertEquals(["b2", "a1"], ["${k}${v}" for k, v in d]);
+        this.assertEquals([2, 4, 6], [x * 2 for x in {3, 1, 2}]);
+        let text = "ab";
+        this.assertEquals(["a", "b"], [c for c in text]);
+    }
+
+    @test
+    func breakAndContinueWork(): void {
+        list<string> seen = [];
+        let text = "abcd";
+        for (c in text) {
+            if (c == "b") { continue; }
+            if (c == "d") { break; }
+            seen = seen.push(c);
+        }
+        this.assertEquals(["a", "c"], seen);
+    }
+}

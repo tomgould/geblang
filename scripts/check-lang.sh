@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # check-lang.sh: drive `geblang check` over tests/.
 #
-# tests/check/ contains files that MUST each produce at least one diagnostic.
-# Every other tests/ file MUST pass `geblang check` clean.
+# tests/check/ contains files that MUST each produce at least one diagnostic
+# (checked under --strict so warnings count). Every other tests/ file MUST
+# pass `geblang check` clean.
 
 set -u
 
@@ -21,7 +22,7 @@ if [ -d "$bad_dir" ]; then
     for f in "$bad_dir"/*.gb; do
         [ -f "$f" ] || continue
         total_bad=$((total_bad + 1))
-        if "$BIN" check "$f" >/dev/null 2>&1; then
+        if "$BIN" check --strict "$f" >/dev/null 2>&1; then
             echo "check-lang: $f was expected to fail but check passed" >&2
             unflagged_bad=$((unflagged_bad + 1))
         fi

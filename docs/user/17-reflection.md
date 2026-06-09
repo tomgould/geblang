@@ -143,9 +143,21 @@ let request = reflect.class("http.Request");
 io.println(reflect.className(request));   # Request
 ```
 
-Native module *functions* are not reflectable: `reflect.function("math.sqrt")`
-returns `null`. The function still works when called normally; it just has no
-reflectable target.
+`reflect.function` also resolves a native module's functions (1.16.0). The
+result is a first-class callable, the same value `math.sqrt` produces as an
+expression. Unknown members return `null`:
+
+```gb
+import math;
+
+let sqrt = reflect.function("math.sqrt");
+io.println(sqrt(16.0));                       # 4
+io.println(reflect.function("math.nope"));    # null
+```
+
+Native functions carry no source-level metadata, so structural calls such as
+`reflect.parameters` or `reflect.location` report nothing useful for them;
+they resolve and call.
 
 ## Class reflection
 
@@ -355,8 +367,8 @@ the introduction to `dir` and `typeof`.
   resolve concrete type arguments at runtime.
 - **Native module class exports** are reflectable via the `module.Class` form
   (`reflect.class("http.Request")`).
-- **Native module functions** are *not* reflectable:
-  `reflect.function("math.sqrt")` returns `null`. They run normally when called;
-  they simply carry no reflectable target.
+- **Native module functions** resolve to first-class callables
+  (`reflect.function("math.sqrt")`, 1.16.0). They carry no source-level
+  structure, so parameter and location introspection reports nothing for them.
 - **Field and method listings cover a class's own declared members.** Inherited
   members live on the parent class, reachable with `reflect.parent`.

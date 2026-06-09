@@ -7280,6 +7280,20 @@ func (e *Evaluator) iterateComprehensionFor(c *ast.ComprehensionFor, env *runtim
 			}
 		}
 		return nil
+	case runtime.Dict:
+		for _, pair := range runtime.DictPairs(it) {
+			if err := step(pair); err != nil {
+				return err
+			}
+		}
+		return nil
+	case runtime.String:
+		for _, c := range runtime.StringChars(it) {
+			if err := step(c); err != nil {
+				return err
+			}
+		}
+		return nil
 	case runtime.Range:
 		current := new(big.Int).Set(it.Start)
 		step := new(big.Int).Set(it.Step)
@@ -7449,13 +7463,11 @@ func (e *Evaluator) iterableValues(value runtime.Value) ([]runtime.Value, error)
 			values = append(values, next)
 		}
 	case runtime.Dict:
-		ordered := value.OrderedKeys()
-		values := make([]runtime.Value, 0, len(ordered))
-		for _, k := range ordered {
-			entry := value.Entries[k]
-			values = append(values, &runtime.List{Elements: []runtime.Value{entry.Key, entry.Value}})
-		}
-		return values, nil
+		return runtime.DictPairs(value), nil
+	case runtime.Set:
+		return orderedSetValues(value), nil
+	case runtime.String:
+		return runtime.StringChars(value), nil
 	default:
 		return nil, fmt.Errorf("%s is not iterable", value.TypeName())
 	}
@@ -7856,6 +7868,9 @@ func (e *Evaluator) evalReflectLookupCall(call *ast.CallExpression, env *runtime
 		if function, found := e.globalFunctions[targetName.Value]; found {
 			return function, nil
 		}
+		if value, found := e.nativeQualifiedFunctionValue(targetName.Value, env); found {
+			return value, nil
+		}
 	}
 	if !ok {
 		return runtime.Null{}, nil
@@ -7883,6 +7898,28 @@ func (e *Evaluator) evalReflectLookupCall(call *ast.CallExpression, env *runtime
 	default:
 		return nil, fmt.Errorf("unsupported reflect lookup %s", name)
 	}
+}
+
+// nativeQualifiedFunctionValue resolves "module.fn" to a pure native
+// builtin as a first-class callable, for reflect.function name lookups.
+func (e *Evaluator) nativeQualifiedFunctionValue(name string, env *runtime.Environment) (runtime.Value, bool) {
+	moduleName, exportName, ok := strings.Cut(name, ".")
+	if !ok {
+		return nil, false
+	}
+	moduleValue, found := env.Get(moduleName)
+	if !found {
+		return nil, false
+	}
+	module, ok := moduleValue.(*runtime.Module)
+	if !ok {
+		return nil, false
+	}
+	canonical := module.Canonical
+	if canonical == "" {
+		canonical = module.Name
+	}
+	return e.nativeBuiltinValue(canonical, exportName)
 }
 
 func (e *Evaluator) reflectLookupValue(name string, env *runtime.Environment) (runtime.Value, bool, error) {
@@ -23317,7 +23354,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 		if method, ok := lookupMethod(instance.Class, "__call"); ok {
 			return e.applyFunctionWithThis(method, []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}}, instance)
 		}
-		return nil, fmt.Errorf("unknown method %s.%s", instance.Class.Name, name)
+		return nil, native.UnknownMethodError(instance.Class.Name, name)
 	}
 	if target, ok := primitiveConversionTarget(name); ok {
 		if target == "int" {
@@ -25797,7 +25834,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			return native.NumericClamp(value, args[0], args[1])
 		}
 	}
-	return nil, fmt.Errorf("unknown method %s.%s", receiver.TypeName(), name)
+	return nil, native.UnknownMethodError(receiver.TypeName(), name)
 }
 
 func formatArgs(args []runtime.Value) []any {
@@ -25894,7 +25931,7 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 		if method, ok := lookupMethod(instance.Class, "__call"); ok {
 			return e.applyFunctionWithThis(method, []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}}, instance)
 		}
-		return nil, fmt.Errorf("unknown method %s.%s", instance.Class.Name, name)
+		return nil, native.UnknownMethodError(instance.Class.Name, name)
 	}
 	args, err := e.evalCallArguments(call, env)
 	if err != nil {
@@ -28639,7 +28676,7 @@ func evalNumericInfix(operator string, left runtime.Value, right runtime.Value) 
 			return nil, decimalFloatArithError(operator, left, right)
 		}
 	}
-	return nil, fmt.Errorf("unsupported operands for %s: %s and %s", operator, left.TypeName(), right.TypeName())
+	return nil, native.UnsupportedOperandsError(operator, left.TypeName(), right.TypeName())
 }
 
 func intToFloatValue(v runtime.Int) runtime.Float {

@@ -11,6 +11,16 @@ import (
 
 var stackFramePattern = regexp.MustCompile(`^\s*at\s+(.+?)(?:\s+\(line\s+([0-9]+)\))?\s*$`)
 
+// UnknownMethodError is the canonical unknown-method text on both backends.
+func UnknownMethodError(typeName, method string) error {
+	return fmt.Errorf("unknown method %s.%s", typeName, method)
+}
+
+// UnsupportedOperandsError is the canonical bad-binary-operand text on both backends.
+func UnsupportedOperandsError(operator, leftType, rightType string) error {
+	return fmt.Errorf("unsupported operands for %s: %s and %s", operator, leftType, rightType)
+}
+
 func registerErrors(r *Registry) {
 	r.Register("errors", "new", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) < 1 || len(args) > 2 {

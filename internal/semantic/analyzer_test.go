@@ -1138,3 +1138,60 @@ func TestAnalyzerAllowsShadowedModuleName(t *testing.T) {
 		}
 	}
 }
+
+// TestAnalyzerFlagsUnknownBareCallee: a call to an undeclared bare name must
+// be a static error so the evaluator path rejects what the VM compiler
+// already rejects (static-analysis contract).
+func TestAnalyzerFlagsUnknownBareCallee(t *testing.T) {
+	input := `import io;
+RangeError("x");
+`
+	p := parser.New(lexer.New(input))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	diagnostics := semantic.New().Analyze(program)
+	found := false
+	for _, d := range diagnostics {
+		if d.Severity == semantic.SeverityError && strings.Contains(d.Message, "RangeError") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected unknown-callee error for RangeError, got %+v", diagnostics)
+	}
+}
+
+// TestAnalyzerAcceptsKnownBareCallees covers the resolvable callee kinds that
+// must NOT be flagged: declared funcs (incl. forward refs), lambdas in vars,
+// classes, ambient errors, bare builtins, from-imports, and nested funcs.
+func TestAnalyzerAcceptsKnownBareCallees(t *testing.T) {
+	input := `import io;
+from math import sqrt;
+forward();
+func forward(): void {}
+let lam = func(): int { return 1; };
+lam();
+class Widget { func Widget() {} }
+Widget();
+ValueError("boom");
+typeof(lam);
+sqrt(4.0);
+func outer(): void {
+    func inner(): void {}
+    inner();
+}
+outer();
+`
+	p := parser.New(lexer.New(input))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	for _, d := range semantic.New().Analyze(program) {
+		if d.Severity == semantic.SeverityError {
+			t.Fatalf("unexpected analyzer error: %s", d.Message)
+		}
+	}
+}

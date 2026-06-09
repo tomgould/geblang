@@ -3196,6 +3196,129 @@ io.println(await greet());
 `, "hello\n")
 }
 
+func TestParityAwaitPreservesThrownErrorClass(t *testing.T) {
+	runParity(t, `import io;
+async func boom(): int {
+    throw ValueError("vb");
+}
+try {
+    io.println(await boom());
+} catch (ValueError e) {
+    io.println("typed ${e.message}");
+}
+try {
+    io.println(await boom());
+} catch (Error e) {
+    io.println("base ${e.message}");
+}
+`, "typed vb\nbase vb\n")
+}
+
+func TestParityAwaitThrownErrorInMethodAndAsyncAwait(t *testing.T) {
+	runParity(t, `import io;
+import async;
+async func boom(): int {
+    throw ValueError("vm");
+}
+class Runner {
+    func go(): string {
+        try {
+            await boom();
+            return "no";
+        } catch (ValueError e) {
+            return "method ${e.message}";
+        }
+    }
+}
+io.println(Runner().go());
+try {
+    async.await(boom());
+} catch (ValueError e) {
+    io.println("native ${e.message}");
+}
+`, "method vm\nnative vm\n")
+}
+
+func TestParityReflectFunctionResolvesNativeModuleFunctions(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+import math;
+import math as m2;
+let f = reflect.function("math.sqrt");
+io.println(f != null);
+io.println(f(16.0));
+let g = reflect.function(math.abs);
+io.println(g != null);
+io.println(g(-3));
+let h = reflect.function("m2.sqrt");
+io.println(h != null);
+io.println(reflect.function("math.noSuchFn") == null);
+io.println("${reflect.parameters(f)}");
+io.println("${reflect.location(f)}");
+io.println("${reflect.returnType(f)}");
+`, "true\n4\ntrue\n3\ntrue\ntrue\n[]\nnull\nvoid\n")
+}
+
+func TestParityForInIteratesDictSetString(t *testing.T) {
+	runParity(t, `import io;
+let d = {"z": 1, "a": 2};
+d["m"] = 3;
+for (pair in d) { io.println("${pair}"); }
+for (k, v in d) { io.println("${k}=${v}"); }
+let s = {3, 1, 2};
+for (x in s) { io.println(x); }
+let text = "héllo";
+for (c in text) { io.println(c); }
+`, "[\"z\", 1]\n[\"a\", 2]\n[\"m\", 3]\nz=1\na=2\nm=3\n1\n2\n3\nh\né\nl\nl\no\n")
+}
+
+func TestParityComprehensionsIterateDictSetString(t *testing.T) {
+	runParity(t, `import io;
+let d = {"b": 2, "a": 1};
+io.println("${[p for p in d]}");
+io.println("${[k + "-" + (v as string) for k, v in d]}");
+io.println("${[x * 2 for x in {3, 1, 2}]}");
+let text = "ab";
+io.println("${[c for c in text]}");
+io.println("${ {c for c in text} }");
+`, "[[\"b\", 2], [\"a\", 1]]\n[\"b-2\", \"a-1\"]\n[2, 4, 6]\n[\"a\", \"b\"]\nset{\"a\", \"b\"}\n")
+}
+
+func TestParityLiteralDivModByZeroThrowsCatchably(t *testing.T) {
+	runParity(t, `import io;
+try { io.println(1 % 0); } catch (Error e) { io.println("mod: ${e.message}"); }
+try { io.println(1 // 0); } catch (Error e) { io.println("idiv: ${e.message}"); }
+int z = 0;
+try { io.println(7 % z); } catch (Error e) { io.println("modv: ${e.message}"); }
+int w = 9;
+try { w %= z; } catch (Error e) { io.println("modc: ${e.message}"); }
+`, "mod: modulo by zero\nidiv: integer division by zero\nmodv: modulo by zero\nmodc: modulo by zero\n")
+}
+
+func TestParityRuntimeErrorMessages(t *testing.T) {
+	runParity(t, `import io;
+func show(string label, func body): void {
+    try { body(); } catch (Error e) { io.println("${label}: ${e.message}"); }
+}
+show("m-set", func(): void { {1, 2}.bogus(); });
+show("m-list", func(): void { [1].bogus(); });
+show("m-dict", func(): void { {"a": 1}.bogus(); });
+show("m-str", func(): void { "x".bogus(); });
+show("m-int", func(): void { (1).bogus(); });
+show("op-strmod", func(): void { let r = "x" % [1]; io.println("${r}"); });
+show("op-strminus", func(): void { let r = "x" - 1; io.println("${r}"); });
+show("op-listplus", func(): void { let r = [1] + 2; io.println("${r}"); });
+`, `m-set: unknown method set.bogus
+m-list: unknown method list.bogus
+m-dict: unknown method dict.bogus
+m-str: unknown method string.bogus
+m-int: unknown method int.bogus
+op-strmod: unsupported operands for %: string and list
+op-strminus: unsupported operands for -: string and int
+op-listplus: unsupported operands for +: list and int
+`)
+}
+
 func TestParityAsyncTaskDoneMethod(t *testing.T) {
 	runParity(t, `import io;
 async func noop(): void {}

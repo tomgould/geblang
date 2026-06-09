@@ -1,0 +1,72 @@
+/**
+ * @title await preserves the thrown error class (1.16.0)
+ * @summary An error thrown inside an async function is rethrown by
+ * `await` with its original class and message, so typed catch
+ * clauses match it on both backends.
+ */
+import test;
+import async;
+
+async func failTyped(): int {
+    throw ValueError("typed-fail");
+}
+
+class AwaitErrorClassTest extends test.Test {
+    @test
+    func typedCatchMatchesAwaitedError(): void {
+        string got = "";
+        try {
+            await failTyped();
+        } catch (ValueError e) {
+            got = e.message;
+        }
+        this.assertEquals("typed-fail", got);
+    }
+
+    @test
+    func baseCatchSeesOriginalMessage(): void {
+        string got = "";
+        try {
+            await failTyped();
+        } catch (Error e) {
+            got = e.message;
+        }
+        this.assertEquals("typed-fail", got);
+    }
+
+    @test
+    func typedCatchInMethodContext(): void {
+        try {
+            await failTyped();
+            this.fail("expected throw");
+        } catch (ValueError e) {
+            this.assertEquals("typed-fail", e.message);
+        }
+    }
+
+    @test
+    func asyncAwaitNativePreservesClass(): void {
+        string got = "";
+        try {
+            async.await(failTyped());
+        } catch (ValueError e) {
+            got = e.message;
+        }
+        this.assertEquals("typed-fail", got);
+    }
+
+    @test
+    func uncatchedClassDoesNotMatch(): void {
+        bool typedMissed = false;
+        try {
+            try {
+                await failTyped();
+            } catch (TypeError e) {
+                this.fail("TypeError must not match ValueError");
+            }
+        } catch (ValueError e) {
+            typedMissed = true;
+        }
+        this.assertTrue(typedMissed);
+    }
+}

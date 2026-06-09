@@ -1,7 +1,8 @@
 /**
  * @category Tests
- * @summary geblang check MUST flag constant-folded integer division by zero.
- * The compiler evaluates literal `// 0` at compile time and surfaces it as a
- * type-level error rather than letting it fail at runtime.
+ * @summary geblang check warns on a literal `// 0` / `% 0`. The failure is
+ * a catchable runtime throw on both backends (1.16.0); the analyzer flags
+ * the inevitable throw as an advisory warning, not a compile error.
  */
 let x = 5 // 0;
+let y = 5 % 0;

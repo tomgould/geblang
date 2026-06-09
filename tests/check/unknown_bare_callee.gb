@@ -1,0 +1,12 @@
+/**
+ * @category Tests
+ * @summary A call to an undeclared bare name is a static analyzer error on
+ * BOTH paths (1.16.0), so the evaluator rejects it like the VM compiler
+ * does, even when the call is wrapped in throw or try/catch.
+ */
+import io;
+try {
+    throw RangeError("not a built-in error class");
+} catch (Error e) {
+    io.println("never analyzed away");
+}

@@ -1,5 +1,58 @@
 # Release Notes
 
+## 1.16.0
+
+### Language
+
+- `for-in` loops and comprehensions now iterate dicts, sets, and strings
+  directly on both backends. Dicts yield insertion-ordered `[key, value]`
+  pairs (destructurable into two binders: `for (k, v in d)`), sets yield
+  elements in their sorted `toList()` order, and strings yield
+  single-character strings matching `.chars()`. Previously dict iteration
+  worked only on the evaluator's `for-in`, set iteration only in evaluator
+  comprehensions, and string iteration not at all.
+
+### Reflection
+
+- `reflect.function` now resolves native module functions by qualified name
+  (`reflect.function("math.sqrt")`) to a first-class callable, the same value
+  the bare `math.sqrt` expression produces. Import aliases work
+  (`import math as m` resolves `"m.sqrt"`); unknown members return `null`.
+- `reflect.function` accepts a native function value directly on both
+  backends, and structural introspection (`reflect.parameters`,
+  `reflect.location`, `reflect.returnType`) degrades gracefully for native
+  functions (empty parameters, `null` location, `void` return) instead of
+  raising on the bytecode VM.
+- `reflect.module` resolves pure native modules even in loader-less
+  embeddings of the VM.
+
+### Fixes
+
+- Calling an undeclared bare name (for example a misspelled function or a
+  non-existent error class) is now a static error on the evaluator path
+  too, matching the bytecode compiler. Previously `geblang run
+  --disable-vm` and `geblang test` ran such programs until the bad call,
+  which could be silently swallowed by `try/catch`.
+- A literal division or modulo by zero (`5 // 0`, `5 % 0`) is no longer a
+  hard compile error on the bytecode VM. It throws a catchable runtime
+  error on both backends, matching evaluator semantics; `geblang check`
+  flags it with `warning[div-by-zero]`.
+- The bytecode VM's integer fast paths reported "integer division by zero"
+  for a modulo by zero; they now say "modulo by zero" like the evaluator
+  and the generic path.
+- Runtime error messages for unknown primitive methods and unsupported
+  binary operands are now identical on both backends ("unknown method
+  set.bogus"; "unsupported operands for -: string and int"). The VM
+  previously said "set has no method bogus" and the misleading "left
+  operand must be numeric".
+- `await` now rethrows the error raised inside an async function with its
+  original class and message on the bytecode VM, so typed catch clauses
+  (`catch (ValueError e)`) match it. Previously the VM collapsed the failure
+  into a generic runtime error that only a base `catch (Error e)` could see,
+  with a mangled message. The evaluator already behaved correctly; both
+  backends now agree. This also applies to `task.await()` and
+  `async.await(task)`.
+
 ## 1.15.0
 
 ### Standard library

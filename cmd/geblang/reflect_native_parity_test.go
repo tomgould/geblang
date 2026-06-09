@@ -27,9 +27,9 @@ func TestReflectNativeModuleParity(t *testing.T) {
 			expect: "true",
 		},
 		{
-			name:   "function-null",
-			source: "import reflect;\nimport math;\nimport io;\nio.println(reflect.function(\"math.sqrt\") == null);\n",
-			expect: "true",
+			name:   "function-resolves-callable",
+			source: "import reflect;\nimport math;\nimport io;\nlet f = reflect.function(\"math.sqrt\");\nio.println(f != null);\nio.println(f(9.0));\n",
+			expect: "true\n3",
 		},
 		{
 			name:   "unknown-null",

@@ -78,6 +78,31 @@ for (i in 0..<10 by 3) {   # 0 3 6 9 (exclusive upper bound)
 
 The step defaults to 1 when omitted. It can be any integer expression.
 
+### What for-in iterates over
+
+`for-in` accepts lists, ranges, generator-returning calls, classes that
+implement the iterator protocol, and (1.16.0) dicts, sets, and strings
+directly:
+
+- A **dict** yields insertion-ordered `[key, value]` pairs. Two binders
+  destructure them: `for (k, v in d) { ... }`.
+- A **set** yields its elements in the same sorted order as `set.toList()`.
+- A **string** yields single-character strings, matching `.chars()`.
+
+```gb
+for (k, v in {"a": 1, "b": 2}) {
+    io.println("${k}=${v}");      # a=1  b=2
+}
+
+for (n in {3, 1, 2}) {
+    io.print("${n} ");            # 1 2 3
+}
+
+for (c in "abc") {
+    io.print(c);                  # abc
+}
+```
+
 For lazy range iteration over large sequences, import `collections` and use
 `collections.range(start, end, step)`:
 
@@ -219,9 +244,18 @@ are inferred from the body expression and the binder.
 
 The same iterables the `for-in` loop accepts: `list`, `range`,
 generator-returning calls, classes that implement the iterator protocol,
-and 1.0.6-era `streams`. To iterate dict entries, call `.items()` to get
-`list<list<any>>` and destructure into two binders, or `.keys()` for a
-plain key iteration. To iterate string characters, call `.chars()`.
+1.0.6-era `streams`, and (1.16.0) `dict` (insertion-ordered `[key, value]`
+pairs, destructurable into two binders), `set` (sorted `toList()` order),
+and `string` (per character, matching `.chars()`):
+
+```gb
+[k + "=" + (v as string) for k, v in {"a": 1, "b": 2}]   # ["a=1", "b=2"]
+[n * 2 for n in {3, 1, 2}]                               # [2, 4, 6]
+{c for c in "abca"}                                      # set{"a", "b", "c"}
+```
+
+`.items()`, `.keys()`, and `.chars()` remain available when you want the
+intermediate list itself.
 
 ### Generator comprehensions
 

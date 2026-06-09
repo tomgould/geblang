@@ -1143,7 +1143,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					}
 				case OpModInt:
 					if ri == 0 {
-						return vm.runtimeError(instruction, "integer division by zero")
+						return vm.runtimeError(instruction, "modulo by zero")
 					}
 					v := li % ri
 					if v != 0 && (li < 0) != (ri < 0) {
@@ -1334,7 +1334,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			ri := instruction.Operands[2]
 			if ri == 0 {
-				return vm.runtimeError(instruction, "integer division by zero")
+				return vm.runtimeError(instruction, "modulo by zero")
 			}
 			v := lv.I64 % ri
 			if v != 0 && (lv.I64 < 0) != (ri < 0) {
@@ -1924,16 +1924,19 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return err
 			}
-			if vm.moduleLoader == nil {
-				vm.push(runtime.Null{})
+			if vm.moduleLoader != nil {
+				if module, lerr := vm.moduleLoader.LoadModule(canonical, ""); lerr == nil && module != nil {
+					vm.push(module)
+					break
+				}
+			}
+			// Pure native modules need no loader; synthesize the module
+			// value so reflect lookups work in loader-less embeddings.
+			if _, ok := native.NativeModuleNames[canonical]; ok {
+				vm.push(&runtime.Module{Name: canonical, Canonical: canonical, Exports: map[string]runtime.Value{}})
 				break
 			}
-			module, lerr := vm.moduleLoader.LoadModule(canonical, "")
-			if lerr != nil || module == nil {
-				vm.push(runtime.Null{})
-				break
-			}
-			vm.push(module)
+			vm.push(runtime.Null{})
 		case OpImportFrom:
 			if err := vm.importFrom(instruction); err != nil {
 				return err
@@ -2576,9 +2579,12 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if task, ok := value.(*runtime.Task); ok {
 				result := task.Await()
 				if result.Err != nil {
-					return vm.runtimeError(instruction, "await: %v", result.Err)
-				}
-				if result.Value == nil {
+					nextIP, throwErr := vm.throwRecoverableError(instruction, ip, result.Err)
+					if throwErr != nil {
+						return throwErr
+					}
+					ip = nextIP
+				} else if result.Value == nil {
 					vm.push(runtime.Null{})
 				} else {
 					vm.push(result.Value)
@@ -3328,6 +3334,14 @@ func (vm *VM) throw(instruction Instruction, ip int) (int, error) {
 }
 
 func (vm *VM) throwRecoverableError(instruction Instruction, ip int, err error) (int, error) {
+	// A vmThrownError in the chain carries the original typed throw from
+	// another VM (task body, module call); rethrow it so catch matches.
+	var thrown vmThrownError
+	if errors.As(err, &thrown) && !thrown.err.IsFatal() {
+		captured := thrown.err
+		vm.pendingThrow = &captured
+		return vm.jumpToExceptionHandler(instruction, ip)
+	}
 	errValue := vm.withErrorStackTrace(runtime.NewRecoverableError(err), instruction.Line)
 	vm.pendingThrow = &errValue
 	return vm.jumpToExceptionHandler(instruction, ip)
@@ -3589,7 +3603,7 @@ func (vm *VM) binaryNumericValues(instruction Instruction, left runtime.Value, r
 	if isNumericValue(left) && isNumericValue(right) {
 		return vm.decimalFloatArithError(instruction, left, right)
 	}
-	return vm.runtimeError(instruction, "left operand must be numeric")
+	return vm.runtimeError(instruction, "%s", native.UnsupportedOperandsError(binaryOpSymbol(instruction.Op), left.TypeName(), right.TypeName()).Error())
 }
 
 func intToFloatVal(v runtime.Value) runtime.Float {
@@ -4647,6 +4661,12 @@ func (vm *VM) iteratorFor(instruction Instruction, value runtime.Value) (*iterat
 		return &iteratorValue{generator: v}, nil
 	case runtime.Range:
 		return newRangeIterator(v), nil
+	case runtime.Dict:
+		return &iteratorValue{values: runtime.DictPairs(v)}, nil
+	case runtime.Set:
+		return &iteratorValue{values: orderedSetValues(v)}, nil
+	case runtime.String:
+		return &iteratorValue{values: runtime.StringChars(v)}, nil
 	case *runtime.Instance:
 		return vm.userInstanceIterator(instruction, v)
 	}
@@ -7943,6 +7963,15 @@ func (vm *VM) reflectLookupNativeCall(fn string, args []runtime.Value) (runtime.
 		}
 		exported, ok := module.Exports[exportName.Value]
 		if !ok {
+			if fn == "function" {
+				canonical := module.Canonical
+				if canonical == "" {
+					canonical = module.Name
+				}
+				if builtin, found := vm.builtinValue(canonical, exportName.Value); found {
+					return builtin, nil
+				}
+			}
 			return runtime.Null{}, nil
 		}
 		value = exported
@@ -7954,6 +7983,8 @@ func (vm *VM) reflectLookupNativeCall(fn string, args []runtime.Value) (runtime.
 			if value.Target == "function" {
 				return value, nil
 			}
+		case runtime.Function, runtime.OverloadedFunction:
+			return value, nil
 		case runtime.BytecodeFunction:
 			return value, nil
 		case runtime.String:
@@ -8258,6 +8289,14 @@ func reflectFunctionMetadata(value runtime.Value) (runtime.FunctionMetadata, boo
 		if metadata != nil {
 			return *metadata, true
 		}
+	case runtime.Function:
+		// Native-wrapped functions carry no source structure; degrade to
+		// empty metadata like the evaluator.
+		metadata := runtime.FunctionMetadata{Name: value.Name, ReturnType: "void"}
+		if value.ReturnType != nil {
+			metadata.ReturnType = value.ReturnType.String()
+		}
+		return metadata, true
 	}
 	return runtime.FunctionMetadata{}, false
 }
@@ -12483,7 +12522,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		case "await":
 			result := task.Await()
 			if result.Err != nil {
-				return 0, vm.runtimeError(instruction, "await: %v", result.Err)
+				return vm.throwRecoverableError(instruction, ip, result.Err)
 			}
 			if result.Value == nil {
 				vm.push(runtime.Null{})
@@ -12762,7 +12801,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if nativeObject, ok := receiver.(runtime.NativeObject); ok {
 		caller, ok := vm.statefulNative.(nativeObjectMethodCaller)
 		if !ok {
-			return 0, vm.runtimeError(instruction, "%s has no method %s", nativeObject.TypeName(), nameValue.Value)
+			return 0, vm.runtimeError(instruction, "%s", native.UnknownMethodError(nativeObject.TypeName(), nameValue.Value).Error())
 		}
 		result, err := caller.NativeObjectMethod(nativeObject, nameValue.Value, args)
 		if err != nil {
@@ -14697,7 +14736,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.String)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method %s", receiver.TypeName(), name)
+			return nil, native.UnknownMethodError(receiver.TypeName(), name)
 		}
 		affix, ok := args[0].(runtime.String)
 		if !ok {
@@ -14945,7 +14984,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			copy(out, value.Value[start:end])
 			return runtime.Bytes{Value: out}, nil
 		default:
-			return nil, fmt.Errorf("%s has no method %s", receiver.TypeName(), name)
+			return nil, native.UnknownMethodError(receiver.TypeName(), name)
 		}
 	case "lastindexof":
 		value, ok := receiver.(runtime.String)
@@ -15310,7 +15349,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		value, ok := receiver.(runtime.Dict)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method %s", receiver.TypeName(), name)
+			return nil, native.UnknownMethodError(receiver.TypeName(), name)
 		}
 		ordered := value.OrderedKeys()
 		items := make([]runtime.Value, 0, len(ordered))
@@ -15591,7 +15630,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		bi, ok := native.IntValueToBigInt(receiver)
 		if !ok {
-			return nil, fmt.Errorf("%s has no method %s", receiver.TypeName(), name)
+			return nil, native.UnknownMethodError(receiver.TypeName(), name)
 		}
 		even := bi.Bit(0) == 0
 		if strings.ToLower(name) == "isodd" {
@@ -15672,7 +15711,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		return runtime.String{Value: base64.RawURLEncoding.EncodeToString(value.Value)}, nil
 	default:
-		return nil, fmt.Errorf("%s has no method %s", receiver.TypeName(), name)
+		return nil, native.UnknownMethodError(receiver.TypeName(), name)
 	}
 }
 

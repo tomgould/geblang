@@ -5387,7 +5387,8 @@ func foldIntInt(op string, l, r int64) (runtime.Value, bool, error) {
 		return runtime.NewInt64(l * r), true, nil
 	case "//":
 		if r == 0 {
-			return nil, true, fmt.Errorf("integer division by zero")
+			// Defer to runtime so the throw stays catchable (eval parity).
+			return nil, false, nil
 		}
 		// Floor semantics: Go's `/` truncates toward zero.
 		q := l / r
@@ -5397,7 +5398,7 @@ func foldIntInt(op string, l, r int64) (runtime.Value, bool, error) {
 		return runtime.NewInt64(q), true, nil
 	case "%":
 		if r == 0 {
-			return nil, true, fmt.Errorf("modulo by zero")
+			return nil, false, nil
 		}
 		// Floor semantics: sign of result follows divisor.
 		m := l % r

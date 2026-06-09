@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"geblang/internal/ast"
+	"geblang/internal/native"
 	"geblang/internal/token"
 )
 
@@ -70,6 +71,9 @@ type Analyzer struct {
 	importedNames map[string]bool
 	// import aliases (module names): legal only in qualified access, dir, reflect.module.
 	moduleAliases map[string]bool
+	// every name bound by any declaration in the file; backs the
+	// unknown-bare-callee check without lexical-scope false positives.
+	declaredNames map[string]struct{}
 }
 
 // SetClassSurfaceResolver installs the cross-module class member
@@ -199,11 +203,12 @@ func (a *Analyzer) checkBuiltinModuleShadow(name *ast.Identifier, declaredType *
 }
 
 func New() *Analyzer {
-	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, enums: map[string]struct{}{}, aliases: map[string]typeInfo{}, typeParamScope: map[string]int{}, deprecatedFuncs: map[string]string{}, deprecatedClasses: map[string]string{}, deprecatedMethods: map[string]map[string]string{}, importedNames: map[string]bool{}, moduleAliases: map[string]bool{}}
+	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, enums: map[string]struct{}{}, aliases: map[string]typeInfo{}, typeParamScope: map[string]int{}, deprecatedFuncs: map[string]string{}, deprecatedClasses: map[string]string{}, deprecatedMethods: map[string]map[string]string{}, importedNames: map[string]bool{}, moduleAliases: map[string]bool{}, declaredNames: map[string]struct{}{}}
 }
 
 func (a *Analyzer) Analyze(program *ast.Program) []Diagnostic {
 	a.collectTypeDeclarations(program.Statements)
+	collectDeclaredNames(program.Statements, a.declaredNames)
 	a.validateTypeAnnotations(program.Statements)
 	a.validateTopLevelOverloads()
 	a.validateClassOverloads()
@@ -731,6 +736,10 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 	case *ast.ReturnStatement:
 		a.analyzeReturn(stmt, fn)
 	case *ast.YieldStatement:
+		if stmt.Value != nil {
+			a.analyzeExpression(stmt.Value)
+		}
+	case *ast.SimpleStatement:
 		if stmt.Value != nil {
 			a.analyzeExpression(stmt.Value)
 		}
@@ -1630,6 +1639,11 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 	case *ast.InfixExpression:
 		a.analyzeExpression(expr.Left)
 		a.analyzeExpression(expr.Right)
+		if expr.Operator == "//" || expr.Operator == "%" {
+			if lit, ok := expr.Right.(*ast.IntegerLiteral); ok && strings.Trim(lit.Value, "0_") == "" {
+				a.ruleWarningAt(expr.Token, "div-by-zero", "%q by literal zero always throws at runtime", expr.Operator)
+			}
+		}
 	case *ast.PrefixExpression:
 		a.analyzeExpression(expr.Right)
 	case *ast.PostfixExpression:
@@ -1643,6 +1657,9 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		a.analyzeExpression(expr.Index)
 	case *ast.CallExpression:
 		a.analyzeExpression(expr.Callee)
+		if ident, ok := expr.Callee.(*ast.Identifier); ok {
+			a.checkBareCalleeKnown(ident)
+		}
 		moduleArgAllowed := callAcceptsModuleArg(expr.Callee)
 		for _, arg := range expr.Arguments {
 			if moduleArgAllowed && a.isModuleValueRef(arg.Value) {
@@ -1702,6 +1719,141 @@ func (a *Analyzer) checkBindingNotDestroyed(ident *ast.Identifier) {
 // markBindingDestroyed walks scopes inner-to-outer to find the
 // binding for `name` and flips its destroyed flag. Called by the
 // `del x` statement's analyzer hook.
+// checkBareCalleeKnown errors on a call to a bare name declared nowhere in
+// the file, so the evaluator path rejects what the bytecode compiler
+// already rejects. The declared-anywhere set (not lexical scope) keeps it
+// free of false positives from the analyzer's partial scope tracking.
+func (a *Analyzer) checkBareCalleeKnown(ident *ast.Identifier) {
+	name := ident.Value
+	if name == "" || name == "this" {
+		return
+	}
+	if _, ok := a.declaredNames[name]; ok {
+		return
+	}
+	if _, ok := a.lookup(name); ok {
+		return
+	}
+	if _, ok := a.functions[strings.ToLower(name)]; ok {
+		return
+	}
+	if _, ok := a.classes[name]; ok {
+		return
+	}
+	if _, ok := a.interfaces[name]; ok {
+		return
+	}
+	if _, ok := a.enums[name]; ok {
+		return
+	}
+	if _, ok := a.aliases[strings.ToLower(name)]; ok {
+		return
+	}
+	if _, ok := ambientErrorClasses[name]; ok {
+		return
+	}
+	if a.importedNames[name] || a.moduleAliases[name] {
+		return
+	}
+	for _, builtin := range native.BareBuiltins {
+		if builtin == name {
+			return
+		}
+	}
+	a.errorAt(ident.Token, "unknown function %q", name)
+}
+
+// collectDeclaredNames gathers every name bound by a declaration anywhere in
+// the statement tree, feeding checkBareCalleeKnown's declared-anywhere set.
+func collectDeclaredNames(stmts []ast.Statement, into map[string]struct{}) {
+	addIdent := func(ident *ast.Identifier) {
+		if ident != nil && ident.Value != "" {
+			into[ident.Value] = struct{}{}
+		}
+	}
+	var walk func(stmt ast.Statement)
+	walkBlock := func(block *ast.BlockStatement) {
+		if block != nil {
+			collectDeclaredNames(block.Statements, into)
+		}
+	}
+	walk = func(stmt ast.Statement) {
+		switch s := stmt.(type) {
+		case *ast.DeclarationStatement:
+			addIdent(s.Name)
+		case *ast.DestructuringStatement:
+			for _, name := range s.Names {
+				addIdent(name)
+			}
+		case *ast.FunctionStatement:
+			addIdent(s.Name)
+			for _, param := range s.Parameters {
+				addIdent(param.Name)
+			}
+			walkBlock(s.Body)
+		case *ast.ClassStatement:
+			addIdent(s.Name)
+			collectDeclaredNames(s.Members, into)
+			if s.Destructor != nil {
+				walk(s.Destructor)
+			}
+		case *ast.InterfaceStatement:
+			addIdent(s.Name)
+		case *ast.EnumStatement:
+			addIdent(s.Name)
+		case *ast.ExportStatement:
+			walk(s.Statement)
+		case *ast.InitStatement:
+			walkBlock(s.Body)
+		case *ast.WithStatement:
+			addIdent(s.Name)
+			walkBlock(s.Body)
+		case *ast.IfStatement:
+			walkBlock(s.Consequence)
+			for _, elseIf := range s.ElseIfs {
+				walkBlock(elseIf.Body)
+			}
+			walkBlock(s.Alternative)
+		case *ast.WhileStatement:
+			walkBlock(s.Body)
+		case *ast.ForStatement:
+			addIdent(s.VarName)
+			for _, name := range s.VarNames {
+				addIdent(name)
+			}
+			if s.Init != nil {
+				walk(s.Init)
+			}
+			walkBlock(s.Body)
+		case *ast.TryStatement:
+			walkBlock(s.Body)
+			for _, catch := range s.Catches {
+				addIdent(catch.Name)
+				walkBlock(catch.Body)
+			}
+			walkBlock(s.Finally)
+		case *ast.MatchStatement:
+			for _, matchCase := range s.Cases {
+				addIdent(matchCase.Name)
+				walkBlock(matchCase.Body)
+			}
+		case *ast.SelectStatement:
+			for _, selectCase := range s.Cases {
+				if selectCase.Binding != "" {
+					into[selectCase.Binding] = struct{}{}
+				}
+				walkBlock(selectCase.Body)
+			}
+			walkBlock(s.Default)
+		case *ast.BlockStatement:
+			walkBlock(s)
+		}
+	}
+	for _, stmt := range stmts {
+		walk(stmt)
+	}
+}
+
 // isDeclarationName reports whether name binds a class, function, enum, or
 // interface declaration (vs a variable). Class/enum/interface declarations
 // bind a typeInfo whose name equals the declared name.

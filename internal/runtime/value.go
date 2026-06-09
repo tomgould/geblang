@@ -414,6 +414,29 @@ type SetEntry struct {
 	Value Value
 }
 
+// DictPairs returns insertion-ordered [key, value] pairs, the canonical
+// dict iteration view on both backends.
+func DictPairs(d Dict) []Value {
+	ordered := d.OrderedKeys()
+	values := make([]Value, 0, len(ordered))
+	for _, k := range ordered {
+		entry := d.Entries[k]
+		values = append(values, &List{Elements: []Value{entry.Key, entry.Value}})
+	}
+	return values
+}
+
+// StringChars returns per-rune single-character strings, matching
+// string.chars(); the canonical string iteration view on both backends.
+func StringChars(s String) []Value {
+	runes := []rune(s.Value)
+	values := make([]Value, len(runes))
+	for i, r := range runes {
+		values[i] = String{Value: string(r)}
+	}
+	return values
+}
+
 type Range struct {
 	Start     *big.Int
 	End       *big.Int

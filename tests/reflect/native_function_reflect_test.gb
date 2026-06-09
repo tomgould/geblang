@@ -1,0 +1,44 @@
+/**
+ * @title Reflect over native module functions (1.16.0)
+ * @summary reflect.function resolves a pure native module function
+ * ("math.sqrt") to a first-class callable, accepts a native function
+ * value directly, and returns null for unknown native members. Both
+ * backends behave identically.
+ */
+import test;
+import reflect;
+import math;
+import json as aliased;
+
+class NativeFunctionReflectTest extends test.Test {
+    @test
+    func resolvesByQualifiedName(): void {
+        let f = reflect.function("math.sqrt");
+        this.assertTrue(f != null);
+        this.assertEquals(4.0, f(16.0));
+    }
+
+    @test
+    func resolvesThroughImportAlias(): void {
+        let f = reflect.function("aliased.stringify");
+        this.assertTrue(f != null);
+        this.assertEquals(aliased.stringify([1, 2]), f([1, 2]));
+    }
+
+    @test
+    func acceptsNativeFunctionValue(): void {
+        let f = reflect.function(math.sqrt);
+        this.assertTrue(f != null);
+        this.assertEquals(5.0, f(25.0));
+    }
+
+    @test
+    func unknownNativeMemberIsNull(): void {
+        this.assertTrue(reflect.function("math.noSuchFn") == null);
+    }
+
+    @test
+    func moduleLookupStillResolves(): void {
+        this.assertTrue(reflect.module("math") != null);
+    }
+}
