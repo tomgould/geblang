@@ -5,6 +5,79 @@ Current version: **1.15.0**. It combines the ergonomics of PHP and
 Python with strong static typing, generics, decorators, async, and
 runtime reflection.
 
+## Quick overview
+
+Geblang compiles to bytecode for a stack VM, with a tree-walking interpreter as
+a fallback for anything the VM can't yet build (full parity is the goal) and
+on-disk bytecode caching. It aims for the same ergonomics and gentle learning
+curve as PHP and Python, but with the static guarantees those dynamic languages
+struggle to support.
+
+- Static typing with inference, plus an `any` escape hatch. Type errors are caught before execution by run/test/build, and both backends agree on what they reject.
+- Reified generics; `instanceof list<int>` works at runtime.
+- Modules and packages: manifest, lockfile, path- and git-based dependencies.
+- Single inheritance + multiple interfaces, with operator overloading via Python-style dunder methods.
+- Decorators / aspect-oriented programming: decorators can be either callable wrappers or pure metadata (a mix of PHP attributes and Python decorators).
+- async/await and generators backed by goroutines (true concurrency, not a single-threaded event loop), with structured task groups and `async.race` / `async.all` / `async.timeout`.
+- Pattern matching (`match`) and destructuring.
+- Functional helpers on collections: `xs.map(f)`, `xs.filter(p)`, `xs.reduce(init, f)`, `xs.sortBy(key)`, `collections.maxBy` / `groupBy` / `chunk`.
+- Runtime reflection over classes, functions, fields, decorators, and modules.
+- Context managers (`with`), immutability (`@immutable`), null-coalescing (`??`), nullable types (`?T`), string interpolation.
+- A large standard library oriented towards (but not limited to) web development and APIs.
+- Built-in tooling: REPL, test runner and framework, static analysis, formatter, LSP + DAP, and a VS Code extension.
+
+## Example
+
+Naive vs `@memoize`d recursive Fibonacci, timed with the `profiler` timer context manager:
+
+```gb
+import profiler;
+import io;
+
+func fibNaive(int n): int {
+    if (n < 2) { return n; }
+    return fibNaive(n - 1) + fibNaive(n - 2);
+}
+
+@memoize
+func fibMemo(int n): int {
+    if (n < 2) { return n; }
+    return fibMemo(n - 1) + fibMemo(n - 2);
+}
+
+let n = 32;
+
+/* The with-binding does not escape the block, so pre-declare the timer and
+ * the result, assign inside, and read elapsed afterwards. */
+let naive = 0;
+let tNaive = profiler.timer();
+with (tNaive) {
+    naive = fibNaive(n);
+}
+
+let memo = 0;
+let tMemo = profiler.timer();
+with (tMemo) {
+    memo = fibMemo(n);
+}
+
+io.println("fib(${n})");
+io.println("  naive recursion : ${naive} in ${tNaive.elapsedMs()} ms");
+io.println("  @memoize        : ${memo} in ${tMemo.elapsedMs()} ms");
+io.println("  speedup         : ${tNaive.elapsedMs() / tMemo.elapsedMs()}x");
+```
+
+Output:
+
+```
+fib(32)
+  naive recursion : 2178309 in 324.027586 ms
+  @memoize        : 2178309 in 0.108335 ms
+  speedup         : 2990.977855725296x
+```
+
+A smaller example:
+
 ```gb
 import io;
 
@@ -27,6 +100,53 @@ io.println(g.greet());
 Types are checked statically. `any` is opt-in for dynamic boundaries
 (parsed JSON, untyped foreign data); most code is typed end-to-end.
 
+## Benchmarks
+
+Some simple benchmarks against Python, PHP, and Node (take them with the usual
+pinch of salt; matching their raw performance was never a goal, just being fast
+enough for an interpreted language):
+
+```
+case            language   median ms   min ms     max ms     output
+--------------  ---------  ----------  ---------  ---------  ----------------
+numeric_loop    geblang            72         68         88  666665000000
+numeric_loop    python            128        123        227  666665000000
+numeric_loop    php                29         28         82  666665000000
+numeric_loop    node               27         25        134  666665000000
+recursive_fib   geblang            61         60         63  317811
+recursive_fib   python             37         35         42  317811
+recursive_fib   php                22         21         26  317811
+recursive_fib   node               24         23         28  317811
+list_pipeline   geblang            14         13         16  2497500
+list_pipeline   python             17         15         17  2497500
+list_pipeline   php                12         11         14  2497500
+list_pipeline   node               23         22         24  2497500
+string_concat   geblang            15         12         16  25714
+string_concat   python             19         18         21  25714
+string_concat   php                12         11         12  25714
+string_concat   node               24         21         28  25714
+dict_ops        geblang            31         26         40  49995000
+dict_ops        python             18         18         21  49995000
+dict_ops        php                12         12         14  49995000
+dict_ops        node               26         25         27  49995000
+class_dispatch  geblang            23         23         26  2497475000
+class_dispatch  python             19         18         20  2497475000
+class_dispatch  php                12         11         14  2497475000
+class_dispatch  node               24         23         24  2497475000
+regex_match     geblang            47         46         52  66666
+regex_match     python             43         43         48  66666
+regex_match     php                15         14         21  66666
+regex_match     node               25         23         36  66666
+json_roundtrip  geblang           449        425        461  284013
+json_roundtrip  python            486        470        494  284013
+json_roundtrip  php               282        265        331  284013
+json_roundtrip  node              254        249        258  284013
+list_functional  geblang            17         14         19  166616670000
+list_functional  python             20         17         25  166616670000
+list_functional  php                12         11         13  166616670000
+list_functional  node               21         20         22  166616670000
+```
+
 ## Highlights
 
 - **Static typing** with generics, unions (`T | U`), intersections
@@ -36,11 +156,13 @@ Types are checked statically. `any` is opt-in for dynamic boundaries
 - **Classes** with single inheritance and interfaces, decorators
   (callable + metadata), pattern matching, enums (with payloads
   and destructuring), and runtime reflection.
-- **Concurrency** built on a cooperative async model: `async`
-  functions, `await`, generators, structured task groups
-  (`async.scope.scope`), and `async.race` / `async.all` /
-  `async.timeout` combinators. Optional reactor backend for
-  high-throughput TCP / HTTP via `{reactor: true}`.
+- **Concurrency** backed by goroutines: `async` functions, `await`,
+  and generators run as real tasks on the Go scheduler (true
+  parallelism, not a single-threaded event loop), with structured
+  task groups (`async.scope`) and `async.race` / `async.all` /
+  `async.timeout` combinators. The built-in `http.serve` /
+  `net.serve` run handlers on a bounded-concurrency pool with
+  configurable overload backpressure.
 - **FFI** for calling C-ABI shared libraries directly (libtorch,
   libsqlite, libcurl, ...). In-process dispatch with no IPC;
   capability-gated default-off.

@@ -43,7 +43,7 @@ Other features offered by Geblang as core language or first-party tooling includ
 - Function and method overloading - multiple signatures of the same name, resolved by argument count and type at call time
 - Generics with type checking and runtime reflection, including `instanceof T` checks
 - Runtime type metadata via `typeof`, type values and reflection APIs
-- Native async via cooperative scheduling as core syntax
+- Native async/await and generators as core syntax, backed by goroutines (tasks run in parallel on the Go scheduler, not a single-threaded event loop)
 - Built-in bundling of Geblang programs into distributable binaries containing the interpreter, stdlib,
   application and dependency packages
 - First-party LSP, debugger, formatter, linter/static analysis and documentation tooling
