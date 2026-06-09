@@ -629,8 +629,9 @@ type ListPatternMatch struct {
 }
 
 type ListPatternBinding struct {
-	Type *TypeRef    // optional element type guard
-	Name *Identifier // required; "_" means "don't bind"
+	Type    *TypeRef    // optional element type guard
+	Name    *Identifier // binder name; "_" means "don't bind"
+	Literal Expression  // literal element matched by equality; nil for binders
 }
 
 type MatchStatement struct {

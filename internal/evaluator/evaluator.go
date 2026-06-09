@@ -2666,6 +2666,13 @@ func (e *Evaluator) evalMatchStatement(stmt *ast.MatchStatement, env *runtime.En
 			continue
 		}
 		if c.Body == nil {
+			// Arrow-bodied arm in statement position: run the action,
+			// discard the value.
+			if c.Value != nil {
+				if _, err := e.evalExpression(c.Value, caseEnv); err != nil {
+					return signal{}, err
+				}
+			}
 			return signal{}, nil
 		}
 		return e.evalBlock(c.Body, caseEnv)
@@ -2748,6 +2755,21 @@ func (e *Evaluator) matchCase(value runtime.Value, c ast.MatchCase, env *runtime
 		matched = true
 		for i, binding := range c.ListPattern.Bindings {
 			elem := list.Elements[i]
+			if binding.Literal != nil {
+				pattern, err := e.evalExpression(binding.Literal, env)
+				if err != nil {
+					return nil, false, err
+				}
+				equal, err := e.evalInfix("==", elem, pattern)
+				if err != nil {
+					return nil, false, err
+				}
+				if !equal.(runtime.Bool).Value {
+					matched = false
+					break
+				}
+				continue
+			}
 			if binding.Type != nil && !e.valueMatchesType(elem, binding.Type.Name) {
 				matched = false
 				break

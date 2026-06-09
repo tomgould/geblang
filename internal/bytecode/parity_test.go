@@ -3441,6 +3441,62 @@ io.println("${reflect.typeBindings(make<float>(1.5 as float))}");
 `, "{\"A\": \"string\", \"B\": \"string\"}\n{\"A\": \"int\", \"B\": \"int\"}\n{\"A\": \"float\", \"B\": \"float\"}\n")
 }
 
+// Arrow-bodied match STATEMENT arms must execute their expression (the
+// documented `case "serve" => startServer();` action form). Both
+// backends previously matched the case and silently dropped the body.
+func TestParityMatchStatementArrowArmsExecute(t *testing.T) {
+	runParity(t, `import io;
+match (5) {
+    case 5 => io.println("five");
+    default => io.println("def");
+}
+match ([9, 2]) {
+    case [a, b] if (a > b) => io.println("big ${a} ${b}");
+    default => io.println("def2");
+}
+match ("x") {
+    case "y" => io.println("wrong");
+    default => io.println("fallback");
+}
+let hits = [];
+match (1) {
+    case 1 => hits.push("one");
+}
+io.println("${hits}");
+`, "five\nbig 9 2\nfallback\n[\"one\"]\n")
+}
+
+// List patterns accept literal elements alongside binders (1.16.0):
+// literals match by equality, binders capture, types still guard.
+func TestParityListPatternLiteralElements(t *testing.T) {
+	runParity(t, `import io;
+func describe(list<any> v): string {
+    return match (v) {
+        case [1, x, 3] => "mid ${x}";
+        case [0, 0] => "zeros";
+        case ["go", n] if (n > 10) => "big go ${n}";
+        case ["go", n] => "go ${n}";
+        case [-1, y] => "neg ${y}";
+        case [true, s] => "flag ${s}";
+        case [int a, 9] => "ends nine ${a}";
+        default => "other";
+    };
+}
+io.println(describe([1, 2, 3]));
+io.println(describe([0, 0]));
+io.println(describe(["go", 50]));
+io.println(describe(["go", 5]));
+io.println(describe([-1, 7]));
+io.println(describe([true, "on"]));
+io.println(describe([4, 9]));
+io.println(describe([9, 9, 9]));
+match ([1, 99]) {
+    case [1, v] => io.println("stmt ${v}");
+    default => io.println("stmt-def");
+}
+`, "mid 2\nzeros\nbig go 50\ngo 5\nneg 7\nflag on\nends nine 4\nother\nstmt 99\n")
+}
+
 func TestParityAsyncTaskDoneMethod(t *testing.T) {
 	runParity(t, `import io;
 async func noop(): void {}

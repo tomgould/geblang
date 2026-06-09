@@ -31,6 +31,14 @@
   single-character strings matching `.chars()`. Previously dict iteration
   worked only on the evaluator's `for-in`, set iteration only in evaluator
   comprehensions, and string iteration not at all.
+- List patterns in `match` accept literal elements alongside binders:
+  `case ["go", n] if (n > 10) => ...` pins positions by equality and
+  captures the rest. Numbers (including negatives), strings, bools, and
+  `null` work as literal elements.
+- Arrow-bodied arms in match STATEMENTS now execute their action
+  expression. Previously `match (cmd) { case "serve" => startServer(); }`
+  - the documented action form - matched the case and silently did
+  nothing on both backends; only the `case X:` block form ran.
 - Generic function call-site inference projects through to constructed
   instances: `make("hello")` for `func make<T>(T v): Pair<T, T>` reports
   `reflect.typeBindings` of `{"A": "string", "B": "string"}` instead of

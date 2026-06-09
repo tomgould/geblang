@@ -1942,6 +1942,16 @@ func (c *Compiler) compileMatchStatement(stmt *ast.MatchStatement) error {
 				c.popScope()
 				return err
 			}
+		} else if matchCase.Value != nil {
+			// Arrow-bodied arm in statement position: run the action,
+			// discard the value.
+			if err := c.compileExpression(matchCase.Value); err != nil {
+				c.popScope()
+				return err
+			}
+			if !c.expressionLeavesNoValue(matchCase.Value) {
+				c.emitAt(OpPop, matchCase.Token.Line, matchCase.Token.Column)
+			}
 		}
 		c.popScope()
 		endJumps = append(endJumps, c.emitJump(OpJump, matchCase.Token.Line, matchCase.Token.Column))
@@ -2181,6 +2191,17 @@ func (c *Compiler) compileMatchCaseCondition(valueSlot int64, matchCase ast.Matc
 	}
 	if matchCase.ListPattern != nil {
 		for i, binding := range matchCase.ListPattern.Bindings {
+			if binding.Literal != nil {
+				c.emitAt(OpGetLocal, line, col, valueSlot)
+				c.emitConstant(runtime.SmallInt{Value: int64(i)}, line, col)
+				c.emitAt(OpIndex, line, col)
+				if err := c.compileExpression(binding.Literal); err != nil {
+					return nil, err
+				}
+				c.emitAt(OpEqual, line, col)
+				nextJumps = append(nextJumps, c.emitJump(OpJumpIfFalse, line, col))
+				continue
+			}
 			isWildcard := binding.Name == nil || binding.Name.Value == "_"
 			if binding.Type == nil && isWildcard {
 				continue

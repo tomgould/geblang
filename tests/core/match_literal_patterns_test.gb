@@ -1,0 +1,66 @@
+/**
+ * @title List-pattern literal elements and arrow statement arms (1.16.0)
+ * @summary `case [1, x, 3]` mixes equality-matched literals with binders
+ * (negative numbers, strings, bools included), and arrow-bodied arms in
+ * match STATEMENTS execute their action expression.
+ */
+import test;
+
+class MatchLiteralPatternsTest extends test.Test {
+    func describe(list<any> v): string {
+        return match (v) {
+            case [1, x, 3] => "mid ${x}";
+            case [0, 0] => "zeros";
+            case ["go", n] if (n > 10) => "big go ${n}";
+            case ["go", n] => "go ${n}";
+            case [-1, y] => "neg ${y}";
+            case [true, s] => "flag ${s}";
+            case [int a, 9] => "ends nine ${a}";
+            default => "other";
+        };
+    }
+
+    @test
+    func literalAndBinderMix(): void {
+        this.assertEquals("mid 2", this.describe([1, 2, 3]));
+        this.assertEquals("zeros", this.describe([0, 0]));
+        this.assertEquals("neg 7", this.describe([-1, 7]));
+        this.assertEquals("flag on", this.describe([true, "on"]));
+    }
+
+    @test
+    func literalsWithGuards(): void {
+        this.assertEquals("big go 50", this.describe(["go", 50]));
+        this.assertEquals("go 5", this.describe(["go", 5]));
+    }
+
+    @test
+    func typedBinderWithTrailingLiteral(): void {
+        this.assertEquals("ends nine 4", this.describe([4, 9]));
+        this.assertEquals("other", this.describe(["x", 9]));
+    }
+
+    @test
+    func literalMismatchFallsThrough(): void {
+        this.assertEquals("other", this.describe([9, 9, 9]));
+        this.assertEquals("other", this.describe([2, 5, 3]));
+    }
+
+    @test
+    func arrowStatementArmsExecute(): void {
+        list<string> seen = [];
+        match (5) {
+            case 5 => seen.push("five");
+            default => seen.push("def");
+        }
+        match ([1, 42]) {
+            case [1, v] => seen.push("got ${v}");
+            default => seen.push("def2");
+        }
+        match ("zzz") {
+            case "a" => seen.push("wrong");
+            default => seen.push("fallback");
+        }
+        this.assertEquals(["five", "got 42", "fallback"], seen);
+    }
+}

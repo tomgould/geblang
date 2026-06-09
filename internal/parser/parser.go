@@ -2426,6 +2426,23 @@ func (p *Parser) parseMatchListPattern() *ast.ListPatternMatch {
 			binding.Type = p.parseTypeRefFromCurrent()
 			p.nextToken() // step onto the name
 		}
+		if binding.Type == nil && !p.curTokenIs(token.Ident) {
+			// Non-identifier element: a literal matched by equality.
+			binding.Literal = p.parseExpression(bitOr)
+			if binding.Literal == nil {
+				p.errorf(p.curToken, "expected list-pattern binding name or literal, got %s", p.curToken.Type)
+				return out
+			}
+			out.Bindings = append(out.Bindings, binding)
+			if p.peekTokenIs(token.Comma) {
+				p.nextToken()
+				continue
+			}
+			if !p.expectPeek(token.RBracket) {
+				return out
+			}
+			return out
+		}
 		if !p.curTokenIs(token.Ident) {
 			p.errorf(p.curToken, "expected list-pattern binding name, got %s", p.curToken.Type)
 			return out

@@ -409,6 +409,22 @@ or untyped (matches any value); `_` is a wildcard that skips
 binding. Length mismatch and type mismatch both fall through to
 the next case.
 
+Elements can also be literals (1.16.0): a non-identifier element
+matches by equality instead of binding, so a pattern can pin some
+positions and capture the rest. Numbers (including negatives),
+strings, bools, and `null` all work:
+
+```gb
+let cmd = ["go", 50];
+let action = match (cmd) {
+    case ["go", n] if (n > 10) => "fast ${n}";
+    case ["go", n]             => "slow ${n}";
+    case ["stop"]              => "halt";
+    case [1, x, 3]             => "sandwiched ${x}";
+    default                    => "unknown";
+};
+```
+
 ```gb
 let pair = [3, 7];
 let label = match (pair) {
