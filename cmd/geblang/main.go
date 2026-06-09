@@ -1831,12 +1831,15 @@ func (l *bytecodeModuleLoader) LoadModule(canonical string, alias string) (*runt
 	path, err := modules.NewResolver(l.modulePaths).Resolve(canonical)
 	if err != nil {
 		if native := l.lookupBuiltin(canonical, alias); native != nil {
+			// Cache so repeated loads are a map hit, not a reconstruct.
+			l.modules[canonical] = native
 			return native, nil
 		}
 		return nil, err
 	}
 	if l.loading[path] {
 		if native := l.lookupBuiltin(canonical, alias); native != nil {
+			l.modules[canonical] = native
 			return native, nil
 		}
 		return nil, fmt.Errorf("circular import detected for %s", canonical)

@@ -4036,6 +4036,11 @@ func (c *Compiler) compileReflectCall(expr *ast.CallExpression, name string) err
 				if err != nil {
 					return err
 				}
+				// argc==0 means the helper already pushed the result (a Null
+				// for an unknown module, matching the evaluator's env-miss).
+				if argc == 0 {
+					return nil
+				}
 				nameIndex := int64(len(c.chunk.Constants))
 				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: "reflect." + name})
 				c.emitAt(OpNativeCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(argc))
@@ -4170,6 +4175,13 @@ func (c *Compiler) compileReflectModuleLookup(expr *ast.CallExpression) error {
 	}
 	resolved, ok := c.resolveName(nameLiteral.Value)
 	if !ok {
+		// Native modules are imported via the fast path (no global slot) but
+		// recorded in moduleAliases; load the module value so reflect.module
+		// resolves them like the evaluator does.
+		if canonical, isModule := c.moduleAliases[nameLiteral.Value]; isModule {
+			c.emitModuleValue(canonical, expr.Token.Line, expr.Token.Column)
+			return nil
+		}
 		c.emitConstant(runtime.Null{}, expr.Token.Line, expr.Token.Column)
 		return nil
 	}
@@ -4179,6 +4191,13 @@ func (c *Compiler) compileReflectModuleLookup(expr *ast.CallExpression) error {
 		c.emitAt(OpGetGlobal, expr.Token.Line, expr.Token.Column, resolved.slot)
 	}
 	return nil
+}
+
+// emitModuleValue emits an OpLoadModuleValue for the canonical module name.
+func (c *Compiler) emitModuleValue(canonical string, line int, column int) {
+	index := int64(len(c.chunk.Constants))
+	c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: canonical})
+	c.emitAt(OpLoadModuleValue, line, column, index)
 }
 
 func (c *Compiler) compileReflectTargetArgument(expr ast.Expression) error {
@@ -4302,7 +4321,16 @@ func (c *Compiler) compileReflectQualifiedLookup(expr *ast.CallExpression, name 
 	}
 	resolved, ok := c.resolveName(moduleName)
 	if !ok {
-		return 0, fmt.Errorf("unknown bytecode module %s", moduleName)
+		// Native modules carry no global slot; load the module value so the
+		// runtime reads module.Exports[export], as the evaluator does.
+		if canonical, isModule := c.moduleAliases[moduleName]; isModule {
+			c.emitModuleValue(canonical, expr.Token.Line, expr.Token.Column)
+			c.emitConstant(runtime.String{Value: exportName}, expr.Token.Line, expr.Token.Column)
+			return 2, nil
+		}
+		// Unknown module: the evaluator's env-miss yields null, so match it.
+		c.emitConstant(runtime.Null{}, expr.Token.Line, expr.Token.Column)
+		return 0, nil
 	}
 	if resolved.kind == "local" {
 		c.emitAt(OpGetLocal, expr.Token.Line, expr.Token.Column, resolved.slot)

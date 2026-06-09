@@ -1348,6 +1348,13 @@ func (e *Evaluator) BuiltinModule(canonical, alias string) *runtime.Module {
 	if _, ok := e.builtins[canonical]; !ok {
 		return nil
 	}
+	// Builtin object classes are installed lazily; ensure they exist before
+	// reading the class-export fields so module Exports are populated.
+	if e.httpRequestClass == nil || e.httpResponseClass == nil {
+		if err := e.installBuiltinTypes(runtime.NewEnvironment()); err != nil {
+			return nil
+		}
+	}
 	return e.builtinModuleValue(canonical, alias)
 }
 

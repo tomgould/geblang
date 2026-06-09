@@ -1919,6 +1919,21 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err := vm.importModule(instruction); err != nil {
 				return err
 			}
+		case OpLoadModuleValue:
+			canonical, err := vm.constantStringAt(instruction, instruction.Operands[0], "module name must be string")
+			if err != nil {
+				return err
+			}
+			if vm.moduleLoader == nil {
+				vm.push(runtime.Null{})
+				break
+			}
+			module, lerr := vm.moduleLoader.LoadModule(canonical, "")
+			if lerr != nil || module == nil {
+				vm.push(runtime.Null{})
+				break
+			}
+			vm.push(module)
 		case OpImportFrom:
 			if err := vm.importFrom(instruction); err != nil {
 				return err
@@ -7961,6 +7976,10 @@ func (vm *VM) reflectLookupNativeCall(fn string, args []runtime.Value) (runtime.
 			}
 		case runtime.BytecodeClass:
 			return value, nil
+		case *runtime.Class:
+			// Native module class export (e.g. http.Request); the evaluator
+			// returns it as-is, so match that.
+			return value, nil
 		case runtime.String:
 			// Look up the class by name in the chunk's class table
 			// first; fall back to cross-module search through the
@@ -11231,7 +11250,7 @@ func copyStringInt64SliceMap(values map[string][]int64) map[string][]int64 {
 
 func shiftInstructionOperands(instruction *Instruction, instructionShift int, constantShift int) {
 	switch instruction.Op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpLoadModuleValue, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 		for i := range instruction.Operands {
 			if isConstantOperand(instruction.Op, i) && instruction.Operands[i] >= 0 {
 				instruction.Operands[i] += int64(constantShift)
@@ -11262,7 +11281,7 @@ func shiftInstructionOperands(instruction *Instruction, instructionShift int, co
 
 func isConstantOperand(op Op, index int) bool {
 	switch op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallSpread, OpGetField, OpSetField, OpMethodCall, OpMethodCallSpread, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallSpread, OpGetField, OpSetField, OpMethodCall, OpMethodCallSpread, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst, OpLoadModuleValue:
 		return index == 0
 	case OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 		return index == 1

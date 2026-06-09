@@ -19,6 +19,12 @@
 - `dir(<module>)` now works on both backends (it previously failed to compile a
   bare module name on the bytecode backend). Under the evaluator it lists a
   module's full accessible member surface.
+- `reflect.module`, `reflect.class`, and `reflect.function` now resolve imported
+  native modules consistently on both backends. Previously the bytecode backend
+  returned null for `reflect.module("<native>")` and failed to compile
+  `reflect.class` / `reflect.function` over a native module; both now match the
+  interpreter (a native module's class exports are reflectable; native functions
+  remain non-reflectable and return null).
 
 ## 1.14.0
 

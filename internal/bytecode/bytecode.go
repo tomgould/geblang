@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(71)
+	Version = uint16(72)
 )
 
 type Op byte
@@ -94,6 +94,8 @@ const (
 	OpRethrow
 	OpMethodCallNamed
 	OpImportModule
+	// Loads the module value named by Operand[0] so reflect lookups resolve over native modules.
+	OpLoadModuleValue
 	OpMakeClosure
 	OpBitAnd
 	OpBitOr
