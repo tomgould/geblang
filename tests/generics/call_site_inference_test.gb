@@ -1,0 +1,67 @@
+/**
+ * @title Generic function call-site inference (1.16.0)
+ * @summary A generic function's inferred (or explicit) type argument
+ * projects through to instances its body constructs, so
+ * reflect.typeBindings reports the concrete type instead of the bare
+ * type-parameter name. Identical on both backends.
+ */
+import test;
+import reflect;
+
+class Pair<A, B> {
+    A first;
+    B second;
+    func Pair(A first, B second) {
+        this.first = first;
+        this.second = second;
+    }
+}
+
+class Box<T> {
+    T item;
+    func Box(T item) { this.item = item; }
+}
+
+func makePair<T>(T v): Pair<T, T> {
+    return Pair(v, v);
+}
+
+func wrap<T>(T v): Box<T> {
+    return Box<T>(v);
+}
+
+class CallSiteInferenceTest extends test.Test {
+    @test
+    func inferredFromStringArgument(): void {
+        let p = makePair("hello");
+        let b = reflect.typeBindings(p);
+        this.assertEquals("string", b["A"]);
+        this.assertEquals("string", b["B"]);
+    }
+
+    @test
+    func inferredFromIntArgument(): void {
+        let b = reflect.typeBindings(makePair(42));
+        this.assertEquals("int", b["A"]);
+        this.assertEquals("int", b["B"]);
+    }
+
+    @test
+    func explicitTypeArgumentWins(): void {
+        let b = reflect.typeBindings(makePair<float>(1.5 as float));
+        this.assertEquals("float", b["A"]);
+    }
+
+    @test
+    func explicitConstructorTypeArgResolvesThroughT(): void {
+        let b = reflect.typeBindings(wrap("x"));
+        this.assertEquals("string", b["T"]);
+    }
+
+    @test
+    func directConstructionStillInfers(): void {
+        let b = reflect.typeBindings(Pair(1, "a"));
+        this.assertEquals("int", b["A"]);
+        this.assertEquals("string", b["B"]);
+    }
+}

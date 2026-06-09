@@ -5828,6 +5828,14 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 	// LHS annotation (e.g. `Box<int> b = Box(...)`). Either path takes
 	// priority over inference from constructor args, which fills in any
 	// remaining bindings further down.
+	// A type-arg name that is itself a bound generic param (an enclosing
+	// generic function's T) resolves to the call site's concrete binding.
+	resolveArgName := func(name string) string {
+		if bound, ok := env.GetTypeBinding(name); ok && bound != "" {
+			return bound
+		}
+		return name
+	}
 	if len(call.TypeArguments) > 0 && len(class.TypeParameters) > 0 {
 		if instance.TypeBindings == nil {
 			instance.TypeBindings = map[string]string{}
@@ -5837,7 +5845,7 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 				break
 			}
 			if arg != nil && arg.Operator == "" && arg.Name != "" {
-				instance.TypeBindings[class.TypeParameters[i]] = arg.Name
+				instance.TypeBindings[class.TypeParameters[i]] = resolveArgName(arg.Name)
 			}
 		}
 	} else if len(declared) > 0 && declared[0] != nil {
@@ -5851,7 +5859,7 @@ func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.Cal
 					break
 				}
 				if arg != nil && arg.Operator == "" && arg.Name != "" {
-					instance.TypeBindings[class.TypeParameters[i]] = arg.Name
+					instance.TypeBindings[class.TypeParameters[i]] = resolveArgName(arg.Name)
 				}
 			}
 		}

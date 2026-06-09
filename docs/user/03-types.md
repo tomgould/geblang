@@ -598,6 +598,26 @@ the value's type against T at runtime. T is bound from the explicit
 `<int>` / `<string>` at the call site, and `instanceof T` consults that
 binding inside the body.
 
+Call-site bindings also project through to instances the body constructs
+(1.16.0). A generic function returning a generic class reports the
+concrete types, whether T was inferred from an argument or passed
+explicitly:
+
+```gb
+class Pair<A, B> {
+    A first;
+    B second;
+    func Pair(A first, B second) { this.first = first; this.second = second; }
+}
+
+func make<T>(T v): Pair<T, T> {
+    return Pair(v, v);
+}
+
+reflect.typeBindings(make("hello"));   # {"A": "string", "B": "string"}
+reflect.typeBindings(make(42));        # {"A": "int", "B": "int"}
+```
+
 > **Strict binding.** Explicit type arguments on a generic call replace T
 > in every position of the signature - parameters, return type, and the
 > body - just like in Kotlin, Swift, Rust, and C#. If you write

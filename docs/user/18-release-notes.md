@@ -31,6 +31,11 @@
   single-character strings matching `.chars()`. Previously dict iteration
   worked only on the evaluator's `for-in`, set iteration only in evaluator
   comprehensions, and string iteration not at all.
+- Generic function call-site inference projects through to constructed
+  instances: `make("hello")` for `func make<T>(T v): Pair<T, T>` reports
+  `reflect.typeBindings` of `{"A": "string", "B": "string"}` instead of
+  the bare type-parameter name. The bytecode VM already behaved this way;
+  the evaluator now matches.
 
 ### Reflection
 

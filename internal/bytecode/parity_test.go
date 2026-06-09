@@ -3418,6 +3418,29 @@ io.println("${probe(2)}");
 `, "90\ntrue\nnull\n")
 }
 
+// Generic FUNCTION call-site inference must project the inferred type
+// argument through to instances the body constructs (roadmap post-1.0
+// known issue; the VM already did this, the evaluator left bare "T").
+func TestParityGenericFunctionCallSiteInference(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+class Pair<A, B> {
+    A first;
+    B second;
+    func Pair(A first, B second) {
+        this.first = first;
+        this.second = second;
+    }
+}
+func make<T>(T v): Pair<T, T> {
+    return Pair(v, v);
+}
+io.println("${reflect.typeBindings(make("hello"))}");
+io.println("${reflect.typeBindings(make(42))}");
+io.println("${reflect.typeBindings(make<float>(1.5 as float))}");
+`, "{\"A\": \"string\", \"B\": \"string\"}\n{\"A\": \"int\", \"B\": \"int\"}\n{\"A\": \"float\", \"B\": \"float\"}\n")
+}
+
 func TestParityAsyncTaskDoneMethod(t *testing.T) {
 	runParity(t, `import io;
 async func noop(): void {}
