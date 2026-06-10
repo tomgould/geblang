@@ -48,6 +48,10 @@ type VM struct {
 	// stays true for the VM's lifetime. The single-goroutine hot path
 	// (numeric_loop) never bridges, so it stays lock-free.
 	bridgeActive      atomic.Bool
+	// escapedRefs counts vm-capturing closures handed out during a run
+	// (method wrappers, stateful-native bridges, lazy generators). A
+	// wrapper VM is only recycled when none escaped.
+	escapedRefs atomic.Int32
 	localsStack       []runtime.VMValue
 	currentFrameBP    int
 	frames            []callFrame
@@ -419,6 +423,20 @@ func NewVM(chunk Chunk, stdout io.Writer) *VM {
 	if localsCap < 256 {
 		localsCap = 256
 	}
+	if meta := chunk.sharedMeta; meta != nil {
+		// Shared-meta fast path: the chunk carries once-prepared
+		// (memoised) functions, the class index, and type-assert
+		// specs; this VM shares them read-only instead of detaching
+		// and re-deriving per construction.
+		meta.prepare(chunk)
+		chunk.Functions = meta.preparedFunctions
+		vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), dirtyGlobals: make([]bool, globalSize), localsStack: make([]runtime.VMValue, 0, localsCap), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: meta.classIndex, natives: native.NewBuiltinRegistry(), nativeCache: make([]native.Function, len(chunk.Constants)), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, interfaceFallbacks: map[int64]map[string]crossModuleDefault{}, interfaceExtraFields: map[int64][]extraField{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
+		vm.typeAssertSpecs = meta.typeAssertSpecs
+		vm.requiresCallSitePolymorphism = meta.requiresCallSitePolymorphism
+		native.SetInstanceInvoker(vm.invokeInstanceMethod)
+		native.SetClassDeserializer(vm.deserializeIntoClass)
+		return vm
+	}
 	// Detach Functions so prepareFunctionTypeMetadata can mutate the
 	// per-VM metadata (typeParamSet, paramTypeSpecs, etc.) without
 	// racing concurrent VMs that share the same source chunk.
@@ -725,6 +743,47 @@ func (vm *VM) RestoreInterfaceFallbackState(state InterfaceFallbackState) {
 	if state.extraFields != nil {
 		vm.interfaceExtraFields = state.extraFields
 	}
+}
+
+func (vm *VM) noteEscape() { vm.escapedRefs.Add(1) }
+
+// resetForReuse clears the per-run mutable state of a wrapper VM so a
+// pooled instance can serve another call over the same template chunk
+// (Functions/Classes/meta identical; the caller re-points Constants and
+// Instructions and re-applies its per-call setup). Chunk-shape caches
+// (nativeCache, nameLowerCache, class/method lookup caches,
+// typeSpecCache) are deliberately kept.
+func (vm *VM) resetForReuse() {
+	vm.stack = vm.stack[:0]
+	vm.localsStack = vm.localsStack[:0]
+	vm.frames = vm.frames[:0]
+	if cap(vm.defers) > 0 {
+		vm.defers = vm.defers[:1]
+		vm.defers[0] = vm.defers[0][:0]
+	} else {
+		vm.defers = make([][]deferredAction, 1, 64)
+	}
+	for i := range vm.dirtyGlobals {
+		vm.dirtyGlobals[i] = false
+	}
+	vm.pendingThrow = nil
+	vm.exceptionHandlers = vm.exceptionHandlers[:0]
+	vm.runEntryIP = 0
+	vm.runInlineExitDepth = -1
+	vm.inDispatchLoop = false
+	vm.destructibleInstances = nil
+	vm.pendingTypeBindings = nil
+	vm.forwardThis = nil
+	vm.generatorExecution = false
+	vm.generatorYield = nil
+	vm.generatorDone = nil
+	vm.interfaceFallbacks = map[int64]map[string]crossModuleDefault{}
+	vm.interfaceExtraFields = map[int64][]extraField{}
+	vm.bridgeActive.Store(false)
+	vm.escapedRefs.Store(0)
+	// The global native hooks must point at a live VM for this chunk.
+	native.SetInstanceInvoker(vm.invokeInstanceMethod)
+	native.SetClassDeserializer(vm.deserializeIntoClass)
 }
 
 func (vm *VM) prepareFunctionTypeMetadata() {
@@ -5687,6 +5746,7 @@ func (parent *VM) spawnAsyncWorker() *VM {
 }
 
 func (vm *VM) lazyGenerator(index int64, args []runtime.Value) *runtime.Generator {
+	vm.noteEscape()
 	items := make(chan vmGeneratorItem)
 	doneCh := make(chan struct{})
 	stop := sync.Once{}
@@ -5731,6 +5791,7 @@ func (vm *VM) lazyGenerator(index int64, args []runtime.Value) *runtime.Generato
 }
 
 func (vm *VM) lazyClosureGenerator(closure runtime.BytecodeClosure, args []runtime.Value) *runtime.Generator {
+	vm.noteEscape()
 	items := make(chan vmGeneratorItem)
 	doneCh := make(chan struct{})
 	stop := sync.Once{}
@@ -6730,6 +6791,7 @@ func (vm *VM) runtimeMethodWrappers(classIndex int64) map[string][]runtime.Funct
 		if firstIndex >= 0 && int(firstIndex) < len(vm.chunk.Functions) && vm.chunk.Functions[firstIndex].Name != "" {
 			name = vm.chunk.Functions[firstIndex].Name
 		}
+		vm.noteEscape()
 		methods[methodKey] = []runtime.Function{{
 			Name:   name,
 			Target: "method",
@@ -8329,6 +8391,7 @@ func (vm *VM) reflectBoundMethodCallable(class runtime.BytecodeClass, key string
 	if len(indices) == 0 {
 		return nil
 	}
+	vm.noteEscape()
 	return runtime.Function{
 		Name: key,
 		Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -8388,6 +8451,7 @@ func (vm *VM) reflectStaticMethodCallable(class runtime.BytecodeClass, key strin
 	if len(indices) == 0 {
 		return nil
 	}
+	vm.noteEscape()
 	return runtime.Function{
 		Name: key,
 		Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -8963,6 +9027,7 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtim
 		// any concurrent write-back into vm.globals must serialise with
 		// the parent's setGlobalVM, so flip bridgeActive monotonically.
 		vm.bridgeActive.Store(true)
+		vm.noteEscape()
 		return runtime.Function{
 			Name:       callable.Name,
 			Parameters: bridgedParameters(callable.Parameters),
@@ -8975,6 +9040,7 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtim
 		}
 	case runtime.BytecodeClosure:
 		vm.bridgeActive.Store(true)
+		vm.noteEscape()
 		return runtime.Function{
 			Name:       callable.Name,
 			Parameters: bridgedParameters(vm.closureParameters(callable)),
@@ -11329,38 +11395,68 @@ func (vm *VM) runWrapper(args []runtime.Value, wrapper []Instruction) (runtime.V
 func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction, rawIndex int64, isolated bool) (runtime.Value, error) {
 	chunk := vm.chunk
 	shift := len(wrapper)
-	chunk.Constants = append(append([]runtime.Value(nil), args...), vm.chunk.Constants...)
-	chunk.Instructions = append([]Instruction(nil), wrapper...)
-	chunk.Functions = append([]FunctionInfo(nil), vm.chunk.Functions...)
-	for i := range chunk.Functions {
-		chunk.Functions[i].Entry += int64(shift)
-		chunk.Functions[i].DefaultConstants = append([]int64(nil), chunk.Functions[i].DefaultConstants...)
-		for j, defaultIndex := range chunk.Functions[i].DefaultConstants {
-			if defaultIndex >= 0 {
-				chunk.Functions[i].DefaultConstants[j] = defaultIndex + int64(len(args))
+	// Constants stay per call: they carry the call arguments and the
+	// parent's CURRENT pool (static assignments mutate slots at runtime).
+	chunk.Constants = append(append(make([]runtime.Value, 0, len(args)+len(vm.chunk.Constants)), args...), vm.chunk.Constants...)
+	var tpl *wrapperTemplate
+	if meta := vm.chunk.sharedMeta; meta != nil {
+		// Shared shifted template: functions/classes/instruction tails
+		// are pure functions of (chunk, wrapper length, arg count), built
+		// once and shared read-only across calls.
+		tpl = meta.wrapperTemplate(vm.chunk, shift, len(args))
+		instructions := make([]Instruction, 0, shift+len(tpl.tail))
+		instructions = append(instructions, wrapper...)
+		instructions = append(instructions, tpl.tail...)
+		chunk.Instructions = instructions
+		chunk.Functions = tpl.functions
+		chunk.Classes = tpl.classes
+		chunk.sharedMeta = tpl.meta
+	} else {
+		chunk.Instructions = append([]Instruction(nil), wrapper...)
+		chunk.Functions = append([]FunctionInfo(nil), vm.chunk.Functions...)
+		for i := range chunk.Functions {
+			chunk.Functions[i].Entry += int64(shift)
+			chunk.Functions[i].DefaultConstants = append([]int64(nil), chunk.Functions[i].DefaultConstants...)
+			for j, defaultIndex := range chunk.Functions[i].DefaultConstants {
+				if defaultIndex >= 0 {
+					chunk.Functions[i].DefaultConstants[j] = defaultIndex + int64(len(args))
+				}
 			}
 		}
-	}
-	chunk.Classes = copyClasses(vm.chunk.Classes)
-	for i := range chunk.Classes {
-		for j, defaultIndex := range chunk.Classes[i].FieldDefaults {
-			if defaultIndex >= 0 {
-				chunk.Classes[i].FieldDefaults[j] = defaultIndex + int64(len(args))
+		chunk.Classes = copyClasses(vm.chunk.Classes)
+		for i := range chunk.Classes {
+			for j, defaultIndex := range chunk.Classes[i].FieldDefaults {
+				if defaultIndex >= 0 {
+					chunk.Classes[i].FieldDefaults[j] = defaultIndex + int64(len(args))
+				}
+			}
+			for name, constantIndex := range chunk.Classes[i].StaticValues {
+				if constantIndex >= 0 {
+					chunk.Classes[i].StaticValues[name] = constantIndex + int64(len(args))
+				}
 			}
 		}
-		for name, constantIndex := range chunk.Classes[i].StaticValues {
-			if constantIndex >= 0 {
-				chunk.Classes[i].StaticValues[name] = constantIndex + int64(len(args))
-			}
+		for _, instruction := range vm.chunk.Instructions {
+			copied := instruction
+			copied.Operands = append([]int64(nil), instruction.Operands...)
+			shiftInstructionOperands(&copied, shift, len(args))
+			chunk.Instructions = append(chunk.Instructions, copied)
 		}
 	}
-	for _, instruction := range vm.chunk.Instructions {
-		copied := instruction
-		copied.Operands = append([]int64(nil), instruction.Operands...)
-		shiftInstructionOperands(&copied, shift, len(args))
-		chunk.Instructions = append(chunk.Instructions, copied)
+	var callVM *VM
+	if tpl != nil {
+		if pooled, _ := tpl.vmPool.Get().(*VM); pooled != nil {
+			pooled.resetForReuse()
+			pooled.chunk.Constants = chunk.Constants
+			pooled.chunk.Instructions = chunk.Instructions
+			pooled.stdout = vm.stdout
+			pooled.moduleLoader = vm.moduleLoader
+			callVM = pooled
+		}
 	}
-	callVM := NewVMWithModuleLoader(chunk, vm.stdout, vm.moduleLoader)
+	if callVM == nil {
+		callVM = NewVMWithModuleLoader(chunk, vm.stdout, vm.moduleLoader)
+	}
 	// The callVM is a wrap-bridge worker: its setGlobalVM writes feed the
 	// write-back loop below, so it must take the locked + dirty-tracking
 	// path even if no further wrap fires inside it.
@@ -11410,6 +11506,8 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 		callVM.rawFunctionCalls[rawIndex] = true
 	}
 	if err := callVM.Run(); err != nil {
+		// Errors leave throw/handler state behind; be conservative and
+		// let this VM go to the collector instead of the pool.
 		return nil, err
 	}
 	// Propagate any global-state mutations the callVM produced back to the
@@ -11438,10 +11536,15 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 		}
 		vm.globalsMu.Unlock()
 	}
-	if len(callVM.stack) == 0 {
-		return runtime.Null{}, nil
+	var result runtime.Value = runtime.Null{}
+	var popErr error
+	if len(callVM.stack) > 0 {
+		result, popErr = callVM.pop()
 	}
-	return callVM.pop()
+	if tpl != nil && popErr == nil && callVM.escapedRefs.Load() == 0 {
+		tpl.vmPool.Put(callVM)
+	}
+	return result, popErr
 }
 
 func copyRuntimeValueMap(values map[int64]runtime.Value) map[int64]runtime.Value {

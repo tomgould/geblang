@@ -20,6 +20,15 @@
   licence text. `--` passes everything after it to the application
   untouched.
 
+### Performance
+
+- The bytecode VM shares once-prepared chunk metadata and shifted
+  wrapper templates across VM instances, and recycles wrapper VMs
+  between calls. Server workloads that dispatch through callbacks and
+  cross-module calls speed up substantially: a representative typed
+  web route serves ~4x more requests per second than 1.17.0, with
+  request latency cut to a quarter.
+
 ### Fixes
 
 - Dict spread works on callable values on the bytecode VM, matching

@@ -324,6 +324,11 @@ type Chunk struct {
 	Constants    []runtime.Value
 	Instructions []Instruction
 	Functions    []FunctionInfo
+	// sharedMeta carries the once-prepared runtime metadata (memoised
+	// function specs, class index, wrapper templates) shared by every
+	// VM bound to a copy of this chunk. Set at Compile/Decode; nil for
+	// hand-built chunks, which fall back to per-VM preparation.
+	sharedMeta *chunkSharedMeta
 	Classes      []ClassInfo
 	Interfaces   []InterfaceInfo
 	Exports      []ExportInfo
@@ -974,6 +979,7 @@ func Decode(data []byte) (Chunk, error) {
 		return Chunk{}, errors.New("trailing bytecode data")
 	}
 	chunk.consolidateOperands()
+	chunk.sharedMeta = newChunkSharedMeta()
 	return chunk, nil
 }
 

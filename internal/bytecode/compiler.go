@@ -266,6 +266,7 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 	c.chunk.TopLevelLocalCount = c.locals
 	c.chunk.GlobalCount = int64(len(c.globals))
 	c.chunk.consolidateOperands()
+	c.chunk.sharedMeta = newChunkSharedMeta()
 	return c.chunk, nil
 }
 
