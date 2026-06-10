@@ -7,8 +7,11 @@ import (
 	"strings"
 	"testing"
 
+	"geblang/internal/ast"
 	"geblang/internal/bytecode"
+	"geblang/internal/lexer"
 	"geblang/internal/modules"
+	"geblang/internal/parser"
 )
 
 func TestSourceFlagsUnresolvedImport(t *testing.T) {
@@ -687,5 +690,75 @@ func TestSourceAllowsAnyReturnToGenericParam(t *testing.T) {
 		if strings.Contains(d.Message, "cannot return any") {
 			t.Fatalf("any->generic-param return must be allowed: %+v", d)
 		}
+	}
+}
+
+// A *_test.gb declaring the same module name as a sibling module file
+// merges with it so private references analyze; plain scripts, non-test
+// files, and mismatched declarations do not merge.
+func TestSameModuleTestProgram(t *testing.T) {
+	dir := t.TempDir()
+	moduleSource := `module helpers;
+func hidden(int x): int { return x * 2; }
+export func visible(int x): int { return hidden(x); }
+`
+	if err := os.WriteFile(filepath.Join(dir, "helpers.gb"), []byte(moduleSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testSource := `module helpers;
+import test;
+class HiddenTest extends test.Test {
+    @test
+    func doubles(): void { this.assertEquals(4, hidden(2)); }
+}
+`
+	testPath := filepath.Join(dir, "helpers_test.gb")
+	if err := os.WriteFile(testPath, []byte(testSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolver := modules.NewResolver([]string{dir})
+
+	parse := func(src string) *ast.Program {
+		p := parser.New(lexer.New(src))
+		program := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Fatalf("parse: %v", p.Errors())
+		}
+		return program
+	}
+
+	merged, ok := SameModuleTestProgram(testPath, parse(testSource), resolver)
+	if !ok {
+		t.Fatal("expected same-module merge to apply")
+	}
+	if DeclaredModuleName(merged) != "" {
+		t.Fatal("merged program must not retain a module declaration")
+	}
+	sawHidden := false
+	for _, stmt := range merged.Statements {
+		if fn, ok := stmt.(*ast.FunctionStatement); ok && fn.Name.Value == "hidden" {
+			sawHidden = true
+		}
+	}
+	if !sawHidden {
+		t.Fatal("merged program must include the module's private function")
+	}
+
+	// The merged program checks clean; the unmerged test file would not.
+	diags := CrossModuleAnalysis(testPath, merged, Options{Resolver: resolver, CrossModule: true})
+	for _, d := range diags {
+		if d.Severity == SeverityError {
+			t.Fatalf("unexpected diagnostic on merged program: %s", d.Message)
+		}
+	}
+
+	if _, ok := SameModuleTestProgram(filepath.Join(dir, "helpers_other.gb"), parse(testSource), resolver); ok {
+		t.Fatal("non *_test.gb file must not merge")
+	}
+	if _, ok := SameModuleTestProgram(testPath, parse("import test;\n"), resolver); ok {
+		t.Fatal("test file without a module declaration must not merge")
+	}
+	if _, ok := SameModuleTestProgram(testPath, parse("module nothere;\n"), resolver); ok {
+		t.Fatal("unresolvable module declaration must not merge")
 	}
 }

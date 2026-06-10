@@ -1,0 +1,40 @@
+/**
+ * @title Same-module test files reach private module members
+ * @summary A *_test.gb that declares the SAME module name as a sibling
+ * module file runs inside that module, so private functions, classes,
+ * consts, and module state are directly testable. Exported members keep
+ * working unchanged.
+ */
+module privhelpers;
+import test;
+
+class PrivateMemberAccessTest extends test.Test {
+
+    @test
+    func privateFunction(): void {
+        this.assertEquals("abc", normalize("  ABC  "));
+    }
+
+    @test
+    func privateConst(): void {
+        this.assertEquals("id-", PREFIX);
+    }
+
+    @test
+    func privateClass(): void {
+        this.assertTrue(Checker().valid("abcd"));
+        this.assertFalse(Checker().valid("ab"));
+    }
+
+    @test
+    func privateModuleState(): void {
+        let before = hits;
+        record();
+        this.assertEquals(before + 1, hits);
+    }
+
+    @test
+    func exportedMemberStillWorks(): void {
+        this.assertEquals("id-xy", tag(" XY "));
+    }
+}

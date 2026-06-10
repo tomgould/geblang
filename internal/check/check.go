@@ -7,6 +7,7 @@ package check
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -147,8 +148,14 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 		}
 		return nil, diags
 	}
-	diags := CrossModuleAnalysis(file, program, opts)
-	if _, compileErr := bytecode.CompileWithOptions(program, []byte(source), file, bytecode.CompileOptions{NativeSymbols: opts.NativeSymbols}); compileErr != nil {
+	// A same-module test file is analyzed merged with the module under
+	// test so its private references resolve.
+	analysisProgram := program
+	if merged, ok := SameModuleTestProgram(file, program, opts.Resolver); ok {
+		analysisProgram = merged
+	}
+	diags := CrossModuleAnalysis(file, analysisProgram, opts)
+	if _, compileErr := bytecode.CompileWithOptions(analysisProgram, []byte(source), file, bytecode.CompileOptions{NativeSymbols: opts.NativeSymbols}); compileErr != nil {
 		if d, ok := compileDiagnostic(file, compileErr); ok {
 			diags = append(diags, d)
 		}
@@ -158,6 +165,66 @@ func Source(file, source string, opts Options) (*ast.Program, []Diagnostic) {
 		diags = append(diags, lintProgram(file, program)...)
 	}
 	return program, diags
+}
+
+// SameModuleTestProgram merges a `*_test.gb` file that declares
+// `module X;` with the module source X resolves to, so the test's
+// references to X's private members analyze and execute as if declared
+// inside the module (the Go same-package test convention). Module
+// declarations are stripped from the merged program so it runs as a
+// script. Returns ok=false when the convention does not apply.
+func SameModuleTestProgram(file string, program *ast.Program, resolver *modules.Resolver) (*ast.Program, bool) {
+	if resolver == nil || !strings.HasSuffix(file, "_test.gb") {
+		return nil, false
+	}
+	canonical := DeclaredModuleName(program)
+	if canonical == "" {
+		return nil, false
+	}
+	modulePath, err := resolver.Resolve(canonical)
+	if err != nil {
+		return nil, false
+	}
+	absModule, _ := filepath.Abs(modulePath)
+	absTest, _ := filepath.Abs(file)
+	if absModule == absTest {
+		return nil, false
+	}
+	moduleSource, err := os.ReadFile(modulePath)
+	if err != nil {
+		return nil, false
+	}
+	mp := parser.New(lexer.New(string(moduleSource)))
+	moduleProgram := mp.ParseProgram()
+	if len(mp.Errors()) > 0 || DeclaredModuleName(moduleProgram) != canonical {
+		return nil, false
+	}
+	merged := make([]ast.Statement, 0, len(moduleProgram.Statements)+len(program.Statements))
+	merged = append(merged, withoutModuleDeclarations(moduleProgram.Statements)...)
+	merged = append(merged, withoutModuleDeclarations(program.Statements)...)
+	return &ast.Program{Statements: merged}, true
+}
+
+// DeclaredModuleName returns the program's `module X;` canonical name,
+// or "" when the program is a plain script.
+func DeclaredModuleName(program *ast.Program) string {
+	for _, stmt := range program.Statements {
+		if decl, ok := stmt.(*ast.ModuleStatement); ok {
+			return strings.Join(decl.Path, ".")
+		}
+	}
+	return ""
+}
+
+func withoutModuleDeclarations(statements []ast.Statement) []ast.Statement {
+	out := make([]ast.Statement, 0, len(statements))
+	for _, stmt := range statements {
+		if _, ok := stmt.(*ast.ModuleStatement); ok {
+			continue
+		}
+		out = append(out, stmt)
+	}
+	return out
 }
 
 // checkReservedNames flags a user module that declares a reserved built-in

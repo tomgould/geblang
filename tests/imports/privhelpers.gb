@@ -1,0 +1,25 @@
+/**
+ * @title Module with private members (fixture for same-module tests)
+ */
+module privhelpers;
+
+const string PREFIX = "id-";
+
+let int hits = 0;
+
+func normalize(string raw): string {
+    return raw.trim().lower();
+}
+
+class Checker {
+    func valid(string id): bool { return id.length() > 2; }
+}
+
+func record(): int {
+    hits += 1;
+    return hits;
+}
+
+export func tag(string raw): string {
+    return PREFIX + normalize(raw);
+}

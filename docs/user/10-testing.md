@@ -375,6 +375,53 @@ has a `check-lang` target that drives a script which asserts every file
 under `tests/check/` produces a diagnostic while every other test file
 checks clean.
 
+## Testing private module members
+
+Module members without `export` are private: importing code cannot see
+them. To test them without exporting implementation details, declare the
+SAME module name in the test file and place it alongside the module
+source. `geblang test` then runs the test file inside the module, so
+private functions, classes, constants, and module-level state are
+directly visible:
+
+```geblang
+# users.gb
+module app.users;
+
+func normalizeId(string id): string {
+    return id.trim().lower();
+}
+
+export func findUser(string id): ?User { ... }
+```
+
+```geblang
+# users_test.gb
+module app.users;
+import test;
+
+class NormalizeTest extends test.Test {
+    @test
+    func trimsAndLowers(): void {
+        this.assertEquals("abc", normalizeId("  ABC  "));
+    }
+}
+```
+
+The convention follows Go's same-package tests. The rules:
+
+- The test file name must end in `_test.gb` and declare exactly the
+  module name its sibling module file declares.
+- The private view exists only under `geblang test`. Everywhere else
+  (`run`, `build`, importing code) private members stay private.
+- `geblang check` and the editor understand the convention, so private
+  references in a same-module test file check clean.
+- A test file that declares a module name with no matching module source
+  is an error.
+
+Tests without a module declaration keep working as before: they import
+the module under test and exercise its exported surface.
+
 ## Reified generics in tests
 
 The runtime enforces declared element types for `list<T>`, `set<T>`, and

@@ -1037,9 +1037,9 @@ func checkModuleDeclarations(config checkConfig, programs map[string]*ast.Progra
 			continue
 		}
 		decl := modules[0]
-		declared[decl.name] = append(declared[decl.name], decl)
 		resolved, err := checkResolver(config, file).Resolve(decl.name)
 		if err != nil {
+			declared[decl.name] = append(declared[decl.name], decl)
 			diagnostics = append(diagnostics, checkDiagnostic{
 				File:     decl.file,
 				Line:     decl.line,
@@ -1051,6 +1051,11 @@ func checkModuleDeclarations(config checkConfig, programs map[string]*ast.Progra
 			continue
 		}
 		if !sameFilePath(resolved, file) {
+			if strings.HasSuffix(file, "_test.gb") {
+				// Same-module test file: tests module X from inside X
+				// (check.SameModuleTestProgram), not a duplicate.
+				continue
+			}
 			diagnostics = append(diagnostics, checkDiagnostic{
 				File:     decl.file,
 				Line:     decl.line,
@@ -1060,6 +1065,7 @@ func checkModuleDeclarations(config checkConfig, programs map[string]*ast.Progra
 				Message:  fmt.Sprintf("declared module %s resolves to %s", decl.name, resolved),
 			})
 		}
+		declared[decl.name] = append(declared[decl.name], decl)
 	}
 	names := make([]string, 0, len(declared))
 	for name := range declared {
@@ -1492,11 +1498,24 @@ func runTestFile(path string, tags []string, classFilter string, methodFilters [
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	program, err := parseAndAnalyze(path, string(source))
+	parsed, err := parseOnly(string(source))
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	classes := testClasses(program)
+	resolver := modules.NewResolver([]string{filepath.Dir(path)})
+	// A test file declaring `module X;` merges with X's source so its
+	// tests reach X's private members (check.SameModuleTestProgram).
+	base, sameModule := check.SameModuleTestProgram(path, parsed, resolver)
+	if !sameModule {
+		if declared := check.DeclaredModuleName(parsed); declared != "" {
+			return 0, 0, 0, fmt.Errorf("%s declares module %s but no module source resolves to that name; a same-module test file must sit alongside the module it tests", path, declared)
+		}
+		base = parsed
+	}
+	if err := analyzeCrossModule(path, base, resolver); err != nil {
+		return 0, 0, 0, err
+	}
+	classes := testClasses(parsed)
 	if classFilter != "" {
 		filtered := classes[:0]
 		for _, name := range classes {
@@ -1509,9 +1528,12 @@ func runTestFile(path string, tags []string, classFilter string, methodFilters [
 	if len(classes) == 0 {
 		return 0, 0, 0, nil
 	}
-	runner := buildTestRunner(classes, tags, methodFilters, format)
-	program, err = parseAndAnalyze(path, string(source)+"\n"+runner)
+	runnerProgram, err := parseOnly(buildTestRunner(classes, tags, methodFilters, format))
 	if err != nil {
+		return 0, 0, 0, err
+	}
+	program := &ast.Program{Statements: append(append([]ast.Statement{}, base.Statements...), runnerProgram.Statements...)}
+	if err := analyzeCrossModule(path, program, resolver); err != nil {
 		return 0, 0, 0, err
 	}
 	var out strings.Builder
@@ -1555,13 +1577,21 @@ func analyzeCrossModule(file string, program *ast.Program, resolver *modules.Res
 }
 
 func parseAndAnalyze(file, source string) (*ast.Program, error) {
+	program, err := parseOnly(source)
+	if err != nil {
+		return nil, err
+	}
+	if err := analyzeCrossModule(file, program, modules.NewResolver([]string{filepath.Dir(file)})); err != nil {
+		return nil, err
+	}
+	return program, nil
+}
+
+func parseOnly(source string) (*ast.Program, error) {
 	p := parser.New(lexer.New(source))
 	program := p.ParseProgram()
 	if len(p.Errors()) > 0 {
 		return nil, fmt.Errorf("%s", strings.Join(p.Errors(), "\n"))
-	}
-	if err := analyzeCrossModule(file, program, modules.NewResolver([]string{filepath.Dir(file)})); err != nil {
-		return nil, err
 	}
 	return program, nil
 }

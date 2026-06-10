@@ -46,6 +46,16 @@
   of re-parsed on every evaluation. Allocations in call-heavy evaluator
   workloads drop by about 23%, which speeds up `geblang test` runs.
 
+### Testing
+
+- Same-module test files: a `*_test.gb` that declares the same module
+  name as a sibling module file runs inside that module under
+  `geblang test`, so private functions, classes, constants, and module
+  state are directly testable without exporting them (the Go
+  same-package test convention). `geblang check` and the editor
+  understand the convention; outside the test runner private members
+  stay private. See the testing chapter for details.
+
 ### Tooling
 
 - The parity fuzzer generates random required/default/variadic
