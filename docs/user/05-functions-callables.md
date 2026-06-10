@@ -186,9 +186,27 @@ sum(1, 2, 3);                                 # 6
 sum();                                        # 0
 ```
 
+Inside the body the variadic name is an ordinary `list<T>`, so list
+methods work on it directly (`values.length()`, `values.join(", ")`).
+Defaulted parameters may sit before the variadic slot; the defaults
+engage when the call leaves them unfilled:
+
+```gb
+func tag(string base, string sep = "-", string ...parts): string {
+    if (parts.isEmpty()) { return base; }
+    return base + sep + parts.join(sep);
+}
+
+tag("x");                                     # x
+tag("x", "+", "y", "z");                      # x+y+z
+tag("x", sep: "*");                           # x
+```
+
 At the call site, `...` (spread) does the inverse: it expands a
 collection into arguments. Spread dispatches on the runtime type
-of its operand.
+of its operand. Spread works in every dispatch context: plain
+functions, lambdas, instance methods, static methods, and
+constructors.
 
 ### List spread to positional arguments
 

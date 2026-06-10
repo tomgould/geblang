@@ -934,13 +934,13 @@ func (vm *VM) Run() (err error) {
 // try/catch instead of terminating the VM.
 func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) error {
 	for ip := vm.runEntryIP; ip < len(instructions); ip++ {
-		instruction := instructions[ip]
+		instruction := &instructions[ip]
 		switch instruction.Op {
 		case OpNoop:
 		case OpConstant:
 			index := instruction.Operands[0]
 			if index < 0 || int(index) >= len(vm.chunk.Constants) {
-				return vm.runtimeError(instruction, "constant index out of range")
+				return vm.runtimeError(*instruction, "constant index out of range")
 			}
 			value := vm.chunk.Constants[index]
 			switch x := value.(type) {
@@ -960,7 +960,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				vm.push(value)
 			}
 		case OpAdd:
-			nextIP, err := vm.add(instruction, ip)
+			nextIP, err := vm.add(*instruction, ip)
 			if err != nil {
 				return err
 			}
@@ -969,11 +969,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			slot := instruction.Operands[0]
 			constIdx := instruction.Operands[1]
 			if constIdx < 0 || int(constIdx) >= len(vm.chunk.Constants) {
-				return vm.runtimeError(instruction, "constant index out of range")
+				return vm.runtimeError(*instruction, "constant index out of range")
 			}
 			litVal, ok := vm.chunk.Constants[constIdx].(runtime.String)
 			if !ok {
-				return vm.runtimeError(instruction, "literal must be string")
+				return vm.runtimeError(*instruction, "literal must be string")
 			}
 			var target []runtime.VMValue
 			var offset int
@@ -985,7 +985,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			idx := int(slot) + offset
 			if idx >= len(target) {
-				return vm.runtimeError(instruction, "slot out of range")
+				return vm.runtimeError(*instruction, "slot out of range")
 			}
 			cur := target[idx]
 			if cur.Kind == runtime.VMKindBoxed {
@@ -1005,13 +1005,13 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			vm.pushVM(cur)
 			vm.pushVM(runtime.VMValueFromValue(litVal))
-			nextIP, err := vm.add(instruction, ip)
+			nextIP, err := vm.add(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			result, perr := vm.popVM()
 			if perr != nil {
-				return vm.runtimeError(instruction, "%s", perr.Error())
+				return vm.runtimeError(*instruction, "%s", perr.Error())
 			}
 			target[idx] = result
 			vm.pushVM(result)
@@ -1020,11 +1020,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			slot := instruction.Operands[0]
 			constIdx := instruction.Operands[1]
 			if constIdx < 0 || int(constIdx) >= len(vm.chunk.Constants) {
-				return vm.runtimeError(instruction, "constant index out of range")
+				return vm.runtimeError(*instruction, "constant index out of range")
 			}
 			litVal, ok := vm.chunk.Constants[constIdx].(runtime.String)
 			if !ok {
-				return vm.runtimeError(instruction, "literal must be string")
+				return vm.runtimeError(*instruction, "literal must be string")
 			}
 			var target []runtime.VMValue
 			var offset int
@@ -1036,7 +1036,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			idx := int(slot) + offset
 			if idx >= len(target) {
-				return vm.runtimeError(instruction, "slot out of range")
+				return vm.runtimeError(*instruction, "slot out of range")
 			}
 			cur := target[idx]
 			if cur.Kind == runtime.VMKindBoxed {
@@ -1059,28 +1059,28 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			vm.pushVM(cur)
 			vm.pushVM(runtime.VMValueFromValue(litVal))
-			nextIP, err := vm.add(instruction, ip)
+			nextIP, err := vm.add(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			result, perr := vm.popVM()
 			if perr != nil {
-				return vm.runtimeError(instruction, "%s", perr.Error())
+				return vm.runtimeError(*instruction, "%s", perr.Error())
 			}
 			target[idx] = result
 			ip = nextIP
 		case OpAddStringConst:
 			n := len(vm.stack)
 			if n < 1 {
-				return vm.fatalError(instruction, "stack underflow")
+				return vm.fatalError(*instruction, "stack underflow")
 			}
 			constIdx := instruction.Operands[0]
 			if constIdx < 0 || int(constIdx) >= len(vm.chunk.Constants) {
-				return vm.runtimeError(instruction, "constant index out of range")
+				return vm.runtimeError(*instruction, "constant index out of range")
 			}
 			litVal, ok := vm.chunk.Constants[constIdx].(runtime.String)
 			if !ok {
-				return vm.runtimeError(instruction, "OpAddStringConst literal must be string")
+				return vm.runtimeError(*instruction, "OpAddStringConst literal must be string")
 			}
 			leftVM := vm.stack[n-1]
 			if leftVM.Kind == runtime.VMKindBoxed {
@@ -1091,7 +1091,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			// Defer to generic OpAdd if the static-type proof missed.
 			vm.pushVM(runtime.VMValueFromValue(litVal))
-			nextIP, err := vm.add(instruction, ip)
+			nextIP, err := vm.add(*instruction, ip)
 			if err != nil {
 				return err
 			}
@@ -1099,7 +1099,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpAddString:
 			n := len(vm.stack)
 			if n < 2 {
-				return vm.fatalError(instruction, "stack underflow")
+				return vm.fatalError(*instruction, "stack underflow")
 			}
 			leftVM := vm.stack[n-2]
 			rightVM := vm.stack[n-1]
@@ -1113,13 +1113,13 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				}
 			}
 			// Untyped local can carry a non-string at runtime; defer to vm.add.
-			nextIP, err := vm.add(instruction, ip)
+			nextIP, err := vm.add(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpSub, OpMul, OpDiv, OpIntDiv, OpMod, OpPow:
-			nextIP, err := vm.binaryNumeric(instruction, ip)
+			nextIP, err := vm.binaryNumeric(*instruction, ip)
 			if err != nil {
 				return err
 			}
@@ -1127,7 +1127,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpAddInt, OpSubInt, OpMulInt, OpModInt:
 			n := len(vm.stack)
 			if n < 2 {
-				return vm.fatalError(instruction, "stack underflow")
+				return vm.fatalError(*instruction, "stack underflow")
 			}
 			leftVM := vm.stack[n-2]
 			rightVM := vm.stack[n-1]
@@ -1159,7 +1159,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					}
 				case OpModInt:
 					if ri == 0 {
-						return vm.runtimeError(instruction, "modulo by zero")
+						return vm.runtimeError(*instruction, "modulo by zero")
 					}
 					v := li % ri
 					if v != 0 && (li < 0) != (ri < 0) {
@@ -1176,7 +1176,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			left := leftVM.ToValue()
 			right := rightVM.ToValue()
 			vm.stack = vm.stack[:n-2]
-			genericOp := instruction
+			genericOp := *instruction
 			switch instruction.Op {
 			case OpAddInt:
 				genericOp.Op = OpAdd
@@ -1199,7 +1199,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpLessInt, OpGreaterInt, OpLessEqualInt, OpGreaterEqualInt, OpEqualInt:
 			n := len(vm.stack)
 			if n < 2 {
-				return vm.fatalError(instruction, "stack underflow")
+				return vm.fatalError(*instruction, "stack underflow")
 			}
 			leftVM := vm.stack[n-2]
 			rightVM := vm.stack[n-1]
@@ -1226,7 +1226,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			// Fallback for non-SmallInt int values (runtime.Int after overflow):
 			// vm.equal/vm.compare pop from stack themselves and re-push the
 			// bool result, so leave both operands on the stack here.
-			genericOp := instruction
+			genericOp := *instruction
 			switch instruction.Op {
 			case OpLessInt:
 				genericOp.Op = OpLess
@@ -1271,7 +1271,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					}
 				}
 			}
-			if err := vm.updateIntSlot(instruction); err != nil {
+			if err := vm.updateIntSlot(*instruction); err != nil {
 				return err
 			}
 		case OpIncGlobalInt, OpDecGlobalInt:
@@ -1291,14 +1291,14 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					}
 				}
 			}
-			if err := vm.updateIntSlot(instruction); err != nil {
+			if err := vm.updateIntSlot(*instruction); err != nil {
 				return err
 			}
 		case OpAppendLocalList, OpAppendGlobalList:
-			if err := vm.appendListSlot(instruction); err != nil {
+			if err := vm.appendListSlot(*instruction); err != nil {
 				var typed vmTypedError
 				if errors.As(err, &typed) {
-					nextIP, throwErr := vm.throwTyped(instruction, ip, typed.class, typed.message)
+					nextIP, throwErr := vm.throwTyped(*instruction, ip, typed.class, typed.message)
 					if throwErr != nil {
 						return throwErr
 					}
@@ -1311,7 +1311,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			OpJumpIfNotGreaterEqualInt, OpJumpIfNotEqualInt, OpJumpIfEqualInt:
 			n := len(vm.stack)
 			if n < 2 {
-				return vm.fatalError(instruction, "stack underflow")
+				return vm.fatalError(*instruction, "stack underflow")
 			}
 			lvm := vm.stack[n-2]
 			rvm := vm.stack[n-1]
@@ -1339,27 +1339,27 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				}
 				continue
 			}
-			nextIP, err := vm.compareJumpIntFallback(instruction, ip)
+			nextIP, err := vm.compareJumpIntFallback(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpJumpIfModNotZero, OpJumpIfModZero:
 			if len(instruction.Operands) != 3 {
-				return vm.fatalError(instruction, "mod-jump instruction has invalid operands")
+				return vm.fatalError(*instruction, "mod-jump instruction has invalid operands")
 			}
 			slot := int(instruction.Operands[1])
 			idx := vm.currentFrameBP + slot
 			if idx < 0 || idx >= len(vm.localsStack) {
-				return vm.runtimeError(instruction, "local slot out of range")
+				return vm.runtimeError(*instruction, "local slot out of range")
 			}
 			lv := vm.localsStack[idx]
 			if lv.Kind != runtime.VMKindSmallInt {
-				return vm.runtimeError(instruction, "mod-jump fast path requires int local")
+				return vm.runtimeError(*instruction, "mod-jump fast path requires int local")
 			}
 			ri := instruction.Operands[2]
 			if ri == 0 {
-				return vm.runtimeError(instruction, "modulo by zero")
+				return vm.runtimeError(*instruction, "modulo by zero")
 			}
 			v := lv.I64 % ri
 			if v != 0 && (lv.I64 < 0) != (ri < 0) {
@@ -1392,7 +1392,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				lv, lerr = vm.getLocalVM(dst)
 			}
 			if lerr != nil {
-				return vm.runtimeError(instruction, "%s", lerr.Error())
+				return vm.runtimeError(*instruction, "%s", lerr.Error())
 			}
 			var rv runtime.VMValue
 			var rerr error
@@ -1406,7 +1406,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				rv, rerr = vm.getGlobalVM(rhsOp)
 			}
 			if rerr != nil {
-				return vm.runtimeError(instruction, "%s", rerr.Error())
+				return vm.runtimeError(*instruction, "%s", rerr.Error())
 			}
 			subtract := false
 			switch instruction.Op {
@@ -1453,39 +1453,39 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 						storeErr = vm.setLocalVM(dst, result)
 					}
 					if storeErr != nil {
-						return vm.runtimeError(instruction, "%s", storeErr.Error())
+						return vm.runtimeError(*instruction, "%s", storeErr.Error())
 					}
 					vm.pushVM(result)
 					continue
 				}
 			}
-			if err := vm.intSelfArith(instruction); err != nil {
+			if err := vm.intSelfArith(*instruction); err != nil {
 				return err
 			}
 		case OpEqual:
-			nextIP, err := vm.equal(instruction, ip)
+			nextIP, err := vm.equal(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpLess, OpGreater, OpLessEqual, OpGreaterEqual:
-			nextIP, err := vm.compare(instruction, ip)
+			nextIP, err := vm.compare(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpNot:
-			nextIP, err := vm.not(instruction, ip)
+			nextIP, err := vm.not(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpBoolXor:
-			if err := vm.boolXor(instruction); err != nil {
+			if err := vm.boolXor(*instruction); err != nil {
 				return err
 			}
 		case OpNegate:
-			nextIP, err := vm.negate(instruction, ip)
+			nextIP, err := vm.negate(*instruction, ip)
 			if err != nil {
 				return err
 			}
@@ -1494,10 +1494,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			slot := instruction.Operands[0]
 			value, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			if err := vm.setGlobal(slot, value); err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 		case OpGetGlobal:
 			slot := instruction.Operands[0]
@@ -1510,14 +1510,14 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			value, err := vm.getGlobalVM(slot)
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.pushVM(value)
 		case OpSetGlobal:
 			slot := instruction.Operands[0]
 			value, err := vm.popVM()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			if int(slot) < len(vm.globals) && !vm.bridgeActive.Load() {
 				cur := vm.globals[slot]
@@ -1528,19 +1528,19 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				}
 			}
 			if err := vm.setGlobalVM(slot, value); err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.pushVM(value)
 		case OpDefineLocal:
 			slot := instruction.Operands[0]
 			value, err := vm.popVM()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			// Fresh binding: replace the slot rather than writing into a cell a
 			// prior iteration boxed, so a re-run `let` captures a distinct value.
 			if err := vm.defineLocalVM(slot, value); err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 		case OpGetLocal:
 			slot := instruction.Operands[0]
@@ -1554,14 +1554,14 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			value, err := vm.getLocalVM(slot)
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.pushVM(value)
 		case OpSetLocal:
 			slot := instruction.Operands[0]
 			value, err := vm.popVM()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			idx := vm.currentFrameBP + int(slot)
 			if idx < len(vm.localsStack) {
@@ -1573,19 +1573,19 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				}
 			}
 			if err := vm.setLocalVM(slot, value); err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.pushVM(value)
 		case OpBuildList:
 			count := instruction.Operands[0]
 			if count < 0 {
-				return vm.runtimeError(instruction, "list element count out of range")
+				return vm.runtimeError(*instruction, "list element count out of range")
 			}
 			elements := make([]runtime.Value, int(count))
 			for i := int(count) - 1; i >= 0; i-- {
 				value, err := vm.pop()
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				elements[i] = value
 			}
@@ -1593,18 +1593,18 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpBuildDict:
 			count := instruction.Operands[0]
 			if count < 0 {
-				return vm.runtimeError(instruction, "dict entry count out of range")
+				return vm.runtimeError(*instruction, "dict entry count out of range")
 			}
 			// Stack is LIFO; reorder pairs so Order tracks source order.
 			pairs := make([][2]runtime.Value, count)
 			for i := count - 1; i >= 0; i-- {
 				value, err := vm.pop()
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				key, err := vm.pop()
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				pairs[i] = [2]runtime.Value{key, value}
 			}
@@ -1616,51 +1616,51 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpBuildSet:
 			count := instruction.Operands[0]
 			if count < 0 {
-				return vm.runtimeError(instruction, "set element count out of range")
+				return vm.runtimeError(*instruction, "set element count out of range")
 			}
 			elements := make(map[string]runtime.SetEntry, int(count))
 			for i := int64(0); i < count; i++ {
 				value, err := vm.pop()
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				elements[native.DictKey(value)] = runtime.SetEntry{Value: value}
 			}
 			vm.push(runtime.Set{Elements: elements})
 		case OpIndex:
-			if err := vm.index(instruction); err != nil {
+			if err := vm.index(*instruction); err != nil {
 				return err
 			}
 		case OpContains:
 			container, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			needle, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			result, err := vm.contains(needle, container)
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.push(result)
 		case OpSetIndex:
-			nextIP, err := vm.setIndex(instruction, ip)
+			nextIP, err := vm.setIndex(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpSlice:
-			if err := vm.slice(instruction); err != nil {
+			if err := vm.slice(*instruction); err != nil {
 				return err
 			}
 		case OpIterInit:
-			if err := vm.iterInit(instruction); err != nil {
+			if err := vm.iterInit(*instruction); err != nil {
 				return err
 			}
 		case OpIterNext:
-			hasNext, err := vm.iterNext(instruction)
+			hasNext, err := vm.iterNext(*instruction)
 			if err != nil {
 				// A foreign-class __done / __next that threw returns a
 				// wrappedError carrying the original vmThrownError; route
@@ -1670,7 +1670,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				if errors.As(err, &thrown) {
 					captured := thrown.err
 					vm.pendingThrow = &captured
-					nextIP, perr := vm.jumpToExceptionHandler(instruction, ip)
+					nextIP, perr := vm.jumpToExceptionHandler(*instruction, ip)
 					if perr != nil {
 						return perr
 					}
@@ -1683,27 +1683,27 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				ip = int(instruction.Operands[0]) - 1
 			}
 		case OpIterClose:
-			if err := vm.iterClose(instruction); err != nil {
+			if err := vm.iterClose(*instruction); err != nil {
 				return err
 			}
 		case OpTypeAssert:
-			if err := vm.typeAssert(instruction); err != nil {
+			if err := vm.typeAssert(*instruction); err != nil {
 				return err
 			}
 		case OpShallowFreeze:
 			value, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.push(runtime.ShallowFreeze(value))
 		case OpMatchListShape:
 			if len(instruction.Operands) != 1 {
-				return vm.fatalError(instruction, "match-list-shape instruction has invalid operands")
+				return vm.fatalError(*instruction, "match-list-shape instruction has invalid operands")
 			}
 			expected := instruction.Operands[0]
 			vmv, err := vm.popVM()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			ok := false
 			if vmv.Kind == runtime.VMKindBoxed {
@@ -1713,39 +1713,39 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			vm.pushVM(runtime.VMValueBool(ok))
 		case OpUnpackList:
-			if err := vm.unpackList(instruction); err != nil {
+			if err := vm.unpackList(*instruction); err != nil {
 				return err
 			}
 		case OpBuildRange:
-			if err := vm.buildRange(instruction); err != nil {
+			if err := vm.buildRange(*instruction); err != nil {
 				return err
 			}
 		case OpExit:
-			code, err := vm.popExitCode(instruction)
+			code, err := vm.popExitCode(*instruction)
 			if err != nil {
 				return err
 			}
 			return ExitError{Code: code}
 		case OpCall:
-			nextIP, err := vm.call(instruction, ip)
+			nextIP, err := vm.call(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpTailCall:
-			nextIP, err := vm.tailCall(instruction)
+			nextIP, err := vm.tailCall(*instruction)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpRange:
-			if err := vm.execRange(instruction); err != nil {
+			if err := vm.execRange(*instruction); err != nil {
 				return err
 			}
 		case OpTypeOf:
 			vmv, err := vm.popVM()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			switch vmv.Kind {
 			case runtime.VMKindSmallInt:
@@ -1770,72 +1770,72 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpDir:
 			vmv, err := vm.popVM()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.push(vmDirValue(vmv.ToValue()))
 		case OpDump:
 			vmv, err := vm.popVM()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.push(runtime.String{Value: native.DumpValue(vmv.ToValue())})
 		case OpSelect:
-			nextIP, err := vm.executeSelect(instruction, ip)
+			nextIP, err := vm.executeSelect(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpInstanceOf:
-			if err := vm.instanceOf(instruction); err != nil {
+			if err := vm.instanceOf(*instruction); err != nil {
 				return err
 			}
 		case OpCast:
-			nextIP, err := vm.cast(instruction, ip)
+			nextIP, err := vm.cast(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpMethodCall:
-			nextIP, err := vm.methodCall(instruction, ip)
+			nextIP, err := vm.methodCall(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpCallResolvedMethod:
-			nextIP, err := vm.callResolvedMethod(instruction, ip)
+			nextIP, err := vm.callResolvedMethod(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpMethodCallSpread:
-			nextIP, err := vm.methodCallSpread(instruction, ip)
+			nextIP, err := vm.methodCallSpread(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpWithEnter:
-			if err := vm.withEnter(instruction); err != nil {
+			if err := vm.withEnter(*instruction); err != nil {
 				return err
 			}
 		case OpWithExit:
-			if err := vm.withExit(instruction); err != nil {
+			if err := vm.withExit(*instruction); err != nil {
 				return err
 			}
 		case OpDel:
-			if err := vm.execDel(instruction); err != nil {
+			if err := vm.execDel(*instruction); err != nil {
 				return err
 			}
 		case OpMethodCallNamed:
-			nextIP, err := vm.methodCallNamed(instruction, ip)
+			nextIP, err := vm.methodCallNamed(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpNativeCall:
-			if err := vm.nativeCall(instruction); err != nil {
+			if err := vm.nativeCall(*instruction); err != nil {
 				var recoverable recoverableNativeError
 				if errors.As(err, &recoverable) {
-					nextIP, throwErr := vm.throwRecoverableError(instruction, ip, recoverable.err)
+					nextIP, throwErr := vm.throwRecoverableError(*instruction, ip, recoverable.err)
 					if throwErr != nil {
 						return throwErr
 					}
@@ -1845,10 +1845,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return err
 			}
 		case OpNativeCallSpread:
-			if err := vm.nativeCallSpread(instruction); err != nil {
+			if err := vm.nativeCallSpread(*instruction); err != nil {
 				var recoverable recoverableNativeError
 				if errors.As(err, &recoverable) {
-					nextIP, throwErr := vm.throwRecoverableError(instruction, ip, recoverable.err)
+					nextIP, throwErr := vm.throwRecoverableError(*instruction, ip, recoverable.err)
 					if throwErr != nil {
 						return throwErr
 					}
@@ -1858,10 +1858,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return err
 			}
 		case OpNativeCallNamed:
-			if err := vm.nativeCallNamed(instruction); err != nil {
+			if err := vm.nativeCallNamed(*instruction); err != nil {
 				var recoverable recoverableNativeError
 				if errors.As(err, &recoverable) {
-					nextIP, throwErr := vm.throwRecoverableError(instruction, ip, recoverable.err)
+					nextIP, throwErr := vm.throwRecoverableError(*instruction, ip, recoverable.err)
 					if throwErr != nil {
 						return throwErr
 					}
@@ -1872,80 +1872,86 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 		case OpDefineClass:
 			if len(instruction.Operands) != 1 {
-				return vm.fatalError(instruction, "define class instruction has invalid operands")
+				return vm.fatalError(*instruction, "define class instruction has invalid operands")
 			}
 			classIndex := instruction.Operands[0]
 			if classIndex >= 0 && int(classIndex) < len(vm.chunk.Classes) {
 				classInfo := vm.chunk.Classes[classIndex]
 				classValue, decorated, err := vm.applyCallableDecoratorsForClass(classIndex, classInfo)
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				if decorated {
 					vm.decoratedClasses[classIndex] = classValue
 				}
-				if err := vm.resolveCrossModuleInterfaceMembers(instruction, classIndex, classInfo); err != nil {
+				if err := vm.resolveCrossModuleInterfaceMembers(*instruction, classIndex, classInfo); err != nil {
 					return err
 				}
 			}
 		case OpConstructClass:
-			nextIP, err := vm.constructClass(instruction, ip)
+			nextIP, err := vm.constructClass(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpGetField:
-			nextIP, err := vm.getField(instruction, ip)
+			nextIP, err := vm.getField(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpSetField:
-			nextIP, err := vm.setField(instruction, ip)
+			nextIP, err := vm.setField(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpCallParentConstructor:
-			nextIP, err := vm.callParentConstructor(instruction, ip)
+			nextIP, err := vm.callParentConstructor(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpCallParentMethod:
-			nextIP, err := vm.callParentMethod(instruction, ip)
+			nextIP, err := vm.callParentMethod(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpGetStaticValue:
-			nextIP, err := vm.getStaticValue(instruction, ip)
+			nextIP, err := vm.getStaticValue(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpSetStaticValue:
-			nextIP, err := vm.setStaticValue(instruction, ip)
+			nextIP, err := vm.setStaticValue(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpCallStaticMethod:
-			nextIP, err := vm.callStaticMethod(instruction, ip)
+			nextIP, err := vm.callStaticMethod(*instruction, ip)
+			if err != nil {
+				return err
+			}
+			ip = nextIP
+		case OpCallStaticMethodSpread:
+			nextIP, err := vm.callStaticMethodSpread(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpIdentical:
-			if err := vm.identical(instruction); err != nil {
+			if err := vm.identical(*instruction); err != nil {
 				return err
 			}
 		case OpImportModule:
-			if err := vm.importModule(instruction); err != nil {
+			if err := vm.importModule(*instruction); err != nil {
 				return err
 			}
 		case OpLoadModuleValue:
-			canonical, err := vm.constantStringAt(instruction, instruction.Operands[0], "module name must be string")
+			canonical, err := vm.constantStringAt(*instruction, instruction.Operands[0], "module name must be string")
 			if err != nil {
 				return err
 			}
@@ -1963,80 +1969,80 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			vm.push(runtime.Null{})
 		case OpImportFrom:
-			if err := vm.importFrom(instruction); err != nil {
+			if err := vm.importFrom(*instruction); err != nil {
 				return err
 			}
 		case OpNativeValue:
 			if len(instruction.Operands) != 2 {
-				return vm.fatalError(instruction, "native value instruction has invalid operands")
+				return vm.fatalError(*instruction, "native value instruction has invalid operands")
 			}
-			canonical, err := vm.constantStringAt(instruction, instruction.Operands[0], "native value module must be string")
+			canonical, err := vm.constantStringAt(*instruction, instruction.Operands[0], "native value module must be string")
 			if err != nil {
 				return err
 			}
-			name, err := vm.constantStringAt(instruction, instruction.Operands[1], "native value name must be string")
+			name, err := vm.constantStringAt(*instruction, instruction.Operands[1], "native value name must be string")
 			if err != nil {
 				return err
 			}
 			v, ok := vm.builtinValue(canonical, name)
 			if !ok {
-				return vm.runtimeError(instruction, "%s.%s is not a native function", canonical, name)
+				return vm.runtimeError(*instruction, "%s.%s is not a native function", canonical, name)
 			}
 			vm.push(v)
 		case OpFreezeLocal:
 			slot := instruction.Operands[0]
 			cur, err := vm.getLocalVM(slot)
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			frozen := runtime.FreezeShallowCopy(cur.ToValue())
 			if err := vm.setLocalVM(slot, runtime.VMValueFromValue(frozen)); err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 		case OpCheckUnpackLen:
 			v, err := vm.getLocal(instruction.Operands[0])
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			expected := int(instruction.Operands[1])
 			if list, ok := v.(*runtime.List); ok && len(list.Elements) < expected {
-				return vm.runtimeError(instruction, "list has %d elements, destructuring expects %d", len(list.Elements), expected)
+				return vm.runtimeError(*instruction, "list has %d elements, destructuring expects %d", len(list.Elements), expected)
 			}
 		case OpFormatSpec:
-			spec, err := vm.popString(instruction, "format spec must be string")
+			spec, err := vm.popString(*instruction, "format spec must be string")
 			if err != nil {
 				return err
 			}
 			value, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			out, ferr := native.FormatValueWithSpec(value, spec)
 			if ferr != nil {
-				return vm.runtimeError(instruction, "%s", ferr.Error())
+				return vm.runtimeError(*instruction, "%s", ferr.Error())
 			}
 			vm.push(runtime.String{Value: out})
 		case OpMakeClosure:
 			if len(instruction.Operands) < 2 {
-				return vm.fatalError(instruction, "make closure instruction has invalid operands")
+				return vm.fatalError(*instruction, "make closure instruction has invalid operands")
 			}
 			funcIndex := instruction.Operands[0]
 			upvalueCount := instruction.Operands[1]
 			if funcIndex < 0 || int(funcIndex) >= len(vm.chunk.Functions) {
-				return vm.runtimeError(instruction, "closure function index out of range")
+				return vm.runtimeError(*instruction, "closure function index out of range")
 			}
 			if int64(len(instruction.Operands))-2 != upvalueCount {
-				return vm.runtimeError(instruction, "closure upvalue count mismatch")
+				return vm.runtimeError(*instruction, "closure upvalue count mismatch")
 			}
 			upvalues := make([]runtime.Value, upvalueCount)
 			for i := int64(0); i < upvalueCount; i++ {
 				outerSlot := instruction.Operands[2+i]
 				if outerSlot < 0 {
-					return vm.runtimeError(instruction, "closure upvalue slot out of range")
+					return vm.runtimeError(*instruction, "closure upvalue slot out of range")
 				}
 				outerIdx := vm.currentFrameBP + int(outerSlot)
 				if outerIdx >= len(vm.localsStack) {
-					return vm.runtimeError(instruction, "closure upvalue slot out of range")
+					return vm.runtimeError(*instruction, "closure upvalue slot out of range")
 				}
 				slot := vm.localsStack[outerIdx]
 				var cell *runtime.BytecodeCell
@@ -2072,12 +2078,12 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				TypeBindings:  capturedBindings,
 			})
 		case OpMakeError:
-			if err := vm.makeError(instruction); err != nil {
+			if err := vm.makeError(*instruction); err != nil {
 				return err
 			}
 		case OpPushExceptionHandler:
 			if len(instruction.Operands) != 1 {
-				return vm.fatalError(instruction, "exception handler instruction has invalid operands")
+				return vm.fatalError(*instruction, "exception handler instruction has invalid operands")
 			}
 			snap, snapBase := vm.snapshotCurrentFrameLocals()
 			vm.exceptionHandlers = append(vm.exceptionHandlers, exceptionHandler{
@@ -2090,49 +2096,49 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			})
 		case OpPopExceptionHandler:
 			if len(vm.exceptionHandlers) == 0 {
-				return vm.runtimeError(instruction, "exception handler stack is empty")
+				return vm.runtimeError(*instruction, "exception handler stack is empty")
 			}
 			vm.exceptionHandlers = vm.exceptionHandlers[:len(vm.exceptionHandlers)-1]
 		case OpThrow:
-			nextIP, err := vm.throw(instruction, ip)
+			nextIP, err := vm.throw(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpCatch:
-			nextIP, err := vm.catchException(instruction, ip)
+			nextIP, err := vm.catchException(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpRethrow:
-			nextIP, err := vm.rethrow(instruction, ip)
+			nextIP, err := vm.rethrow(*instruction, ip)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpRuntimeError:
-			message, err := vm.popString(instruction, "runtime error message must be string")
+			message, err := vm.popString(*instruction, "runtime error message must be string")
 			if err != nil {
 				return err
 			}
-			return vm.runtimeError(instruction, "%s", message)
+			return vm.runtimeError(*instruction, "%s", message)
 		case OpMatchError:
 			if len(instruction.Operands) != 1 || int(instruction.Operands[0]) >= len(vm.chunk.Constants) {
-				return vm.fatalError(instruction, "match error instruction has invalid operands")
+				return vm.fatalError(*instruction, "match error instruction has invalid operands")
 			}
 			hint, ok := vm.chunk.Constants[instruction.Operands[0]].(runtime.String)
 			if !ok {
-				return vm.runtimeError(instruction, "match error hint must be string")
+				return vm.runtimeError(*instruction, "match error hint must be string")
 			}
 			matchValue, popErr := vm.pop()
 			if popErr != nil {
-				return vm.runtimeError(instruction, "%s", popErr.Error())
+				return vm.runtimeError(*instruction, "%s", popErr.Error())
 			}
 			msg := fmt.Sprintf("%s; got %s (type: %s)", hint.Value, matchValue.Inspect(), matchValue.TypeName())
 			matchErrValue := vm.withErrorStackTrace(runtime.Error{Class: "MatchError", Message: msg}, instruction.Line)
 			vm.pendingThrow = &matchErrValue
-			nextMatchIP, throwErr := vm.jumpToExceptionHandler(instruction, ip)
+			nextMatchIP, throwErr := vm.jumpToExceptionHandler(*instruction, ip)
 			if throwErr != nil {
 				return throwErr
 			}
@@ -2140,192 +2146,192 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpDeferPrint:
 			value, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.addDefer(deferredAction{kind: deferKindPrint, value: value})
 		case OpDeferPrintln:
 			value, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.addDefer(deferredAction{kind: deferKindPrintln, value: value})
 		case OpDeferNativeCall:
 			if len(instruction.Operands) != 2 {
-				return vm.fatalError(instruction, "defer native call instruction has invalid operands")
+				return vm.fatalError(*instruction, "defer native call instruction has invalid operands")
 			}
 			nameIndex := instruction.Operands[0]
 			argc := instruction.Operands[1]
 			if nameIndex < 0 || int(nameIndex) >= len(vm.chunk.Constants) {
-				return vm.runtimeError(instruction, "defer native call name out of range")
+				return vm.runtimeError(*instruction, "defer native call name out of range")
 			}
 			nameConst, ok := vm.chunk.Constants[nameIndex].(runtime.String)
 			if !ok {
-				return vm.runtimeError(instruction, "defer native call name must be string")
+				return vm.runtimeError(*instruction, "defer native call name must be string")
 			}
 			args := make([]runtime.Value, argc)
 			for i := int(argc) - 1; i >= 0; i-- {
 				v, err := vm.pop()
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				args[i] = v
 			}
 			vm.addDefer(deferredAction{kind: deferKindNative, name: nameConst.Value, args: args})
 		case OpDeferFuncCall:
 			if len(instruction.Operands) != 2 {
-				return vm.fatalError(instruction, "defer func call instruction has invalid operands")
+				return vm.fatalError(*instruction, "defer func call instruction has invalid operands")
 			}
 			funcIdx := instruction.Operands[0]
 			argc := instruction.Operands[1]
 			if funcIdx < 0 || int(funcIdx) >= len(vm.chunk.Functions) {
-				return vm.runtimeError(instruction, "defer func call function index out of range")
+				return vm.runtimeError(*instruction, "defer func call function index out of range")
 			}
 			args := make([]runtime.Value, argc)
 			for i := int(argc) - 1; i >= 0; i-- {
 				v, err := vm.pop()
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				args[i] = v
 			}
 			vm.addDefer(deferredAction{kind: deferKindFunc, funcIdx: funcIdx, args: args})
 		case OpDeferMethodCall:
 			if len(instruction.Operands) != 2 {
-				return vm.fatalError(instruction, "defer method call instruction has invalid operands")
+				return vm.fatalError(*instruction, "defer method call instruction has invalid operands")
 			}
 			nameIndex := instruction.Operands[0]
 			argc := instruction.Operands[1]
 			if nameIndex < 0 || int(nameIndex) >= len(vm.chunk.Constants) {
-				return vm.runtimeError(instruction, "defer method call name out of range")
+				return vm.runtimeError(*instruction, "defer method call name out of range")
 			}
 			nameConst, ok := vm.chunk.Constants[nameIndex].(runtime.String)
 			if !ok {
-				return vm.runtimeError(instruction, "defer method call name must be string")
+				return vm.runtimeError(*instruction, "defer method call name must be string")
 			}
 			args := make([]runtime.Value, argc)
 			for i := int(argc) - 1; i >= 0; i-- {
 				v, err := vm.pop()
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				args[i] = v
 			}
 			receiver, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.addDefer(deferredAction{kind: deferKindMethod, name: nameConst.Value, receiver: receiver, args: args})
 		case OpDeferCallableCall:
 			if len(instruction.Operands) != 1 {
-				return vm.fatalError(instruction, "defer callable call instruction has invalid operands")
+				return vm.fatalError(*instruction, "defer callable call instruction has invalid operands")
 			}
 			argc := instruction.Operands[0]
 			args := make([]runtime.Value, argc)
 			for i := int(argc) - 1; i >= 0; i-- {
 				v, err := vm.pop()
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				args[i] = v
 			}
 			callable, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args})
 		case OpDeferNativeCallNamed:
 			if len(instruction.Operands) < 2 {
-				return vm.fatalError(instruction, "defer named native call has invalid operands")
+				return vm.fatalError(*instruction, "defer named native call has invalid operands")
 			}
 			nameIndex := instruction.Operands[0]
 			argc := int(instruction.Operands[1])
 			if len(instruction.Operands) != 2+argc {
-				return vm.runtimeError(instruction, "defer named native call argument metadata mismatch")
+				return vm.runtimeError(*instruction, "defer named native call argument metadata mismatch")
 			}
 			nameConst, ok := vm.chunk.Constants[nameIndex].(runtime.String)
 			if !ok {
-				return vm.runtimeError(instruction, "defer named native call name must be string")
+				return vm.runtimeError(*instruction, "defer named native call name must be string")
 			}
 			args := make([]runtime.Value, argc)
 			for i := argc - 1; i >= 0; i-- {
 				v, err := vm.pop()
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				args[i] = v
 			}
-			names, err := vm.readArgNames(instruction, instruction.Operands[2:])
+			names, err := vm.readArgNames(*instruction, instruction.Operands[2:])
 			if err != nil {
 				return err
 			}
 			vm.addDefer(deferredAction{kind: deferKindNative, name: nameConst.Value, args: args, names: names})
 		case OpDeferMethodCallNamed:
 			if len(instruction.Operands) < 2 {
-				return vm.fatalError(instruction, "defer named method call has invalid operands")
+				return vm.fatalError(*instruction, "defer named method call has invalid operands")
 			}
 			nameIndex := instruction.Operands[0]
 			argc := int(instruction.Operands[1])
 			if len(instruction.Operands) != 2+argc {
-				return vm.runtimeError(instruction, "defer named method call argument metadata mismatch")
+				return vm.runtimeError(*instruction, "defer named method call argument metadata mismatch")
 			}
 			nameConst, ok := vm.chunk.Constants[nameIndex].(runtime.String)
 			if !ok {
-				return vm.runtimeError(instruction, "defer named method call name must be string")
+				return vm.runtimeError(*instruction, "defer named method call name must be string")
 			}
 			args := make([]runtime.Value, argc)
 			for i := argc - 1; i >= 0; i-- {
 				v, err := vm.pop()
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				args[i] = v
 			}
-			names, err := vm.readArgNames(instruction, instruction.Operands[2:])
+			names, err := vm.readArgNames(*instruction, instruction.Operands[2:])
 			if err != nil {
 				return err
 			}
 			receiver, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.addDefer(deferredAction{kind: deferKindMethod, name: nameConst.Value, receiver: receiver, args: args, names: names})
 		case OpDeferCallableCallNamed:
 			if len(instruction.Operands) < 1 {
-				return vm.fatalError(instruction, "defer named callable call has invalid operands")
+				return vm.fatalError(*instruction, "defer named callable call has invalid operands")
 			}
 			argc := int(instruction.Operands[0])
 			if len(instruction.Operands) != 1+argc {
-				return vm.runtimeError(instruction, "defer named callable call argument metadata mismatch")
+				return vm.runtimeError(*instruction, "defer named callable call argument metadata mismatch")
 			}
 			args := make([]runtime.Value, argc)
 			for i := argc - 1; i >= 0; i-- {
 				v, err := vm.pop()
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				args[i] = v
 			}
-			names, err := vm.readArgNames(instruction, instruction.Operands[1:])
+			names, err := vm.readArgNames(*instruction, instruction.Operands[1:])
 			if err != nil {
 				return err
 			}
 			callable, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args, names: names})
 		case OpPrintln:
 			value, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			text, err := vm.displayString(value)
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			if vm.shouldRouteDirectPrint() {
 				if _, err := vm.statefulNativeCall("io", "println", []runtime.Value{runtime.String{Value: text}}, nil); err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				continue
 			}
@@ -2335,15 +2341,15 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpPrint:
 			value, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			text, err := vm.displayString(value)
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			if vm.shouldRouteDirectPrint() {
 				if _, err := vm.statefulNativeCall("io", "print", []runtime.Value{runtime.String{Value: text}}, nil); err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				continue
 			}
@@ -2355,36 +2361,36 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpJumpIfFalse:
 			value, err := vm.popVM()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			b, ok := value.AsBool()
 			if !ok {
-				return vm.runtimeError(instruction, "jump condition must be bool")
+				return vm.runtimeError(*instruction, "jump condition must be bool")
 			}
 			if !b {
 				ip = int(instruction.Operands[0]) - 1
 			}
 		case OpPop:
 			if _, err := vm.popVM(); err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 		case OpDup:
 			if len(vm.stack) == 0 {
-				return vm.fatalError(instruction, "stack underflow")
+				return vm.fatalError(*instruction, "stack underflow")
 			}
 			vm.pushVM(vm.stack[len(vm.stack)-1])
 		case OpReturn:
 			if len(vm.frames) == 0 {
-				if err := vm.runDefers(instruction); err != nil {
+				if err := vm.runDefers(*instruction); err != nil {
 					return err
 				}
 				return nil
 			}
 			valueVM, err := vm.popVM()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
-			if err := vm.runDefers(instruction); err != nil {
+			if err := vm.runDefers(*instruction); err != nil {
 				return err
 			}
 			// Read out the frame fields we need without copying the whole
@@ -2463,7 +2469,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if negateReturn {
 				boolValue, ok := value.(runtime.Bool)
 				if !ok {
-					return vm.runtimeError(instruction, "comparison operator method must return bool")
+					return vm.runtimeError(*instruction, "comparison operator method must return bool")
 				}
 				value = runtime.Bool{Value: !boolValue.Value}
 			}
@@ -2475,10 +2481,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpYield:
 			value, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			if len(vm.frames) == 0 || vm.frames[len(vm.frames)-1].generator == nil {
-				return vm.runtimeError(instruction, "yield can only be used inside a generator function")
+				return vm.runtimeError(*instruction, "yield can only be used inside a generator function")
 			}
 			frame := vm.frames[len(vm.frames)-1]
 			select {
@@ -2487,7 +2493,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return nil
 			}
 		case OpBitAnd, OpBitOr, OpBitXor, OpLShift, OpRShift:
-			nextIP, err := vm.bitwiseInfix(instruction, ip)
+			nextIP, err := vm.bitwiseInfix(*instruction, ip)
 			if err != nil {
 				return err
 			}
@@ -2495,7 +2501,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				ip = nextIP
 			}
 		case OpBitNot:
-			nextIP, err := vm.bitwiseNot(instruction, ip)
+			nextIP, err := vm.bitwiseNot(*instruction, ip)
 			if err != nil {
 				return err
 			}
@@ -2505,48 +2511,48 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpNullCoalesce:
 			top, err := vm.peekVM()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			if top.Kind != runtime.VMKindNull && top.Kind != runtime.VMKindUnset {
 				ip = int(instruction.Operands[0]) - 1
 			} else {
 				if _, err := vm.popVM(); err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 			}
 		case OpOptionalChain:
 			top, err := vm.peekVM()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			if top.Kind == runtime.VMKindNull || top.Kind == runtime.VMKindUnset {
 				ip = int(instruction.Operands[0]) - 1
 			}
 		case OpCallSpread:
 			if len(instruction.Operands) != 2 {
-				return vm.fatalError(instruction, "call-spread instruction has invalid operands")
+				return vm.fatalError(*instruction, "call-spread instruction has invalid operands")
 			}
 			funcIndex := instruction.Operands[0]
 			staticArgCount := int(instruction.Operands[1])
 			if funcIndex < 0 || int(funcIndex) >= len(vm.chunk.Functions) {
-				return vm.runtimeError(instruction, "function index out of range")
+				return vm.runtimeError(*instruction, "function index out of range")
 			}
 			spreadVal, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			spreadList, ok := spreadVal.(*runtime.List)
 			staticArgs := make([]runtime.Value, staticArgCount)
 			for i := staticArgCount - 1; i >= 0; i-- {
 				val, err := vm.pop()
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				staticArgs[i] = val
 			}
 			if ok {
 				combined := append(staticArgs, spreadList.Elements...)
-				nextIP, err := vm.startFunction(instruction, ip, &vm.chunk.Functions[funcIndex], combined, nil)
+				nextIP, err := vm.startFunction(*instruction, ip, &vm.chunk.Functions[funcIndex], combined, nil)
 				if err != nil {
 					return err
 				}
@@ -2555,35 +2561,91 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			spreadDict, ok := spreadVal.(runtime.Dict)
 			if !ok {
-				return vm.runtimeError(instruction, "spread argument must be a list or dict")
+				return vm.runtimeError(*instruction, "spread argument must be a list or dict")
 			}
 			args, names, err := spreadDictNamedArguments(spreadDict, staticArgs, vm.chunk.Functions[funcIndex].ParamNames)
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
-			ordered, err := vm.orderRuntimeArguments(instruction, vm.chunk.Functions[funcIndex], args, names, 0)
+			ordered, err := vm.orderRuntimeArguments(*instruction, vm.chunk.Functions[funcIndex], args, names, 0)
 			if err != nil {
 				return err
 			}
-			nextIP, err := vm.startFunction(instruction, ip, &vm.chunk.Functions[funcIndex], ordered, nil)
+			nextIP, err := vm.startFunction(*instruction, ip, &vm.chunk.Functions[funcIndex], ordered, nil)
+			if err != nil {
+				return err
+			}
+			ip = nextIP
+		case OpConstructClassSpread:
+			if len(instruction.Operands) != 2 {
+				return vm.fatalError(*instruction, "construct-class-spread instruction has invalid operands")
+			}
+			classIndex := instruction.Operands[0]
+			staticArgCount := int(instruction.Operands[1])
+			if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+				return vm.runtimeError(*instruction, "class index out of range")
+			}
+			spreadVal, err := vm.pop()
+			if err != nil {
+				return vm.runtimeError(*instruction, "%s", err.Error())
+			}
+			staticArgs := make([]runtime.Value, staticArgCount)
+			for i := staticArgCount - 1; i >= 0; i-- {
+				val, err := vm.pop()
+				if err != nil {
+					return vm.runtimeError(*instruction, "%s", err.Error())
+				}
+				staticArgs[i] = val
+			}
+			if spreadList, ok := spreadVal.(*runtime.List); ok {
+				combined := append(staticArgs, spreadList.Elements...)
+				nextIP, err := vm.constructClassWithArgs(*instruction, ip, classIndex, combined, false)
+				if err != nil {
+					return err
+				}
+				ip = nextIP
+				continue
+			}
+			spreadDict, ok := spreadVal.(runtime.Dict)
+			if !ok {
+				return vm.runtimeError(*instruction, "spread argument must be a list or dict")
+			}
+			classInfo := vm.chunk.Classes[classIndex]
+			if len(classInfo.ConstructorIndices) != 1 {
+				return vm.runtimeError(*instruction, "cannot use dict spread without a single constructor on %s", classInfo.Name)
+			}
+			ctor := vm.chunk.Functions[classInfo.ConstructorIndices[0]]
+			ctorParams := ctor.ParamNames
+			if len(ctorParams) > 0 {
+				ctorParams = ctorParams[1:] // skip the receiver slot
+			}
+			args, names, err := spreadDictNamedArguments(spreadDict, staticArgs, ctorParams)
+			if err != nil {
+				return vm.runtimeError(*instruction, "%s", err.Error())
+			}
+			ordered, err := vm.orderRuntimeArguments(*instruction, ctor, args, names, 1)
+			if err != nil {
+				return err
+			}
+			nextIP, err := vm.constructClassWithArgs(*instruction, ip, classIndex, ordered, false)
 			if err != nil {
 				return err
 			}
 			ip = nextIP
 		case OpListConcat:
 			if len(instruction.Operands) != 1 {
-				return vm.fatalError(instruction, "list-concat instruction has invalid operands")
+				return vm.fatalError(*instruction, "list-concat instruction has invalid operands")
 			}
 			n := int(instruction.Operands[0])
 			segments := make([]*runtime.List, n)
 			for i := n - 1; i >= 0; i-- {
 				val, err := vm.pop()
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.runtimeError(*instruction, "%s", err.Error())
 				}
 				list, ok := val.(*runtime.List)
 				if !ok {
-					return vm.runtimeError(instruction, "list-concat operand must be a list")
+					return vm.runtimeError(*instruction, "list-concat operand must be a list")
 				}
 				segments[i] = list
 			}
@@ -2599,12 +2661,12 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpAwait:
 			value, err := vm.pop()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			if task, ok := value.(*runtime.Task); ok {
 				result := task.Await()
 				if result.Err != nil {
-					nextIP, throwErr := vm.throwRecoverableError(instruction, ip, result.Err)
+					nextIP, throwErr := vm.throwRecoverableError(*instruction, ip, result.Err)
 					if throwErr != nil {
 						return throwErr
 					}
@@ -2622,27 +2684,27 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			// Peeks at the top of stack; if it is an instance, sets TypeBindings from the
 			// declaration annotation, overriding any bindings inferred from constructor args.
 			if len(instruction.Operands) < 1 {
-				return vm.runtimeError(instruction, "OpSetTypeBindings: missing operands")
+				return vm.runtimeError(*instruction, "OpSetTypeBindings: missing operands")
 			}
 			count := int(instruction.Operands[0])
 			if len(instruction.Operands) < 1+count*2 {
-				return vm.runtimeError(instruction, "OpSetTypeBindings: operand count mismatch")
+				return vm.runtimeError(*instruction, "OpSetTypeBindings: operand count mismatch")
 			}
 			top, err := vm.peek()
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
 			if instance, ok := top.(*runtime.Instance); ok {
 				for j := 0; j < count; j++ {
 					pIdx := instruction.Operands[1+j*2]
 					tIdx := instruction.Operands[2+j*2]
 					if int(pIdx) >= len(vm.chunk.Constants) || int(tIdx) >= len(vm.chunk.Constants) {
-						return vm.runtimeError(instruction, "OpSetTypeBindings: constant index out of range")
+						return vm.runtimeError(*instruction, "OpSetTypeBindings: constant index out of range")
 					}
 					paramName, pOK := vm.chunk.Constants[pIdx].(runtime.String)
 					typeName, tOK := vm.chunk.Constants[tIdx].(runtime.String)
 					if !pOK || !tOK {
-						return vm.runtimeError(instruction, "OpSetTypeBindings: constants must be strings")
+						return vm.runtimeError(*instruction, "OpSetTypeBindings: constants must be strings")
 					}
 					if instance.TypeBindings == nil {
 						instance.TypeBindings = map[string]string{}
@@ -2659,11 +2721,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			// Operands match OpSetTypeBindings: [count, pName1Idx,
 			// tName1Idx, pName2Idx, tName2Idx, ...].
 			if len(instruction.Operands) < 1 {
-				return vm.runtimeError(instruction, "OpPlantCallTypeBindings: missing operands")
+				return vm.runtimeError(*instruction, "OpPlantCallTypeBindings: missing operands")
 			}
 			count := int(instruction.Operands[0])
 			if len(instruction.Operands) < 1+count*2 {
-				return vm.runtimeError(instruction, "OpPlantCallTypeBindings: operand count mismatch")
+				return vm.runtimeError(*instruction, "OpPlantCallTypeBindings: operand count mismatch")
 			}
 			if count > 0 && vm.pendingTypeBindings == nil {
 				vm.pendingTypeBindings = map[string]string{}
@@ -2672,17 +2734,17 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				pIdx := instruction.Operands[1+j*2]
 				tIdx := instruction.Operands[2+j*2]
 				if int(pIdx) >= len(vm.chunk.Constants) || int(tIdx) >= len(vm.chunk.Constants) {
-					return vm.runtimeError(instruction, "OpPlantCallTypeBindings: constant index out of range")
+					return vm.runtimeError(*instruction, "OpPlantCallTypeBindings: constant index out of range")
 				}
 				paramName, pOK := vm.chunk.Constants[pIdx].(runtime.String)
 				typeName, tOK := vm.chunk.Constants[tIdx].(runtime.String)
 				if !pOK || !tOK {
-					return vm.runtimeError(instruction, "OpPlantCallTypeBindings: constants must be strings")
+					return vm.runtimeError(*instruction, "OpPlantCallTypeBindings: constants must be strings")
 				}
 				vm.pendingTypeBindings[paramName.Value] = typeName.Value
 			}
 		default:
-			return vm.fatalError(instruction, "unknown opcode %d", instruction.Op)
+			return vm.fatalError(*instruction, "unknown opcode %d", instruction.Op)
 		}
 	}
 	return nil
@@ -2862,7 +2924,12 @@ func bytecodeFunctionArityRange(function FunctionInfo, offset int) (int, int, bo
 		offset = len(function.ParamNames)
 	}
 	max := len(function.ParamNames) - offset
+	variadic := function.Variadic && max > 0
 	min := max
+	if variadic {
+		// The variadic slot is always optional; defaults may sit before it.
+		min--
+	}
 	for min > 0 {
 		paramIndex := offset + min - 1
 		if paramIndex >= len(function.DefaultConstants) || function.DefaultConstants[paramIndex] < 0 {
@@ -2870,14 +2937,7 @@ func bytecodeFunctionArityRange(function FunctionInfo, offset int) (int, int, bo
 		}
 		min--
 	}
-	variadic := function.Variadic && max > 0
-	if variadic {
-		if min == max {
-			min--
-		}
-		return min, max, true
-	}
-	return min, max, false
+	return min, max, variadic
 }
 
 func (vm *VM) decoratorFunctionIndices(name string) []int64 {
@@ -3075,41 +3135,50 @@ func (vm *VM) compare(instruction Instruction, ip int) (int, error) {
 	}
 	switch instruction.Op {
 	case OpLess, OpGreater, OpLessEqual, OpGreaterEqual:
-		methodName := "__lt"
-		switch instruction.Op {
-		case OpGreater:
-			methodName = "__gt"
-		case OpLessEqual:
-			methodName = "__lte"
-		case OpGreaterEqual:
-			methodName = "__gte"
+		// Resolution chain mirrors the evaluator's comparisonAttempts:
+		// direct dunder, negated inverse on the left, swapped on the right.
+		type attempt struct {
+			name   string
+			recv   runtime.Value
+			arg    runtime.Value
+			negate bool
 		}
-		if instance, ok := left.(*runtime.Instance); ok {
+		var attempts []attempt
+		switch instruction.Op {
+		case OpLess:
+			attempts = []attempt{{"__lt", left, right, false}, {"__gt", right, left, false}}
+		case OpGreater:
+			attempts = []attempt{{"__gt", left, right, false}, {"__lt", right, left, false}}
+		case OpLessEqual:
+			attempts = []attempt{{"__lte", left, right, false}, {"__gt", left, right, true}, {"__lt", right, left, true}}
+		case OpGreaterEqual:
+			attempts = []attempt{{"__gte", left, right, false}, {"__lt", left, right, true}, {"__gt", right, left, true}}
+		}
+		for _, at := range attempts {
+			instance, ok := at.recv.(*runtime.Instance)
+			if !ok {
+				continue
+			}
 			classInfo, ok := vm.classInfo(instance.Class.Name)
 			if !ok {
 				return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
 			}
-			if indices, ok := vm.lookupMethod(classInfo, methodName); ok {
-				functionIndex, err := vm.selectRuntimeFunction(instruction, methodName, indices, []runtime.Value{right}, 1)
-				if err != nil {
-					return 0, err
-				}
-				return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
+			indices, ok := vm.lookupMethod(classInfo, at.name)
+			if !ok {
+				continue
 			}
-			if fallbackName, ok := inverseComparisonMethodName(instruction.Op); ok {
-				if indices, ok := vm.lookupMethod(classInfo, fallbackName); ok {
-					functionIndex, err := vm.selectRuntimeFunction(instruction, fallbackName, indices, []runtime.Value{right}, 1)
-					if err != nil {
-						return 0, err
-					}
-					nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
-					if err != nil {
-						return 0, err
-					}
-					vm.frames[len(vm.frames)-1].negateReturn = true
-					return nextIP, nil
-				}
+			functionIndex, err := vm.selectRuntimeFunction(instruction, at.name, indices, []runtime.Value{at.arg}, 1)
+			if err != nil {
+				return 0, err
 			}
+			nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, at.arg}, nil)
+			if err != nil {
+				return 0, err
+			}
+			if at.negate {
+				vm.frames[len(vm.frames)-1].negateReturn = true
+			}
+			return nextIP, nil
 		}
 		cmp, err := native.NumericCompare(left, right)
 		if err != nil {
@@ -3128,17 +3197,6 @@ func (vm *VM) compare(instruction Instruction, ip int) (int, error) {
 		return ip, nil
 	default:
 		return 0, vm.runtimeError(instruction, "unknown comparison opcode")
-	}
-}
-
-func inverseComparisonMethodName(op Op) (string, bool) {
-	switch op {
-	case OpLessEqual:
-		return "__gt", true
-	case OpGreaterEqual:
-		return "__lt", true
-	default:
-		return "", false
 	}
 }
 
@@ -4789,7 +4847,7 @@ func (vm *VM) iterNext(instruction Instruction) (bool, error) {
 	}
 	next, ok, err := iter.next()
 	if err != nil {
-		return false, vm.runtimeError(instruction, "%s", err.Error())
+		return false, vm.raiseIteratorFault(instruction, err)
 	}
 	if !ok {
 		return false, nil
@@ -4798,6 +4856,17 @@ func (vm *VM) iterNext(instruction Instruction) (bool, error) {
 		return false, vm.runtimeError(instruction, "%s", err.Error())
 	}
 	return true, nil
+}
+
+// raiseIteratorFault re-raises an iterator/generator error without
+// flattening it to a string, so a typed throw inside a generator body
+// keeps its class for catch dispatch in the consuming loop.
+func (vm *VM) raiseIteratorFault(instruction Instruction, err error) error {
+	var thrown vmThrownError
+	if errors.As(err, &thrown) {
+		return vm.runtimeErrorWith(instruction, thrown, "uncaught %s", thrown.err.Inspect())
+	}
+	return vm.runtimeError(instruction, "%s", err.Error())
 }
 
 // advanceUserIterator drives one step of a user-defined iterator
@@ -6070,10 +6139,10 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 		return 0, vm.runtimeError(instruction, "%s expects at most %d args, got %d", function.Name, len(function.ParamSlots), argc)
 	}
 	required := len(function.ParamSlots)
-	for required > 0 && required <= len(function.DefaultConstants) && function.DefaultConstants[required-1] >= 0 {
+	if function.Variadic && required > 0 {
 		required--
 	}
-	if function.Variadic && required == len(function.ParamSlots) && len(function.ParamSlots) > 0 {
+	for required > 0 && required <= len(function.DefaultConstants) && function.DefaultConstants[required-1] >= 0 {
 		required--
 	}
 	if argc < required {
@@ -6090,6 +6159,10 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 			}
 		}
 		for i := argc; i < len(args); i++ {
+			if args[i] != nil {
+				// Variadic slot already holds its bundled (or empty) list.
+				continue
+			}
 			if i >= len(function.DefaultConstants) || function.DefaultConstants[i] < 0 {
 				return 0, vm.runtimeError(instruction, "%s missing argument %d", function.Name, i+1)
 			}
@@ -6799,6 +6872,23 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 			case "length":
 				vm.push(runtime.Int{Value: r.Length()})
 				return ip, nil
+			case "first":
+				if r.Length().Sign() == 0 {
+					vm.push(runtime.Null{})
+					return ip, nil
+				}
+				vm.push(runtime.Int{Value: new(big.Int).Set(r.Start)})
+				return ip, nil
+			case "last":
+				n := r.Length()
+				if n.Sign() == 0 {
+					vm.push(runtime.Null{})
+					return ip, nil
+				}
+				last := new(big.Int).Mul(r.Step, new(big.Int).Sub(n, big.NewInt(1)))
+				last.Add(last, r.Start)
+				vm.push(runtime.Int{Value: last})
+				return ip, nil
 			default:
 				return 0, vm.runtimeError(instruction, "range has no field %s", name)
 			}
@@ -7281,6 +7371,60 @@ func (vm *VM) callStaticMethod(instruction Instruction, ip int) (int, error) {
 		}
 		args[i] = value
 	}
+	return vm.callStaticMethodWithArgs(instruction, ip, classIndex, name, args)
+}
+
+func (vm *VM) callStaticMethodSpread(instruction Instruction, ip int) (int, error) {
+	if len(instruction.Operands) != 3 {
+		return 0, vm.fatalError(instruction, "static method spread instruction has invalid operands")
+	}
+	classIndex := instruction.Operands[0]
+	nameIndex := instruction.Operands[1]
+	staticArgCount := int(instruction.Operands[2])
+	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+		return 0, vm.runtimeError(instruction, "class index out of range")
+	}
+	name, err := vm.constantStringAt(instruction, nameIndex, "static method name must be string")
+	if err != nil {
+		return 0, err
+	}
+	spreadVal, err := vm.pop()
+	if err != nil {
+		return 0, vm.runtimeError(instruction, "%s", err.Error())
+	}
+	staticArgs := make([]runtime.Value, staticArgCount)
+	for i := staticArgCount - 1; i >= 0; i-- {
+		value, err := vm.pop()
+		if err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		staticArgs[i] = value
+	}
+	if spreadList, ok := spreadVal.(*runtime.List); ok {
+		combined := append(staticArgs, spreadList.Elements...)
+		return vm.callStaticMethodWithArgs(instruction, ip, classIndex, name, combined)
+	}
+	spreadDict, ok := spreadVal.(runtime.Dict)
+	if !ok {
+		return 0, vm.runtimeError(instruction, "spread argument must be a list or dict")
+	}
+	indices, found := vm.lookupStaticMethod(vm.chunk.Classes[classIndex], name)
+	if !found || len(indices) != 1 {
+		return 0, vm.runtimeError(instruction, "cannot use dict spread with static method %s.%s", vm.chunk.Classes[classIndex].Name, name)
+	}
+	fn := vm.chunk.Functions[indices[0]]
+	args, names, err := spreadDictNamedArguments(spreadDict, staticArgs, fn.ParamNames)
+	if err != nil {
+		return 0, vm.runtimeError(instruction, "%s", err.Error())
+	}
+	ordered, err := vm.orderRuntimeArguments(instruction, fn, args, names, 0)
+	if err != nil {
+		return 0, err
+	}
+	return vm.callStaticMethodWithArgs(instruction, ip, classIndex, name, ordered)
+}
+
+func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classIndex int64, name string, args []runtime.Value) (int, error) {
 	indices, ok := vm.lookupStaticMethod(vm.chunk.Classes[classIndex], name)
 	if !ok {
 		// Same-chunk walk exhausted: the static method may live on a cross-module ancestor.
@@ -7357,6 +7501,14 @@ func (vm *VM) orderRuntimeArguments(instruction Instruction, function FunctionIn
 		}
 		ordered[position] = arg
 		assigned[position] = true
+	}
+	variadicIndex := -1
+	if function.Variadic && len(function.ParamNames) > paramOffset {
+		variadicIndex = len(function.ParamNames) - 1 - paramOffset
+	}
+	if variadicIndex >= 0 && variadicIndex == len(ordered)-1 && !assigned[variadicIndex] {
+		ordered = ordered[:variadicIndex]
+		assigned = assigned[:variadicIndex]
 	}
 	for i := range ordered {
 		if assigned[i] {
@@ -11373,7 +11525,7 @@ func copyStringInt64SliceMap(values map[string][]int64) map[string][]int64 {
 
 func shiftInstructionOperands(instruction *Instruction, instructionShift int, constantShift int) {
 	switch instruction.Op {
-	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpLoadModuleValue, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpCallStaticMethodSpread, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpLoadModuleValue, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 		for i := range instruction.Operands {
 			if isConstantOperand(instruction.Op, i) && instruction.Operands[i] >= 0 {
 				instruction.Operands[i] += int64(constantShift)
@@ -11420,7 +11572,7 @@ func isConstantOperand(op Op, index int) bool {
 		return index == 1
 	case OpGetStaticValue, OpSetStaticValue:
 		return index == 1
-	case OpCallStaticMethod:
+	case OpCallStaticMethod, OpCallStaticMethodSpread:
 		return index == 1
 	case OpMethodCallNamed:
 		return index == 0 || index >= 2
@@ -11770,12 +11922,8 @@ func (vm *VM) selectRuntimeFunction(instruction Instruction, name string, indice
 			return 0, vm.runtimeError(instruction, "method index out of range")
 		}
 		function := vm.chunk.Functions[index]
-		required := len(function.ParamSlots)
-		for required > paramOffset && required <= len(function.DefaultConstants) && function.DefaultConstants[required-1] >= 0 {
-			required--
-		}
-		provided := len(args) + paramOffset
-		if provided < required || provided > len(function.ParamSlots) {
+		min, max, variadic := bytecodeFunctionArityRange(function, paramOffset)
+		if len(args) < min || (!variadic && len(args) > max) {
 			return 0, vm.runtimeError(instruction, "no matching overload for %s", name)
 		}
 		if !vm.runtimeArgumentsMatch(function, args, paramOffset) {
@@ -11789,12 +11937,8 @@ func (vm *VM) selectRuntimeFunction(instruction Instruction, name string, indice
 			return 0, vm.runtimeError(instruction, "method index out of range")
 		}
 		function := vm.chunk.Functions[index]
-		required := len(function.ParamSlots)
-		for required > paramOffset && required <= len(function.DefaultConstants) && function.DefaultConstants[required-1] >= 0 {
-			required--
-		}
-		provided := len(args) + paramOffset
-		if provided < required || provided > len(function.ParamSlots) {
+		min, max, variadic := bytecodeFunctionArityRange(function, paramOffset)
+		if len(args) < min || (!variadic && len(args) > max) {
 			continue
 		}
 		if !vm.runtimeArgumentsMatch(function, args, paramOffset) {
@@ -11845,7 +11989,11 @@ func (vm *VM) runtimeArgumentsMatch(function FunctionInfo, args []runtime.Value,
 	for i, arg := range args {
 		paramIndex := i + paramOffset
 		if paramIndex >= len(function.ParamTypes) {
-			return false
+			if !function.Variadic || len(function.ParamTypes) == 0 {
+				return false
+			}
+			// Extra variadic args match the variadic param's element type.
+			paramIndex = len(function.ParamTypes) - 1
 		}
 		if paramIndex < len(function.paramTypeSpecs) && function.paramTypeSpecs[paramIndex].raw != "" {
 			if !vm.matchValueToTypeSpec(typeParams, arg, function.paramTypeSpecs[paramIndex]) {
@@ -12339,17 +12487,66 @@ func (vm *VM) methodCallSpread(instruction Instruction, ip int) (int, error) {
 		}
 		staticArgs[i] = val
 	}
-	spreadList, ok := spreadVal.(*runtime.List)
-	if !ok {
-		return 0, vm.runtimeError(instruction, "spread argument must be a list")
+	if spreadList, ok := spreadVal.(*runtime.List); ok {
+		args := append(staticArgs, spreadList.Elements...)
+		for _, a := range args {
+			vm.push(a)
+		}
+		rebuilt := Instruction{
+			Op:       OpMethodCall,
+			Operands: []int64{instruction.Operands[0], int64(len(args))},
+			Line:     instruction.Line,
+			Column:   instruction.Column,
+		}
+		return vm.methodCall(rebuilt, ip)
 	}
-	args := append(staticArgs, spreadList.Elements...)
-	for _, a := range args {
+	spreadDict, ok := spreadVal.(runtime.Dict)
+	if !ok {
+		return 0, vm.runtimeError(instruction, "spread argument must be a list or dict")
+	}
+	name, err := vm.constantStringAt(instruction, instruction.Operands[0], "method name constant must be string")
+	if err != nil {
+		return 0, err
+	}
+	receiver, err := vm.pop()
+	if err != nil {
+		return 0, vm.runtimeError(instruction, "%s", err.Error())
+	}
+	instance, ok := receiver.(*runtime.Instance)
+	if !ok {
+		return 0, vm.runtimeError(instruction, "dict spread requires an instance method receiver")
+	}
+	if instance.Class == nil || instance.Class.Module != vm.moduleName {
+		return 0, vm.runtimeError(instruction, "cannot use dict spread with a cross-module method")
+	}
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if !ok {
+		return 0, vm.runtimeError(instruction, "unknown class %s", instance.Class.Name)
+	}
+	indices, ok := vm.lookupMethod(classInfo, name)
+	if !ok || len(indices) != 1 {
+		return 0, vm.runtimeError(instruction, "cannot use dict spread with method %s.%s", instance.Class.Name, name)
+	}
+	fn := vm.chunk.Functions[indices[0]]
+	fnParams := fn.ParamNames
+	if len(fnParams) > 0 {
+		fnParams = fnParams[1:] // skip the receiver slot
+	}
+	args, names, err := spreadDictNamedArguments(spreadDict, staticArgs, fnParams)
+	if err != nil {
+		return 0, vm.runtimeError(instruction, "%s", err.Error())
+	}
+	ordered, err := vm.orderRuntimeArguments(instruction, fn, args, names, 1)
+	if err != nil {
+		return 0, err
+	}
+	vm.push(receiver)
+	for _, a := range ordered {
 		vm.push(a)
 	}
 	rebuilt := Instruction{
 		Op:       OpMethodCall,
-		Operands: []int64{instruction.Operands[0], int64(len(args))},
+		Operands: []int64{instruction.Operands[0], int64(len(ordered))},
 		Line:     instruction.Line,
 		Column:   instruction.Column,
 	}

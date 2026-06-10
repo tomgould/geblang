@@ -726,7 +726,7 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 			 * top-level / class-level declarations where the
 			 * confusion is more likely (`let errors = [...]`
 			 * followed by `errors.push(...)`). */
-			a.declare(param.Name.Value, a.typeInfoFromRef(param.Type))
+			a.declare(param.Name.Value, a.parameterBindingType(param))
 			if param.Default != nil {
 				a.checkAssignable(param.Type, param.Default, fmt.Sprintf("cannot use %s default for %s parameter %s", a.expressionTypeName(param.Default).display(), param.Type.String(), param.Name.Value))
 			}
@@ -849,7 +849,7 @@ func (a *Analyzer) analyzeClassMembers(stmt *ast.ClassStatement) {
 			a.declare("this", typeInfo{name: stmt.Name.Value, known: true})
 		}
 		for _, param := range method.Parameters {
-			a.declare(param.Name.Value, a.typeInfoFromRef(param.Type))
+			a.declare(param.Name.Value, a.parameterBindingType(param))
 			if param.Default != nil {
 				a.checkAssignable(param.Type, param.Default, fmt.Sprintf("cannot use %s default for %s parameter %s", a.expressionTypeName(param.Default).display(), param.Type.String(), param.Name.Value))
 			}
@@ -2442,6 +2442,16 @@ func (a *Analyzer) homogeneousElementType(elements []ast.Expression) (typeInfo, 
 		}
 	}
 	return common, true
+}
+
+// parameterBindingType is the type a parameter NAME binds to inside the
+// function body. A variadic `T ...rest` collects into a list<T>.
+func (a *Analyzer) parameterBindingType(param ast.Parameter) typeInfo {
+	t := a.typeInfoFromRef(param.Type)
+	if param.Variadic {
+		return typeInfo{name: "list", known: true, args: []typeInfo{t}}
+	}
+	return t
 }
 
 func (a *Analyzer) typeInfoFromRef(ref *ast.TypeRef) typeInfo {

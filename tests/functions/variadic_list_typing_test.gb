@@ -1,0 +1,51 @@
+/**
+ * @title Variadic parameters bind as list<T> inside the body
+ * @summary `T ...rest` collects into a list<T>, so list methods
+ * (length, join, contains, sorted) are valid on the parameter name in
+ * functions and methods, regardless of the element type.
+ */
+import test;
+
+func count(int ...rest): int {
+    return rest.length();
+}
+
+func joined(string sep, string ...parts): string {
+    return parts.join(sep);
+}
+
+class Tagger {
+    func tag(string base, int ...nums): string {
+        if (nums.length() == 0) { return base; }
+        return base + ":" + nums.sorted().join(",");
+    }
+}
+
+class VariadicListTypingTest extends test.Test {
+
+    @test
+    func listMethodsOnIntVariadic(): void {
+        this.assertEquals(0, count());
+        this.assertEquals(3, count(1, 2, 3));
+    }
+
+    @test
+    func listMethodsOnStringVariadic(): void {
+        this.assertEquals("a-b-c", joined("-", "a", "b", "c"));
+        this.assertEquals("", joined("-"));
+    }
+
+    @test
+    func listMethodsInMethodContext(): void {
+        let t = Tagger();
+        this.assertEquals("x", t.tag("x"));
+        this.assertEquals("x:1,2,9", t.tag("x", 9, 1, 2));
+    }
+
+    @test
+    func variadicListSupportsContains(): void {
+        let probe = func(int ...xs): bool { return xs.contains(7); };
+        this.assertTrue(probe(5, 7));
+        this.assertFalse(probe(5, 6));
+    }
+}

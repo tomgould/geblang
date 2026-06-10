@@ -1,0 +1,51 @@
+/**
+ * @title Comparison operators derived from a single ordering dunder
+ * @summary Defining only `__lt` (or only `__gt`) enables all four
+ * comparison operators: the missing strict operator dispatches with
+ * swapped operands and the non-strict forms negate the strict result.
+ * A defined dunder always wins over a derived one.
+ */
+import test;
+
+class OnlyLt {
+    int x;
+    func OnlyLt(int x) { this.x = x; }
+    func __lt(OnlyLt o): bool { return this.x < o.x; }
+}
+
+class OnlyGt {
+    int x;
+    func OnlyGt(int x) { this.x = x; }
+    func __gt(OnlyGt o): bool { return this.x > o.x; }
+}
+
+class DerivedComparisonTest extends test.Test {
+
+    @test
+    func ltDerivesGreaterAndNonStrict(): void {
+        this.assertTrue(OnlyLt(1) < OnlyLt(2));
+        this.assertTrue(OnlyLt(2) > OnlyLt(1));
+        this.assertFalse(OnlyLt(1) > OnlyLt(2));
+        this.assertTrue(OnlyLt(1) <= OnlyLt(2));
+        this.assertFalse(OnlyLt(2) <= OnlyLt(1));
+        this.assertTrue(OnlyLt(2) >= OnlyLt(1));
+        this.assertTrue(OnlyLt(2) >= OnlyLt(2));
+    }
+
+    @test
+    func gtDerivesLessAndNonStrict(): void {
+        this.assertTrue(OnlyGt(1) < OnlyGt(2));
+        this.assertTrue(OnlyGt(2) > OnlyGt(1));
+        this.assertTrue(OnlyGt(1) <= OnlyGt(2));
+        this.assertTrue(OnlyGt(2) >= OnlyGt(1));
+        this.assertFalse(OnlyGt(1) >= OnlyGt(2));
+    }
+
+    @test
+    func sortedUsesDerivedOrder(): void {
+        let l = [OnlyLt(3), OnlyLt(1), OnlyLt(2)];
+        let s = l.sortBy(func(OnlyLt v): int { return v.x; });
+        this.assertEquals(1, s[0].x);
+        this.assertEquals(3, s[2].x);
+    }
+}

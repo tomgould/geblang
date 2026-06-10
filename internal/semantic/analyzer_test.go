@@ -1195,3 +1195,43 @@ outer();
 		}
 	}
 }
+
+// A variadic `T ...rest` binds rest as list<T> inside the body: list
+// methods are valid, element-type methods on the list are not.
+func TestAnalyzerVariadicParamBindsAsList(t *testing.T) {
+	good := `func f(int ...rest): int { return rest.length(); }
+class C {
+    func tag(string base, string ...parts): string { return base + parts.join("-"); }
+}
+`
+	p := parser.New(lexer.New(good))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	for _, d := range semantic.New().Analyze(program) {
+		if d.Severity == semantic.SeverityError {
+			t.Fatalf("unexpected diagnostic: %s", d.Message)
+		}
+	}
+
+	bad := `func h(int ...rest): string { return rest.upper(); }
+`
+	p = parser.New(lexer.New(bad))
+	program = p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	analyzer := semantic.New()
+	analyzer.EnableMethodChecks()
+	diagnostics := analyzer.Analyze(program)
+	found := false
+	for _, d := range diagnostics {
+		if strings.Contains(d.Message, "list has no method upper") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'list has no method upper' diagnostic, got %v", diagnostics)
+	}
+}

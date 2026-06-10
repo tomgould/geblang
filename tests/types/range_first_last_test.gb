@@ -1,0 +1,29 @@
+/**
+ * @title Range first/last as fields
+ * @summary Ranges expose `.first` and `.last` as fields (like
+ * `.length`), matching the call forms; empty ranges yield null.
+ */
+import test;
+
+class RangeFirstLastTest extends test.Test {
+
+    @test
+    func fieldsMatchMethods(): void {
+        let r = 1..5;
+        this.assertEquals(1, r.first);
+        this.assertEquals(5, r.last);
+        this.assertEquals(r.first(), r.first);
+        this.assertEquals(r.last(), r.last);
+    }
+
+    @test
+    func exclusiveAndStepped(): void {
+        this.assertEquals(7, (2..<8).last);
+    }
+
+    @test
+    func emptyRangeYieldsNull(): void {
+        this.assertEquals(-1, (5..1).first ?? -1);
+        this.assertEquals(-1, (5..1).last ?? -1);
+    }
+}

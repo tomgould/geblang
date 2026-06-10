@@ -1,0 +1,55 @@
+/**
+ * @title Spread arguments in every dispatch context
+ * @summary List and dict spread bind correctly into constructors,
+ * instance methods, and static methods, including mixed
+ * positional-plus-spread calls, defaults, and silently-dropped extra
+ * dict keys (matching the plain-function spread contract).
+ */
+import test;
+
+class Carrier {
+    int a; int b;
+    func Carrier(int a, int b = 9) { this.a = a; this.b = b; }
+    func m(int a, int b = 9): string { return "${a}|${b}"; }
+    static func sm(int a, int b = 9): string { return "${a}|${b}"; }
+}
+
+class SpreadDispatchContextsTest extends test.Test {
+
+    @test
+    func listSpreadIntoConstructor(): void {
+        let p = Carrier(...[3, 4]);
+        this.assertEquals(3, p.a);
+        this.assertEquals(4, p.b);
+    }
+
+    @test
+    func dictSpreadIntoConstructor(): void {
+        let p = Carrier(...{"a": 5, "junk": 1});
+        this.assertEquals(5, p.a);
+        this.assertEquals(9, p.b);
+        this.assertEquals(7, Carrier(1, ...{"b": 7}).b);
+    }
+
+    @test
+    func listSpreadIntoMethod(): void {
+        let c = Carrier(0);
+        this.assertEquals("1|2", c.m(...[1, 2]));
+        this.assertEquals("1|9", c.m(...[1]));
+    }
+
+    @test
+    func dictSpreadIntoMethod(): void {
+        let c = Carrier(0);
+        this.assertEquals("5|9", c.m(...{"a": 5}));
+        this.assertEquals("5|6", c.m(...{"a": 5, "b": 6, "junk": 2}));
+        this.assertEquals("1|7", c.m(1, ...{"b": 7}));
+    }
+
+    @test
+    func spreadIntoStaticMethod(): void {
+        this.assertEquals("1|2", Carrier.sm(...[1, 2]));
+        this.assertEquals("8|9", Carrier.sm(...{"a": 8}));
+        this.assertEquals("2|3", Carrier.sm(2, ...{"b": 3}));
+    }
+}

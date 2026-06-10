@@ -1,0 +1,74 @@
+/**
+ * @title Exceptions thrown inside generators keep their class
+ * @summary A `throw` inside a generator body surfaces in the consuming
+ * loop as the thrown class (and subclass), catchable by class name,
+ * not as a generic RuntimeError.
+ */
+import test;
+
+func boomAfterOne(): generator<int> {
+    yield 1;
+    throw ValueError("boom");
+}
+
+class CustomErr extends ValueError {
+    func CustomErr(string m) { parent(m); }
+}
+
+func customAfterOne(): generator<int> {
+    yield 1;
+    throw CustomErr("custom");
+}
+
+class GeneratorThrowClassTest extends test.Test {
+
+    @test
+    func thrownClassIsCatchable(): void {
+        let seen = [];
+        let caught = "";
+        try {
+            for (n in boomAfterOne()) { seen.push(n); }
+        } catch (ValueError e) {
+            caught = "${e.class}:${e.message}";
+        }
+        this.assertEquals("[1]", "${seen}");
+        this.assertEquals("ValueError:boom", caught);
+    }
+
+    @test
+    func subclassCaughtByParentClass(): void {
+        let caught = "";
+        try {
+            for (n in customAfterOne()) { }
+        } catch (ValueError e) {
+            caught = e.class;
+        }
+        this.assertEquals("CustomErr", caught);
+    }
+
+    @test
+    func wrongClassDoesNotCatch(): void {
+        let outer = "";
+        try {
+            try {
+                for (n in boomAfterOne()) { }
+            } catch (TypeError e) {
+                outer = "wrong";
+            }
+        } catch (ValueError e) {
+            outer = "right:${e.message}";
+        }
+        this.assertEquals("right:boom", outer);
+    }
+
+    @test
+    func comprehensionConsumptionKeepsClass(): void {
+        let caught = "";
+        try {
+            let xs = [x for x in boomAfterOne()];
+        } catch (ValueError e) {
+            caught = e.class;
+        }
+        this.assertEquals("ValueError", caught);
+    }
+}

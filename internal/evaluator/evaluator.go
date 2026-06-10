@@ -1805,18 +1805,15 @@ func decoratorWrapperCompatible(original runtime.Function, wrapper runtime.Funct
 }
 
 func functionArityRange(params []ast.Parameter) (int, int, bool) {
+	variadic := len(params) > 0 && params[len(params)-1].Variadic
 	min := len(params)
+	if variadic {
+		min--
+	}
 	for min > 0 && params[min-1].Default != nil {
 		min--
 	}
-	variadic := len(params) > 0 && params[len(params)-1].Variadic
-	if variadic {
-		if min == len(params) {
-			min--
-		}
-		return min, len(params), true
-	}
-	return min, len(params), false
+	return min, len(params), variadic
 }
 
 func (e *Evaluator) decoratorCallArguments(fn runtime.Function, decorator ast.Decorator, env *runtime.Environment) ([]evaluatedCallArg, error) {
@@ -2222,10 +2219,11 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		}
 		return nil, fmt.Errorf("%q is not declared", expr.Value)
 	case *ast.IntegerLiteral:
-		value, err := runtime.NewIntLiteral(expr.Value)
+		parsed, err := expr.ParsedValue()
 		if err != nil {
 			return nil, err
 		}
+		value := runtime.Int{Value: parsed}
 		if expected != nil && expected.Operator == "" {
 			switch expected.Name {
 			case "decimal":
@@ -2237,14 +2235,17 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 		}
 		return value, nil
 	case *ast.DecimalLiteral:
-		return runtime.NewDecimalLiteral(expr.Value)
-	case *ast.FloatLiteral:
-		stripped := strings.ReplaceAll(expr.Value[:len(expr.Value)-1], "_", "")
-		value, err := strconv.ParseFloat(stripped, 64)
+		parsed, err := expr.ParsedValue()
 		if err != nil {
-			return nil, fmt.Errorf("invalid float literal %q", expr.Value)
+			return nil, err
 		}
-		return runtime.Float{Value: value}, nil
+		return runtime.Decimal{Value: parsed}, nil
+	case *ast.FloatLiteral:
+		parsed, err := expr.ParsedValue()
+		if err != nil {
+			return nil, err
+		}
+		return runtime.Float{Value: parsed}, nil
 	case *ast.StringLiteral:
 		return runtime.String{Value: expr.Value}, nil
 	case *ast.InterpolatedString:
@@ -7456,6 +7457,19 @@ func (e *Evaluator) evalSelectorExpression(expr *ast.SelectorExpression, env *ru
 			return runtime.Int{Value: new(big.Int).Set(r.Step)}, nil
 		case "length":
 			return runtime.Int{Value: r.Length()}, nil
+		case "first":
+			if r.Length().Sign() == 0 {
+				return runtime.Null{}, nil
+			}
+			return runtime.Int{Value: new(big.Int).Set(r.Start)}, nil
+		case "last":
+			n := r.Length()
+			if n.Sign() == 0 {
+				return runtime.Null{}, nil
+			}
+			last := new(big.Int).Mul(r.Step, new(big.Int).Sub(n, big.NewInt(1)))
+			last.Add(last, r.Start)
+			return runtime.Int{Value: last}, nil
 		}
 		return nil, fmt.Errorf("range has no field %s", expr.Name.Value)
 	}
@@ -23405,7 +23419,12 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 		if param.Variadic {
 			variadicElements := make([]runtime.Value, 0)
 			if i < len(args) {
-				variadicElements = args[i:]
+				// args may carry nil holes for unfilled default slots.
+				for _, v := range args[i:] {
+					if v != nil {
+						variadicElements = append(variadicElements, v)
+					}
+				}
 			}
 			value = &runtime.List{Elements: variadicElements}
 		} else if i < len(args) && args[i] != nil {
@@ -23889,6 +23908,9 @@ func (e *Evaluator) evalContains(needle, container runtime.Value) (runtime.Value
 }
 
 func (e *Evaluator) evalOperatorMethod(operator string, left runtime.Value, right runtime.Value) (runtime.Value, bool, error) {
+	if isComparison(operator) {
+		return e.evalComparisonMethod(operator, left, right)
+	}
 	instance, ok := left.(*runtime.Instance)
 	if !ok {
 		return nil, false, nil
@@ -23911,6 +23933,57 @@ func (e *Evaluator) evalOperatorMethod(operator string, left runtime.Value, righ
 		}
 	}
 	return value, true, nil
+}
+
+// comparisonAttempt is one step in the ordering-dunder resolution
+// chain shared (by construction) with the VM's compare: direct dunder,
+// then negated inverse on the left, then swapped operands on the right.
+type comparisonAttempt struct {
+	name   string
+	recv   runtime.Value
+	arg    runtime.Value
+	negate bool
+}
+
+func comparisonAttempts(operator string, left, right runtime.Value) []comparisonAttempt {
+	switch operator {
+	case "<":
+		return []comparisonAttempt{{"__lt", left, right, false}, {"__gt", right, left, false}}
+	case ">":
+		return []comparisonAttempt{{"__gt", left, right, false}, {"__lt", right, left, false}}
+	case "<=":
+		return []comparisonAttempt{{"__lte", left, right, false}, {"__gt", left, right, true}, {"__lt", right, left, true}}
+	case ">=":
+		return []comparisonAttempt{{"__gte", left, right, false}, {"__lt", left, right, true}, {"__gt", right, left, true}}
+	default:
+		return nil
+	}
+}
+
+func (e *Evaluator) evalComparisonMethod(operator string, left, right runtime.Value) (runtime.Value, bool, error) {
+	for _, at := range comparisonAttempts(operator, left, right) {
+		instance, ok := at.recv.(*runtime.Instance)
+		if !ok {
+			continue
+		}
+		method, ok := lookupMethod(instance.Class, at.name)
+		if !ok {
+			continue
+		}
+		value, err := e.applyFunctionWithThis(method, []runtime.Value{at.arg}, instance)
+		if err != nil {
+			return nil, true, err
+		}
+		result, ok := value.(runtime.Bool)
+		if !ok {
+			return nil, true, fmt.Errorf("%s.%s must return bool", instance.Class.Name, at.name)
+		}
+		if at.negate {
+			result.Value = !result.Value
+		}
+		return result, true, nil
+	}
+	return nil, false, nil
 }
 
 func operatorMethodName(operator string) (string, bool) {

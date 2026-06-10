@@ -1,5 +1,58 @@
 # Release Notes
 
+## 1.17.0
+
+### Language
+
+- Default parameters combine correctly with a variadic parameter. A
+  signature like `f(int a, int b = 10, int ...rest)` now binds in every
+  context (plain function, lambda, method, static method, constructor)
+  and call shape (positional with the default engaged, named arguments,
+  spread). Previously the bytecode VM rejected valid calls at compile
+  time and the evaluator could crash on named arguments or method calls.
+- A variadic parameter is typed as `list<T>` inside the function body,
+  so list methods (`rest.length()`, `parts.join(sep)`) type-check.
+  Previously the analyzer treated `int ...rest` as a bare `int`, which
+  rejected valid code at top level and broke module compilation on the
+  bytecode VM.
+- Spread arguments now work in every dispatch context on both backends:
+  constructors, instance methods, and static methods accept `...list`
+  and `...dict` (extra dict keys are dropped, matching plain functions),
+  including mixed positional-plus-spread calls.
+- Defining a single ordering dunder enables all four comparison
+  operators: `a > b` derives from `b.__lt(a)` (and `a < b` from
+  `b.__gt(a)`); `<=` and `>=` negate the strict comparison when the
+  direct dunder is missing. A defined dunder always wins over a derived
+  one.
+- `range.first` and `range.last` work in field form alongside
+  `range.length`, matching the documented surface; empty ranges yield
+  `null`.
+
+### Fixes
+
+- An exception thrown inside a generator keeps its class in the
+  consuming loop on the bytecode VM, so `catch (ValueError e)` matches
+  it (including subclasses and comprehension consumption). Previously
+  the VM collapsed it into a generic runtime error.
+- The evaluator derives `<=` and `>=` from a lone `__gt` / `__lt` the
+  same way the bytecode VM always has, removing a latent divergence.
+
+### Performance
+
+- The bytecode VM dispatch loop fetches instructions by pointer instead
+  of copying them: integer-loop and arithmetic benchmarks improve by
+  roughly 7-15% and recursive call workloads by ~18%.
+- Numeric literals are parsed once and cached on the syntax tree instead
+  of re-parsed on every evaluation. Allocations in call-heavy evaluator
+  workloads drop by about 23%, which speeds up `geblang test` runs.
+
+### Tooling
+
+- The parity fuzzer generates random required/default/variadic
+  signatures called positionally, with named arguments, and with spread
+  across all dispatch contexts, plus generators that throw typed
+  errors - locking the new behavior against backend drift.
+
 ## 1.16.0
 
 ### Breaking: in-place collection mutators

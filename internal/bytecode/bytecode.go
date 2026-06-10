@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(72)
+	Version = uint16(73)
 )
 
 type Op byte
@@ -303,6 +303,12 @@ const (
 	// Spread-aware OpNativeCall. Operands [nameIndex, staticArgCount];
 	// stack [static_args..., spread_list].
 	OpNativeCallSpread
+	// Spread-aware OpConstructClass. Operands [classIndex, staticArgCount];
+	// stack [static_args..., spread_list_or_dict].
+	OpConstructClassSpread
+	// Spread-aware OpCallStaticMethod. Operands [classIndex, nameIndex,
+	// staticArgCount]; stack [static_args..., spread_list_or_dict].
+	OpCallStaticMethodSpread
 )
 
 type Instruction struct {

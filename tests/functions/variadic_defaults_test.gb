@@ -1,0 +1,72 @@
+/**
+ * @title Default parameters combined with a variadic parameter
+ * @summary A signature like `f(int a, int b = 10, int ...rest)` binds
+ * correctly in every dispatch context: plain function, lambda, instance
+ * method, static method, and constructor, with positional, named, and
+ * spread call shapes.
+ */
+import test;
+
+func f(int a, int b = 10, int ...rest): string {
+    return "${a}|${b}|${rest}";
+}
+
+class Carrier {
+    string s;
+    func Carrier(int a, int b = 10, int ...rest) { this.s = "${a}|${b}|${rest}"; }
+    func go(int a, int b = 10, int ...rest): string { return "${a}|${b}|${rest}"; }
+    static func sgo(int a, int b = 10, int ...rest): string { return "${a}|${b}|${rest}"; }
+}
+
+class VariadicDefaultsTest extends test.Test {
+
+    @test
+    func plainFunctionDefaultEngages(): void {
+        this.assertEquals("1|10|[]", f(1));
+        this.assertEquals("1|2|[]", f(1, 2));
+        this.assertEquals("1|2|[3, 4]", f(1, 2, 3, 4));
+    }
+
+    @test
+    func plainFunctionNamedArg(): void {
+        this.assertEquals("1|5|[]", f(1, b: 5));
+    }
+
+    @test
+    func plainFunctionSpread(): void {
+        this.assertEquals("7|8|[9]", f(...[7, 8, 9]));
+    }
+
+    @test
+    func lambdaContext(): void {
+        let lam = func(int a, int b = 10, int ...rest): string { return "${a}|${b}|${rest}"; };
+        this.assertEquals("1|10|[]", lam(1));
+        this.assertEquals("1|2|[3]", lam(1, 2, 3));
+    }
+
+    @test
+    func methodContext(): void {
+        let c = Carrier(0);
+        this.assertEquals("1|10|[]", c.go(1));
+        this.assertEquals("1|2|[3]", c.go(1, 2, 3));
+        this.assertEquals("1|6|[]", c.go(1, b: 6));
+    }
+
+    @test
+    func staticMethodContext(): void {
+        this.assertEquals("1|10|[]", Carrier.sgo(1));
+        this.assertEquals("1|2|[3]", Carrier.sgo(1, 2, 3));
+    }
+
+    @test
+    func constructorContext(): void {
+        this.assertEquals("1|10|[]", Carrier(1).s);
+        this.assertEquals("1|2|[3]", Carrier(1, 2, 3).s);
+        this.assertEquals("1|7|[]", Carrier(1, b: 7).s);
+    }
+
+    @test
+    func tooFewArgsStillErrors(): void {
+        this.assertThrows(func(): void { f(...([] as list<int>)); });
+    }
+}

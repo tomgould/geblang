@@ -1,0 +1,13 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an element-type method called on a
+ * variadic parameter: `int ...rest` binds rest as list<int>, so string/int
+ * methods on the list itself are typos.
+ */
+import io;
+
+func h(int ...rest): string {
+    return rest.upper();
+}
+
+io.println(h(1, 2));

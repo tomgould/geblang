@@ -45,27 +45,9 @@ type Int struct {
 }
 
 func NewIntLiteral(lit string) (Int, error) {
-	digits := strings.ReplaceAll(lit, "_", "")
-	base := 10
-	if len(digits) > 2 && digits[0] == '0' {
-		switch digits[1] {
-		case 'b', 'B':
-			base = 2
-			digits = digits[2:]
-		case 'o', 'O':
-			base = 8
-			digits = digits[2:]
-		case 'x', 'X':
-			base = 16
-			digits = digits[2:]
-		}
-	}
-	if digits == "" {
-		return Int{}, fmt.Errorf("invalid integer literal %q", lit)
-	}
-	value, ok := new(big.Int).SetString(digits, base)
-	if !ok {
-		return Int{}, fmt.Errorf("invalid integer literal %q", lit)
+	value, err := ast.ParseIntLiteral(lit)
+	if err != nil {
+		return Int{}, err
 	}
 	return Int{Value: value}, nil
 }
@@ -92,10 +74,9 @@ type Decimal struct {
 }
 
 func NewDecimalLiteral(lit string) (Decimal, error) {
-	digits := strings.ReplaceAll(lit, "_", "")
-	value, ok := new(big.Rat).SetString(digits)
-	if !ok {
-		return Decimal{}, fmt.Errorf("invalid decimal literal %q", lit)
+	value, err := ast.ParseDecimalLiteral(lit)
+	if err != nil {
+		return Decimal{}, err
 	}
 	return Decimal{Value: value}, nil
 }

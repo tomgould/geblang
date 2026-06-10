@@ -13563,3 +13563,175 @@ while (ev != null) {
 }
 `, "startArray\nvalue\nerror\n")
 }
+
+func TestParityVariadicWithDefaults(t *testing.T) {
+	runParity(t, `import io;
+func f(int a, int b = 10, int ...rest): string { return "${a}|${b}|${rest}"; }
+io.println(f(1));
+io.println(f(1, 2));
+io.println(f(1, 2, 3, 4));
+io.println(f(1, b: 5));
+io.println(f(...[7, 8, 9]));
+let lam = func(int a, int b = 10, int ...rest): string { return "${a}|${b}|${rest}"; };
+io.println(lam(1));
+io.println(lam(1, 2, 3));
+class M {
+    func go(int a, int b = 10, int ...rest): string { return "${a}|${b}|${rest}"; }
+    static func sgo(int a, int b = 10, int ...rest): string { return "${a}|${b}|${rest}"; }
+}
+io.println(M().go(1));
+io.println(M().go(1, 2, 3));
+io.println(M().go(1, b: 6));
+io.println(M.sgo(1));
+io.println(M.sgo(1, 2, 3));
+class K {
+    string s;
+    func K(int a, int b = 10, int ...rest) { this.s = "${a}|${b}|${rest}"; }
+}
+io.println(K(1).s);
+io.println(K(1, 2, 3).s);
+io.println(K(1, b: 7).s);
+`, "1|10|[]\n1|2|[]\n1|2|[3, 4]\n1|5|[]\n7|8|[9]\n1|10|[]\n1|2|[3]\n1|10|[]\n1|2|[3]\n1|6|[]\n1|10|[]\n1|2|[3]\n1|10|[]\n1|2|[3]\n1|7|[]\n")
+}
+
+func TestParityCrossModuleVariadicWithDefaults(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "vd.gb"), []byte(`module vd;
+export func make(int w, int h = 3, int ...extra): int { return w * h + extra.length(); }
+export class Builder {
+    func tag(string base, string sep = "-", string ...parts): string {
+        if (parts.length() == 0) { return base; }
+        return base + sep + parts.join(sep);
+    }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write vd: %v", err)
+	}
+
+	source := `import io;
+import vd;
+io.println(vd.make(2));
+io.println(vd.make(2, 5));
+io.println(vd.make(2, 5, 1, 1));
+let b = vd.Builder();
+io.println(b.tag("x"));
+io.println(b.tag("x", "+", "y", "z"));
+`
+	want := "6\n10\n12\nx\nx+y+z\n"
+
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse: %v", p.Errors())
+	}
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: got %q, want %q", evOut.String(), want)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	loader.mainChunk = chunk
+	loader.hasMainChunk = true
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	stateful.SetMethodDispatcher(vm)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: got %q, want %q", vmOut.String(), want)
+	}
+}
+
+func TestParityGeneratorThrowKeepsErrorClass(t *testing.T) {
+	runParity(t, `import io;
+func g(): generator<int> { yield 1; throw ValueError("boom"); }
+try { for (n in g()) { io.println(n); } } catch (ValueError e) { io.println("caught ${e.class}: ${e.message}"); }
+class MyErr extends ValueError { func MyErr(string m) { parent(m); } }
+func g2(): generator<int> { yield 5; throw MyErr("custom"); }
+try { for (n in g2()) { io.println(n); } } catch (ValueError e) { io.println("sub ${e.class}: ${e.message}"); }
+func g3(): generator<int> { yield 9; throw TypeError("t"); }
+try { let xs = [x * 2 for x in g3()]; io.println(xs); } catch (TypeError e) { io.println("compr ${e.class}"); }
+func g4(): generator<int> { yield 2; throw ValueError("nested"); }
+try {
+    try { for (n in g4()) { io.println(n); } } catch (TypeError e) { io.println("wrong"); }
+} catch (ValueError e) { io.println("outer ${e.message}"); }
+`, "1\ncaught ValueError: boom\n5\nsub MyErr: custom\ncompr TypeError\n2\nouter nested\n")
+}
+
+func TestParitySpreadIntoConstructorsMethodsStatics(t *testing.T) {
+	runParity(t, `import io;
+class P {
+    int a; int b;
+    func P(int a, int b = 9) { this.a = a; this.b = b; }
+    func m(int a, int b = 9): string { return "${a}|${b}"; }
+    static func sm(int a, int b = 9): string { return "${a}|${b}"; }
+}
+let p = P(...[3, 4]);
+io.println("${p.a}/${p.b}");
+let q = P(...{"a": 5, "junk": 1});
+io.println("${q.a}/${q.b}");
+io.println(P(1, ...{"b": 7}).b);
+let r = P(0);
+io.println(r.m(...[1, 2]));
+io.println(r.m(...[1]));
+io.println(r.m(...{"a": 5}));
+io.println(r.m(...{"a": 5, "b": 6, "junk": 2}));
+io.println(r.m(1, ...{"b": 7}));
+io.println(P.sm(...[1, 2]));
+io.println(P.sm(...{"a": 8}));
+io.println(P.sm(2, ...{"b": 3}));
+`, "3/4\n5/9\n7\n1|2\n1|9\n5|9\n5|6\n1|7\n1|2\n8|9\n2|3\n")
+}
+
+func TestParityRangeFirstLastFields(t *testing.T) {
+	runParity(t, `import io;
+let r = 1..5;
+io.println(r.first);
+io.println(r.last);
+io.println((2..<8).last);
+io.println((5..1).first ?? "empty");
+io.println((5..1).last ?? "empty");
+io.println(r.first());
+io.println(r.last());
+io.println(r.length);
+`, "1\n5\n7\nempty\nempty\n1\n5\n5\n")
+}
+
+func TestParityDerivedComparisonDunders(t *testing.T) {
+	runParity(t, `import io;
+class LT { int x; func LT(int x) { this.x = x; } func __lt(LT o): bool { return this.x < o.x; } }
+class GT { int x; func GT(int x) { this.x = x; } func __gt(GT o): bool { return this.x > o.x; } }
+io.println(LT(1) < LT(2));
+io.println(LT(2) > LT(1));
+io.println(LT(1) > LT(2));
+io.println(LT(1) <= LT(2));
+io.println(LT(2) <= LT(1));
+io.println(LT(2) >= LT(1));
+io.println(LT(1) >= LT(2));
+io.println(GT(1) < GT(2));
+io.println(GT(2) > GT(1));
+io.println(GT(1) <= GT(2));
+io.println(GT(2) >= GT(1));
+class Both {
+    int x;
+    func Both(int x) { this.x = x; }
+    func __lt(Both o): bool { return this.x < o.x; }
+    func __gt(Both o): bool { return false; }
+}
+io.println(Both(2) > Both(1));
+`, "true\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\n")
+}

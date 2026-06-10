@@ -1026,6 +1026,13 @@ Operator methods should return the type users expect from the operator.
 Comparison and equality methods must return `bool`; arithmetic methods should
 usually return the same domain type.
 
+Defining a single ordering dunder is enough for all four comparison
+operators. Missing operators are derived: `a > b` falls back to
+`b.__lt(a)` (and `a < b` to `b.__gt(a)`), while `a <= b` and `a >= b`
+fall back to the negated strict comparison. With only `__lt` on `Money`
+above, `<`, `>`, `<=`, and `>=` all work. A defined dunder always wins
+over a derived one.
+
 ## Cast Overloading
 
 A class can control how its instances respond to `as TYPE` casts by

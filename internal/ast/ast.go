@@ -1,7 +1,11 @@
 package ast
 
 import (
+	"fmt"
+	"math/big"
+	"strconv"
 	"strings"
+	"sync"
 
 	"geblang/internal/token"
 )
@@ -744,29 +748,119 @@ func (e *InterpolatedString) String() string {
 type IntegerLiteral struct {
 	Token token.Token
 	Value string
+
+	parseOnce sync.Once
+	parsed    *big.Int
+	parseErr  error
 }
 
 func (*IntegerLiteral) expressionNode()        {}
 func (e *IntegerLiteral) TokenLiteral() string { return e.Token.Literal }
 func (e *IntegerLiteral) String() string       { return e.Token.Literal }
 
+// ParsedValue parses Value once and caches the result; the returned
+// big.Int is shared across evaluations and must not be mutated.
+func (e *IntegerLiteral) ParsedValue() (*big.Int, error) {
+	e.parseOnce.Do(func() {
+		e.parsed, e.parseErr = ParseIntLiteral(e.Value)
+	})
+	return e.parsed, e.parseErr
+}
+
+// ParseIntLiteral parses an integer literal body (underscore separators,
+// 0b/0o/0x prefixes) into a big.Int.
+func ParseIntLiteral(lit string) (*big.Int, error) {
+	digits := lit
+	if strings.ContainsRune(digits, '_') {
+		digits = strings.ReplaceAll(digits, "_", "")
+	}
+	base := 10
+	if len(digits) > 2 && digits[0] == '0' {
+		switch digits[1] {
+		case 'b', 'B':
+			base = 2
+			digits = digits[2:]
+		case 'o', 'O':
+			base = 8
+			digits = digits[2:]
+		case 'x', 'X':
+			base = 16
+			digits = digits[2:]
+		}
+	}
+	if digits == "" {
+		return nil, fmt.Errorf("invalid integer literal %q", lit)
+	}
+	value, ok := new(big.Int).SetString(digits, base)
+	if !ok {
+		return nil, fmt.Errorf("invalid integer literal %q", lit)
+	}
+	return value, nil
+}
+
 type DecimalLiteral struct {
 	Token token.Token
 	Value string
+
+	parseOnce sync.Once
+	parsed    *big.Rat
+	parseErr  error
 }
 
 func (*DecimalLiteral) expressionNode()        {}
 func (e *DecimalLiteral) TokenLiteral() string { return e.Token.Literal }
 func (e *DecimalLiteral) String() string       { return e.Token.Literal }
 
+// ParsedValue parses Value once and caches the result; the returned
+// big.Rat is shared across evaluations and must not be mutated.
+func (e *DecimalLiteral) ParsedValue() (*big.Rat, error) {
+	e.parseOnce.Do(func() {
+		e.parsed, e.parseErr = ParseDecimalLiteral(e.Value)
+	})
+	return e.parsed, e.parseErr
+}
+
+// ParseDecimalLiteral parses a decimal literal body (underscore
+// separators) into a big.Rat.
+func ParseDecimalLiteral(lit string) (*big.Rat, error) {
+	digits := lit
+	if strings.ContainsRune(digits, '_') {
+		digits = strings.ReplaceAll(digits, "_", "")
+	}
+	value, ok := new(big.Rat).SetString(digits)
+	if !ok {
+		return nil, fmt.Errorf("invalid decimal literal %q", lit)
+	}
+	return value, nil
+}
+
 type FloatLiteral struct {
 	Token token.Token
 	Value string
+
+	parseOnce sync.Once
+	parsed    float64
+	parseErr  error
 }
 
 func (*FloatLiteral) expressionNode()        {}
 func (e *FloatLiteral) TokenLiteral() string { return e.Token.Literal }
 func (e *FloatLiteral) String() string       { return e.Token.Literal }
+
+// ParsedValue parses the literal (trailing 'f' marker, underscore
+// separators) once and caches the float64.
+func (e *FloatLiteral) ParsedValue() (float64, error) {
+	e.parseOnce.Do(func() {
+		stripped := strings.ReplaceAll(e.Value[:len(e.Value)-1], "_", "")
+		v, err := strconv.ParseFloat(stripped, 64)
+		if err != nil {
+			e.parseErr = fmt.Errorf("invalid float literal %q", e.Value)
+			return
+		}
+		e.parsed = v
+	})
+	return e.parsed, e.parseErr
+}
 
 type PrefixExpression struct {
 	Token    token.Token

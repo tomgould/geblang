@@ -233,21 +233,110 @@ func (g *fuzzGen) classBlock() (decls string, calls []string) {
 	return d.String(), calls
 }
 
+// signatureBlock emits a function (and method/static/constructor
+// carriers of the same signature) mixing required, defaulted, and
+// variadic parameters, plus calls in every binding shape: positional
+// subsets, named args for defaulted params, and list spread. Argument
+// binding across dispatch contexts is a proven divergence source
+// (the default+variadic cluster fixed in 1.17.0).
+func (g *fuzzGen) signatureBlock() (decls string, calls []string) {
+	// Non-negative: a negative default is a prefix expression, which the
+	// bytecode compiler rejects (literal defaults only).
+	defB := strconv.Itoa(g.rng.Intn(99))
+	hasVariadic := g.rng.Intn(2) == 0
+	sig := "int a, int b = " + defB
+	body := "\"${a}|${b}\""
+	if hasVariadic {
+		sig += ", int ...rest"
+		body = "\"${a}|${b}|${rest}\""
+	}
+	var d strings.Builder
+	d.WriteString("func sigf(" + sig + "): string { return " + body + "; }\n")
+	d.WriteString("class Sig {\n")
+	d.WriteString("  string s;\n")
+	d.WriteString("  func Sig(" + sig + ") { this.s = " + body + "; }\n")
+	d.WriteString("  func m(" + sig + "): string { return " + body + "; }\n")
+	d.WriteString("  static func sm(" + sig + "): string { return " + body + "; }\n")
+	d.WriteString("}\n")
+	d.WriteString("let sigl = func(" + sig + "): string { return " + body + "; };\n")
+
+	argShapes := []string{
+		"(" + g.intLit() + ")",
+		"(" + g.intLit() + ", " + g.intLit() + ")",
+		"(" + g.intLit() + ", b: " + g.intLit() + ")",
+	}
+	if hasVariadic {
+		argShapes = append(argShapes,
+			"("+g.intLit()+", "+g.intLit()+", "+g.intLit()+", "+g.intLit()+")",
+			"(...["+g.intLit()+", "+g.intLit()+", "+g.intLit()+"])",
+		)
+	} else {
+		argShapes = append(argShapes, "(...["+g.intLit()+", "+g.intLit()+"])")
+	}
+	shape := func() string { return argShapes[g.rng.Intn(len(argShapes))] }
+	calls = append(calls,
+		"io.println(sigf"+shape()+");",
+		"io.println(Sig"+shape()+".s);",
+		"io.println(Sig(0).m"+shape()+");",
+		"io.println(Sig.sm"+shape()+");",
+		"io.println(sigl"+shape()+");",
+	)
+	return d.String(), calls
+}
+
+// generatorBlock emits a generator that yields a few values and then
+// either finishes or throws a typed error, consumed by a for-in inside
+// try/catch that prints every value and any caught class+message.
+// Generator fault routing is a proven divergence source (class loss
+// fixed in 1.17.0).
+func (g *fuzzGen) generatorBlock() (decls string, calls []string) {
+	yields := 1 + g.rng.Intn(3)
+	var d strings.Builder
+	d.WriteString("class GenErr extends ValueError { func GenErr(string m) { parent(m); } }\n")
+	d.WriteString("func gen(): generator<int> {\n")
+	for i := 0; i < yields; i++ {
+		d.WriteString("  yield " + g.intLit() + ";\n")
+	}
+	switch g.rng.Intn(3) {
+	case 0:
+		// clean finish
+	case 1:
+		d.WriteString("  throw ValueError(" + g.stringLit() + ");\n")
+	default:
+		d.WriteString("  throw GenErr(" + g.stringLit() + ");\n")
+	}
+	d.WriteString("}\n")
+	calls = append(calls,
+		`try { for (n in gen()) { io.println(n); } io.println("done"); } catch (ValueError e) { io.println(e.class); io.println(e.message); }`,
+	)
+	return d.String(), calls
+}
+
 func (g *fuzzGen) program() string {
 	var b strings.Builder
 	b.WriteString("import io;\n")
-	// Roughly half the programs exercise the class/dispatch surface.
-	emitClasses := g.rng.Intn(2) == 0
-	var classCalls []string
-	if emitClasses {
+	// Pick at most one structural section per program so the generated
+	// declarations cannot collide; the rest of the budget is scalar
+	// expressions and fault statements.
+	var sectionCalls []string
+	switch g.rng.Intn(4) {
+	case 0:
 		decls, calls := g.classBlock()
 		b.WriteString(decls)
-		classCalls = calls
+		sectionCalls = calls
+	case 1:
+		decls, calls := g.signatureBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 2:
+		decls, calls := g.generatorBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
 	}
 	stmts := 3 + g.rng.Intn(5)
 	for i := 0; i < stmts; i++ {
-		if emitClasses && i < len(classCalls) {
-			b.WriteString(classCalls[i])
+		if i < len(sectionCalls) {
+			b.WriteString(sectionCalls[i])
 		} else if g.rng.Intn(3) == 0 {
 			b.WriteString(g.faultStmt())
 		} else {
@@ -256,12 +345,10 @@ func (g *fuzzGen) program() string {
 		}
 		b.WriteByte('\n')
 	}
-	// Ensure all class calls run even if the statement budget was small.
-	if emitClasses {
-		for i := stmts; i < len(classCalls); i++ {
-			b.WriteString(classCalls[i])
-			b.WriteByte('\n')
-		}
+	// Ensure all section calls run even if the statement budget was small.
+	for i := stmts; i < len(sectionCalls); i++ {
+		b.WriteString(sectionCalls[i])
+		b.WriteByte('\n')
 	}
 	return b.String()
 }

@@ -3064,6 +3064,21 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					c.emitAt(OpMakeError, expr.Token.Line, expr.Token.Column, classNameIndex, int64(len(expr.Arguments)))
 					return nil
 				}
+				if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+					if len(classInfo.ConstructorIndices) > 1 {
+						return fmt.Errorf("cannot use spread with overloaded constructor %s", classInfo.Name)
+					}
+					for _, arg := range expr.Arguments[:spreadIndex] {
+						if err := c.compileExpression(arg.Value); err != nil {
+							return err
+						}
+					}
+					if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+						return err
+					}
+					c.emitAt(OpConstructClassSpread, expr.Token.Line, expr.Token.Column, classIndex, int64(spreadIndex))
+					return nil
+				}
 				var orderedArgs []ast.Expression
 				var functionIndex int64
 				if len(classInfo.ConstructorIndices) > 0 {
@@ -3313,6 +3328,23 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				if _, resolvedName := c.resolveName(object.Value); !resolvedName {
 					if classIndex, ok := c.classes[strings.ToLower(object.Value)]; ok && c.chunk.Classes[classIndex].Name == object.Value {
 						indices, ok := c.lookupStaticMethod(c.chunk.Classes[classIndex], selector.Name.Value)
+						if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+							if ok && len(indices) > 1 {
+								return fmt.Errorf("cannot use spread with overloaded static method %s", selector.Name.Value)
+							}
+							for _, arg := range expr.Arguments[:spreadIndex] {
+								if err := c.compileExpression(arg.Value); err != nil {
+									return err
+								}
+							}
+							if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+								return err
+							}
+							nameIndex := int64(len(c.chunk.Constants))
+							c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: selector.Name.Value})
+							c.emitAt(OpCallStaticMethodSpread, expr.Token.Line, expr.Token.Column, classIndex, nameIndex, int64(spreadIndex))
+							return nil
+						}
 						var orderedArgs []ast.Expression
 						var functionIndex int64
 						var err error
@@ -3372,7 +3404,8 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 					break
 				}
 			}
-			if !selector.Optional && !hasNamedMethodArgs {
+			_, hasSpreadMethodArg := callSpreadIndex(expr.Arguments)
+			if !selector.Optional && !hasNamedMethodArgs && !hasSpreadMethodArg {
 				if fnIndex, ok := c.staticallyResolveMethodCall(selector, expr.Arguments); ok {
 					if err := c.compileExpression(selector.Object); err != nil {
 						return err
@@ -3392,6 +3425,26 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			var optionalJump int
 			if selector.Optional {
 				optionalJump = c.emitJump(OpOptionalChain, expr.Token.Line, expr.Token.Column)
+			}
+			if spreadIndex, hasSpread := callSpreadIndex(expr.Arguments); hasSpread {
+				if hasNamedMethodArgs {
+					return fmt.Errorf("named arguments are not supported with spread in a method call")
+				}
+				for _, arg := range expr.Arguments[:spreadIndex] {
+					if err := c.compileExpression(arg.Value); err != nil {
+						return err
+					}
+				}
+				if err := c.compileExpression(expr.Arguments[spreadIndex].Value); err != nil {
+					return err
+				}
+				nameIndex := int64(len(c.chunk.Constants))
+				c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: selector.Name.Value})
+				c.emitAt(OpMethodCallSpread, expr.Token.Line, expr.Token.Column, nameIndex, int64(spreadIndex))
+				if selector.Optional {
+					c.patchJump(optionalJump)
+				}
+				return nil
 			}
 			for _, arg := range expr.Arguments {
 				if err := c.compileExpression(arg.Value); err != nil {
@@ -4740,14 +4793,14 @@ func (c *Compiler) orderFunctionArguments(function FunctionInfo, args []ast.Call
 		if !function.Variadic && len(args) > available {
 			return nil, fmt.Errorf("%s received too many positional arguments", function.Name)
 		}
-		if function.Variadic && len(args) < available-1 {
-			return nil, fmt.Errorf("%s received too few positional arguments", function.Name)
+		lastRequired := len(function.ParamNames)
+		if function.Variadic {
+			// The variadic slot is optional; defaults may sit before it.
+			lastRequired--
 		}
-		if !function.Variadic {
-			for i := len(args) + paramOffset; i < len(function.ParamNames); i++ {
-				if i >= len(function.DefaultConstants) || function.DefaultConstants[i] < 0 {
-					return nil, fmt.Errorf("%s missing argument before parameter %s", function.Name, function.ParamNames[i])
-				}
+		for i := len(args) + paramOffset; i < lastRequired; i++ {
+			if i >= len(function.DefaultConstants) || function.DefaultConstants[i] < 0 {
+				return nil, fmt.Errorf("%s missing argument before parameter %s", function.Name, function.ParamNames[i])
 			}
 		}
 		ordered := make([]ast.Expression, 0, len(args))
@@ -4786,8 +4839,12 @@ func (c *Compiler) orderFunctionArguments(function FunctionInfo, args []ast.Call
 		}
 		ordered[position] = arg.Value
 	}
+	variadicIndex := -1
+	if function.Variadic && len(function.ParamNames) > paramOffset {
+		variadicIndex = len(function.ParamNames) - 1 - paramOffset
+	}
 	for i, arg := range ordered {
-		if arg == nil {
+		if arg == nil && i != variadicIndex {
 			paramIndex := i + paramOffset
 			if paramIndex >= len(function.DefaultConstants) || function.DefaultConstants[paramIndex] < 0 {
 				return nil, fmt.Errorf("%s missing argument before parameter %s", function.Name, function.ParamNames[paramIndex])
