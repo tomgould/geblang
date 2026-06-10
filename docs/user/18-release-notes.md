@@ -2,8 +2,30 @@
 
 ## 1.18.0
 
+### Language
+
+- Signal interception: `sys.onSignal(name, handler)` traps `SIGINT`,
+  `SIGTERM`, `SIGHUP`, `SIGQUIT` (plus `SIGUSR1`/`SIGUSR2` on unix);
+  handlers run isolated, share state via `store`, and a handler that
+  calls `sys.exit` runs runtime cleanup before terminating.
+  `sys.clearSignal(name)` restores default delivery and
+  `sys.raise(name)` signals the current process. `SIGKILL` is
+  rejected.
+
+### Bundling
+
+- Built binaries answer standard first-argument flags: `--help`,
+  `--version` (application name and version from `geblang.yaml` plus
+  the engine version), and `--notices` for the embedded third-party
+  licence text. `--` passes everything after it to the application
+  untouched.
+
 ### Fixes
 
+- Dict spread works on callable values on the bytecode VM, matching
+  the evaluator: `let g = f; g(...{"q": "x"})` binds named arguments
+  (and engages declared defaults) for function values, lambdas,
+  closures, and reflection-obtained callables.
 - `io.exists` returns `false` instead of throwing `IOError` when a
   path component is a regular file (`/some/file.txt/child`). An
   existence predicate never throws for a path that cannot exist;

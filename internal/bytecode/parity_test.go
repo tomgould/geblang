@@ -13743,3 +13743,37 @@ io.println(io.exists("TMPFILE/child.html"));
 io.println(io.exists("TMPFILE/a/b"));
 `, "content", "true\nfalse\nfalse\n")
 }
+
+func TestParitySignalHandlerRunsOnRaise(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import sys;
+import store;
+import time;
+
+let s = store.Store();
+s.set("hits", 0);
+sys.onSignal("SIGUSR1", func(string name): void {
+    s.update("hits", func(any old): any { return (old as int) + 1; });
+});
+sys.raise("SIGUSR1");
+let deadline = time.now() + 5000;
+while ((s.get("hits") as int) < 1 && time.now() < deadline) {
+    sys.sleep(10);
+}
+io.println("hits=${s.get("hits")}");
+sys.clearSignal("SIGUSR1");
+`, "hits=1\n")
+}
+
+func TestParityDictSpreadOntoFunctionValue(t *testing.T) {
+	runParity(t, `import io;
+func f(string q = "Q", string product = "P"): string { return q + "/" + product; }
+let g = f;
+io.println(g(...{"q": "x"}));
+io.println(g(...{"product": "y", "junk": 1}));
+io.println(g(...{}));
+let lam = func(int a, int b = 9): int { return a * 100 + b; };
+io.println(lam(...{"a": 3}));
+io.println(lam(...{"a": 3, "b": 4}));
+`, "x/P\nQ/y\nQ/P\n309\n304\n")
+}

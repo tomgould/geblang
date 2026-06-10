@@ -141,11 +141,17 @@ func runBuild(args []string) {
 
 	specs := append([]resourceSpec(nil), extraResources...)
 	resourceRoot := absPkgDir
+	appName := entry
+	appVersion := ""
 	if pkgManifest, err := resolver.FindManifest(absPkgDir); err == nil && pkgManifest != nil {
 		resourceRoot = pkgManifest.Root
 		for _, pattern := range pkgManifest.Resources {
 			specs = append(specs, resourceSpec{src: pattern})
 		}
+		if pkgManifest.Name != "" {
+			appName = pkgManifest.Name
+		}
+		appVersion = pkgManifest.Version
 	}
 	if len(specs) > 0 {
 		resources, err := collectResources(resourceRoot, specs)
@@ -159,9 +165,11 @@ func runBuild(args []string) {
 	}
 
 	manifest := bundle.Manifest{
-		Version: version,
-		Entry:   entry,
-		Modules: records,
+		Version:    version,
+		Entry:      entry,
+		Name:       appName,
+		AppVersion: appVersion,
+		Modules:    records,
 	}
 
 	exe, err := os.Executable()
@@ -212,9 +220,8 @@ func runBuild(args []string) {
 		os.Exit(1)
 	}
 
-	// Write the third-party NOTICES alongside the binary so the distribution
-	// stays licence-compliant. A sidecar file (not a binary flag) avoids
-	// clashing with any `licenses` arg the built program defines itself.
+	// Sidecar NOTICES keeps distribution dirs licence-compliant even when
+	// nobody runs the binary's --notices flag.
 	noticesPath := absOut + ".NOTICES.txt"
 	if err := os.WriteFile(noticesPath, []byte(notices.Text), 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "geblang build: warn: write notices: %v\n", err)
@@ -225,6 +232,58 @@ func runBuild(args []string) {
 }
 
 func runBundled(b *bundle.Bundle) int {
+	args := os.Args[1:]
+	if len(args) > 0 {
+		switch args[0] {
+		case "--":
+			args = args[1:]
+		case "--help", "-h":
+			printBundledHelp(b)
+			return 0
+		case "--version":
+			printBundledVersion(b)
+			return 0
+		case "--notices", "--licences", "--licenses":
+			fmt.Print(licenseText)
+			return 0
+		}
+	}
+	return runBundledWithArgs(b, args)
+}
+
+func bundledAppName(b *bundle.Bundle) string {
+	if b.Manifest.Name != "" {
+		return b.Manifest.Name
+	}
+	return b.Manifest.Entry
+}
+
+func printBundledVersion(b *bundle.Bundle) {
+	name := bundledAppName(b)
+	if b.Manifest.AppVersion != "" {
+		fmt.Printf("%s %s (geblang %s)\n", name, b.Manifest.AppVersion, version)
+		return
+	}
+	fmt.Printf("%s (geblang %s)\n", name, version)
+}
+
+func printBundledHelp(b *bundle.Bundle) {
+	bin := filepath.Base(os.Args[0])
+	printBundledVersion(b)
+	fmt.Printf(`
+usage: %s [args...]
+
+Standard flags (recognised only as the first argument):
+  --help, -h     show this help
+  --version      show the application and runtime version
+  --notices      print third-party licence notices
+  --             pass everything after it to the application untouched
+
+All other arguments are passed to the application.
+`, bin)
+}
+
+func runBundledWithArgs(b *bundle.Bundle, args []string) int {
 	hash := b.Hash()
 	tempDir := filepath.Join(os.TempDir(), "geblang-"+hash)
 
@@ -246,7 +305,7 @@ func runBundled(b *bundle.Bundle) int {
 		return 1
 	}
 
-	return runBundledEntry(b.Manifest.Entry, os.Args[1:], filepath.Join(tempDir, "src"))
+	return runBundledEntry(b.Manifest.Entry, args, filepath.Join(tempDir, "src"))
 }
 
 func runBundledEntry(entry string, args []string, srcDir string) int {

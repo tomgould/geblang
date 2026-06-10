@@ -220,3 +220,21 @@ export func name(): string { return "app"; }
 		t.Fatalf("example code should omit metadata docblock: %q", filePage.HTML)
 	}
 }
+
+// --search/--search-scope inject a navbar form with a hidden product
+// filter; without the flags pages stay form-free.
+func TestSearchFormInjection(t *testing.T) {
+	searchURL = ""
+	searchScope = ""
+	if got := searchFormHTML(); got != "" {
+		t.Fatalf("expected empty form without flags, got %q", got)
+	}
+	parseExtraArgs([]string{"--search", "/search", "--search-scope", "geblang"})
+	defer func() { searchURL = ""; searchScope = "" }()
+	form := searchFormHTML()
+	for _, want := range []string{`action="/search"`, `name="q"`, `name="product" value="geblang"`} {
+		if !strings.Contains(form, want) {
+			t.Fatalf("form missing %q: %q", want, form)
+		}
+	}
+}

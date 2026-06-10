@@ -1,0 +1,79 @@
+/**
+ * @title Signal interception (sys.onSignal / clearSignal / raise)
+ * @summary `sys.onSignal(name, handler)` traps a named signal; the
+ * handler runs isolated and shares state via `store`. `sys.raise`
+ * sends a signal to the current process; `sys.clearSignal` restores
+ * default delivery. SIGKILL cannot be trapped.
+ */
+import test;
+import sys;
+import store;
+import time;
+
+class SysSignalsTest extends test.Test {
+
+    func waitFor(any s, string key, int wanted): bool {
+        let deadline = time.now() + 5000;
+        while ((s.get(key) as int) < wanted && time.now() < deadline) {
+            sys.sleep(10);
+        }
+        return (s.get(key) as int) >= wanted;
+    }
+
+    @test
+    func handlerRunsOnRaise(): void {
+        let s = store.Store();
+        s.set("hits", 0);
+        sys.onSignal("SIGUSR1", func(string name): void {
+            s.update("hits", func(any old): any { return (old as int) + 1; });
+        });
+        sys.raise("SIGUSR1");
+        this.assertTrue(this.waitFor(s, "hits", 1));
+        sys.clearSignal("SIGUSR1");
+    }
+
+    @test
+    func handlerReceivesSignalName(): void {
+        let s = store.Store();
+        s.set("name", "");
+        sys.onSignal("USR2", func(string name): void {
+            s.set("name", name);
+        });
+        sys.raise("SIGUSR2");
+        let deadline = time.now() + 5000;
+        while ((s.get("name") as string) == "" && time.now() < deadline) {
+            sys.sleep(10);
+        }
+        this.assertEquals("SIGUSR2", s.get("name") as string);
+        sys.clearSignal("SIGUSR2");
+    }
+
+    @test
+    func reRegisterReplacesHandler(): void {
+        let s = store.Store();
+        s.set("a", 0);
+        s.set("b", 0);
+        sys.onSignal("SIGUSR1", func(string name): void {
+            s.update("a", func(any old): any { return (old as int) + 1; });
+        });
+        sys.onSignal("SIGUSR1", func(string name): void {
+            s.update("b", func(any old): any { return (old as int) + 1; });
+        });
+        sys.raise("SIGUSR1");
+        this.assertTrue(this.waitFor(s, "b", 1));
+        this.assertEquals(0, s.get("a") as int);
+        sys.clearSignal("SIGUSR1");
+    }
+
+    @test
+    func killCannotBeTrapped(): void {
+        this.assertThrows(func(): void {
+            sys.onSignal("SIGKILL", func(string name): void { });
+        });
+    }
+
+    @test
+    func unknownSignalRejected(): void {
+        this.assertThrows(func(): void { sys.raise("SIGNOPE"); });
+    }
+}

@@ -333,3 +333,45 @@ proc.closeStdin();
 io.println(proc.readStdout());
 io.println(proc.wait());
 ```
+
+## Intercepting Signals
+
+`sys.onSignal(name, handler)` traps a named signal for the current
+process. The handler receives the canonical signal name and runs in an
+isolated execution context (the same model as HTTP handlers), so share
+state through `store` and terminate explicitly with `sys.exit`:
+
+```gb
+import io;
+import sys;
+
+sys.onSignal("SIGINT", func(string name): void {
+    io.println("shutting down (${name})");
+    sys.exit(0);
+});
+```
+
+Supported names: `SIGINT`, `SIGTERM`, `SIGHUP`, `SIGQUIT`, `SIGUSR1`,
+`SIGUSR2` (the `SIG` prefix is optional; `SIGUSR1`/`SIGUSR2` are not
+available on Windows). `SIGKILL` cannot be trapped and is rejected.
+Registering a handler replaces any previous handler for that signal;
+`sys.clearSignal(name)` restores default delivery.
+
+`sys.raise(name)` sends a signal to the current process - useful in
+tests and for re-raising after cleanup:
+
+```gb
+import sys;
+import store;
+
+let state = store.Store();
+state.set("reloads", 0);
+
+sys.onSignal("SIGHUP", func(string name): void {
+    state.update("reloads", func(any old): any { return (old as int) + 1; });
+});
+```
+
+A handler that returns normally resumes the program; one that calls
+`sys.exit(code)` runs the runtime's cleanup (open files, database
+connections, destructors) and terminates with that code.

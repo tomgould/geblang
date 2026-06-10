@@ -202,6 +202,23 @@ Pass arguments to the bundled program the same way you would any other binary:
 The argument list is forwarded to the entry module's `main` function via
 `sys.args()`.
 
+## Standard Flags Of Built Binaries
+
+Every built binary answers a small set of standard flags, recognised
+only when they are the FIRST argument:
+
+| Flag | Effect |
+|---|---|
+| `--help`, `-h` | Application name/version, usage, and this flag list |
+| `--version` | `<name> <version> (geblang <engine version>)`, from `geblang.yaml` |
+| `--notices`, `--licences` | Prints the embedded third-party licence notices |
+| `--` | Passes everything after it to the application untouched |
+
+Any other first argument (and all later arguments) flow to the
+application's `main(list<string> args)` unchanged, so an application
+that defines its own `--help` can still receive it via
+`./app -- --help`.
+
 ## Full Example: A CLI Tool
 
 Package layout:

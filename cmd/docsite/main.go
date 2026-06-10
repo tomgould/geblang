@@ -133,9 +133,46 @@ func parseExtraArgs(args []string) ([]string, string) {
 			}
 			continue
 		}
+		if args[i] == "--search" {
+			if i+1 < len(args) {
+				searchURL = args[i+1]
+				i++
+			}
+			continue
+		}
+		if args[i] == "--search-scope" {
+			if i+1 < len(args) {
+				searchScope = args[i+1]
+				i++
+			}
+			continue
+		}
 		apiSources = append(apiSources, args[i])
 	}
 	return apiSources, exampleSource
+}
+
+// searchURL/searchScope, when set via --search/--search-scope, inject a
+// navbar search form into every page (used by the docs website build;
+// plain static builds leave them empty).
+var (
+	searchURL   string
+	searchScope string
+)
+
+func searchFormHTML() string {
+	if searchURL == "" {
+		return ""
+	}
+	scope := ""
+	if searchScope != "" {
+		scope = `<input type="hidden" name="product" value="` + searchScope + `">`
+	}
+	return `
+      <form class="d-flex ms-auto me-3" role="search" action="` + searchURL + `" method="get">
+        <input class="form-control form-control-sm me-2" type="search" name="q" placeholder="Search this manual">` + scope + `
+        <button class="btn btn-outline-light btn-sm" type="submit">Search</button>
+      </form>`
 }
 
 func loadAPIPages(sources []string) ([]page, error) {
@@ -726,8 +763,8 @@ func layout(pages []page, current page, prev, next *page) string {
 <body>
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
     <div class="container-fluid manual-shell">
-      <a class="navbar-brand fw-semibold" href="` + relHref(current.Output, "index.html") + `">Geblang Reference Manual</a>
-      <span class="navbar-text">Static manual and source API reference</span>
+      <a class="navbar-brand fw-semibold" href="` + relHref(current.Output, "index.html") + `">Geblang Reference Manual</a>` + searchFormHTML() + `
+      <span class="navbar-text d-none d-xl-inline">Static manual and source API reference</span>
     </div>
   </nav>
   <main class="container-fluid manual-shell py-4">

@@ -32,9 +32,11 @@ type ModuleRecord struct {
 
 // Manifest is stored as BUNDLE.json inside the zip.
 type Manifest struct {
-	Version string         `json:"version"`
-	Entry   string         `json:"entry"`
-	Modules []ModuleRecord `json:"modules"`
+	Version    string         `json:"version"`
+	Entry      string         `json:"entry"`
+	Name       string         `json:"name,omitempty"`
+	AppVersion string         `json:"appVersion,omitempty"`
+	Modules    []ModuleRecord `json:"modules"`
 }
 
 // Bundle holds the decoded bundle data and its raw zip bytes.

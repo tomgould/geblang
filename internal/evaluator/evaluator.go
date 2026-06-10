@@ -178,6 +178,8 @@ type Evaluator struct {
 	watchMu               sync.Mutex
 	nextWatchID           int64
 	watches               map[int64]*watchHandle
+	signalMu              sync.Mutex
+	signalHandlers        map[string]*signalSubscription
 	webMu                 sync.Mutex
 	nextWebID             int64
 	webApps               map[int64]*webApp
@@ -951,6 +953,14 @@ func (e *Evaluator) Cleanup() error {
 	e.watchMu.Unlock()
 	for _, watcher := range watches {
 		record(stopWatchHandle(watcher))
+	}
+
+	e.signalMu.Lock()
+	signalSubs := e.signalHandlers
+	e.signalHandlers = nil
+	e.signalMu.Unlock()
+	for _, sub := range signalSubs {
+		sub.stop()
 	}
 
 	e.netServerMu.Lock()
@@ -18966,6 +18976,9 @@ func signalByName(name string) (os.Signal, error) {
 	case "QUIT":
 		return syscall.SIGQUIT, nil
 	default:
+		if sig, ok := platformSignalByName(strings.ToUpper(strings.TrimPrefix(name, "SIG"))); ok {
+			return sig, nil
+		}
 		return nil, fmt.Errorf("unsupported signal %q", name)
 	}
 }
