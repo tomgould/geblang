@@ -1,0 +1,39 @@
+/**
+ * @title io.exists is a non-throwing predicate
+ * @summary `io.exists` answers false (never throws) when the path is
+ * absent OR when a path component is a regular file (ENOTDIR), so URL
+ * and user-supplied paths can be probed safely.
+ */
+import test;
+import io;
+import path;
+
+class IoExistsTest extends test.Test {
+
+    func tempFile(): string {
+        let dir = io.tempDir();
+        let file = path.join(dir, "io_exists_probe.txt");
+        io.writeText(file, "x");
+        return file;
+    }
+
+    @test
+    func trueForExistingFile(): void {
+        let file = this.tempFile();
+        this.assertTrue(io.exists(file));
+        io.remove(file);
+    }
+
+    @test
+    func falseForMissingPath(): void {
+        this.assertFalse(io.exists("/definitely/not/here/file.txt"));
+    }
+
+    @test
+    func falseWhenComponentIsAFile(): void {
+        let file = this.tempFile();
+        this.assertFalse(io.exists(file + "/child.html"));
+        this.assertFalse(io.exists(file + "/a/b/c"));
+        io.remove(file);
+    }
+}

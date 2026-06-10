@@ -137,7 +137,7 @@ io.println(dicts[0]["age"]); # 37
 let semi = csv.parse("a; b; c\n1; 2; 3", {"delimiter": ";", "trimSpace": true});
 
 # Large file - streaming.
-csv.stream(io.open("large.csv", "r"), func(row): void {
+csv.stream(io.open("large.csv", "r"), func(list<string> row): void {
     io.println(row[0]);
 });
 ```

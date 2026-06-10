@@ -17286,7 +17286,9 @@ func ioExists(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 	if err == nil {
 		return runtime.Bool{Value: true}, nil
 	}
-	if os.IsNotExist(err) {
+	// ENOTDIR (a path component is a regular file) means "does not
+	// exist" for a predicate, same as ENOENT.
+	if os.IsNotExist(err) || errors.Is(err, syscall.ENOTDIR) {
 		return runtime.Bool{Value: false}, nil
 	}
 	return nil, err

@@ -34,9 +34,12 @@ geblang run main.gb              # run a script
 geblang test tests/              # run *_test.gb under a path
 geblang check src/               # static check (no execution)
 geblang fmt src/                 # format in place
-geblang doc <module>             # print module signatures
-geblang build --entry main.gb --out app
+geblang doc src/                 # print signatures for a file or dir
+geblang build --entry main --out app <package-dir>
 ```
+
+`geblang build` takes a MODULE name for `--entry` (the module must
+export `func main(list<string> args)`), not a file path.
 
 ## Syntax
 
@@ -52,17 +55,30 @@ io.println(x);  # trailing line comment
 `//` is integer division, not a comment. Never use `//` for
 comments anywhere.
 
-### Imports
+### Imports and modules
 
 ```gb
 import io;
-import json;
-import datetime as dt;          # alias
+import datetime as dt;              # alias
+from crypt import passwordHash;     # selective
+from bytes import toHex as hex;     # selective with alias
 ```
 
 Imports go at file top. Stdlib modules don't need a path. Local
-modules resolve through the manifest's `paths` or
-`dependencies`.
+modules resolve through the manifest's `paths` or `dependencies`.
+
+A module file starts with `module name;` and exports its public
+surface explicitly; everything else is private to the module:
+
+```gb
+module app.users;
+
+func normalizeId(string id): string { ... }    # private
+
+export func findUser(string id): ?User { ... } # public
+export const int MAX_PAGE = 100;
+export class User { ... }
+```
 
 ### Variables
 
@@ -73,62 +89,86 @@ int  y = 2;                  # explicit
 const PI = 3.14;             # immutable; PI is decimal
 ```
 
-`let x = 1.0` infers `decimal`, not `float`. Use `1.0 as float`
-when you specifically want the float type. `decimal` is the
-default for floating-point literals because money and precise
-arithmetic are more common than fast IEEE math.
+`let x = 1.0` infers `decimal`, not `float`. Use `1.0f` or
+`1.0 as float` when you specifically want the float type.
+`decimal` is the default for floating-point literals because
+money and precise arithmetic are more common than fast IEEE math.
 
 ### Primitive types
 
 `int`, `float`, `decimal`, `string`, `bool`, `bytes`, `any`,
-`null`. Integers are arbitrary precision. Strings are UTF-8 and
-interpolate inside double quotes:
+`null`. Integers are arbitrary precision (no overflow). Strings
+are UTF-8 and interpolate inside double quotes:
 
 ```gb
 let name = "Ada";
 io.println("hello ${name}");    # interp
 io.println('hello ${name}');    # literal (single quotes are raw)
+io.println("${3.14159:.2f}");   # format spec -> 3.14
+io.println("${42:04d}");        # -> 0042
 ```
 
 ### Collections
 
 ```gb
-list<int>          xs = [1, 2, 3];
+list<int>          xs = [1, 2, 3];      # int[] is an alias
 dict<string, int>  d  = {"a": 1, "b": 2};
-set<string>        s  = {"x", "y"} as set<string>;
+set<int>           s  = {1, 2, 3};      # brace literal w/o ':' is a set
 ```
 
-- **List mutators work in place** (1.16.0). `xs.push(x)` appends to
-  `xs` and returns it, so pushes chain; no reassignment needed.
-- **Dicts iterate in insertion order**. The same applies to
-  `.keys()`, `.values()`, `.items()`, and `for ... in dict`.
-- **Sets need an explicit type cast** at construction because
-  `{}` defaults to dict.
-- `instanceof list<T>` walks elements when untagged, matches the
-  tag when the collection came from a typed declaration.
-  `list<any>` accepts every list. Union args like
-  `list<int|string>` match elementwise.
+- **List mutators work in place** (1.16.0+): `push`, `pop`,
+  `prepend`, `insert`, `removeAt`, `remove`, `reverse`, `sort`,
+  `sortBy` mutate the receiver AND return it (chainable).
+  `sorted()`, `reversed()`, `copy()`, `deepCopy()` are the copy
+  variants.
+- **Dicts iterate in insertion order**, including `.keys()`,
+  `.values()`, `.items()`, and `for (k, v in d)`.
+- An EMPTY `{}` is a dict; an empty set needs a typed declaration.
+- Slicing is Python-style on lists and strings: `xs[1:3]`,
+  `xs[:2]`, `s[-3:]`. Negative indexes count from the end.
+- Comprehensions: `[x * x for x in 1..5]`,
+  `[x for x in xs if x > 0]`, `{k: v * 2 for k, v in d}`.
+- `instanceof list<T>` works at runtime (reified generics).
+
+### Ranges
+
+```gb
+for (i in 1..5)   { }     # inclusive: 1,2,3,4,5
+for (i in 0..<10) { }     # exclusive end
+let xs = (1..5).toList();
+range(1, 9, 2);           # builtin -> [1, 3, 5, 7, 9]
+r.length; r.first; r.last; r.contains(3);
+```
 
 ### Control flow
 
 ```gb
 if (cond) { } else if (other) { } else { }
 for (x in xs) { }
-for (k, v in d.items()) { }
-for (i in 0..<10) { }
+for (k, v in d) { }
+for (let int i = 0; i < n; i++) { }
 while (cond) { }
+do { } while (cond);
+outer: for (i in 1..3) { continue outer; }    # labeled loops
+
+let grade = score >= 50 ? "pass" : "fail";    # ternary
 
 match (x) {
-    case int n when n > 0 => handlePositive(n);
-    case string s         => handleString(s);
-    default               => handleOther();
+    case int n if (n > 0)  => handlePositive(n);
+    case [first, second]   => handlePair(first, second);
+    case ["go", n]         => handleGo(n);    # literal elements pin positions
+    case string s          => handleString(s);
+    default                => handleOther();
 }
 ```
 
-`match` uses `=>`, guards are `when`, patterns can match by type
-and bind. As an expression, each branch ends with `;` and the
-closing `}` is followed by `;`. As a statement (no value used),
-no trailing `;`.
+`match` uses `=>`, guards are `if (cond)` after the pattern, and
+patterns match by type, literal value, or list shape and bind
+names. As an expression (`let y = match (x) { ... };`) each arm
+yields a value; an unmatched expression with no `default` throws
+`MatchError`.
+
+`defer expr;` runs at function exit (LIFO order), like Go.
 
 ### Null handling
 
@@ -140,10 +180,8 @@ if (name != null) {
 }
 
 let display = name ?? "anonymous";      # null coalesce
+let len = user?.profile?.bio ?? "";     # optional chaining
 ```
-
-After an `!= null` check the checker narrows the nullable to its
-non-null type for the rest of the branch. `??` is null coalesce.
 
 ### Functions
 
@@ -152,16 +190,44 @@ func add(int a, int b): int { return a + b; }
 
 let inc = func(int n): int { return n + 1; };
 
-func greet(string name, string greeting = "Hello"): string {
-    return greeting + ", " + name;
-}
+func greet(string name, string greeting = "Hello"): string { ... }
+greet("Ada", greeting: "Hi");           # named argument
 
-greet("Ada");                  # default arg works in any position
+func sum(int start, int ...rest): int { # variadic: rest is list<int>
+    return start + rest.reduce(func(int a, int b): int { return a + b; }, 0);
+}
+sum(1, 2, 3);
+sum(...[1, 2, 3]);                      # list spread
+greet(...{"name": "Ada"});              # dict spread -> named args
 ```
 
-Functions can carry the same name with different signatures
-(overloading). Closures capture their environment by reference;
-captured variables can be reassigned through the closure.
+- Defaults, named args, variadics, and spread combine freely and
+  work in every dispatch context: functions, lambdas, methods,
+  static methods, constructors (1.17.0).
+- Dict spread silently drops keys that name no parameter.
+- Overloading: the same name with different signatures resolves by
+  argument count and type at the call site.
+- Closures capture by reference; captured variables can be
+  reassigned through the closure.
+- Pipe: `x |> f(y)` calls `f(x, y)`; chains read left to right.
+
+### Generics
+
+```gb
+func head<T>(list<T> xs): T { return xs[0]; }
+
+class Box<T> {
+    T item;
+    func Box(T v) { this.item = v; }
+    func get(): T { return this.item; }
+}
+
+func topBy<T implements Scored>(list<T> items): T { ... }
+```
+
+Generics are reified: `instanceof T`, `reflect.typeBindings(x)`,
+and element-type enforcement on `list<T>.push` all work at
+runtime.
 
 ### Generators
 
@@ -169,42 +235,57 @@ captured variables can be reassigned through the closure.
 func counter(): generator<int> {
     yield 1;
     yield 2;
-    yield 3;
 }
-
 for (n in counter()) { io.println(n); }
 ```
 
 Return type is `generator<T>`. Use `iterable<T>` for parameters
 that accept any iterable (generators, lists, sets, ranges).
+Errors thrown inside a generator keep their class in the
+consuming loop's `catch`.
 
-### Async
+### Async (true parallelism)
 
 ```gb
 import async;
 
-async func slow(): int {
-    async.sleep(10);
-    return 42;
-}
+func work(int n): int { return n * n; }
 
-let token  = async.run(slow);
-let result = async.await(token);
+let t1 = async.run(func(): int { return work(1); });
+let t2 = async.run(func(): int { return work(2); });
+io.println(async.all([t1, t2]));        # parallel on real cores
 ```
 
-`async.all([t1, t2])`, `async.race([...])`, `async.timeout(ms,
-fn)`, `async.cancel(token)` compose tasks.
+```gb
+import async.channel as ch;
+
+let c = ch.Channel<int>(8);
+c.send(1);
+io.println(c.recv());                   # channels also iterate: for (x in c)
+```
+
+Tasks are goroutines: CPU-bound fan-out scales across cores (no
+GIL, no event loop). `async.await(t)`, `async.all`, `async.race`,
+`async.timeout(ms, fn)`, `async.cancel` compose tasks; channels
+and `select` coordinate them.
 
 ### Classes
 
 ```gb
 class Counter {
     int value;
-    func Counter(int start = 0) { this.value = start; }
+    static int created = 0;
+    const string KIND = "counter";
+
+    func Counter(int start = 0) {
+        this.value = start;
+        Counter.created += 1;
+    }
     func bump(): int {
-        this.value = this.value + 1;
+        this.value += 1;
         return this.value;
     }
+    static func total(): int { return Counter.created; }
 }
 
 class TaskCounter extends Counter {
@@ -213,138 +294,207 @@ class TaskCounter extends Counter {
         parent(0);                  # calls parent CONSTRUCTOR
         this.label = label;
     }
-    func describe(): string {
-        return parent.describe() + ":" + this.label;
+    func bump(): int {
+        return parent.bump() + 100; # calls parent METHOD
     }
 }
 ```
 
 - `parent(args)` calls the parent CONSTRUCTOR; `parent.method(args)`
   calls a parent METHOD. `super` is not a keyword.
-- `@abstract` on a class blocks direct instantiation. `@abstract`
-  on a method (which still needs a body that may be empty) forces
-  subclasses to override.
-- Methods named like decorators that resolve in scope (e.g.
-  `@upper` where `upper(string): string` exists) run on every
-  field assignment. Other decorators are pure metadata.
+- `@abstract` on a class blocks direct instantiation; on a method it
+  forces subclasses to override.
+- `@immutable` on a class makes fields set-once (construction only).
+- No `public`/`private`/`protected` modifiers; module `export` is
+  the visibility boundary.
 
-### Interfaces
+### Operator overloading (dunders)
+
+```gb
+class Money {
+    int cents;
+    func Money(int c) { this.cents = c; }
+    func __add(Money o): Money { return Money(this.cents + o.cents); }
+    func __eq(Money o): bool { return this.cents == o.cents; }
+    func __lt(Money o): bool { return this.cents < o.cents; }
+    func __string(): string { return "$${this.cents / 100}"; }
+}
+```
+
+Dunders: `__add __sub __mul __div __intdiv __mod __pow`, ordering
+`__lt __lte __gt __gte` (defining ONE ordering dunder derives the
+other three operators), `__eq`, bitwise `__bitand __bitor __bitxor
+__lshift __rshift`, prefix `__not __neg __bitnot`, plus `__index`,
+`__contains` (for `in`), `__iter`/`__next`/`__done`, `__call`,
+`__invoke` (callable objects), and cast dunders `__string __int
+__float __bool __decimal __bytes` (drive `as TYPE`, `println`, and
+interpolation).
+
+### Interfaces and enums
 
 ```gb
 interface Notifier {
     func send(string msg): void;
+    func sendAll(list<string> ms): void {   # default body allowed
+        for (m in ms) { this.send(m); }
+    }
 }
 
-class EmailNotifier implements Notifier {
-    func EmailNotifier() {}
-    func send(string msg): void { /* ... */ }
-}
+enum Color { Red, Green, Blue }
+enum Shape { Circle(decimal), Rect(decimal, decimal) }
+
+let area = match (shape) {
+    case Shape.Circle(decimal r)          => 3.14 * r * r;
+    case Shape.Rect(decimal w, decimal h) => w * h;
+};
 ```
-
-Interfaces may carry default method bodies, default field values,
-and `extends` other interfaces. Use `instanceof Notifier` to test
-implementation.
 
 ### Errors
 
 ```gb
 try {
     risky();
-} catch (RuntimeError e) {
-    io.println(e.message);
+} catch (ValueError e) {
+    io.println("${e.class}: ${e.message}");
+} finally {
+    cleanup();
 }
 
-class MyError extends RuntimeError {
+class MyError extends ValueError {
     func MyError(string m) { parent(m); }
 }
-
 throw MyError("boom");
 ```
 
-Catches dispatch by class hierarchy. `errors.new(msg)`,
-`errors.wrap(inner, msg)`, `errors.is(e, cls)`,
+Catches dispatch by class hierarchy (subclasses match parent
+catches). Built-in classes include `Error`, `RuntimeError`,
+`ValueError`, `TypeError`, `IOError`, `NetworkError`,
+`DatabaseError`, `NotFoundError`, `TimeoutError`,
+`AssertionError`. `errors.wrap(inner, msg)`, `errors.is(e, cls)`,
 `errors.stackTrace(e)` are the stdlib helpers.
+
+### Context managers and decorators
+
+```gb
+with (f = io.open("data.txt")) {
+    io.println(f.readAll());
+}
+# the with-binding (f) does not escape the block
+
+import profiler;
+let t = profiler.timer();
+with (t) { doWork(); }
+io.println(t.elapsedMs());
+
+@memoize
+func fib(int n): int { ... }            # built-in caching decorator
+
+func logged(func f): func {             # custom wrapping decorator
+    return func(int x): int { io.println("call ${x}"); return f(x); };
+}
+@logged
+func double(int x): int { return x * 2; }
+```
+
+Decorators are callable wrappers when the name resolves to a
+function, otherwise inspectable metadata (`reflect.decorators`).
 
 ### Reflection
 
 ```gb
 import reflect;
 
-reflect.typeOf(value);                # Type<list>, Type<int>, etc.
-reflect.className(cls);               # "Foo" or null
-reflect.parent(cls);                  # parent class name or null
+reflect.typeOf(value);                # "int", "list", class name...
+reflect.class("module.ClassName");    # resolve class by name
 reflect.classes();                    # every loaded class
-reflect.interfaces(cls);              # DIRECT interfaces; walk parent for inherited
-reflect.constructors(cls);            # list of param dicts
-reflect.fields(cls);                  # list of field metadata
-reflect.methods(cls);                 # list of method name strings
-reflect.decorators(target);           # list of {name, args, namedArgs}
+reflect.fields(cls);                  # field metadata
+reflect.methods(cls);                 # method names
+reflect.parameters(fn);               # param metadata dicts
+reflect.decorators(target);           # [{name, args, namedArgs}]
 reflect.hasDecorator(target, "Get");
-reflect.typeBindings(value);          # {"T": "int"} for tagged collections
+reflect.typeBindings(value);          # {"T": "int"} for reified generics
+reflect.function("math.sqrt");        # resolve function by name (native too)
 ```
 
 `reflect.interfaces(cls)` returns the DIRECT `implements` clause
-only; walk parents through `reflect.parent` if you need the full
-chain.
+only; walk `reflect.parent(cls)` for the full chain. `typeof(x)`
+(parens required), `dir(value)`, and `dump(value)` are ambient
+introspection builtins.
 
 ## Idioms
 
-- **Type cast for access**: `(value as Foo).method()`.
-- **Stringify primitives**: `n.toString()` or `(n as string)`.
-  Either works on every primitive type. String concat does not
-  coerce, so cast or stringify before `+`.
-- **Joint dict iteration**: `for (k, v in d.items()) { }`.
-- **List filter inline**: `xs.filter(func(int n): bool { return n > 0; })`.
-- **Null coalesce**: `let v = maybe ?? fallback;`.
-- **Accumulate with push**: `xs.push(item);` mutates in place (1.16.0).
+- **Type cast for access**: `(value as Foo).method()`. Casts are
+  CHECKED and throw on mismatch; use `instanceof` to test first.
+- **Stringify**: interpolate (`"${n}"`), `n.toString()`, or
+  `(n as string)`. String concat does not coerce.
+- **Joint dict iteration**: `for (k, v in d) { }`.
+- **Accumulate with push**: `xs.push(item);` mutates in place.
+- **Hot-loop strings**: `strbuilder` or `+=` on a local (the VM
+  fuses the accumulation); avoid rebuilding via `s = s + x` on
+  fields.
 - **Single-token YAML/parameter**: a `"%key%"` string that wraps
   exactly one marker preserves the referenced value's native type.
 
 ## Anti-idioms
 
 - Don't use `//` for comments (it's integer division).
-- Don't expect `list.push(x)` to mutate the list. It returns a new
-  list; reassign or capture the result.
-- Don't write `"hello" + 5`. String concat does not coerce. Cast:
-  `"hello " + (5 as string)`. Or interpolate: `"hello ${5}"`.
-- Don't use `super`. Use `parent(args)` for the constructor and
-  `parent.method(args)` for parent methods.
-- Don't name a source file the same as a stdlib module you import.
-  The resolver picks the local file by filename. Either rename
-  your file or use a non-colliding alias.
+- Don't write `"hello" + 5`. Concat does not coerce; interpolate
+  or cast.
+- Don't use `super`. Use `parent(args)` / `parent.method(args)`.
+- Don't name a source file the same as a stdlib module you import
+  (the resolver picks the local file by filename).
+- Don't reassign list mutator results expecting a copy:
+  `let ys = xs.sort();` leaves `ys` and `xs` the SAME mutated
+  list. Use `sorted()` for a copy.
 - Don't write multi-paragraph code comments. One short line for
-  WHY, never WHAT (the code already says WHAT).
+  WHY, never WHAT.
 
 ## Stdlib at a glance
 
 | Module | Purpose |
 |--------|---------|
-| `io` | stdin/stdout, `readText`, `writeText`, `readBytes`, `exists`, `tempDir`. |
-| `sys` | env vars (`getenv`, `setenv`), args, `cwd`, `exit`. |
-| `path` | `join`, `dir`, `base`, `ext`, `abs`. |
-| `json`, `yaml`, `toml`, `xml`, `csv` | parse / stringify; insertion-ordered. |
-| `crypt` | `aesEncrypt/Decrypt`, `hmacSha256`, `jwtSign/Verify`, `base64*`, `sha*`. |
-| `bytes` | `fromHex/toHex`, `fromBase64/toBase64`, `concat`, `slice`. |
-| `string` | `compare`, `equalsFold`, `fromCodePoint`. |
-| `re`, `pcre` | regex. |
-| `db` | SQL connect / query / exec; supports sqlite, postgres, mysql. |
-| `http` | client (`get`, `post`, `request`) and `serve`. |
-| `time` | `now`, `sleep`, `elapsed`. |
-| `datetime` | `parse`, `format`, `Instant`, `Zone`. |
-| `async` | tasks, sleep, race, timeout. |
-| `reflect` | class / function / decorator metadata. |
-| `collections` | `range`, `filter`, `map`, `sort`, `groupBy`, `topK`. |
-| `strbuilder` | O(n) string accumulation; reach for it in hot loops. |
-| `math` | trig, log, floor, ceil, prime tests. |
-| `errors` | `new`, `wrap`, `is`, stack traces. |
-| `streams` | lazy iteration with `map`, `filter`, `reduce` chains. |
+| `io` | stdin/stdout, files (`open`, `readText`, `writeText`, `readBytes`), `exists`, `tempDir`. |
+| `sys` | env vars, args, `cwd`, `exit`, `goroutineId`. |
+| `path` / `pathlib` | `join`, `dir`, `base`, `ext`, `abs`; object-style paths. |
+| `json`, `yaml`, `toml`, `xml`, `csv`, `msgpack` | parse / stringify; insertion-ordered. |
+| `encoding` | base64, hex, URL encoding. |
+| `crypt` | AES, HMAC, SHA, bcrypt password hashing, JWT (`jwtSign(p, k, {alg})`). |
+| `secrets` | constant-time compare, random tokens. |
+| `bytes` | hex/base64, `concat`, `slice`. |
+| `strings` | `compare`, `equalsFold`, `fromCodePoint`, splitting helpers. |
+| `re`, `pcre` | regex (Go engine / PCRE-style). |
+| `db` | SQL connect/query/exec; sqlite, postgres, mysql; transactions, prepared statements. |
+| `redis` | client incl. pub/sub. |
+| `http` | client (`get`, `post`, `request(url)` fluent builder, `fetchAll`) and server (`serve`, TLS, autocert). |
+| `sockets`, `net` | TCP/UDP, low-level networking. |
+| `time` | `now`, `sleep`, `monotonicNs`. |
+| `datetime` | `parse`, `format`, `Instant`, zones, arithmetic. |
+| `async` | tasks, channels, select, worker pools. |
+| `store` | synchronised cross-request/goroutine state. |
+| `reflect` | class/function/decorator metadata. |
+| `collections` | `maxBy`, `groupBy`, `chunk`, `sortBy`, lazy `lazyMap`/`lazyFilter`. |
+| `streams` | lazy iteration pipelines. |
+| `strbuilder` | O(n) string accumulation. |
+| `math` | trig, log, floor/ceil/round, prime tests. |
+| `profiler` | `timer()`, `profile()` context managers; CPU/memory/wall. |
+| `image` | decode/encode PNG/JPEG/GIF/WebP, resize, crop, rotate. |
+| `errors` | `wrap`, `is`, stack traces. |
+| `ffi`, `clib.*` | call C libraries (zstd, magic, ncurses, systemd). |
+| `messaging` | RabbitMQ / Kafka / SQS / STOMP producers and consumers. |
+| `test` | the test framework (below). |
 
-`geblang doc <module>` prints the exact signatures.
+`geblang doc <file-or-dir>` prints exact signatures; `dir(module)`
+lists members at runtime.
 
 ## Testing
 
 ```gb
 import test;
+
+func half(int n): int {
+    if (n % 2 != 0) { throw ValueError("odd"); }
+    return n / 2;
+}
 
 class MathTest extends test.Test {
     @test
@@ -354,32 +504,45 @@ class MathTest extends test.Test {
 
     @test
     func throwsOnInvalidInput(): void {
-        this.assertThrows(func(): void { divideBy(0); });
+        this.assertThrows(func(): void { half(3); });
     }
 }
 ```
 
 `setUp()` and `tearDown()` run around each test method. The test
-runner picks up `Test` subclasses; no manual `test.run()`.
+runner picks up `Test` subclasses; no manual `test.run()`. Run
+with `geblang test path/`. Asserters: `assertEquals`,
+`assertNotEquals`, `assertTrue`, `assertFalse`, `assertNull`,
+`assertNotNull`, `assertThrows`.
 
-Run with `geblang test path/`. Asserters:
-`assertEquals`, `assertNotEquals`, `assertTrue`, `assertFalse`,
-`assertNull`, `assertNotNull`, `assertThrows`.
+To test a module's PRIVATE members, declare the SAME module name
+in a sibling `*_test.gb` (1.17.0): the test then runs inside the
+module and sees private functions, classes, consts, and state.
+
+```gb
+# users.gb:       module app.users;  func normalizeId(...) ...
+# users_test.gb:  module app.users;  import test;  class ... extends test.Test
+```
 
 ## Pitfalls in priority order
 
 1. **`//` is integer division**, not a comment.
-2. **Don't shadow stdlib module filenames** in your source files.
-3. **List mutators are in-place** (1.16.0). `xs.push(item)` mutates
-   `xs` and returns it; use `copy()`/`sorted()`/`reversed()` for copies.
-4. **`as` is a cast, not a type test**. It throws on mismatch.
-   Use `instanceof` for tests.
-5. **Dict iteration is insertion order**, not alphabetical, not
-   undefined.
-6. **`reflect.interfaces(cls)`** returns the DIRECT `implements`
-   clause only; walk `reflect.parent(cls)` for the full chain.
-7. **String interpolation requires double quotes**. Single
-   quotes are literal and don't process `\n` or `${}`.
+2. **List mutators are in-place** (1.16.0+): `push`/`sort`/etc.
+   mutate AND return the receiver. `sorted()`/`reversed()`/`copy()`
+   are the copy variants.
+3. **`as` is a checked cast, not a type test**; it throws on
+   mismatch. Use `instanceof` for tests.
+4. **Floating literals are `decimal`** by default; suffix `f`
+   (`1.5f`) or cast for IEEE `float`.
+5. **Don't shadow stdlib module filenames** in your source files.
+6. **Dict iteration is insertion order**, not alphabetical.
+7. **String interpolation requires double quotes**; single quotes
+   are raw (no `\n`, no `${}`).
+8. **`typeof` needs parentheses**: `typeof(x)`.
+9. **`reflect.interfaces(cls)`** returns the DIRECT `implements`
+   clause only; walk `reflect.parent(cls)` for the chain.
+10. **Mixed numeric arithmetic does not coerce** between
+    `int`/`decimal` and `float`; cast explicitly.
 
 ## When in doubt
 

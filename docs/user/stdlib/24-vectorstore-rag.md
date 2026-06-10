@@ -36,8 +36,8 @@ store.add("cats", [0.1, 0.2, 0.9], {"text": "about cats"});
 store.add("cars", [0.9, 0.1, 0.1], {"text": "about cars"});
 
 let hits = store.search([0.1, 0.2, 0.8], 1);
-io.println(hits[0].record.metadata["text"]);   // about cats
-io.println(hits[0].score);                      // similarity, higher = closer
+io.println(hits[0].record.metadata["text"]);   # about cats
+io.println(hits[0].score);                      # similarity, higher = closer
 ```
 
 ### `VectorStore` interface
@@ -228,9 +228,9 @@ numbers or a packed little-endian float32 BLOB (the stored form).
 ```gb
 import vecmath;
 
-vecmath.score("cosine", [1.0, 0.0], [1.0, 0.0]);   // 1.0
+vecmath.score("cosine", [1.0, 0.0], [1.0, 0.0]);   # 1.0
 let hits = vecmath.topK([[1.0, 0.0], [0.0, 1.0]], [1.0, 0.0], 1, "cosine");
-hits[0]["index"];                                   // 0
+hits[0]["index"];                                   # 0
 ```
 
 `vectorstore.score(metric, a, b)` delegates to `vecmath.score`; you rarely call

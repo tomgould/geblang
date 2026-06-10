@@ -20,6 +20,12 @@ Bytes values also expose `b.toHex()`, `b.toBase64()`, and
 `b.toList()` returns the byte values as a `list<int>` (the inverse of
 `bytes.fromList`); `b.get(i)` / `b[i]` reads a single byte value.
 
+`b.contains(n)` tests for a single BYTE VALUE (an int 0-255), not a
+sub-sequence: `bytes.fromString("hi").contains(104)` is `true`
+because `0x68` (`h`) appears. To search for a byte sub-sequence,
+convert with `toString` and use string `contains`, or compare
+slices.
+
 ```gb
 import bytes;
 
@@ -45,8 +51,8 @@ Base64:
 ```gb
 import encoding;
 
-let token = encoding.base64UrlEncode("user:42");      // string -> string
-let back  = encoding.base64UrlDecode(token);           // -> "user:42"
+let token = encoding.base64UrlEncode("user:42");      # string -> string
+let back  = encoding.base64UrlDecode(token);          # back == "user:42"
 ```
 
 For binary payloads, decode through the `bytes` module so the result stays

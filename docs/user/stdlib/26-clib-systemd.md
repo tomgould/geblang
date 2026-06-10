@@ -111,7 +111,7 @@ import clib.systemd as systemd;
 import async;
 
 /* Ping the watchdog every 10 seconds from a background task. */
-async.spawn(func(): void {
+async.run(func(): void {
     while (true) {
         systemd.watchdog();
         async.sleep(10000);

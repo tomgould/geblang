@@ -351,6 +351,17 @@ need it. Skipped tests do not cause a non-zero exit.
 For JetBrains IDE test runners, `--format teamcity` emits
 `##teamcity[...]` service messages instead of the plain summary.
 
+Tests that load native libraries through `ffi` / `clib.*` need the
+FFI permission, exactly like `geblang run`:
+
+```sh
+geblang test --allow-ffi 'libzstd.so.*' tests/
+geblang test --allow-ffi '*' tests/        # allow everything (CI sandbox)
+```
+
+Without it, such tests fail with a "could not load native library"
+error naming the candidates that were tried.
+
 ## Test layout convention
 
 The reference project structure groups tests by feature area:

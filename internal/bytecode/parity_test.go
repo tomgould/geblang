@@ -13735,3 +13735,11 @@ class Both {
 io.println(Both(2) > Both(1));
 `, "true\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\n")
 }
+
+func TestParityIOExistsThroughFilePath(t *testing.T) {
+	runParityStatefulWithFile(t, `import io;
+io.println(io.exists("TMPFILE"));
+io.println(io.exists("TMPFILE/child.html"));
+io.println(io.exists("TMPFILE/a/b"));
+`, "content", "true\nfalse\nfalse\n")
+}

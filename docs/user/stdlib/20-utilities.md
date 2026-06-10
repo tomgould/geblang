@@ -266,7 +266,7 @@ absence explicit in the type rather than relying on `null` checks.
 import option;
 import io;
 
-func findUser(int id): Option<string> {
+func findUser(int id): option.Option<string> {
     dict<int, string> db = {1: "Ada", 2: "Grace"};
     return option.ofNullable(db.get(id));
 }

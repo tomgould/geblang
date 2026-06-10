@@ -1,5 +1,14 @@
 # Release Notes
 
+## 1.18.0
+
+### Fixes
+
+- `io.exists` returns `false` instead of throwing `IOError` when a
+  path component is a regular file (`/some/file.txt/child`). An
+  existence predicate never throws for a path that cannot exist;
+  genuine faults (such as permission errors) still throw.
+
 ## 1.17.0
 
 ### Language

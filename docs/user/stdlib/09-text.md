@@ -441,9 +441,9 @@ let src = "## Hello\n\n| col1 | col2 |\n|------|------|\n| a | b |\n\n- [x] done
 io.println(markdown.renderHtml(src));
 
 let blocks = markdown.parse(src);
-io.println(blocks[0]["type"]);          // heading
-io.println(blocks[1]["headers"][0]);    // col1
-io.println(blocks[2]["items"][0]["checked"]);  // true
+io.println(blocks[0]["type"]);          # heading
+io.println(blocks[1]["headers"][0]);    # col1
+io.println(blocks[2]["items"][0]["checked"]);  # true
 ```
 
 ---
@@ -457,10 +457,10 @@ SPDX-style name: `"NFC"`, `"NFD"`, `"NFKC"`, or `"NFKD"`.
 ```gb
 import unicode;
 
-let nfd = "é";                 // e + U+0301 combining acute (2 code points)
+let nfd = "é";                 # e + U+0301 combining acute (2 code points)
 let nfc = unicode.normalize(nfd, "NFC");
-io.println(nfc.length());          // 1 - now a single code point
-io.println(unicode.normalize("ﬁ", "NFKC"));   // "fi" - ligature decomposed
+io.println(nfc.length());          # 1 - now a single code point
+io.println(unicode.normalize("ﬁ", "NFKC"));   # fi - ligature decomposed
 ```
 
 | Function | Returns | Description |

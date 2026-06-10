@@ -30,10 +30,10 @@ Features inspired by Python include:
 - Aspect-oriented programming with decorators
 - Operator overloading via magic/dunder methods
 - Clear, readable syntax with low boilerplate
+- List and dict comprehensions
 - REPL-first exploration and tooling
 - Exceptions and custom error classes for structured failure handling
 - A batteries-included standard library philosophy
-- Operator overloading via dunder methods
 - No private, protected, public modifiers
 - Immutability via `freeze` module and `@immutable` decorator for classes
 
@@ -51,17 +51,12 @@ Other features offered by Geblang as core language or first-party tooling includ
 - A language design that keeps PHP/Python-style productivity while making types, metadata, packaging and
   tooling coherent from the start
 
-Compared with e.g. TypeScript, Geblang is not a typed layer over another dynamic
-runtime. Types, generics, reflection metadata, async execution, decorators,
-standard-library modules and bundling are all part of the language/runtime
-contract rather than erased or delegated to a separate JavaScript platform.
-That gives Geblang a simpler deployment story for server-side scripts, CLI
-tools and web services: the same language owns parsing, type checks, bytecode
-execution, native modules, debugging and standalone executable bundling.
-TypeScript remains a strong fit when you need the JavaScript and browser
-ecosystem; Geblang is aimed at the places where you want scripting ergonomics
-with a purpose-built backend/runtime and fewer layers between source code and
-the deployed program.
+Compared with TypeScript on Node, Geblang is not a typed layer over another
+dynamic runtime: types, generics, reflection metadata, async execution,
+decorators, the standard library and bundling are all part of one
+language/runtime contract rather than erased at compile time or delegated to a
+separate JavaScript platform. See the dedicated comparison below for what that
+means in practice for HTTP services.
 
 ## Repository
 
@@ -95,6 +90,16 @@ Geblang favors explicitness at module and API boundaries. Imports name the
 module being used, user modules export their public surface deliberately, and
 type hints document the values an API expects. Dynamic features exist, but they
 are intended to work with typed code rather than replace it.
+
+Two disciplines run through the implementation. First, types are real: the
+static checks run on the compile path for `run`, `test`, and `build` alike,
+reach across module boundaries, and the same type metadata is reified at
+runtime for `instanceof`, reflection, and request binding. Second, behavior is
+specified twice: every program must produce identical output on the bytecode
+VM and the reference evaluator, enforced by a parity suite and a generative
+fuzzer. Each backend acts as an executable specification for the other, which
+is how a language this young holds its semantics steady from release to
+release.
 
 ### Coming From PHP
 
@@ -148,8 +153,42 @@ scale. The key differences are:
 | Distribution | `venv`, `pip`, runtime required | `geblang build` embeds interpreter, stdlib, and source into one binary |
 | Indentation sensitivity | Required (syntax-level) | Braces (no whitespace sensitivity) |
 
-Python features that Geblang omits include multiple inheritance, `*args`
-and `**kwargs` on every function by default (but there is spread support).
+Python features that Geblang omits include multiple inheritance and
+untyped `**kwargs` bags. Typed variadic parameters (`int ...rest`,
+collected as a `list<int>`), named arguments, default values, and
+list/dict spread at call sites cover the same call shapes with the
+types kept intact.
+
+### Coming From TypeScript / Node
+
+TypeScript fixed JavaScript's type problem at compile time, but the
+types stop existing the moment the code runs. Geblang keeps them alive
+at runtime, and replaces the Node platform underneath with a single
+purpose-built runtime. For HTTP-layer services - APIs, gateways,
+backends-for-frontends, webhook processors, integration glue - that
+trade looks like this:
+
+| Feature | TypeScript / Node | Geblang |
+|---------|-------------------|---------|
+| Types at runtime | Erased; `as` casts are unchecked assertions | Reified; casts are checked, `instanceof list<int>` works, APIs can validate against real types |
+| Parallelism | Single-threaded event loop; worker threads are separate isolates with message passing | Goroutine-backed tasks across all cores; `async.run` is true parallelism with shared typed values |
+| Request isolation | One shared mutable module scope for every in-flight request | Shared-nothing per request by default; cross-request state is an explicit, synchronised opt-in |
+| Blocking code | Blocks the event loop; everything must be async-aware | Blocks one goroutine; no function colouring, any code can be awaited |
+| Toolchain | tsc + bundler + package manager + runtime, each configured separately | One binary: run, test, check, format, LSP, debug, bundle |
+| Dependencies | `node_modules`, transitive sprawl, supply-chain surface | Batteries-included stdlib (HTTP server/client with TLS and LetsEncrypt, database, Redis, JSON/YAML/XML/CSV, crypto, templating, queues); packages exist but most services need few or none |
+| Type-checked config and data | Zod/io-ts schemas duplicated alongside the types | The type IS the schema; reflection-driven binding and validation read the real signatures |
+| Deployment | Runtime + lockfile + node_modules or a bundler step | `geblang build` emits one self-contained executable |
+| Web framework | Express/Fastify/Nest, assembled from packages | Gebweb ships alongside: typed controllers, DI, validation, OpenAPI from your signatures |
+
+The short version: if a service's job is to terminate HTTP, validate
+and transform typed payloads, talk to databases and other services,
+and stay up under concurrent load, Geblang gives you the static types
+TypeScript promised, enforced at runtime, with true parallelism and a
+one-binary deployment - and without the event-loop discipline, the
+schema-duplication libraries, or the `node_modules` tree. TypeScript
+remains the right call when you need the browser ecosystem or
+isomorphic front/back code; Geblang aims at the server side of that
+line.
 
 ## Quick Example
 
@@ -227,60 +266,104 @@ an improved interpreter. Geblang aims to be in the same ballpark as
 those interpreters on realistic application code without attempting
 to match the JIT.
 
-Indicative numbers from a development machine (the absolute values
-will vary):
+Indicative numbers from a development machine, measured against
+Geblang 1.17.0 (the absolute values will vary; medians of repeated
+runs):
 
-| Benchmark          | Geblang | Python | PHP    |
-|--------------------|---------|--------|--------|
-| `numeric_loop`     | 131 ms  | 141 ms | 33 ms  |
-| `recursive_fib`    | 75 ms   | 44 ms  | 25 ms  |
-| `list_pipeline`    | 9 ms    | 17 ms  | 13 ms  |
-| `string_concat`    | 9 ms    | 21 ms  | 13 ms  |
-| `dict_ops`         | 18 ms   | 22 ms  | 15 ms  |
-| `class_dispatch`   | 21 ms   | 23 ms  | 14 ms  |
-| `regex_match`      | 66 ms   | 51 ms  | 17 ms  |
-| `json_roundtrip`   | 520 ms  | 545 ms | 340 ms |
-| `list_functional`  | 13 ms   | 18 ms  | 14 ms  |
+| Benchmark          | Geblang | Python | PHP    | Node   |
+|--------------------|---------|--------|--------|--------|
+| `numeric_loop`     | 71 ms   | 139 ms | 34 ms  | 32 ms  |
+| `recursive_fib`    | 58 ms   | 38 ms  | 24 ms  | 26 ms  |
+| `list_pipeline`    | 15 ms   | 16 ms  | 13 ms  | 23 ms  |
+| `string_concat`    | 12 ms   | 19 ms  | 12 ms  | 24 ms  |
+| `dict_ops`         | 22 ms   | 20 ms  | 13 ms  | 27 ms  |
+| `class_dispatch`   | 26 ms   | 21 ms  | 13 ms  | 24 ms  |
+| `regex_match`      | 50 ms   | 50 ms  | 16 ms  | 25 ms  |
+| `json_roundtrip`   | 440 ms  | 514 ms | 302 ms | 269 ms |
+| `list_functional`  | 15 ms   | 17 ms  | 13 ms  | 24 ms  |
 
 ### What Geblang is quick at
+
+`numeric_loop` runs a counted `for` loop two million times with a
+small if/else and integer arithmetic in the body. The VM keeps small
+integers unboxed and fuses the common compare-and-branch patterns, so
+Geblang runs this at roughly twice CPython's speed and ahead of every
+collection benchmark Node posts here.
 
 `list_pipeline`, `list_functional`, and `string_concat` are
 allocation-heavy patterns the VM has been tuned for: building lists
 with `.push`, chaining `.map` / `.filter` / `.reduce`, and
-concatenating string literals into a builder in tight loops.
-
-`numeric_loop` runs a counted `for` loop two million times with a
-small if/else and integer arithmetic in the body. For loops where
-the compiler can tell the variables stay as integers, Geblang puts
-serious effort into making the body cheap.
+concatenating string literals into a builder in tight loops. All
+three sit level with CPython and PHP and well ahead of Node;
+`string_concat` ties PHP outright.
 
 `json_roundtrip` parses a 1 MB JSON payload and stringifies it back
-200 times. After the 1.0.6 token-driven parser and direct encoder,
-Geblang outperforms Python's C-implemented `json` module on this
-workload.
+200 times. The token-driven parser and direct encoder outperform
+Python's C-implemented `json` module on this workload.
 
 `dict_ops` and `class_dispatch` exercise dict get/set and instance
-method dispatch in a tight loop; both are competitive with Python.
+method dispatch in a tight loop; both are competitive with Python
+and Node.
 
 ### What it's slower at
 
-`recursive_fib(28)` is a large number of recursive calls and not
-much else; Geblang is noticeably slower than Python and PHP there.
-`regex_match` is similar; regex match cost is dominated by the Go
-regex engine, which trails the C runtimes of Python and PHP.
+`recursive_fib(28)` is a large number of bare recursive calls and not
+much else; Geblang trails Python, PHP, and Node there. Call-heavy
+code pays for the per-call type validation that reified generics and
+enforced signatures require - 1.17.0's dispatch-loop work narrowed
+the gap, and further call-path tuning is ongoing. `regex_match` cost
+is dominated by the Go regex engine: now level with CPython, still
+behind PCRE (PHP) and V8's Irregexp (Node).
 
-Geblang's conscious language design choices, particularly around
-generics and type-safety, mean there is more runtime overhead per
-function call than a dynamically-typed interpreter pays. For
-everyday code (request handlers, parsing JSON, walking lists and
-dicts, modest loops) the difference is hopefully invisible.
+For everyday application code - request handlers, parsing JSON,
+walking lists and dicts, modest loops - the per-call difference
+disappears into IO time. The benchmarks above are deliberately
+hostile microloops; run `make bench` yourself and weigh the shapes
+that match your workload.
 
-> :bulb: Geblang is a personal project, built for fun, interest, curiosity and to help
-> me learn Go and a bit about compiler and interpreter design.
-> It's not meant to be super fast. This is not something I've built with a
-> "you should actually stop using PHP/Python and use this instead" angle.
->
-> If you decide to try it out, do your own benchmarks and decide if the performance is right for you.
+## Concurrency And True Parallelism
+
+Geblang's concurrency model is one of its clearest separations from
+the languages it borrows ergonomics from. `async.run` hands work to a
+real goroutine on the Go scheduler, so tasks execute in parallel
+across every core:
+
+```gb
+import async;
+import io;
+
+let tasks = [
+    async.run(func(): int { return heavyWork(1); }),
+    async.run(func(): int { return heavyWork(2); }),
+    async.run(func(): int { return heavyWork(3); }),
+];
+io.println(async.all(tasks));   # three cores, one wall-clock unit
+```
+
+What that means against the neighbours:
+
+- **No GIL.** Python threads interleave on one core; Geblang tasks
+  genuinely run simultaneously. CPU-bound fan-out scales with cores
+  without multiprocessing, pickling, or worker pools.
+- **No event loop.** Node gets concurrency by never blocking a single
+  thread, which makes blocking code a bug and splits the ecosystem
+  into sync and async halves. A Geblang task that blocks just parks
+  its goroutine; there is no function colouring, and `await` works on
+  anything.
+- **No per-request process model.** PHP gets isolation by tearing the
+  world down after every request. Geblang's HTTP server keeps the
+  process resident but runs each request handler in an isolated copy
+  of the runtime state, so one request can never observe another's
+  in-flight mutations - PHP's shared-nothing safety at goroutine
+  throughput. Cross-request state (counters, caches, sessions) is an
+  explicit opt-in through a synchronised store, never an accident of
+  module scope.
+
+Generators, channels (`async.channel`'s `Channel<T>`), `select`, worker pools, and
+structured fan-out (`async.all`, `http.fetchAll` with a concurrency
+cap) are all built on the same primitives, and the test runner,
+profiler, and web framework understand them natively. The async
+chapter covers the full surface.
 
 ## Manual Chapters
 
@@ -314,10 +397,14 @@ dicts, modest loops) the difference is hopefully invisible.
 
 ## Status
 
-I've released an initial 1.0. Geblang is actively evolving.
-The bytecode VM is the preferred execution path when a feature is supported; 
-the evaluator remains a compatibility path and an implementation aid. 
-Use `--trace-exec` to see which engine ran a script.
+Geblang is at version 1.18.0 and under active development, with
+regular minor releases since 1.0 (see the release notes chapter for
+the full history). The bytecode VM is the default execution path; the
+tree-walking evaluator backs the test runner and acts as a
+compatibility path. The two backends are held to byte-identical
+output by a parity test suite and a generative fuzzer, so programs
+behave the same whichever engine runs them. Use `--trace-exec` to see
+which engine ran a script.
 
 ## For AI agents
 
