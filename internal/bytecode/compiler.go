@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"geblang/internal/ast"
+	argbinding "geblang/internal/binding"
 	"geblang/internal/desugar"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
@@ -4767,42 +4768,40 @@ func selfListPushAssignment(name string, expr ast.Expression) (ast.Expression, b
 }
 
 func (c *Compiler) orderFunctionArguments(function FunctionInfo, args []ast.CallArgument, paramOffset int) ([]ast.Expression, error) {
-	if len(args) == 0 {
-		variadicIndex := -1
-		if function.Variadic && len(function.ParamNames) > 0 {
-			variadicIndex = len(function.ParamNames) - 1
-		}
-		for i := paramOffset; i < len(function.ParamNames); i++ {
-			if i == variadicIndex {
-				continue
-			}
-			if i >= len(function.DefaultConstants) || function.DefaultConstants[i] < 0 {
-				return nil, fmt.Errorf("%s missing argument before parameter %s", function.Name, function.ParamNames[i])
-			}
-		}
-		return nil, nil
+	paramNames := function.ParamNames
+	if paramOffset < len(paramNames) {
+		paramNames = paramNames[paramOffset:]
+	} else {
+		paramNames = nil
 	}
+	hasDefault := make([]bool, len(paramNames))
+	for i := range paramNames {
+		paramIndex := i + paramOffset
+		hasDefault[i] = paramIndex < len(function.DefaultConstants) && function.DefaultConstants[paramIndex] >= 0
+	}
+	sig := argbinding.Signature{
+		FuncName:   function.Name,
+		ParamNames: paramNames,
+		HasDefault: hasDefault,
+		Variadic:   function.Variadic,
+	}
+	bargs := make([]argbinding.Arg, len(args))
 	hasNamed := false
-	for _, arg := range args {
+	for i, arg := range args {
 		if arg.Name != nil {
+			bargs[i].Name = arg.Name.Value
 			hasNamed = true
-			break
 		}
+	}
+	result, err := argbinding.Order(sig, bargs)
+	if err != nil {
+		return nil, err
 	}
 	if !hasNamed {
-		available := len(function.ParamNames) - paramOffset
-		if !function.Variadic && len(args) > available {
-			return nil, fmt.Errorf("%s received too many positional arguments", function.Name)
-		}
-		lastRequired := len(function.ParamNames)
-		if function.Variadic {
-			// The variadic slot is optional; defaults may sit before it.
-			lastRequired--
-		}
-		for i := len(args) + paramOffset; i < lastRequired; i++ {
-			if i >= len(function.DefaultConstants) || function.DefaultConstants[i] < 0 {
-				return nil, fmt.Errorf("%s missing argument before parameter %s", function.Name, function.ParamNames[i])
-			}
+		// Positional calls emit in source order; the runtime packs any
+		// variadic tail and fills trailing defaults by arity.
+		if len(args) == 0 {
+			return nil, nil
 		}
 		ordered := make([]ast.Expression, 0, len(args))
 		for _, arg := range args {
@@ -4810,46 +4809,12 @@ func (c *Compiler) orderFunctionArguments(function FunctionInfo, args []ast.Call
 		}
 		return ordered, nil
 	}
-	if len(function.ParamNames) <= paramOffset {
-		return nil, fmt.Errorf("function metadata for %s has no parameter names", function.Name)
-	}
-	positions := map[string]int{}
-	for i := paramOffset; i < len(function.ParamNames); i++ {
-		positions[function.ParamNames[i]] = i - paramOffset
-	}
-	ordered := make([]ast.Expression, len(function.ParamNames)-paramOffset)
-	nextPositional := 0
-	for _, arg := range args {
-		if arg.Name == nil {
-			for nextPositional < len(ordered) && ordered[nextPositional] != nil {
-				nextPositional++
-			}
-			if nextPositional >= len(ordered) {
-				return nil, fmt.Errorf("%s received too many positional arguments", function.Name)
-			}
-			ordered[nextPositional] = arg.Value
-			nextPositional++
-			continue
-		}
-		position, ok := positions[strings.ToLower(arg.Name.Value)]
-		if !ok {
-			return nil, fmt.Errorf("%s has no parameter %s", function.Name, arg.Name.Value)
-		}
-		if ordered[position] != nil {
-			return nil, fmt.Errorf("%s parameter %s passed more than once", function.Name, arg.Name.Value)
-		}
-		ordered[position] = arg.Value
-	}
-	variadicIndex := -1
-	if function.Variadic && len(function.ParamNames) > paramOffset {
-		variadicIndex = len(function.ParamNames) - 1 - paramOffset
-	}
-	for i, arg := range ordered {
-		if arg == nil && i != variadicIndex {
-			paramIndex := i + paramOffset
-			if paramIndex >= len(function.DefaultConstants) || function.DefaultConstants[paramIndex] < 0 {
-				return nil, fmt.Errorf("%s missing argument before parameter %s", function.Name, function.ParamNames[paramIndex])
-			}
+	// Named calls emit one slot per parameter with nil holes where a
+	// default applies, trimmed of trailing holes.
+	ordered := make([]ast.Expression, len(result.Slots))
+	for i, slot := range result.Slots {
+		if slot != argbinding.DefaultSlot {
+			ordered[i] = args[slot].Value
 		}
 	}
 	for len(ordered) > 0 && ordered[len(ordered)-1] == nil {

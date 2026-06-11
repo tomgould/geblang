@@ -267,20 +267,20 @@ those interpreters on realistic application code without attempting
 to match the JIT.
 
 Indicative numbers from a development machine, measured against
-Geblang 1.17.0 (the absolute values will vary; medians of repeated
+Geblang 1.18.0 (the absolute values will vary; medians of repeated
 runs):
 
 | Benchmark          | Geblang | Python | PHP    | Node   |
 |--------------------|---------|--------|--------|--------|
-| `numeric_loop`     | 71 ms   | 139 ms | 34 ms  | 32 ms  |
-| `recursive_fib`    | 58 ms   | 38 ms  | 24 ms  | 26 ms  |
-| `list_pipeline`    | 15 ms   | 16 ms  | 13 ms  | 23 ms  |
-| `string_concat`    | 12 ms   | 19 ms  | 12 ms  | 24 ms  |
-| `dict_ops`         | 22 ms   | 20 ms  | 13 ms  | 27 ms  |
-| `class_dispatch`   | 26 ms   | 21 ms  | 13 ms  | 24 ms  |
-| `regex_match`      | 50 ms   | 50 ms  | 16 ms  | 25 ms  |
-| `json_roundtrip`   | 440 ms  | 514 ms | 302 ms | 269 ms |
-| `list_functional`  | 15 ms   | 17 ms  | 13 ms  | 24 ms  |
+| `numeric_loop`     | 71 ms   | 125 ms | 28 ms  | 28 ms  |
+| `recursive_fib`    | 57 ms   | 36 ms  | 22 ms  | 25 ms  |
+| `list_pipeline`    | 14 ms   | 15 ms  | 10 ms  | 22 ms  |
+| `string_concat`    | 13 ms   | 19 ms  | 11 ms  | 23 ms  |
+| `dict_ops`         | 22 ms   | 18 ms  | 12 ms  | 28 ms  |
+| `class_dispatch`   | 25 ms   | 19 ms  | 12 ms  | 24 ms  |
+| `regex_match`      | 36 ms   | 42 ms  | 15 ms  | 26 ms  |
+| `json_roundtrip`   | 431 ms  | 479 ms | 310 ms | 263 ms |
+| `list_functional`  | 19 ms   | 16 ms  | 13 ms  | 25 ms  |
 
 ### What Geblang is quick at
 
@@ -312,8 +312,9 @@ much else; Geblang trails Python, PHP, and Node there. Call-heavy
 code pays for the per-call type validation that reified generics and
 enforced signatures require - 1.17.0's dispatch-loop work narrowed
 the gap, and further call-path tuning is ongoing. `regex_match` cost
-is dominated by the Go regex engine: now level with CPython, still
-behind PCRE (PHP) and V8's Irregexp (Node).
+is dominated by the Go regex engine: 1.18.0's cached native dispatch
+puts it ahead of CPython, still behind PCRE (PHP) and V8's Irregexp
+(Node).
 
 For everyday application code - request handlers, parsing JSON,
 walking lists and dicts, modest loops - the per-call difference
