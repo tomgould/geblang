@@ -237,7 +237,8 @@ to generate an in-memory certificate for local development. A self-signed cert
 covers `localhost`, `127.0.0.1`, `::1`, and the bind host; pass
 `selfSigned: ["host", ...]` to set the SANs explicitly. `http.serverCert(server)`
 returns the served certificate as PEM so a client can trust it precisely
-instead of disabling verification.
+instead of disabling verification - write it to a file with
+`io.writeText` to add it to a local trust store.
 
 ```gb
 import http;
