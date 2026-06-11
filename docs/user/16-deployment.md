@@ -40,17 +40,15 @@ parsing on the hot path.
 
 ### GOMAXPROCS
 
-Geblang inherits Go's scheduler. By default it uses one OS thread per
-hardware core. Constrain it under cgroups (Kubernetes, ECS, systemd) so the
-scheduler doesn't fight the container's CPU limits:
+Geblang inherits Go's scheduler, and current toolchains are
+container-aware: under cgroup CPU limits (Kubernetes, ECS, systemd) the
+default thread count follows the container's allocation, not the host's
+core count. Override only when you want fewer threads than the
+allocation, for example to leave headroom for a sidecar:
 
 ```sh
 GOMAXPROCS=2 ./myapp
 ```
-
-Tuning matters when the container is allocated fewer cores than the host
-exposes - the default `nproc` reads host cores, which leads to many idle
-goroutines and unhelpful context switching.
 
 ### Garbage Collection
 
@@ -75,18 +73,18 @@ Don't do this for long-running services.
 
 ### Bytecode Cache
 
-`geblang` caches compiled bytecode in `~/.cache/geblang/bytecode/` (or
-`$GEBLANG_CACHE_DIR`). First runs of a script parse + compile + execute;
-subsequent runs skip parse/compile when the source hash matches. Pre-warm
-the cache as part of your container build to make cold starts
-deterministic:
+Binaries produced by `geblang build` bundle precompiled bytecode, so
+they need no cache and no warm-up - first start is already the fast
+path.
 
-```dockerfile
-RUN /myapp warmup    # any startup that touches every imported module
-```
-
-Clean stale entries with `geblang cache clean` if you suspect the cache is
-serving stale code (the source-hash check should make this unnecessary).
+When you deploy source and run it with `geblang` directly, compiled
+bytecode is cached under `.geblang-cache/<toolchain-version>/` relative
+to the working directory. First runs parse + compile + execute;
+subsequent runs skip parse/compile when the source hash matches. Run
+each entrypoint once during the image build if you want cold starts
+deterministic, and keep the cache directory out of version control.
+Clean entries with `geblang cache clean` if you suspect staleness (the
+source-hash check should make this unnecessary).
 
 ## Observability
 
@@ -147,20 +145,31 @@ io.println("elapsed_ms = " + (delta["elapsed_ms"] as string));
 io.println("heap_alloc = " + (delta["heap_alloc"] as string));
 ```
 
-For continuous profiling, expose a Go `net/http/pprof` endpoint via the
-`pprof` stdlib module (when present) or build a small admin handler that
-calls `profiler.snapshot()` and `profiler.memory()`. The output is
-compatible with the standard `go tool pprof` workflow.
+For engine-level profiling, set `GEBLANG_PPROF=localhost:6060` when
+starting any program (script or built binary) and a standard Go
+`net/http/pprof` endpoint comes up on that address:
+
+```sh
+GEBLANG_PPROF=localhost:6060 ./myapp
+go tool pprof "http://localhost:6060/debug/pprof/profile?seconds=10"
+```
+
+Bind it to localhost (or a private interface) only - the endpoint is
+unauthenticated by design.
 
 ## Common Bottlenecks
 
 When a program is slower than expected, the culprit is almost always one
 of:
 
-1. **String concatenation in a hot loop.** Geblang strings are immutable,
-   so repeated `result = result + chunk` allocates O(n²) bytes. Use a
-   list and `"".join(parts)` at the end, or `io.memory()` to write into
-   a buffer.
+1. **Unbounded string accumulation.** Geblang strings are immutable.
+   The engine recognises the common `acc = acc + piece` loop shape and
+   appends in place, so simple accumulation loops are fast - but
+   accumulation through function boundaries, conditionals the optimiser
+   cannot see through, or interpolation rebuilds the string each time.
+   For heavy assembly use the `strbuilder` module (amortised O(n)
+   appends, one final `build`), or collect parts in a list and
+   `parts.join("")` at the end.
 2. **List indexing where a generator would do.** If you only consume the
    first N items of a large derived sequence, prefer a `generator<T>`
    function over building the full list.
@@ -173,8 +182,9 @@ of:
    `async.io.readText` (or `async.io.readBytes`) and await the result so
    other requests progress.
 5. **Heavy work inside a class constructor.** Decorators and field
-   defaults run for every instance. Cache shared state on the class
-   (static fields) or behind a lazy `option.lazy(...)`.
+   defaults run for every instance. Cache shared state in `static`
+   class members, or defer derived sequences with the lazy `streams`
+   module so work happens on consumption, not construction.
 
 Benchmark micro-suspects with the `benchmarks/` harness or the stdlib
 `time.elapsed` helper:
@@ -187,24 +197,23 @@ doWork();
 io.println("took " + (time.elapsed(t) as string) + "ms");
 ```
 
-A 3-5x repeat is usually enough to filter noise; if you need
-statistically robust numbers, lean on `benchmarks/run.py` which already
-does a 7-run median across geblang/python/php for comparison.
+A 3-5x repeat is usually enough to filter noise; for statistically
+robust numbers, `benchmarks/run.sh` reports a 5-run median (adjustable
+with `--repeats`) across geblang/python/php/node for comparison.
 
 ## Production Checklist
 
 - [ ] Binary built with `geblang build --out` (no source on the host).
 - [ ] `GOMAXPROCS` matches the container's allocated CPU.
 - [ ] `GOMEMLIMIT` is set just below the container memory limit.
-- [ ] Bytecode cache is warmed during the image build.
+- [ ] Source-run deployments only: bytecode cache warmed during the
+      image build (built binaries bundle precompiled bytecode).
 - [ ] Structured logs (`log.info / warn / error`) flow to stdout.
 - [ ] `metrics` endpoint is wired up to your scrape target.
 - [ ] Health-check route returns 200 only when downstream deps are
       reachable.
-- [ ] Graceful shutdown: register a SIGTERM handler that calls
-      `http.shutdown(server, 5000)` so in-flight requests finish.
-- [ ] Crash logs include the Geblang version (`geblang --version`) and
-      the bytecode chunk version printed in panics.
-
-For platform-specific deployment recipes (systemd, Docker Compose,
-Kubernetes), see the matching guides under `docs/user/`.
+- [ ] Graceful shutdown: a SIGTERM handler (`sys.onSignal`) calls
+      `http.shutdown(server, 5000)` so in-flight requests finish, while
+      the main goroutine blocks in `http.wait(server)`.
+- [ ] Crash reports include the toolchain version (`geblang --version`;
+      built binaries answer `--version` too).
