@@ -28,29 +28,15 @@
   members move to a synchronized overlay (semantics unchanged) so the
   constant pool can be shared untouched. Server workloads that
   dispatch through callbacks and cross-module calls speed up
-  substantially: a representative typed web route serves roughly 20x
-  more requests per second than 1.17.0, with median latency cut from
-  tens of milliseconds to ~1 ms, and VM-mode serving is now the
-  fastest deployment path.
+  substantially: a representative typed web route serves ~9x more
+  requests per second than 1.17.0, with median latency cut by ~90%,
+  and VM-mode serving is now the fastest deployment path.
 
 ### HTTP server
 
 - `http.serve` and `http.listen` accept `opts.maxBodyBytes` to cap the
   request body; oversize requests are answered with 413 before the
   handler runs.
-- `http.wait(server)` blocks until a listening server stops serving,
-  pairing with `http.shutdown` for graceful-drain entrypoints (a
-  signal handler can shut down a server the main goroutine waits on).
-
-### JWK / JWKS
-
-- `crypt.jwk(pem, opts)` builds RFC 7517 public JWKs (RFC 7638
-  thumbprint kids by default) for RSA, EC, and Ed25519 keys;
-  `crypt.jwks(keys)` assembles the key-set document.
-- `crypt.jwtVerify` accepts a JWKS or single-JWK dict as its key,
-  selecting by the token's `kid` and pinning the algorithm to the
-  matched key. `crypt.jwtSign` writes `opts.kid` into the token
-  header.
 
 ### Fixes
 

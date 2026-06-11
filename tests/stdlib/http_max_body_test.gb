@@ -1,0 +1,41 @@
+/**
+ * @title http.serve/listen maxBodyBytes
+ * @summary `opts.maxBodyBytes` caps the request body at the server:
+ * oversize bodies answer 413 without invoking the handler.
+ */
+import test;
+import http;
+
+class HttpMaxBodyTest extends test.Test {
+    @test
+    func oversizeBodyRejectedWith413(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return {"status": 200, "body": "got:" + ((request["body"] as string).length() as string)};
+        }, {"maxBodyBytes": 16});
+        try {
+            string base = "http://" + http.serverAddr(server);
+            let ok = http.request(base + "/in").withMethod("POST").withBody("x".repeat(16)).send();
+            this.assertEquals(200, ok.status());
+            this.assertEquals("got:16", ok.text());
+            let big = http.request(base + "/in").withMethod("POST").withBody("x".repeat(17)).send();
+            this.assertEquals(413, big.status());
+        } finally {
+            http.close(server);
+        }
+    }
+
+    @test
+    func absentOptionMeansUnlimited(): void {
+        let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+            return {"status": 200, "body": (request["body"] as string).length() as string};
+        }, {});
+        try {
+            string base = "http://" + http.serverAddr(server);
+            let r = http.request(base + "/in").withMethod("POST").withBody("y".repeat(4096)).send();
+            this.assertEquals(200, r.status());
+            this.assertEquals("4096", r.text());
+        } finally {
+            http.close(server);
+        }
+    }
+}

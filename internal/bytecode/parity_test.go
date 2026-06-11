@@ -3052,6 +3052,58 @@ io.println(decoded["payload"]["sub"]);
 `, "true\nuser-1\nadmin\ntrue\nHS256\nuser-1\n")
 }
 
+// crypt.jwk/jwks produce RFC 7517 documents and crypt.jwtVerify
+// accepts them, selecting by the token's kid and pinning the alg to
+// the matched key.
+func TestParityJWKSRoundTrip(t *testing.T) {
+	runParity(t, `import io;
+import crypt;
+let privA = crypt.generateRsaKey(2048);
+let privB = crypt.generateEcKey("P-256");
+let jwkA = crypt.jwk(crypt.publicKey(privA), {"kid": "a"});
+io.println(jwkA["kty"]);
+io.println(jwkA["alg"]);
+io.println(jwkA["use"]);
+io.println((jwkA["kid"] as string) == "a");
+let auto = crypt.jwk(crypt.publicKey(privA));
+io.println(((auto["kid"] as string).length() > 20) as string);
+let set = crypt.jwks([
+    {"pem": crypt.publicKey(privA), "kid": "a"},
+    {"pem": crypt.publicKey(privB), "kid": "b"},
+]);
+io.println((set["keys"] as list<any>).length());
+let tokenA = crypt.jwtSign({"sub": "alice"}, privA, {"alg": "RS256", "kid": "a"});
+let tokenB = crypt.jwtSign({"sub": "bob"}, privB, {"alg": "ES256", "kid": "b"});
+let claimsA = crypt.jwtVerify(tokenA, set);
+let claimsB = crypt.jwtVerify(tokenB, set);
+io.println(claimsA["sub"]);
+io.println(claimsB["sub"]);
+let wrongKid = crypt.jwtSign({"sub": "eve"}, privA, {"alg": "RS256", "kid": "nope"});
+io.println((crypt.jwtVerify(wrongKid, set) == null) as string);
+let hsForged = crypt.jwtSign({"sub": "eve"}, "shh", {"alg": "HS256", "kid": "a", "allowedAlgs": ["HS256"]});
+io.println((crypt.jwtVerify(hsForged, set) == null) as string);
+`, "RSA\nRS256\nsig\ntrue\ntrue\n2\nalice\nbob\ntrue\ntrue\n")
+}
+
+// An HS token forged with a verifier's public PEM as the HMAC secret
+// must not verify: with no opts.algs the allowed family is pinned to
+// the key type (alg-confusion defense).
+func TestParityJWTAlgConfusionPinned(t *testing.T) {
+	runParity(t, `import io;
+import crypt;
+let privPem = crypt.generateRsaKey(2048);
+let pubPem = crypt.publicKey(privPem);
+let rsToken = crypt.jwtSign({"sub": "alice"}, privPem, {"alg": "RS256"});
+io.println((crypt.jwtVerify(rsToken, pubPem) != null) as string);
+let forged = crypt.jwtSign({"sub": "mallory", "role": "admin"}, pubPem, {"alg": "HS256", "allowedAlgs": ["HS256"]});
+io.println((crypt.jwtVerify(forged, pubPem) == null) as string);
+io.println((crypt.jwtVerify(forged, pubPem, {"allowedAlgs": ["HS256"]}) != null) as string);
+let hsToken = crypt.jwtSign({"sub": "bob"}, "secret");
+io.println((crypt.jwtVerify(hsToken, "secret") != null) as string);
+io.println((crypt.jwtVerify(rsToken, "secret") == null) as string);
+`, "true\ntrue\ntrue\ntrue\ntrue\n")
+}
+
 func TestParityRSAKeyAndJWT(t *testing.T) {
 	runParity(t, `import io;
 import crypt;
@@ -3520,6 +3572,48 @@ io.println(resp.text());
 http.close(server);
 `
 	runParityWithStdlib(t, source, "len:2000 cl:2000 head:stream-me\n")
+}
+
+// http.wait blocks until the handle's server stops; a graceful
+// shutdown from another callable releases the waiter.
+func TestParityHTTPWaitReleasedByShutdown(t *testing.T) {
+	runParityWithStdlib(t, `
+import io;
+import http;
+import async;
+let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+    return {"status": 200, "body": "ok"};
+}, {});
+let stopper = async.run(func(): void {
+    async.await(async.sleep(100));
+    http.shutdown(server, 2000);
+});
+http.wait(server);
+io.println("released");
+async.await(stopper);
+http.wait(server);
+io.println("idempotent");
+`, "released\nidempotent\n")
+}
+
+// opts.maxBodyBytes caps the request body at the server: an oversize
+// body answers 413 without invoking the handler; bodies at the limit
+// pass through.
+func TestParityHTTPListenMaxBodyBytes(t *testing.T) {
+	runParityWithStdlib(t, `
+import io;
+import http;
+let server = http.listen("127.0.0.1:0", func(dict<string, any> request): dict<string, any> {
+    return {"status": 200, "body": "got:" + ((request["body"] as string).length() as string)};
+}, {"maxBodyBytes": 16});
+let base = "http://" + http.serverAddr(server);
+let ok = http.request(base + "/in").withMethod("POST").withBody("x".repeat(16)).send();
+io.println(ok.status());
+io.println(ok.text());
+let big = http.request(base + "/in").withMethod("POST").withBody("x".repeat(17)).send();
+io.println(big.status());
+http.close(server);
+`, "200\ngot:16\n413\n")
 }
 
 // Bare reflect.* without `import reflect` is ambient on both backends,

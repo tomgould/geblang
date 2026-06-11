@@ -329,9 +329,9 @@ type Chunk struct {
 	// VM bound to a copy of this chunk. Set at Compile/Decode; nil for
 	// hand-built chunks, which fall back to per-VM preparation.
 	sharedMeta *chunkSharedMeta
-	Classes      []ClassInfo
-	Interfaces   []InterfaceInfo
-	Exports      []ExportInfo
+	Classes    []ClassInfo
+	Interfaces []InterfaceInfo
+	Exports    []ExportInfo
 	// TopLevelLocalCount is the number of local slots reachable from the
 	// chunk's top-level execution (outside any function body). The VM
 	// pre-sizes vm.locals to this value at Run() entry so the hot

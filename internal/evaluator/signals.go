@@ -67,6 +67,12 @@ func (e *Evaluator) sysOnSignal(call *ast.CallExpression, args []runtime.Value) 
 	e.signalHandlers[canonical] = sub
 	e.signalMu.Unlock()
 
+	// Isolate the handler now, on the evaluator's goroutine: cloning at
+	// delivery time would walk the captured environment while the main
+	// goroutine is still mutating it.
+	if handler.Native == nil {
+		handler = runtime.CloneFunction(handler)
+	}
 	gosignal.Notify(sub.ch, sig)
 	go e.dispatchSignals(canonical, handler, sub)
 	return runtime.Null{}, nil
@@ -89,11 +95,7 @@ func (e *Evaluator) dispatchSignals(name string, handler runtime.Function, sub *
 func (e *Evaluator) invokeSignalHandler(name string, handler runtime.Function) {
 	child := e.childForCallback()
 	defer child.Cleanup()
-	cb := handler
-	if cb.Native == nil {
-		cb = runtime.CloneFunction(handler)
-	}
-	result, err := child.applyFunction(cb, []runtime.Value{runtime.String{Value: name}})
+	result, err := child.applyFunction(handler, []runtime.Value{runtime.String{Value: name}})
 	if err != nil {
 		// A VM-side handler surfaces sys.exit as an exit-coded error.
 		var coder interface{ ExitCode() int }

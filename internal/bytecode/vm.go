@@ -47,11 +47,21 @@ type VM struct {
 	// reader/writer of vm.globals exists. Set monotonically: once true,
 	// stays true for the VM's lifetime. The single-goroutine hot path
 	// (numeric_loop) never bridges, so it stays lock-free.
-	bridgeActive      atomic.Bool
+	bridgeActive atomic.Bool
 	// escapedRefs counts vm-capturing closures handed out during a run
 	// (method wrappers, stateful-native bridges, lazy generators). A
 	// wrapper VM is only recycled when none escaped.
 	escapedRefs atomic.Int32
+	// constantsExtra holds wrapper-call values addressed as constants at
+	// indices >= len(chunk.Constants), so the constant pool stays shared.
+	constantsExtra []runtime.Value
+	// wrapperBase identifies the parent instruction slice this wrapper
+	// VM's instructions were derived from (pool-reuse identity check).
+	wrapperBase []Instruction
+	// staticLocal holds call-local static writes when staticsLocalOnly
+	// is set (wrapper calls); otherwise writes go to the shared overlay.
+	staticLocal       map[int64]runtime.Value
+	staticsLocalOnly  bool
 	localsStack       []runtime.VMValue
 	currentFrameBP    int
 	frames            []callFrame
@@ -678,7 +688,11 @@ func (vm *VM) GlobalsSnapshot() []runtime.Value {
 // RestoreGlobals replaces the globals slice with a converted copy of
 // the caller-provided []runtime.Value.
 func (vm *VM) RestoreGlobals(globals []runtime.Value) {
-	vm.globals = make([]runtime.VMValue, len(globals))
+	if cap(vm.globals) >= len(globals) {
+		vm.globals = vm.globals[:len(globals)]
+	} else {
+		vm.globals = make([]runtime.VMValue, len(globals))
+	}
 	for i, v := range globals {
 		vm.globals[i] = runtime.VMValueFromValue(v)
 	}
@@ -753,6 +767,14 @@ func (vm *VM) noteEscape() { vm.escapedRefs.Add(1) }
 // Instructions and re-applies its per-call setup). Chunk-shape caches
 // (nativeCache, nameLowerCache, class/method lookup caches,
 // typeSpecCache) are deliberately kept.
+// ResetForReuse clears per-run state so a pooled VM can host another
+// call against the same chunk.
+func (vm *VM) ResetForReuse() { vm.resetForReuse() }
+
+// Recyclable reports whether this VM handed out no vm-capturing
+// closures during its run (safe to pool).
+func (vm *VM) Recyclable() bool { return vm.escapedRefs.Load() == 0 }
+
 func (vm *VM) resetForReuse() {
 	vm.stack = vm.stack[:0]
 	vm.localsStack = vm.localsStack[:0]
@@ -768,6 +790,9 @@ func (vm *VM) resetForReuse() {
 	}
 	vm.pendingThrow = nil
 	vm.exceptionHandlers = vm.exceptionHandlers[:0]
+	vm.constantsExtra = nil
+	vm.staticLocal = nil
+	vm.staticsLocalOnly = false
 	vm.runEntryIP = 0
 	vm.runInlineExitDepth = -1
 	vm.inDispatchLoop = false
@@ -1002,10 +1027,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpNoop:
 		case OpConstant:
 			index := instruction.Operands[0]
-			if index < 0 || int(index) >= len(vm.chunk.Constants) {
+			if index < 0 || int(index) >= vm.constantsLen() {
 				return vm.runtimeError(*instruction, "constant index out of range")
 			}
-			value := vm.chunk.Constants[index]
+			value := vm.constantValue(index)
 			switch x := value.(type) {
 			case runtime.SmallInt:
 				vm.pushVM(runtime.VMValueSmallInt(x.Value))
@@ -1031,10 +1056,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpAppendStringConst, OpAppendGlobalStringConst:
 			slot := instruction.Operands[0]
 			constIdx := instruction.Operands[1]
-			if constIdx < 0 || int(constIdx) >= len(vm.chunk.Constants) {
+			if constIdx < 0 || int(constIdx) >= vm.constantsLen() {
 				return vm.runtimeError(*instruction, "constant index out of range")
 			}
-			litVal, ok := vm.chunk.Constants[constIdx].(runtime.String)
+			litVal, ok := vm.constantValue(constIdx).(runtime.String)
 			if !ok {
 				return vm.runtimeError(*instruction, "literal must be string")
 			}
@@ -1082,10 +1107,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 		case OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
 			slot := instruction.Operands[0]
 			constIdx := instruction.Operands[1]
-			if constIdx < 0 || int(constIdx) >= len(vm.chunk.Constants) {
+			if constIdx < 0 || int(constIdx) >= vm.constantsLen() {
 				return vm.runtimeError(*instruction, "constant index out of range")
 			}
-			litVal, ok := vm.chunk.Constants[constIdx].(runtime.String)
+			litVal, ok := vm.constantValue(constIdx).(runtime.String)
 			if !ok {
 				return vm.runtimeError(*instruction, "literal must be string")
 			}
@@ -1138,10 +1163,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return vm.fatalError(*instruction, "stack underflow")
 			}
 			constIdx := instruction.Operands[0]
-			if constIdx < 0 || int(constIdx) >= len(vm.chunk.Constants) {
+			if constIdx < 0 || int(constIdx) >= vm.constantsLen() {
 				return vm.runtimeError(*instruction, "constant index out of range")
 			}
-			litVal, ok := vm.chunk.Constants[constIdx].(runtime.String)
+			litVal, ok := vm.constantValue(constIdx).(runtime.String)
 			if !ok {
 				return vm.runtimeError(*instruction, "OpAddStringConst literal must be string")
 			}
@@ -2187,10 +2212,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			return vm.runtimeError(*instruction, "%s", message)
 		case OpMatchError:
-			if len(instruction.Operands) != 1 || int(instruction.Operands[0]) >= len(vm.chunk.Constants) {
+			if len(instruction.Operands) != 1 || int(instruction.Operands[0]) >= vm.constantsLen() {
 				return vm.fatalError(*instruction, "match error instruction has invalid operands")
 			}
-			hint, ok := vm.chunk.Constants[instruction.Operands[0]].(runtime.String)
+			hint, ok := vm.constantValue(instruction.Operands[0]).(runtime.String)
 			if !ok {
 				return vm.runtimeError(*instruction, "match error hint must be string")
 			}
@@ -2224,10 +2249,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			nameIndex := instruction.Operands[0]
 			argc := instruction.Operands[1]
-			if nameIndex < 0 || int(nameIndex) >= len(vm.chunk.Constants) {
+			if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
 				return vm.runtimeError(*instruction, "defer native call name out of range")
 			}
-			nameConst, ok := vm.chunk.Constants[nameIndex].(runtime.String)
+			nameConst, ok := vm.constantValue(nameIndex).(runtime.String)
 			if !ok {
 				return vm.runtimeError(*instruction, "defer native call name must be string")
 			}
@@ -2264,10 +2289,10 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			nameIndex := instruction.Operands[0]
 			argc := instruction.Operands[1]
-			if nameIndex < 0 || int(nameIndex) >= len(vm.chunk.Constants) {
+			if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
 				return vm.runtimeError(*instruction, "defer method call name out of range")
 			}
-			nameConst, ok := vm.chunk.Constants[nameIndex].(runtime.String)
+			nameConst, ok := vm.constantValue(nameIndex).(runtime.String)
 			if !ok {
 				return vm.runtimeError(*instruction, "defer method call name must be string")
 			}
@@ -2311,7 +2336,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if len(instruction.Operands) != 2+argc {
 				return vm.runtimeError(*instruction, "defer named native call argument metadata mismatch")
 			}
-			nameConst, ok := vm.chunk.Constants[nameIndex].(runtime.String)
+			nameConst, ok := vm.constantValue(nameIndex).(runtime.String)
 			if !ok {
 				return vm.runtimeError(*instruction, "defer named native call name must be string")
 			}
@@ -2337,7 +2362,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if len(instruction.Operands) != 2+argc {
 				return vm.runtimeError(*instruction, "defer named method call argument metadata mismatch")
 			}
-			nameConst, ok := vm.chunk.Constants[nameIndex].(runtime.String)
+			nameConst, ok := vm.constantValue(nameIndex).(runtime.String)
 			if !ok {
 				return vm.runtimeError(*instruction, "defer named method call name must be string")
 			}
@@ -2761,11 +2786,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				for j := 0; j < count; j++ {
 					pIdx := instruction.Operands[1+j*2]
 					tIdx := instruction.Operands[2+j*2]
-					if int(pIdx) >= len(vm.chunk.Constants) || int(tIdx) >= len(vm.chunk.Constants) {
+					if int(pIdx) >= vm.constantsLen() || int(tIdx) >= vm.constantsLen() {
 						return vm.runtimeError(*instruction, "OpSetTypeBindings: constant index out of range")
 					}
-					paramName, pOK := vm.chunk.Constants[pIdx].(runtime.String)
-					typeName, tOK := vm.chunk.Constants[tIdx].(runtime.String)
+					paramName, pOK := vm.constantValue(pIdx).(runtime.String)
+					typeName, tOK := vm.constantValue(tIdx).(runtime.String)
 					if !pOK || !tOK {
 						return vm.runtimeError(*instruction, "OpSetTypeBindings: constants must be strings")
 					}
@@ -2796,11 +2821,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			for j := 0; j < count; j++ {
 				pIdx := instruction.Operands[1+j*2]
 				tIdx := instruction.Operands[2+j*2]
-				if int(pIdx) >= len(vm.chunk.Constants) || int(tIdx) >= len(vm.chunk.Constants) {
+				if int(pIdx) >= vm.constantsLen() || int(tIdx) >= vm.constantsLen() {
 					return vm.runtimeError(*instruction, "OpPlantCallTypeBindings: constant index out of range")
 				}
-				paramName, pOK := vm.chunk.Constants[pIdx].(runtime.String)
-				typeName, tOK := vm.chunk.Constants[tIdx].(runtime.String)
+				paramName, pOK := vm.constantValue(pIdx).(runtime.String)
+				typeName, tOK := vm.constantValue(tIdx).(runtime.String)
 				if !pOK || !tOK {
 					return vm.runtimeError(*instruction, "OpPlantCallTypeBindings: constants must be strings")
 				}
@@ -5156,10 +5181,10 @@ func (vm *VM) typeAssert(instruction Instruction) error {
 		return vm.fatalError(instruction, "type assert instruction has invalid operands")
 	}
 	constIdx := instruction.Operands[0]
-	if constIdx < 0 || int(constIdx) >= len(vm.chunk.Constants) {
+	if constIdx < 0 || int(constIdx) >= vm.constantsLen() {
 		return vm.runtimeError(instruction, "type assert: constant index out of range")
 	}
-	typeStr, ok := vm.chunk.Constants[constIdx].(runtime.String)
+	typeStr, ok := vm.constantValue(constIdx).(runtime.String)
 	if !ok {
 		return vm.runtimeError(instruction, "type assert: expected string constant")
 	}
@@ -6232,10 +6257,10 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 				return 0, vm.runtimeError(instruction, "%s missing argument %d", function.Name, i+1)
 			}
 			defaultIndex := function.DefaultConstants[i]
-			if defaultIndex < 0 || int(defaultIndex) >= len(vm.chunk.Constants) {
+			if defaultIndex < 0 || int(defaultIndex) >= vm.constantsLen() {
 				return 0, vm.runtimeError(instruction, "default argument constant out of range")
 			}
-			args[i] = cloneContainerDefault(vm.chunk.Constants[defaultIndex])
+			args[i] = cloneContainerDefault(vm.constantValue(defaultIndex))
 		}
 	}
 	if validateTypes && function.requiresParamValidation {
@@ -6416,7 +6441,7 @@ func (vm *VM) nativeCall(instruction Instruction) error {
 	}
 	nameIndex := instruction.Operands[0]
 	argc := instruction.Operands[1]
-	if nameIndex < 0 || int(nameIndex) >= len(vm.chunk.Constants) {
+	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
 		return vm.runtimeError(instruction, "native call name out of range")
 	}
 	if int(nameIndex) < len(vm.nativeCache) {
@@ -6439,7 +6464,7 @@ func (vm *VM) nativeCall(instruction Instruction) error {
 			return nil
 		}
 	}
-	name, ok := vm.chunk.Constants[nameIndex].(runtime.String)
+	name, ok := vm.constantValue(nameIndex).(runtime.String)
 	if !ok {
 		return vm.runtimeError(instruction, "native call name must be string")
 	}
@@ -6474,10 +6499,10 @@ func (vm *VM) nativeCallSpread(instruction Instruction) error {
 	}
 	nameIndex := instruction.Operands[0]
 	staticArgCount := int(instruction.Operands[1])
-	if nameIndex < 0 || int(nameIndex) >= len(vm.chunk.Constants) {
+	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
 		return vm.runtimeError(instruction, "native call name out of range")
 	}
-	name, ok := vm.chunk.Constants[nameIndex].(runtime.String)
+	name, ok := vm.constantValue(nameIndex).(runtime.String)
 	if !ok {
 		return vm.runtimeError(instruction, "native call name must be string")
 	}
@@ -6514,10 +6539,10 @@ func (vm *VM) nativeCallNamed(instruction Instruction) error {
 	if argc < 0 || len(instruction.Operands) != int(argc)+2 {
 		return vm.runtimeError(instruction, "named native call argument metadata mismatch")
 	}
-	if nameIndex < 0 || int(nameIndex) >= len(vm.chunk.Constants) {
+	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
 		return vm.runtimeError(instruction, "native call name out of range")
 	}
-	name, ok := vm.chunk.Constants[nameIndex].(runtime.String)
+	name, ok := vm.constantValue(nameIndex).(runtime.String)
 	if !ok {
 		return vm.runtimeError(instruction, "native call name must be string")
 	}
@@ -6831,13 +6856,13 @@ func (vm *VM) initializeFields(instruction Instruction, instance *runtime.Instan
 		value := runtime.Value(runtime.Null{})
 		if i < len(classInfo.FieldDefaults) && classInfo.FieldDefaults[i] >= 0 {
 			defaultIndex := classInfo.FieldDefaults[i]
-			if defaultIndex < 0 || int(defaultIndex) >= len(vm.chunk.Constants) {
+			if defaultIndex < 0 || int(defaultIndex) >= vm.constantsLen() {
 				return vm.runtimeError(instruction, "field default constant out of range")
 			}
 			/* Clone container defaults so each new instance gets a
 			 * fresh empty dict/list/set. Sharing across instances
 			 * is the Python-style mutable-default trap. */
-			value = cloneContainerDefault(vm.chunk.Constants[defaultIndex])
+			value = cloneContainerDefault(vm.constantValue(defaultIndex))
 		}
 		instance.Fields[field] = value
 	}
@@ -7217,10 +7242,10 @@ func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
 	classIndex := instruction.Operands[0]
 	nameIndex := instruction.Operands[1]
 	argc := int(instruction.Operands[2])
-	if nameIndex < 0 || int(nameIndex) >= len(vm.chunk.Constants) {
+	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
 		return 0, vm.runtimeError(instruction, "method name constant out of range")
 	}
-	name, ok := vm.chunk.Constants[nameIndex].(runtime.String)
+	name, ok := vm.constantValue(nameIndex).(runtime.String)
 	if !ok {
 		return 0, vm.runtimeError(instruction, "method name constant must be string")
 	}
@@ -7365,10 +7390,10 @@ func (vm *VM) getStaticValue(instruction Instruction, ip int) (int, error) {
 		}
 		return 0, vm.runtimeError(instruction, "unknown static member %s.%s", vm.chunk.Classes[classIndex].Name, name)
 	}
-	if constantIndex < 0 || int(constantIndex) >= len(vm.chunk.Constants) {
+	if constantIndex < 0 || int(constantIndex) >= vm.constantsLen() {
 		return 0, vm.runtimeError(instruction, "static value constant out of range")
 	}
-	vm.push(vm.chunk.Constants[constantIndex])
+	vm.push(vm.staticValueAt(constantIndex))
 	return ip, nil
 }
 
@@ -7389,17 +7414,12 @@ func (vm *VM) setStaticValue(instruction Instruction, ip int) (int, error) {
 	if err != nil {
 		return 0, vm.runtimeError(instruction, "%s", err.Error())
 	}
-	// Direct assignment to a declared static let / const member. The
-	// chunk stores StaticValues as constant pool indices that the
-	// runtime overwrites in place; we hijack the constant pool slot so
-	// subsequent reads see the new value. This mirrors the evaluator's
-	// behaviour for `Class.name = value`. The assignment expression
-	// itself evaluates to the assigned value, so re-push it for the
-	// enclosing OpPop (or further use).
+	// Statics live in an overlay keyed by their declared constant-pool
+	// index; the pool itself stays immutable so chunks can share it.
 	for ci := classIndex; ci >= 0; {
 		classInfo := vm.chunk.Classes[ci]
-		if constIdx, present := classInfo.StaticValues[name]; present && constIdx >= 0 && int(constIdx) < len(vm.chunk.Constants) {
-			vm.chunk.Constants[constIdx] = value
+		if constIdx, present := classInfo.StaticValues[name]; present && constIdx >= 0 && int(constIdx) < vm.constantsLen() {
+			vm.writeStaticValue(constIdx, value)
 			vm.push(value)
 			return ip, nil
 		}
@@ -7585,10 +7605,10 @@ func (vm *VM) orderRuntimeArguments(instruction Instruction, function FunctionIn
 			return nil, vm.runtimeError(instruction, "%s missing argument before parameter %s", function.Name, function.ParamNames[paramIndex])
 		}
 		defaultIndex := function.DefaultConstants[paramIndex]
-		if defaultIndex < 0 || int(defaultIndex) >= len(vm.chunk.Constants) {
+		if defaultIndex < 0 || int(defaultIndex) >= vm.constantsLen() {
 			return nil, vm.runtimeError(instruction, "default argument constant out of range")
 		}
-		ordered[i] = vm.chunk.Constants[defaultIndex]
+		ordered[i] = vm.constantValue(defaultIndex)
 		assigned[i] = true
 	}
 	for len(ordered) > 0 {
@@ -7597,7 +7617,7 @@ func (vm *VM) orderRuntimeArguments(instruction Instruction, function FunctionIn
 			break
 		}
 		defaultIndex := function.DefaultConstants[paramIndex]
-		if assigned[len(ordered)-1] && defaultIndex >= 0 && int(defaultIndex) < len(vm.chunk.Constants) && valuesEqual(ordered[len(ordered)-1], vm.chunk.Constants[defaultIndex]) {
+		if assigned[len(ordered)-1] && defaultIndex >= 0 && int(defaultIndex) < vm.constantsLen() && valuesEqual(ordered[len(ordered)-1], vm.constantValue(defaultIndex)) {
 			ordered = ordered[:len(ordered)-1]
 			continue
 		}
@@ -9015,6 +9035,10 @@ func serverHandlerArg(module, function string, argIndex int) bool {
 		return (function == "serve" || function == "listen") && argIndex == 1
 	case "net":
 		return function == "serve" && argIndex == 2
+	case "sys":
+		// Signal handlers fire on a signal goroutine while the host VM
+		// may still be running; they share state through `store` only.
+		return function == "onSignal" && argIndex == 1
 	}
 	return false
 }
@@ -11394,24 +11418,49 @@ func (vm *VM) runWrapper(args []runtime.Value, wrapper []Instruction) (runtime.V
 
 func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction, rawIndex int64, isolated bool) (runtime.Value, error) {
 	chunk := vm.chunk
-	shift := len(wrapper)
-	// Constants stay per call: they carry the call arguments and the
-	// parent's CURRENT pool (static assignments mutate slots at runtime).
-	chunk.Constants = append(append(make([]runtime.Value, 0, len(args)+len(vm.chunk.Constants)), args...), vm.chunk.Constants...)
-	var tpl *wrapperTemplate
-	if meta := vm.chunk.sharedMeta; meta != nil {
-		// Shared shifted template: functions/classes/instruction tails
-		// are pure functions of (chunk, wrapper length, arg count), built
-		// once and shared read-only across calls.
-		tpl = meta.wrapperTemplate(vm.chunk, shift, len(args))
-		instructions := make([]Instruction, 0, shift+len(tpl.tail))
-		instructions = append(instructions, wrapper...)
-		instructions = append(instructions, tpl.tail...)
-		chunk.Instructions = instructions
-		chunk.Functions = tpl.functions
-		chunk.Classes = tpl.classes
-		chunk.sharedMeta = tpl.meta
+	meta := vm.chunk.sharedMeta
+	var callVM *VM
+	var wrapperPool *sync.Pool
+	if meta != nil {
+		// Shared layout: the callVM reuses the parent's constants,
+		// functions, classes, and meta untouched. Call arguments live in
+		// the constantsExtra tail (indices >= len(Constants)) and the
+		// wrapper runs appended after the parent code, so nothing is
+		// shifted or copied per call.
+		base := vm.chunk.Instructions
+		translated := make([]Instruction, len(wrapper))
+		for i, instruction := range wrapper {
+			copied := instruction
+			copied.Operands = append([]int64(nil), instruction.Operands...)
+			shiftInstructionOperands(&copied, 0, len(vm.chunk.Constants))
+			translated[i] = copied
+		}
+		pool := meta.poolFor(wrapperShape{baseLen: len(base), wrapperLen: len(translated)})
+		wrapperPool = pool
+		if pooled, _ := pool.Get().(*VM); pooled != nil {
+			pooled.resetForReuse()
+			if sameInstructionBase(pooled.wrapperBase, base) {
+				copy(pooled.chunk.Instructions[len(base):], translated)
+			} else {
+				pooled.chunk.Instructions = appendWrapper(base, translated)
+				pooled.wrapperBase = base
+			}
+			pooled.stdout = vm.stdout
+			pooled.moduleLoader = vm.moduleLoader
+			callVM = pooled
+		} else {
+			chunk.Instructions = appendWrapper(base, translated)
+			callVM = NewVMWithModuleLoader(chunk, vm.stdout, vm.moduleLoader)
+			callVM.wrapperBase = base
+		}
+		callVM.constantsExtra = args
+		// Wrapper-call static writes stay call-local (matching the
+		// per-call constants copy this path used to take).
+		callVM.staticsLocalOnly = true
+		callVM.runEntryIP = len(base)
 	} else {
+		shift := len(wrapper)
+		chunk.Constants = append(append(make([]runtime.Value, 0, len(args)+len(vm.chunk.Constants)), args...), vm.chunk.Constants...)
 		chunk.Instructions = append([]Instruction(nil), wrapper...)
 		chunk.Functions = append([]FunctionInfo(nil), vm.chunk.Functions...)
 		for i := range chunk.Functions {
@@ -11441,17 +11490,6 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 			copied.Operands = append([]int64(nil), instruction.Operands...)
 			shiftInstructionOperands(&copied, shift, len(args))
 			chunk.Instructions = append(chunk.Instructions, copied)
-		}
-	}
-	var callVM *VM
-	if tpl != nil {
-		if pooled, _ := tpl.vmPool.Get().(*VM); pooled != nil {
-			pooled.resetForReuse()
-			pooled.chunk.Constants = chunk.Constants
-			pooled.chunk.Instructions = chunk.Instructions
-			pooled.stdout = vm.stdout
-			pooled.moduleLoader = vm.moduleLoader
-			callVM = pooled
 		}
 	}
 	if callVM == nil {
@@ -11541,8 +11579,8 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 	if len(callVM.stack) > 0 {
 		result, popErr = callVM.pop()
 	}
-	if tpl != nil && popErr == nil && callVM.escapedRefs.Load() == 0 {
-		tpl.vmPool.Put(callVM)
+	if wrapperPool != nil && popErr == nil && callVM.escapedRefs.Load() == 0 {
+		wrapperPool.Put(callVM)
 	}
 	return result, popErr
 }
@@ -12813,10 +12851,10 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	}
 	nameIndex := instruction.Operands[0]
 	argc := int(instruction.Operands[1])
-	if nameIndex < 0 || int(nameIndex) >= len(vm.chunk.Constants) {
+	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
 		return 0, vm.runtimeError(instruction, "method name constant out of range")
 	}
-	nameValue, ok := vm.chunk.Constants[nameIndex].(runtime.String)
+	nameValue, ok := vm.constantValue(nameIndex).(runtime.String)
 	if !ok {
 		return 0, vm.runtimeError(instruction, "method name constant must be string")
 	}
@@ -13305,10 +13343,10 @@ func (vm *VM) methodCallNamed(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 2+argc {
 		return 0, vm.runtimeError(instruction, "named method call argument metadata mismatch")
 	}
-	if nameIndex < 0 || int(nameIndex) >= len(vm.chunk.Constants) {
+	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
 		return 0, vm.runtimeError(instruction, "method name constant out of range")
 	}
-	nameValue, ok := vm.chunk.Constants[nameIndex].(runtime.String)
+	nameValue, ok := vm.constantValue(nameIndex).(runtime.String)
 	if !ok {
 		return 0, vm.runtimeError(instruction, "method name constant must be string")
 	}
@@ -13503,8 +13541,73 @@ func (vm *VM) classInfo(name string) (ClassInfo, bool) {
 // lowerConstantName returns the lowercased form of a String constant
 // at the given index, memoised in nameLowerCache so the lookup amortises
 // to a slice read on the hot method-dispatch path.
+func (vm *VM) constantsLen() int {
+	return len(vm.chunk.Constants) + len(vm.constantsExtra)
+}
+
+func (vm *VM) constantValue(index int64) runtime.Value {
+	if base := vm.chunk.Constants; int(index) < len(base) {
+		return base[index]
+	}
+	return vm.constantsExtra[int(index)-len(vm.chunk.Constants)]
+}
+
+// staticValueAt resolves a static member: call-local writes first, then
+// the chunk's shared overlay, then the declared constant.
+func (vm *VM) staticValueAt(constIdx int64) runtime.Value {
+	if vm.staticLocal != nil {
+		if v, ok := vm.staticLocal[constIdx]; ok {
+			return v
+		}
+	}
+	if meta := vm.chunk.sharedMeta; meta != nil {
+		meta.staticMu.RLock()
+		v, ok := meta.staticOverlay[constIdx]
+		meta.staticMu.RUnlock()
+		if ok {
+			return v
+		}
+	}
+	return vm.constantValue(constIdx)
+}
+
+func (vm *VM) writeStaticValue(constIdx int64, value runtime.Value) {
+	meta := vm.chunk.sharedMeta
+	if meta == nil {
+		vm.chunk.Constants[constIdx] = value
+		return
+	}
+	if vm.staticsLocalOnly {
+		if vm.staticLocal == nil {
+			vm.staticLocal = map[int64]runtime.Value{}
+		}
+		vm.staticLocal[constIdx] = value
+		return
+	}
+	meta.staticMu.Lock()
+	if meta.staticOverlay == nil {
+		meta.staticOverlay = map[int64]runtime.Value{}
+	}
+	meta.staticOverlay[constIdx] = value
+	meta.staticMu.Unlock()
+}
+
+func sameInstructionBase(a, b []Instruction) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
+}
+
+func appendWrapper(base, wrapper []Instruction) []Instruction {
+	merged := make([]Instruction, 0, len(base)+len(wrapper))
+	merged = append(merged, base...)
+	return append(merged, wrapper...)
+}
+
 func (vm *VM) lowerConstantName(index int64, original string) string {
 	if index < 0 {
+		return strings.ToLower(original)
+	}
+	if int(index) >= len(vm.chunk.Constants) {
+		// Extras-tail constant (wrapper call argument): not cacheable.
 		return strings.ToLower(original)
 	}
 	if int(index) < len(vm.nameLowerCache) {
@@ -16833,10 +16936,10 @@ func (vm *VM) constantString(instruction Instruction, message string) (string, e
 }
 
 func (vm *VM) constantStringAt(instruction Instruction, index int64, message string) (string, error) {
-	if index < 0 || int(index) >= len(vm.chunk.Constants) {
+	if index < 0 || int(index) >= vm.constantsLen() {
 		return "", vm.runtimeError(instruction, "constant index out of range")
 	}
-	stringValue, ok := vm.chunk.Constants[index].(runtime.String)
+	stringValue, ok := vm.constantValue(index).(runtime.String)
 	if !ok {
 		return "", vm.runtimeError(instruction, "%s", message)
 	}

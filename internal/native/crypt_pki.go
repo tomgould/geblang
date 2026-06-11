@@ -544,7 +544,7 @@ func registerCryptPKI(r *Registry) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("crypt.jwtSignRS256 expects payload and privatePem")
 		}
-		return jwtSignWithAlg(args[0], args[1], "RS256", nil, "crypt.jwtSignRS256")
+		return jwtSignWithAlg(args[0], args[1], "RS256", nil, "", "crypt.jwtSignRS256")
 	})
 	r.Register("crypt", "jwtVerifyRS256", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
@@ -560,7 +560,7 @@ func registerCryptPKI(r *Registry) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("crypt.jwtSignES256 expects payload and privatePem")
 		}
-		return jwtSignWithAlg(args[0], args[1], "ES256", nil, "crypt.jwtSignES256")
+		return jwtSignWithAlg(args[0], args[1], "ES256", nil, "", "crypt.jwtSignES256")
 	})
 	r.Register("crypt", "jwtVerifyES256", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
@@ -812,7 +812,7 @@ func sha256Sum(input string) []byte {
 	return h.Sum(nil)
 }
 
-func jwtBuildSigInput(payloadVal runtime.Value, alg string) (string, error) {
+func jwtBuildSigInput(payloadVal runtime.Value, alg string, kid string) (string, error) {
 	payloadJSON, err := ValueToJSON(payloadVal)
 	if err != nil {
 		return "", fmt.Errorf("payload: %w", err)
@@ -822,6 +822,9 @@ func jwtBuildSigInput(payloadVal runtime.Value, alg string) (string, error) {
 		return "", fmt.Errorf("payload encoding: %w", err)
 	}
 	headerJSON := fmt.Sprintf(`{"alg":%q,"typ":"JWT"}`, alg)
+	if kid != "" {
+		headerJSON = fmt.Sprintf(`{"alg":%q,"kid":%q,"typ":"JWT"}`, alg, kid)
+	}
 	header := base64.RawURLEncoding.EncodeToString([]byte(headerJSON))
 	payload := base64.RawURLEncoding.EncodeToString(payloadBytes)
 	return header + "." + payload, nil
@@ -903,7 +906,7 @@ func jwtKeyPEM(key runtime.Value, label string) (string, error) {
 // nil means "default policy" (everything except "none"). Pass
 // []string{"none"} (or include "none" in your list) to explicitly
 // produce an unsigned token.
-func jwtSignWithAlg(payloadVal runtime.Value, key runtime.Value, alg string, allowedAlgs []string, label string) (runtime.Value, error) {
+func jwtSignWithAlg(payloadVal runtime.Value, key runtime.Value, alg string, allowedAlgs []string, kid string, label string) (runtime.Value, error) {
 	if !jwtAlgIsAllowed(alg, allowedAlgs) {
 		if alg == "none" {
 			return nil, fmt.Errorf("%s: alg \"none\" rejected by default; pass opts.allowedAlgs containing \"none\" to opt in", label)
@@ -914,7 +917,7 @@ func jwtSignWithAlg(payloadVal runtime.Value, key runtime.Value, alg string, all
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", label, err)
 	}
-	sigInput, err := jwtBuildSigInput(payloadVal, alg)
+	sigInput, err := jwtBuildSigInput(payloadVal, alg, kid)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", label, err)
 	}
@@ -995,6 +998,32 @@ func jwtSignWithAlg(payloadVal runtime.Value, key runtime.Value, alg string, all
 	return runtime.String{Value: sigInput + "." + base64.RawURLEncoding.EncodeToString(sig)}, nil
 }
 
+// jwtDefaultAllowedAlgs pins the acceptable algorithm family to the
+// key type when the caller gave no opts.algs: PEM keys never verify
+// HMAC tokens (closes the HS-with-public-PEM alg-confusion forgery),
+// raw secrets verify only the HMAC family.
+func jwtDefaultAllowedAlgs(key runtime.Value) []string {
+	s, ok := key.(runtime.String)
+	if !ok || !strings.Contains(s.Value, "-----BEGIN") {
+		return []string{"HS256", "HS384", "HS512"}
+	}
+	pub, err := parsePublicKeyPEM(s.Value, "jwt")
+	if err != nil {
+		// Unparseable PEM: keep the loud per-family parse errors but
+		// never fall back to HMAC.
+		return []string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "EdDSA"}
+	}
+	switch pub.(type) {
+	case *rsa.PublicKey:
+		return []string{"RS256", "RS384", "RS512"}
+	case *ecdsa.PublicKey:
+		return []string{"ES256", "ES384", "ES512"}
+	case ed25519.PublicKey:
+		return []string{"EdDSA"}
+	}
+	return []string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "EdDSA"}
+}
+
 // jwtVerifyWithAlg reads the supplied token's header to pick a
 // verifier. allowedAlgs (when non-empty) gates which algorithms the
 // token header may declare - this is the standard defence against
@@ -1011,9 +1040,27 @@ func jwtVerifyWithAlg(token string, key runtime.Value, allowedAlgs []string, lab
 	}
 	var header struct {
 		Alg string `json:"alg"`
+		Kid string `json:"kid"`
 	}
 	if err := json.Unmarshal(headerBytes, &header); err != nil {
 		return runtime.Null{}, nil
+	}
+	// A dict key is a JWK or JWKS document: resolve the verification
+	// key (by kid when the token names one) and pin to its algorithm.
+	var jwkKey *jwkVerifyKey
+	if jwksDict, ok := key.(runtime.Dict); ok {
+		resolved, found := jwkResolve(jwksDict, header.Kid)
+		if !found {
+			return runtime.Null{}, nil
+		}
+		jwkKey = resolved
+	}
+	if allowedAlgs == nil {
+		if jwkKey != nil {
+			allowedAlgs = jwkAllowedAlgs(jwkKey)
+		} else {
+			allowedAlgs = jwtDefaultAllowedAlgs(key)
+		}
 	}
 	if !jwtAlgIsAllowed(header.Alg, allowedAlgs) {
 		// Disallowed alg (including "none" by default): silent
@@ -1039,9 +1086,18 @@ func jwtVerifyWithAlg(token string, key runtime.Value, allowedAlgs []string, lab
 	sigInput := parts[0] + "." + parts[1]
 	switch {
 	case strings.HasPrefix(header.Alg, "HS"):
-		secret, err := jwtKeyBytes(key, label)
-		if err != nil {
-			return nil, err
+		var secret []byte
+		if jwkKey != nil {
+			if jwkKey.secret == nil {
+				return runtime.Null{}, nil
+			}
+			secret = jwkKey.secret
+		} else {
+			s, err := jwtKeyBytes(key, label)
+			if err != nil {
+				return nil, err
+			}
+			secret = s
 		}
 		mac := hmac.New(newHash, secret)
 		mac.Write([]byte(sigInput))
@@ -1049,11 +1105,7 @@ func jwtVerifyWithAlg(token string, key runtime.Value, allowedAlgs []string, lab
 			return runtime.Null{}, nil
 		}
 	case strings.HasPrefix(header.Alg, "RS"):
-		pem, err := jwtKeyPEM(key, label)
-		if err != nil {
-			return nil, err
-		}
-		pub, err := parsePublicKeyPEM(pem, label)
+		pub, err := jwtAsymmetricKey(key, jwkKey, label)
 		if err != nil {
 			return nil, err
 		}
@@ -1070,11 +1122,7 @@ func jwtVerifyWithAlg(token string, key runtime.Value, allowedAlgs []string, lab
 		if len(sigBytes) == 0 || len(sigBytes)%2 != 0 {
 			return runtime.Null{}, nil
 		}
-		pem, err := jwtKeyPEM(key, label)
-		if err != nil {
-			return nil, err
-		}
-		pub, err := parsePublicKeyPEM(pem, label)
+		pub, err := jwtAsymmetricKey(key, jwkKey, label)
 		if err != nil {
 			return nil, err
 		}
@@ -1094,11 +1142,7 @@ func jwtVerifyWithAlg(token string, key runtime.Value, allowedAlgs []string, lab
 			return runtime.Null{}, nil
 		}
 	case header.Alg == "EdDSA":
-		pem, err := jwtKeyPEM(key, label)
-		if err != nil {
-			return nil, err
-		}
-		pub, err := parsePublicKeyPEM(pem, label)
+		pub, err := jwtAsymmetricKey(key, jwkKey, label)
 		if err != nil {
 			return nil, err
 		}
@@ -1111,6 +1155,22 @@ func jwtVerifyWithAlg(token string, key runtime.Value, allowedAlgs []string, lab
 		}
 	}
 	return jwtDecodePayload(parts[1])
+}
+
+// jwtAsymmetricKey yields the public key for the RS/ES/EdDSA verify
+// branches: the resolved JWK when the caller passed one, else the PEM.
+func jwtAsymmetricKey(key runtime.Value, jwkKey *jwkVerifyKey, label string) (interface{}, error) {
+	if jwkKey != nil {
+		if jwkKey.pub == nil {
+			return nil, fmt.Errorf("%s JWK is not an asymmetric key", label)
+		}
+		return jwkKey.pub, nil
+	}
+	pemStr, err := jwtKeyPEM(key, label)
+	if err != nil {
+		return nil, err
+	}
+	return parsePublicKeyPEM(pemStr, label)
 }
 
 func jwtCheckECCurveForAlg(alg string, curve elliptic.Curve, label string) error {

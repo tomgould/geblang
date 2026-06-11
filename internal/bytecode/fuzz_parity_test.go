@@ -223,12 +223,12 @@ func (g *fuzzGen) classBlock() (decls string, calls []string) {
 	inst := "let inst = " + c + "(" + g.intLit() + ");"
 	calls = append(calls,
 		inst,
-		"io.println(inst.value());",     // override dispatch
-		"io.println(inst.labeled());",   // base method calling overridden this.value()
+		"io.println(inst.value());",   // override dispatch
+		"io.println(inst.labeled());", // base method calling overridden this.value()
 		"io.println(inst.name());",
-		"io.println(inst.n);",           // field read (inherited)
+		"io.println(inst.n);", // field read (inherited)
 		"io.println(inst instanceof Base);",
-		"let bx = Box(" + g.intLit() + "); io.println(bx.get());",
+		"let bx = Box("+g.intLit()+"); io.println(bx.get());",
 	)
 	return d.String(), calls
 }

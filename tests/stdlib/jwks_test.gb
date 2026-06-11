@@ -1,0 +1,77 @@
+/**
+ * @title JWK / JWKS production and verification
+ * @summary `crypt.jwk` builds RFC 7517 public JWKs (RFC 7638
+ * thumbprint kids), `crypt.jwks` assembles the key-set document, and
+ * `crypt.jwtVerify` accepts a JWKS, selecting the key by the token's
+ * kid and pinning the algorithm to the matched key.
+ */
+import test;
+import crypt;
+
+class JwksTest extends test.Test {
+    @test
+    func jwkShapeForEachKeyType(): void {
+        let rsa = crypt.jwk(crypt.publicKey(crypt.generateRsaKey(2048)));
+        this.assertEquals("RSA", rsa["kty"]);
+        this.assertEquals("RS256", rsa["alg"]);
+        this.assertEquals("sig", rsa["use"]);
+        this.assertTrue((rsa["n"] as string).length() > 0);
+        this.assertTrue((rsa["e"] as string).length() > 0);
+        this.assertTrue((rsa["kid"] as string).length() > 20);
+
+        let ec = crypt.jwk(crypt.publicKey(crypt.generateEcKey("P-384")));
+        this.assertEquals("EC", ec["kty"]);
+        this.assertEquals("P-384", ec["crv"]);
+        this.assertEquals("ES384", ec["alg"]);
+
+        let ed = crypt.jwk(crypt.publicKey(crypt.generateEd25519Key()));
+        this.assertEquals("OKP", ed["kty"]);
+        this.assertEquals("Ed25519", ed["crv"]);
+        this.assertEquals("EdDSA", ed["alg"]);
+    }
+
+    @test
+    func privatePemContributesItsPublicHalf(): void {
+        let priv = crypt.generateRsaKey(2048);
+        let fromPriv = crypt.jwk(priv);
+        let fromPub = crypt.jwk(crypt.publicKey(priv));
+        this.assertEquals(fromPub["n"] as string, fromPriv["n"] as string);
+        this.assertEquals(fromPub["kid"] as string, fromPriv["kid"] as string);
+    }
+
+    @test
+    func jwksSelectsByKidAndPinsAlg(): void {
+        let privA = crypt.generateRsaKey(2048);
+        let privB = crypt.generateEcKey("P-256");
+        let set = crypt.jwks([
+            {"pem": crypt.publicKey(privA), "kid": "a"},
+            {"pem": crypt.publicKey(privB), "kid": "b"},
+        ]);
+        this.assertEquals(2, (set["keys"] as list<any>).length());
+
+        let tokenA = crypt.jwtSign({"sub": "alice"}, privA, {"alg": "RS256", "kid": "a"});
+        let claims = crypt.jwtVerify(tokenA, set);
+        this.assertNotNull(claims);
+        this.assertEquals("alice", claims["sub"]);
+
+        /* Unknown kid: no key matches, verification fails. */
+        let unknown = crypt.jwtSign({"sub": "eve"}, privA, {"alg": "RS256", "kid": "zz"});
+        this.assertNull(crypt.jwtVerify(unknown, set));
+
+        /* An HS token cannot verify against an asymmetric JWKS even
+         * when it names a valid kid (alg pinned to the matched key). */
+        let forged = crypt.jwtSign({"sub": "eve"}, "shh", {
+            "alg": "HS256", "kid": "a", "allowedAlgs": ["HS256"]
+        });
+        this.assertNull(crypt.jwtVerify(forged, set));
+    }
+
+    @test
+    func singleJwkWithoutKidVerifies(): void {
+        let priv = crypt.generateEcKey("P-256");
+        let jwk = crypt.jwk(crypt.publicKey(priv));
+        let token = crypt.jwtSign({"u": "x"}, priv, {"alg": "ES256"});
+        let claims = crypt.jwtVerify(token, jwk);
+        this.assertEquals("x", claims["u"]);
+    }
+}

@@ -149,7 +149,7 @@ func desugarDictLiteralWithSpread(d *ast.DictLiteral) ast.Expression {
 				Callee: &ast.SelectorExpression{Token: tok, Object: entry.Value, Name: &ast.Identifier{Token: tok, Value: "items"}},
 			}
 			setCall := &ast.CallExpression{
-				Token: tok,
+				Token:  tok,
 				Callee: &ast.SelectorExpression{Token: tok, Object: accIdent, Name: &ast.Identifier{Token: tok, Value: "set"}},
 				Arguments: []ast.CallArgument{
 					{Value: &ast.Identifier{Token: tok, Value: "__compKey"}},
@@ -165,7 +165,7 @@ func desugarDictLiteralWithSpread(d *ast.DictLiteral) ast.Expression {
 			stmts = append(stmts, forStmt)
 		} else {
 			setCall := &ast.CallExpression{
-				Token: tok,
+				Token:  tok,
 				Callee: &ast.SelectorExpression{Token: tok, Object: accIdent, Name: &ast.Identifier{Token: tok, Value: "set"}},
 				Arguments: []ast.CallArgument{
 					{Value: entry.Key},
@@ -204,7 +204,7 @@ func desugarSetLiteralWithSpread(s *ast.SetLiteral) ast.Expression {
 				Type:  &ast.TypeRef{Token: tok, Name: "list"},
 			}
 			appendCall := &ast.CallExpression{
-				Token: tok,
+				Token:  tok,
 				Callee: &ast.SelectorExpression{Token: tok, Object: accIdent, Name: &ast.Identifier{Token: tok, Value: "append"}},
 				Arguments: []ast.CallArgument{
 					{Value: &ast.Identifier{Token: tok, Value: "__compVal"}},
@@ -219,7 +219,7 @@ func desugarSetLiteralWithSpread(s *ast.SetLiteral) ast.Expression {
 			stmts = append(stmts, forStmt)
 		} else {
 			appendCall := &ast.CallExpression{
-				Token: tok,
+				Token:  tok,
 				Callee: &ast.SelectorExpression{Token: tok, Object: accIdent, Name: &ast.Identifier{Token: tok, Value: "append"}},
 				Arguments: []ast.CallArgument{
 					{Value: element},

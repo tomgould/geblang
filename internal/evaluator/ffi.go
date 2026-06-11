@@ -13,13 +13,13 @@ import (
 // ffiState owns the per-evaluator FFI runtime: the active capability
 // policy plus the registry of opened library handles.
 type ffiState struct {
-	mu          sync.Mutex
-	policy      *ffi.Policy
-	libs        map[int64]*ffi.Library
-	nextID      int64
-	structs     map[int64]*ffi.StructLayout
-	nextStruct  int64
-	callbacks   []*ffiCallback
+	mu         sync.Mutex
+	policy     *ffi.Policy
+	libs       map[int64]*ffi.Library
+	nextID     int64
+	structs    map[int64]*ffi.StructLayout
+	nextStruct int64
+	callbacks  []*ffiCallback
 }
 
 func newFFIState() *ffiState {

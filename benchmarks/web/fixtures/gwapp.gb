@@ -1,0 +1,15 @@
+import gebweb;
+
+class BenchController {
+    @Get("/json/{id}")
+    func j(@PathParam("id") int id): dict<string, any> {
+        return {"ok": true, "n": id, "items": [1, 2, 3]};
+    }
+
+    @Get("/plain")
+    func p(): string {
+        return "ok";
+    }
+}
+
+gebweb.serve(gebweb.app([BenchController]), ":8201");

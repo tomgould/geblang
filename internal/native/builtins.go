@@ -107,6 +107,7 @@ func registerAllBuiltins(r *Registry) {
 	registerYAML(r)
 	registerCrypt(r)
 	registerCryptPKI(r)
+	registerCryptJWK(r)
 	registerDatetime(r)
 	registerSecrets(r)
 	registerRandom(r)
@@ -1163,6 +1164,7 @@ func registerCrypt(r *Registry) {
 			return nil, fmt.Errorf("crypt.jwtSign expects payload, key, and optional opts")
 		}
 		alg := "HS256"
+		kid := ""
 		var allowed []string
 		if len(args) == 3 {
 			a, err := jwtOptsAlg(args[2], "crypt.jwtSign")
@@ -1177,8 +1179,11 @@ func registerCrypt(r *Registry) {
 				return nil, err
 			}
 			allowed = al
+			if opts, ok := args[2].(runtime.Dict); ok {
+				kid = dictString(opts, "kid")
+			}
 		}
-		return jwtSignWithAlg(args[0], args[1], alg, allowed, "crypt.jwtSign")
+		return jwtSignWithAlg(args[0], args[1], alg, allowed, kid, "crypt.jwtSign")
 	})
 	r.Register("crypt", "jwtVerify", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) < 2 || len(args) > 3 {

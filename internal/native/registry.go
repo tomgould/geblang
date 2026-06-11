@@ -206,7 +206,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"bcryptHash": {}, "bcryptVerify": {}, "argon2idHash": {}, "argon2idVerify": {},
 		"passwordHash": {}, "passwordVerify": {},
 		"base64Encode": {}, "base64Decode": {},
-		"jwtSign": {}, "jwtVerify": {}, "jwtDecode": {},
+		"jwtSign": {}, "jwtVerify": {}, "jwtDecode": {}, "jwk": {}, "jwks": {},
 		"generateRsaKey": {}, "generateEcKey": {}, "generateEd25519Key": {},
 		"publicKey": {}, "generateSelfSignedCert": {}, "generateCsr": {}, "parseCert": {}, "signCertificate": {}, "pkcs12Decode": {},
 		"jweEncrypt": {}, "jweDecrypt": {},

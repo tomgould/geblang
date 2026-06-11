@@ -569,6 +569,33 @@ not itself a trusted proxy), `scheme()`/`isSecure()` from
 `X-Forwarded-Proto`, and `host()` from `X-Forwarded-Host`. From an
 untrusted peer the socket values win, so a client cannot spoof its IP.
 
+#### Request body limits
+
+`maxBodyBytes` caps the request body the server will read. A request
+whose body exceeds the cap (by `Content-Length` or while streaming) is
+answered with `413 Request Entity Too Large` before the handler runs.
+Absent (or `0`) means unlimited:
+
+```gb
+http.listen(":8080", handler, { "maxBodyBytes": 10 * 1024 * 1024 });
+```
+
+#### Graceful shutdown
+
+`http.shutdown(server, timeoutMs = 5000)` stops accepting new
+connections and lets in-flight requests finish within the deadline.
+`http.wait(server)` blocks until the server stops serving, however
+that happens - so a signal handler can drain a server the main
+goroutine is waiting on:
+
+```gb
+let server = http.listen(":8080", handler);
+sys.onSignal("SIGTERM", func(string sig): void {
+    http.shutdown(server, 10000);
+});
+http.wait(server);   # returns once the drain completes
+```
+
 #### Server error logging
 
 Connection-level failures (TLS handshake errors, malformed requests) happen

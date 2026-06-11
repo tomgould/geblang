@@ -118,4 +118,3 @@ func TestMethodBodyTypeErrorCrossModuleQualified(t *testing.T) {
 		}
 	}
 }
-

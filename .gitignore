@@ -19,3 +19,4 @@ __pycache__/
 # Geblang scratch outputs used by examples/tests.
 tmp/
 .geblang-cache/
+benchmarks/web/loadgen-bin

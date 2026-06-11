@@ -15648,9 +15648,13 @@ func (e *Evaluator) httpServe(call *ast.CallExpression, args []runtime.Value) (r
 	if err != nil {
 		return nil, err
 	}
+	maxBody, err := parseMaxBodyBytes(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	server := &http.Server{
 		Addr:     addr.Value,
-		Handler:  e.httpHandler(handler, pool, tp),
+		Handler:  e.httpHandler(handler, pool, tp, maxBody),
 		ErrorLog: errLog,
 	}
 	if tlsCfg != nil {
@@ -15698,11 +15702,15 @@ func (e *Evaluator) httpListen(call *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
+	maxBody, err := parseMaxBodyBytes(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	listener, err := net.Listen("tcp", addr.Value)
 	if err != nil {
 		return nil, err
 	}
-	server := &http.Server{Handler: e.httpHandler(handler, pool, tp), ErrorLog: errLog}
+	server := &http.Server{Handler: e.httpHandler(handler, pool, tp, maxBody), ErrorLog: errLog}
 	handle := &httpServerHandle{server: server, listener: listener, done: make(chan error, 1), pool: pool, certPEM: certPEM}
 	e.httpServerMu.Lock()
 	e.nextHTTPServerID++
@@ -15890,6 +15898,35 @@ func (e *Evaluator) httpShutdown(call *ast.CallExpression, args []runtime.Value)
 	return runtime.Null{}, nil
 }
 
+// httpWait blocks until the server behind the handle stops serving
+// (close or shutdown from anywhere, including a signal handler).
+// Unknown handles return immediately: the server is already gone.
+func (e *Evaluator) httpWait(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects a server handle", call.Callee.String())
+	}
+	id, err := rawInt64(args[0], "http server handle")
+	if err != nil {
+		return nil, err
+	}
+	e.httpServerMu.Lock()
+	handle, ok := e.httpServers[id]
+	e.httpServerMu.Unlock()
+	for !ok && e.parent != nil {
+		e = e.parent
+		e.httpServerMu.Lock()
+		handle, ok = e.httpServers[id]
+		e.httpServerMu.Unlock()
+	}
+	if !ok {
+		return runtime.Null{}, nil
+	}
+	if err := waitHTTPServerDone(handle); err != nil {
+		return nil, err
+	}
+	return runtime.Null{}, nil
+}
+
 func (e *Evaluator) httpServerHandle(value runtime.Value) (*httpServerHandle, error) {
 	id, err := rawInt64(value, "http server handle")
 	if err != nil {
@@ -15944,7 +15981,7 @@ func waitHTTPServerDone(handle *httpServerHandle) error {
 	return err
 }
 
-func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool, tp *trustedProxies) http.Handler {
+func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool, tp *trustedProxies, maxBody int64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if pool != nil && !pool.IsUnbounded() {
 			if err := pool.Acquire(r.Context()); err != nil {
@@ -15964,8 +16001,20 @@ func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool,
 			}
 			defer pool.Release()
 		}
+		if maxBody > 0 {
+			if r.ContentLength > maxBody {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+		}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -16041,6 +16090,24 @@ func httpRequestEntries(request *http.Request, body []byte) map[string]runtime.D
 	put("body", runtime.String{Value: string(body)})
 	put("headers", runtime.Dict{Entries: headers})
 	return entries
+}
+
+// parseMaxBodyBytes reads opts.maxBodyBytes for http.serve/listen.
+// 0 (or absent) means unlimited.
+func parseMaxBodyBytes(opts runtime.Value, label string) (int64, error) {
+	dict, ok := opts.(runtime.Dict)
+	if !ok {
+		return 0, nil
+	}
+	v, ok := dictField(dict, "maxBodyBytes")
+	if !ok {
+		return 0, nil
+	}
+	n, ok := toInt64(v)
+	if !ok || n < 0 {
+		return 0, fmt.Errorf("%s opts.maxBodyBytes must be a non-negative int", label)
+	}
+	return n, nil
 }
 
 // trustedProxies matches peer IPs allowed to set X-Forwarded-* headers.

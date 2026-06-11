@@ -205,11 +205,16 @@ let claims = crypt.jwtVerify(token, pub);
 
 #### Algorithm-confusion defence
 
-The default verify policy already excludes `none`, but it still trusts
-whichever HS / RS / ES / EdDSA algorithm the token header declares. In
-production, narrow that further by passing `opts.allowedAlgs` so the
-dispatcher rejects anything outside the allow-list before loading the
-key:
+When `opts.allowedAlgs` is not given, the verify policy is pinned to
+the key type: a raw secret verifies only the HS family, an RSA public
+key only RS256/384/512, an EC public key only ES256/384/512, and an
+Ed25519 key only EdDSA (`none` is always excluded). A token whose
+header names an algorithm outside the key's family fails verification,
+which closes the classic forgery where an HS token is minted using a
+verifier's public PEM text as the HMAC secret. To narrow the policy
+further (for example to a single algorithm), pass `opts.allowedAlgs`
+and the dispatcher rejects anything outside the allow-list before
+loading the key:
 
 ```gb
 let claims = crypt.jwtVerify(token, pubPem, {"allowedAlgs": ["ES256"]});
@@ -219,6 +224,36 @@ The same `allowedAlgs` field is enforced on the sign side, so a
 shared "this service only uses ES256" constant can flow through both
 calls and a typo on either side raises immediately instead of
 producing tokens the matching verifier rejects.
+
+#### JWK and JWKS
+
+`crypt.jwk(pem, opts)` builds the RFC 7517 public JWK for a public,
+certificate, or private PEM (private keys contribute their public
+half). `kid` defaults to the RFC 7638 thumbprint; `alg` defaults per
+key type (RS256 / ES256-512 by curve / EdDSA); `use` defaults to
+`"sig"`. `crypt.jwks(keys)` assembles the `{"keys": [...]}` document
+from PEM strings, `{pem, kid, alg}` dicts, or ready JWK dicts:
+
+```gb
+let set = crypt.jwks([
+    {"pem": crypt.publicKey(currentKey), "kid": "2026-06"},
+    {"pem": crypt.publicKey(previousKey), "kid": "2026-01"},
+]);
+```
+
+`crypt.jwtVerify` accepts a JWKS (or single JWK) dict as its key:
+the verification key is selected by the token header's `kid` (a
+kid-less token verifies only against a single-key set), and the
+algorithm is pinned to the matched key's `alg` (or its key-type
+family), so key rotation and alg pinning come together:
+
+```gb
+let token = crypt.jwtSign(payload, currentKey, {"alg": "RS256", "kid": "2026-06"});
+let claims = crypt.jwtVerify(token, set);
+```
+
+`crypt.jwtSign` writes `opts.kid` into the token header for this
+purpose. Symmetric `oct` JWKs (`k` member) verify the HS family.
 
 `jwtVerify` returns `null` for any invalid token - bad format, disallowed
 algorithm, wrong key, or corrupted signature.

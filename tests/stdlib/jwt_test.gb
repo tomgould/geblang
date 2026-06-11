@@ -128,6 +128,25 @@ class JwtUnifiedTest extends test.Test {
     }
 
     @test
+    func algConfusionDefaultPinsKeyType(): void {
+        /* With no opts.allowedAlgs the family is pinned to the key
+         * type: an HS token forged with the verifier's public PEM as
+         * its HMAC secret must not verify against that PEM. */
+        let priv = crypt.generateRsaKey(2048);
+        let pub = crypt.publicKey(priv);
+        let forged = crypt.jwtSign({"u": "mallory"}, pub, {
+            "alg": "HS256",
+            "allowedAlgs": ["HS256"]
+        });
+        this.assertNull(crypt.jwtVerify(forged, pub));
+        /* And a raw secret never verifies asymmetric tokens. */
+        let rsToken = crypt.jwtSign({"u": "x"}, priv, {"alg": "RS256"});
+        this.assertNull(crypt.jwtVerify(rsToken, "shh"));
+        /* Legitimate flows are unaffected. */
+        this.assertNotNull(crypt.jwtVerify(rsToken, pub));
+    }
+
+    @test
     func algConfusionDefenseAllowedAlgsBlocks(): void {
         /* Caller insists on RS256; an HS256 token must be rejected
          * even when the supplied "key" would superficially verify. */

@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 
@@ -38,6 +41,15 @@ const (
 )
 
 func main() {
+	// GEBLANG_PPROF=addr starts Go's pprof HTTP endpoint for engine
+	// profiling (dev tool; no effect when unset).
+	if addr := os.Getenv("GEBLANG_PPROF"); addr != "" {
+		go func() {
+			if err := http.ListenAndServe(addr, nil); err != nil {
+				fmt.Fprintf(os.Stderr, "geblang: pprof listener: %v\n", err)
+			}
+		}()
+	}
 	if b, err := bundle.OpenFromExecutable(); err == nil && b != nil {
 		os.Exit(runBundled(b))
 	}
@@ -1817,6 +1829,7 @@ type bytecodeModuleLoader struct {
 	ifaceFallbacks map[string]bytecode.InterfaceFallbackState
 	mainVM         *bytecode.VM
 	loading        map[string]bool
+	vmPools        sync.Map
 	// mainChunk holds the entry-point chunk so cross-module reflect
 	// lookups (e.g. a stdlib module calling reflect.class("UserDTO"))
 	// can resolve classes declared in the user script.
@@ -1844,6 +1857,39 @@ func newBytecodeModuleLoader(stdout io.Writer, modulePaths []string) *bytecodeMo
 		decorators:     map[string]bytecode.FunctionDecoratorState{},
 		ifaceFallbacks: map[string]bytecode.InterfaceFallbackState{},
 		loading:        map[string]bool{},
+	}
+}
+
+// moduleVM returns a pooled (or fresh) host VM bound to the module's
+// chunk and configured with the module's canonical state. Hosts carry
+// per-call configuration only; pooling them avoids a full VM
+// construction per cross-module call.
+func (l *bytecodeModuleLoader) moduleVM(module string, chunk bytecode.Chunk) (*bytecode.VM, *sync.Pool) {
+	var pool *sync.Pool
+	if p, ok := l.vmPools.Load(module); ok {
+		pool = p.(*sync.Pool)
+	} else {
+		p, _ := l.vmPools.LoadOrStore(module, &sync.Pool{})
+		pool = p.(*sync.Pool)
+	}
+	vm, _ := pool.Get().(*bytecode.VM)
+	if vm == nil {
+		vm = bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
+	} else {
+		vm.ResetForReuse()
+	}
+	vm.SetModuleName(module)
+	vm.SetModulePaths(l.modulePaths)
+	vm.SetStatefulNativeCaller(l.stateful)
+	vm.RestoreGlobals(l.globals[module])
+	vm.RestoreFunctionDecoratorState(l.decorators[module])
+	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(module))
+	return vm, pool
+}
+
+func releaseModuleVM(pool *sync.Pool, vm *bytecode.VM, err error) {
+	if err == nil && vm.Recyclable() {
+		pool.Put(vm)
 	}
 }
 
@@ -1942,14 +1988,10 @@ func (l *bytecodeModuleLoader) CallModuleFunction(function runtime.BytecodeFunct
 		}
 		chunk = c
 	}
-	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-	vm.SetModuleName(function.Module)
-	vm.SetModulePaths(l.modulePaths)
-	vm.SetStatefulNativeCaller(l.stateful)
-	vm.RestoreGlobals(l.globals[function.Module])
-	vm.RestoreFunctionDecoratorState(l.decorators[function.Module])
-	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(function.Module))
-	return vm.CallFunction(function.Index, args)
+	vm, pool := l.moduleVM(function.Module, chunk)
+	result, err := vm.CallFunction(function.Index, args)
+	releaseModuleVM(pool, vm, err)
+	return result, err
 }
 
 func (l *bytecodeModuleLoader) CallModuleClosure(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
@@ -1970,14 +2012,10 @@ func (l *bytecodeModuleLoader) CallModuleClosure(closure runtime.BytecodeClosure
 		}
 		chunk = c
 	}
-	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-	vm.SetModuleName(closure.Module)
-	vm.SetModulePaths(l.modulePaths)
-	vm.SetStatefulNativeCaller(l.stateful)
-	vm.RestoreGlobals(l.globals[closure.Module])
-	vm.RestoreFunctionDecoratorState(l.decorators[closure.Module])
-	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(closure.Module))
-	return vm.CallClosure(closure, args)
+	vm, pool := l.moduleVM(closure.Module, chunk)
+	result, err := vm.CallClosure(closure, args)
+	releaseModuleVM(pool, vm, err)
+	return result, err
 }
 
 func (l *bytecodeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value) (runtime.Value, error) {
@@ -1994,14 +2032,10 @@ func (l *bytecodeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass,
 		}
 		chunk = c
 	}
-	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-	vm.SetModuleName(class.Module)
-	vm.SetModulePaths(l.modulePaths)
-	vm.SetStatefulNativeCaller(l.stateful)
-	vm.RestoreGlobals(l.globals[class.Module])
-	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
-	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(class.Module))
-	return vm.ConstructClass(class.Index, args)
+	vm, pool := l.moduleVM(class.Module, chunk)
+	result, err := vm.ConstructClass(class.Index, args)
+	releaseModuleVM(pool, vm, err)
+	return result, err
 }
 
 // ConstructorsForModuleClass evaluates `reflect.constructors(class)`
@@ -2020,14 +2054,10 @@ func (l *bytecodeModuleLoader) ConstructorsForModuleClass(class runtime.Bytecode
 		}
 		chunk = c
 	}
-	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-	vm.SetModuleName(class.Module)
-	vm.SetModulePaths(l.modulePaths)
-	vm.SetStatefulNativeCaller(l.stateful)
-	vm.RestoreGlobals(l.globals[class.Module])
-	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
-	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(class.Module))
-	return vm.ReflectConstructorsForChunkClass(class)
+	vm, pool := l.moduleVM(class.Module, chunk)
+	result, err := vm.ReflectConstructorsForChunkClass(class)
+	releaseModuleVM(pool, vm, err)
+	return result, err
 }
 
 func (l *bytecodeModuleLoader) FieldsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error) {
@@ -2044,14 +2074,10 @@ func (l *bytecodeModuleLoader) FieldsForModuleClass(class runtime.BytecodeClass)
 		}
 		chunk = c
 	}
-	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-	vm.SetModuleName(class.Module)
-	vm.SetModulePaths(l.modulePaths)
-	vm.SetStatefulNativeCaller(l.stateful)
-	vm.RestoreGlobals(l.globals[class.Module])
-	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
-	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(class.Module))
-	return vm.ReflectFieldsForChunkClass(class)
+	vm, pool := l.moduleVM(class.Module, chunk)
+	result, err := vm.ReflectFieldsForChunkClass(class)
+	releaseModuleVM(pool, vm, err)
+	return result, err
 }
 
 // DeserializeModuleClass picks the right chunk for a class returned
@@ -2071,14 +2097,10 @@ func (l *bytecodeModuleLoader) DeserializeModuleClass(class runtime.BytecodeClas
 		}
 		chunk = c
 	}
-	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-	vm.SetModuleName(class.Module)
-	vm.SetModulePaths(l.modulePaths)
-	vm.SetStatefulNativeCaller(l.stateful)
-	vm.RestoreGlobals(l.globals[class.Module])
-	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
-	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(class.Module))
-	return vm.DeserializeIntoChunkClass(class, value)
+	vm, pool := l.moduleVM(class.Module, chunk)
+	result, err := vm.DeserializeIntoChunkClass(class, value)
+	releaseModuleVM(pool, vm, err)
+	return result, err
 }
 
 func (l *bytecodeModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value) (runtime.Value, error) {
@@ -2086,14 +2108,10 @@ func (l *bytecodeModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClas
 	if !ok {
 		return nil, fmt.Errorf("module %s is not loaded", class.Module)
 	}
-	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-	vm.SetModuleName(class.Module)
-	vm.SetModulePaths(l.modulePaths)
-	vm.SetStatefulNativeCaller(l.stateful)
-	vm.RestoreGlobals(l.globals[class.Module])
-	vm.RestoreFunctionDecoratorState(l.decorators[class.Module])
-	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(class.Module))
-	return vm.CallStaticMethod(class.Index, methodName, args)
+	vm, pool := l.moduleVM(class.Module, chunk)
+	result, err := vm.CallStaticMethod(class.Index, methodName, args)
+	releaseModuleVM(pool, vm, err)
+	return result, err
 }
 
 func (l *bytecodeModuleLoader) CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -2110,14 +2128,10 @@ func (l *bytecodeModuleLoader) CallParentInModule(module string, className strin
 		}
 		chunk = c
 	}
-	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-	vm.SetModuleName(module)
-	vm.SetModulePaths(l.modulePaths)
-	vm.SetStatefulNativeCaller(l.stateful)
-	vm.RestoreGlobals(l.globals[module])
-	vm.RestoreFunctionDecoratorState(l.decorators[module])
-	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(module))
-	return vm.CallMethodAs(className, instance, methodName, args)
+	vm, pool := l.moduleVM(module, chunk)
+	result, err := vm.CallMethodAs(className, instance, methodName, args)
+	releaseModuleVM(pool, vm, err)
+	return result, err
 }
 
 func (l *bytecodeModuleLoader) ImmutableFieldsForModuleClass(module string, className string) []string {
@@ -2216,14 +2230,9 @@ func (l *bytecodeModuleLoader) CallModuleStaticMethodByName(module, className, m
 		}
 		for ci := chunk.Classes[i]; ; {
 			if _, present := ci.StaticMethods[strings.ToLower(methodName)]; present {
-				vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-				vm.SetModuleName(module)
-				vm.SetModulePaths(l.modulePaths)
-				vm.SetStatefulNativeCaller(l.stateful)
-				vm.RestoreGlobals(l.globals[module])
-				vm.RestoreFunctionDecoratorState(l.decorators[module])
-				vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(module))
+				vm, pool := l.moduleVM(module, chunk)
 				result, err := vm.CallStaticMethod(int64(i), methodName, args)
+				releaseModuleVM(pool, vm, err)
 				return result, true, err
 			}
 			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
@@ -2316,14 +2325,10 @@ func (l *bytecodeModuleLoader) CallModuleMethod(module string, className string,
 		}
 		chunk = c
 	}
-	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-	vm.SetModuleName(module)
-	vm.SetModulePaths(l.modulePaths)
-	vm.SetStatefulNativeCaller(l.stateful)
-	vm.RestoreGlobals(l.globals[module])
-	vm.RestoreFunctionDecoratorState(l.decorators[module])
-	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(module))
-	return vm.CallMethod(instance, methodName, args)
+	vm, pool := l.moduleVM(module, chunk)
+	result, err := vm.CallMethod(instance, methodName, args)
+	releaseModuleVM(pool, vm, err)
+	return result, err
 }
 
 func (l *bytecodeModuleLoader) ListAllClasses() []runtime.Value {

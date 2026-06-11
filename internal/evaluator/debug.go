@@ -31,10 +31,10 @@ type DebugVariable struct {
 type DebugPause struct {
 	Loc       DebugLocation
 	Frames    []DebugFrame
-	Vars      []DebugVariable  // variables for the innermost (current) frame
-	FrameVars [][]DebugVariable // per-frame variables: FrameVars[i] corresponds to Frames[i]
+	Vars      []DebugVariable      // variables for the innermost (current) frame
+	FrameVars [][]DebugVariable    // per-frame variables: FrameVars[i] corresponds to Frames[i]
 	Env       *runtime.Environment // current environment (for evaluate/setVariable)
-	Reason    string // "breakpoint", "step", "pause", "exception"
+	Reason    string               // "breakpoint", "step", "pause", "exception"
 }
 
 // DebugHookFunc is called before each statement when a debug hook is installed.
