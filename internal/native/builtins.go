@@ -3902,7 +3902,15 @@ func reMatchDict(re *regexp.Regexp, match []string) runtime.Dict {
 var (
 	regexCache        atomic.Pointer[map[string]*regexp.Regexp]
 	regexCacheWriteMu sync.Mutex
+	// regexLastHit short-circuits the map (and the per-call string
+	// hash) for the dominant pattern-reuse-in-a-loop shape.
+	regexLastHit atomic.Pointer[regexCacheEntry]
 )
+
+type regexCacheEntry struct {
+	pattern string
+	re      *regexp.Regexp
+}
 
 const regexCacheMaxEntries = 256
 
@@ -3918,8 +3926,12 @@ func CompileCachedRegex(pattern string) (*regexp.Regexp, error) {
 }
 
 func compileCachedRegex(pattern string) (*regexp.Regexp, error) {
+	if last := regexLastHit.Load(); last != nil && last.pattern == pattern {
+		return last.re, nil
+	}
 	current := *regexCache.Load()
 	if re, ok := current[pattern]; ok {
+		regexLastHit.Store(&regexCacheEntry{pattern: pattern, re: re})
 		return re, nil
 	}
 	re, err := regexp.Compile(pattern)
@@ -3940,6 +3952,7 @@ func compileCachedRegex(pattern string) (*regexp.Regexp, error) {
 	}
 	next[pattern] = re
 	regexCache.Store(&next)
+	regexLastHit.Store(&regexCacheEntry{pattern: pattern, re: re})
 	return re, nil
 }
 

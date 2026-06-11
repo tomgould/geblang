@@ -35,6 +35,11 @@
 - Compiled instructions are a third smaller in memory (packed source
   positions, consolidated operand storage), cutting a loaded server's
   resident memory by ~15% under sustained load at unchanged speed.
+- Native function calls are cached per call site in every run
+  configuration (previously only in embedded VMs without a stateful
+  host), removing two per-call map lookups from each stdlib call:
+  regex-heavy loops run ~30% faster, and every pure-native call path
+  benefits.
 - The evaluator (the `geblang test` runtime) gains allocation-free
   integer arithmetic and comparison fast paths (identical floor
   division/modulo and overflow-promotion semantics to the VM),

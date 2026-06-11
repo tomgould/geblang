@@ -2478,7 +2478,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
-			if err := vm.runDefers(*instruction); err != nil {
+			// Deferred-action lists are empty for most frames; popping the
+			// level inline skips the call (and its instruction copy).
+			if n := len(vm.defers); n > 0 && len(vm.defers[n-1]) == 0 {
+				vm.defers = vm.defers[:n-1]
+			} else if err := vm.runDefers(*instruction); err != nil {
 				return err
 			}
 			// Read out the frame fields we need without copying the whole
@@ -6476,10 +6480,14 @@ func (vm *VM) nativeCall(instruction Instruction) error {
 		}
 		args[i] = value
 	}
-	if vm.statefulNative == nil && name.Value != "errors.is" {
-		if module, function, ok := strings.Cut(name.Value, "."); ok && !isStatefulNativeCall(module, function) {
-			_ = module
-			_ = function
+	// Pure builtins always terminate at the registry regardless of
+	// whether a stateful caller is wired, so they are cacheable per
+	// name-constant either way. The excluded modules have VM-inline or
+	// embedder-observable routing that must stay dynamic.
+	if name.Value != "errors.is" {
+		if module, function, ok := strings.Cut(name.Value, "."); ok &&
+			module != "collections" && module != "reflect" && module != "async" &&
+			!isStatefulNativeCall(module, function) {
 			if fn := vm.natives.LookupKey(name.Value); fn != nil && int(nameIndex) < len(vm.nativeCache) {
 				vm.nativeCache[nameIndex] = fn
 			}
