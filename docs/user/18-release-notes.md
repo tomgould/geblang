@@ -56,6 +56,16 @@
   pairing with `http.shutdown` for graceful-drain entrypoints (a
   signal handler can shut down a server the main goroutine waits on).
 
+### Regular expressions
+
+- `re.compile(pattern)` and `pcre.compile(pattern, flags)` return a
+  reusable `Pattern` object that carries the compiled expression, so
+  a loop states the pattern once: `re.compile(p).test(text)`. The
+  object's methods mirror the module functions without the pattern
+  argument. Invalid patterns raise at compile time. Performance is on
+  par with the cached module functions for a single hot pattern and
+  steadier across several interleaved patterns.
+
 ### JWK / JWKS
 
 - `crypt.jwk(pem, opts)` builds RFC 7517 public JWKs (RFC 7638
@@ -65,6 +75,19 @@
   selecting by the token's `kid` and pinning the algorithm to the
   matched key. `crypt.jwtSign` writes `opts.kid` into the token
   header.
+
+### Argument binding
+
+- One shared binder now orders and validates arguments for the
+  compiler, the VM, and the evaluator, ending a family of
+  per-implementation drift. Binding errors use one precise wording
+  everywhere: `f missing argument a`, `f expects at most 2 arguments,
+  got 3`, `f has no parameter c`, `f parameter a passed more than
+  once` (anonymous callables report as `<closure>`).
+- Two evaluator divergences are fixed by the unification: positional
+  arguments after named ones now fill the next unassigned slot (as
+  the compiler and VM always did), and named-parameter matching is
+  case-insensitive on every path.
 
 ### Fixes
 

@@ -42,6 +42,7 @@ import (
 	"unicode/utf8"
 
 	"geblang/internal/ast"
+	"geblang/internal/binding"
 	"geblang/internal/concurrent"
 	"geblang/internal/desugar"
 	"geblang/internal/ffi"
@@ -22679,89 +22680,84 @@ func functionAcceptsPositionalArgs(fn runtime.Function, count int) bool {
 }
 
 func bindEvaluatedFunctionCallArguments(fn runtime.Function, provided []evaluatedCallArg) ([]runtime.Value, bool) {
-	args, _, ok := bindEvaluatedFunctionCallArgumentsDetail(fn, provided)
-	return args, ok
+	args, _, err := bindEvaluatedFunctionCallArgumentsErr(fn, provided)
+	return args, err == nil
 }
 
 // bindEvaluatedFunctionCallArgumentsDetail also reports how many fromSpread
 // args were silently dropped. Overload resolution prefers the overload
 // that drops fewest so spread + overload disambiguates predictably.
 func bindEvaluatedFunctionCallArgumentsDetail(fn runtime.Function, provided []evaluatedCallArg) ([]runtime.Value, int, bool) {
+	args, dropped, err := bindEvaluatedFunctionCallArgumentsErr(fn, provided)
+	return args, dropped, err == nil
+}
+
+// bindEvaluatedFunctionCallArgumentsErr orders a call's evaluated
+// arguments through the shared binder, so the evaluator binds (and
+// reports errors) identically to the compiler and the VM: named
+// matching is case-insensitive and positional arguments may follow
+// named ones, filling the next unassigned slot.
+func bindEvaluatedFunctionCallArgumentsErr(fn runtime.Function, provided []evaluatedCallArg) ([]runtime.Value, int, error) {
 	if fn.Native != nil && len(fn.Parameters) == 0 {
 		args := make([]runtime.Value, 0, len(provided))
 		for _, arg := range provided {
 			if arg.name != "" {
-				return nil, 0, false
+				return nil, 0, fmt.Errorf("%s has no parameter %s", binding.DisplayName(fn.Name), arg.name)
 			}
 			args = append(args, arg.value)
 		}
-		return args, 0, true
+		return args, 0, nil
 	}
-	paramNames := map[string]bool{}
-	for _, p := range fn.Parameters {
+	paramNames := make([]string, len(fn.Parameters))
+	hasDefault := make([]bool, len(fn.Parameters))
+	known := map[string]bool{}
+	for i, p := range fn.Parameters {
 		if p.Name != nil {
-			paramNames[p.Name.Value] = true
+			paramNames[i] = p.Name.Value
+			known[strings.ToLower(p.Name.Value)] = true
 		}
+		hasDefault[i] = p.Default != nil
+	}
+	variadic := len(fn.Parameters) > 0 && fn.Parameters[len(fn.Parameters)-1].Variadic
+	if variadic {
+		// The variadic slot needs no caller-supplied value.
+		hasDefault[len(hasDefault)-1] = true
 	}
 	dropped := 0
 	filtered := make([]evaluatedCallArg, 0, len(provided))
 	for _, arg := range provided {
-		if arg.fromSpread && arg.name != "" && !paramNames[arg.name] {
+		if arg.fromSpread && arg.name != "" && !known[strings.ToLower(arg.name)] {
 			dropped++
 			continue
 		}
 		filtered = append(filtered, arg)
 	}
 	provided = filtered
-	isVariadic := len(fn.Parameters) > 0 && fn.Parameters[len(fn.Parameters)-1].Variadic
-	if !isVariadic && len(provided) > len(fn.Parameters) {
-		return nil, 0, false
+	sig := binding.Signature{
+		FuncName:   fn.Name,
+		ParamNames: paramNames,
+		HasDefault: hasDefault,
+		Variadic:   variadic,
 	}
-	argsLen := len(fn.Parameters)
-	if isVariadic && len(provided) > argsLen {
-		argsLen = len(provided)
+	bargs := make([]binding.Arg, len(provided))
+	for i, arg := range provided {
+		bargs[i].Name = arg.name
 	}
+	result, err := binding.Order(sig, bargs)
+	if err != nil {
+		return nil, 0, err
+	}
+	argsLen := len(fn.Parameters) + len(result.TailArgs)
 	args := make([]runtime.Value, argsLen)
-	filled := make([]bool, len(fn.Parameters))
-	positional := 0
-	seenNamed := false
-	for _, arg := range provided {
-		index := -1
-		if arg.name == "" {
-			if seenNamed || (!isVariadic && positional >= len(fn.Parameters)) {
-				return nil, 0, false
-			}
-			index = positional
-			positional++
-		} else {
-			seenNamed = true
-			for i, param := range fn.Parameters {
-				if param.Name != nil && param.Name.Value == arg.name {
-					index = i
-					break
-				}
-			}
-			if index == -1 {
-				return nil, 0, false
-			}
-		}
-		if index < len(filled) && filled[index] {
-			return nil, 0, false
-		}
-		args[index] = arg.value
-		if index < len(filled) {
-			filled[index] = true
+	for i, slot := range result.Slots {
+		if slot != binding.DefaultSlot {
+			args[i] = provided[slot].value
 		}
 	}
-	for i, param := range fn.Parameters {
-		if param.Variadic {
-			continue
-		}
-		if !filled[i] && param.Default == nil {
-			return nil, 0, false
-		}
+	for i, argIndex := range result.TailArgs {
+		args[len(fn.Parameters)+i] = provided[argIndex].value
 	}
-	return args, dropped, true
+	return args, dropped, nil
 }
 
 func functionArgumentsMatch(fn runtime.Function, args []runtime.Value) bool {
@@ -23269,9 +23265,9 @@ func (e *Evaluator) evalFunctionCallArguments(fn runtime.Function, call *ast.Cal
 	if err != nil {
 		return nil, err
 	}
-	args, ok := bindEvaluatedFunctionCallArguments(fn, provided)
-	if !ok {
-		return nil, fmt.Errorf("no matching arguments for %s", fn.Name)
+	args, _, err := bindEvaluatedFunctionCallArgumentsErr(fn, provided)
+	if err != nil {
+		return nil, err
 	}
 	return args, nil
 }
@@ -23459,7 +23455,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 	}
 	isVariadic := len(fn.Parameters) > 0 && fn.Parameters[len(fn.Parameters)-1].Variadic
 	if !isVariadic && len(args) > len(fn.Parameters) {
-		return nil, fmt.Errorf("function expects at most %d arguments, got %d", len(fn.Parameters), len(args))
+		return nil, fmt.Errorf("%s expects at most %d arguments, got %d", binding.DisplayName(fn.Name), len(fn.Parameters), len(args))
 	}
 	if err := functionArgumentsMatchError(fn, args); err != nil {
 		return nil, err
@@ -23523,7 +23519,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 			}
 			value = evaluated
 		} else {
-			return nil, fmt.Errorf("missing argument %q", param.Name.Value)
+			return nil, fmt.Errorf("%s missing argument %s", binding.DisplayName(fn.Name), param.Name.Value)
 		}
 		if param.Const {
 			value = runtime.FreezeShallowCopy(value)

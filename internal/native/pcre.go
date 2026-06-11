@@ -237,107 +237,25 @@ func pcreQuoteSpecial(s string) string {
 }
 
 func registerPCRE(r *Registry) {
-	r.Register("pcre", "test", func(args []runtime.Value) (runtime.Value, error) {
-		pattern, text, flags, err := pcreArgs(args, "pcre.test", 2, 3)
-		if err != nil {
-			return nil, err
-		}
-		re, err := compileCachedPCRE(pattern, flags)
-		if err != nil {
-			return nil, fmt.Errorf("pcre.test: %v", err)
-		}
-		ok, err := re.MatchString(text)
-		if err != nil {
-			return nil, fmt.Errorf("pcre.test: %v", err)
-		}
-		return runtime.Bool{Value: ok}, nil
-	})
-
-	r.Register("pcre", "find", func(args []runtime.Value) (runtime.Value, error) {
-		pattern, text, flags, err := pcreArgs(args, "pcre.find", 2, 3)
-		if err != nil {
-			return nil, err
-		}
-		re, err := compileCachedPCRE(pattern, flags)
-		if err != nil {
-			return nil, fmt.Errorf("pcre.find: %v", err)
-		}
-		m, err := re.FindStringMatch(text)
-		if err != nil {
-			return nil, fmt.Errorf("pcre.find: %v", err)
-		}
-		if m == nil {
-			return runtime.Null{}, nil
-		}
-		return runtime.String{Value: m.String()}, nil
-	})
-
-	r.Register("pcre", "findAll", func(args []runtime.Value) (runtime.Value, error) {
-		pattern, text, flags, err := pcreArgs(args, "pcre.findAll", 2, 3)
-		if err != nil {
-			return nil, err
-		}
-		re, err := compileCachedPCRE(pattern, flags)
-		if err != nil {
-			return nil, fmt.Errorf("pcre.findAll: %v", err)
-		}
-		var out []runtime.Value
-		m, err := re.FindStringMatch(text)
-		if err != nil {
-			return nil, fmt.Errorf("pcre.findAll: %v", err)
-		}
-		for m != nil {
-			out = append(out, runtime.String{Value: m.String()})
-			m, err = re.FindNextMatch(m)
+	pcreFn := func(name string, body func(re *regexp2.Regexp, text string) (runtime.Value, error)) {
+		r.Register("pcre", name, func(args []runtime.Value) (runtime.Value, error) {
+			pattern, text, flags, err := pcreArgs(args, "pcre."+name, 2, 3)
 			if err != nil {
-				return nil, fmt.Errorf("pcre.findAll: %v", err)
+				return nil, err
 			}
-		}
-		return &runtime.List{Elements: out}, nil
-	})
-
-	r.Register("pcre", "match", func(args []runtime.Value) (runtime.Value, error) {
-		pattern, text, flags, err := pcreArgs(args, "pcre.match", 2, 3)
-		if err != nil {
-			return nil, err
-		}
-		re, err := compileCachedPCRE(pattern, flags)
-		if err != nil {
-			return nil, fmt.Errorf("pcre.match: %v", err)
-		}
-		m, err := re.FindStringMatch(text)
-		if err != nil {
-			return nil, fmt.Errorf("pcre.match: %v", err)
-		}
-		if m == nil {
-			return runtime.Null{}, nil
-		}
-		return pcreMatchToDict(m), nil
-	})
-
-	r.Register("pcre", "matchAll", func(args []runtime.Value) (runtime.Value, error) {
-		pattern, text, flags, err := pcreArgs(args, "pcre.matchAll", 2, 3)
-		if err != nil {
-			return nil, err
-		}
-		re, err := compileCachedPCRE(pattern, flags)
-		if err != nil {
-			return nil, fmt.Errorf("pcre.matchAll: %v", err)
-		}
-		var out []runtime.Value
-		m, err := re.FindStringMatch(text)
-		if err != nil {
-			return nil, fmt.Errorf("pcre.matchAll: %v", err)
-		}
-		for m != nil {
-			out = append(out, pcreMatchToDict(m))
-			m, err = re.FindNextMatch(m)
+			re, err := compileCachedPCRE(pattern, flags)
 			if err != nil {
-				return nil, fmt.Errorf("pcre.matchAll: %v", err)
+				return nil, fmt.Errorf("pcre.%s: %v", name, err)
 			}
-		}
-		return &runtime.List{Elements: out}, nil
-	})
+			return body(re, text)
+		})
+	}
+	pcreFn("test", pcreTestCore)
+
+	pcreFn("find", pcreFindCore)
+	pcreFn("findAll", pcreFindAllCore)
+	pcreFn("match", pcreMatchCore)
+	pcreFn("matchAll", pcreMatchAllCore)
 
 	r.Register("pcre", "replace", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) < 3 || len(args) > 4 {
@@ -361,32 +279,10 @@ func registerPCRE(r *Registry) {
 		if err != nil {
 			return nil, fmt.Errorf("pcre.replace: %v", err)
 		}
-		result, err := re.Replace(text.Value, repl.Value, -1, -1)
-		if err != nil {
-			return nil, fmt.Errorf("pcre.replace: %v", err)
-		}
-		return runtime.String{Value: result}, nil
+		return pcreReplaceCore(re, repl.Value, text.Value)
 	})
 
-	r.Register("pcre", "split", func(args []runtime.Value) (runtime.Value, error) {
-		pattern, text, flags, err := pcreArgs(args, "pcre.split", 2, 3)
-		if err != nil {
-			return nil, err
-		}
-		re, err := compileCachedPCRE(pattern, flags)
-		if err != nil {
-			return nil, fmt.Errorf("pcre.split: %v", err)
-		}
-		parts, err := pcreSplit(re, text)
-		if err != nil {
-			return nil, fmt.Errorf("pcre.split: %v", err)
-		}
-		elements := make([]runtime.Value, len(parts))
-		for i, p := range parts {
-			elements[i] = runtime.String{Value: p}
-		}
-		return &runtime.List{Elements: elements}, nil
-	})
+	pcreFn("split", pcreSplitCore)
 
 	r.Register("pcre", "quote", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {
@@ -398,4 +294,88 @@ func registerPCRE(r *Registry) {
 		}
 		return runtime.String{Value: pcreQuoteSpecial(text.Value)}, nil
 	})
+}
+
+// pcre operation cores, shared by the module functions and the
+// compiled Pattern handle. Each takes an already-compiled regexp2.
+func pcreTestCore(re *regexp2.Regexp, text string) (runtime.Value, error) {
+	ok, err := re.MatchString(text)
+	if err != nil {
+		return nil, fmt.Errorf("pcre.test: %v", err)
+	}
+	return runtime.Bool{Value: ok}, nil
+}
+
+func pcreFindCore(re *regexp2.Regexp, text string) (runtime.Value, error) {
+	m, err := re.FindStringMatch(text)
+	if err != nil {
+		return nil, fmt.Errorf("pcre.find: %v", err)
+	}
+	if m == nil {
+		return runtime.Null{}, nil
+	}
+	return runtime.String{Value: m.String()}, nil
+}
+
+func pcreFindAllCore(re *regexp2.Regexp, text string) (runtime.Value, error) {
+	var out []runtime.Value
+	m, err := re.FindStringMatch(text)
+	if err != nil {
+		return nil, fmt.Errorf("pcre.findAll: %v", err)
+	}
+	for m != nil {
+		out = append(out, runtime.String{Value: m.String()})
+		m, err = re.FindNextMatch(m)
+		if err != nil {
+			return nil, fmt.Errorf("pcre.findAll: %v", err)
+		}
+	}
+	return &runtime.List{Elements: out}, nil
+}
+
+func pcreMatchCore(re *regexp2.Regexp, text string) (runtime.Value, error) {
+	m, err := re.FindStringMatch(text)
+	if err != nil {
+		return nil, fmt.Errorf("pcre.match: %v", err)
+	}
+	if m == nil {
+		return runtime.Null{}, nil
+	}
+	return pcreMatchToDict(m), nil
+}
+
+func pcreMatchAllCore(re *regexp2.Regexp, text string) (runtime.Value, error) {
+	var out []runtime.Value
+	m, err := re.FindStringMatch(text)
+	if err != nil {
+		return nil, fmt.Errorf("pcre.matchAll: %v", err)
+	}
+	for m != nil {
+		out = append(out, pcreMatchToDict(m))
+		m, err = re.FindNextMatch(m)
+		if err != nil {
+			return nil, fmt.Errorf("pcre.matchAll: %v", err)
+		}
+	}
+	return &runtime.List{Elements: out}, nil
+}
+
+func pcreReplaceCore(re *regexp2.Regexp, repl, text string) (runtime.Value, error) {
+	result, err := re.Replace(text, repl, -1, -1)
+	if err != nil {
+		return nil, fmt.Errorf("pcre.replace: %v", err)
+	}
+	return runtime.String{Value: result}, nil
+}
+
+func pcreSplitCore(re *regexp2.Regexp, text string) (runtime.Value, error) {
+	parts, err := pcreSplit(re, text)
+	if err != nil {
+		return nil, fmt.Errorf("pcre.split: %v", err)
+	}
+	elements := make([]runtime.Value, len(parts))
+	for i, p := range parts {
+		elements[i] = runtime.String{Value: p}
+	}
+	return &runtime.List{Elements: elements}, nil
 }

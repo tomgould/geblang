@@ -924,6 +924,19 @@ var stdlibCatalog = map[string]moduleDoc{
 		"matchAll": fn([]string{"string pattern", "string text"}, "list<dict<string, any>>", "Returns every non-overlapping match."),
 		"replace":  fn([]string{"string pattern", "string text", "string replacement"}, "string", "Replaces matches."),
 		"split":    fn([]string{"string pattern", "string text"}, "list<string>", "Splits text by pattern."),
+		"compile":  fn([]string{"string pattern"}, "Pattern", "Validates the pattern eagerly and returns a reusable Pattern object carrying the match surface."),
+	}, classes: map[string]string{
+		"Pattern": "A compiled regular expression from re.compile. Methods mirror the module functions without the pattern argument.",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Pattern": {
+			"test":     fn([]string{"string text"}, "bool", "True when the pattern matches anywhere in text."),
+			"find":     fn([]string{"string text"}, "string", "First match, or \"\" when none."),
+			"findAll":  fn([]string{"string text"}, "list<string>", "Every non-overlapping match."),
+			"match":    fn([]string{"string text"}, "dict<string, any>", "First match with text, groups, and named fields."),
+			"matchAll": fn([]string{"string text"}, "list<dict<string, any>>", "Every non-overlapping match with groups."),
+			"replace":  fn([]string{"string replacement", "string text"}, "string", "Replaces every match in text."),
+			"split":    fn([]string{"string text"}, "list<string>", "Splits text around matches."),
+		},
 	}},
 	"pcre": {functions: map[string]functionDoc{
 		"test":     fn([]string{"string pattern", "string text", "string flags = \"\""}, "bool", "PCRE-compatible test. Supports lookarounds and backreferences. Flags: imsx."),
@@ -934,6 +947,19 @@ var stdlibCatalog = map[string]moduleDoc{
 		"replace":  fn([]string{"string pattern", "string replacement", "string text", "string flags = \"\""}, "string", "Replaces PCRE matches; replacement uses $1, $2, ${name} backrefs."),
 		"split":    fn([]string{"string pattern", "string text", "string flags = \"\""}, "list<string>", "Splits text by PCRE pattern."),
 		"quote":    fn([]string{"string text"}, "string", "Escapes regex metacharacters in a literal string."),
+		"compile":  fn([]string{"string pattern", "string flags = \"\""}, "Pattern", "Validates the PCRE pattern (imsx flags) eagerly and returns a reusable Pattern object."),
+	}, classes: map[string]string{
+		"Pattern": "A compiled PCRE pattern from pcre.compile, carrying its flags. Methods mirror the module functions.",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Pattern": {
+			"test":     fn([]string{"string text"}, "bool", "True when the pattern matches anywhere in text."),
+			"find":     fn([]string{"string text"}, "?string", "First match, or null when none."),
+			"findAll":  fn([]string{"string text"}, "list<string>", "Every non-overlapping match."),
+			"match":    fn([]string{"string text"}, "?dict<string, any>", "First match with text, groups, and named fields."),
+			"matchAll": fn([]string{"string text"}, "list<dict<string, any>>", "Every non-overlapping match with groups."),
+			"replace":  fn([]string{"string replacement", "string text"}, "string", "Replaces every match using $1, ${name} backrefs."),
+			"split":    fn([]string{"string text"}, "list<string>", "Splits text around matches."),
+		},
 	}},
 	"profiler": {functions: map[string]functionDoc{
 		"snapshot": fn([]string{}, "dict<string, any>", "Captures wall clock, heap allocation, peak allocation, GC count, and CPU nanoseconds."),

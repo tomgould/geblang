@@ -297,6 +297,30 @@ Import `re`. The module is a thin wrapper over Go's [`regexp/syntax`](https://pk
 - `matchAll(pattern, text)` - returns `list<dict>` with one entry per non-overlapping match.
 - `replace(pattern, replacement, text)` - returns a `string`. Use `$1`, `$2`, `${name}` in `replacement` to reference capture groups.
 - `split(pattern, text)` - returns a `list<string>`.
+- `compile(pattern)` - validates the pattern eagerly and returns a
+  reusable `Pattern` object.
+
+### Compiled patterns
+
+`re.compile(pattern)` returns a `Pattern` that carries the compiled
+expression, so a loop states the pattern once and its methods drop
+the pattern argument:
+
+```gb
+let id = re.compile("[a-z]+[0-9]+");
+for (token in tokens) {
+    if (id.test(token)) { ... }
+}
+```
+
+`Pattern` has the same surface as the module functions without the
+leading `pattern`: `test(text)`, `find(text)`, `findAll(text)`,
+`match(text)`, `matchAll(text)`, `replace(replacement, text)`,
+`split(text)`. Invalid patterns raise at `compile` time rather than
+at first use. Performance is on par with the cached module functions
+for a single hot pattern, and steadier when several patterns are
+used in the same loop (each compiled form is retained, where the
+plain functions share one most-recent-pattern cache slot).
 
 ### Match results
 
@@ -373,6 +397,10 @@ argument:
 - `find(pattern, text, flags = "")` - first match as a `string`, or `null`.
 - `findAll(pattern, text, flags = "")` - every non-overlapping match as `list<string>`.
 - `match(pattern, text, flags = "")` - dict with `text` / `groups` / `named` (same shape as `re.match`), or `null`.
+- `compile(pattern, flags = "")` - returns a reusable `Pattern` that
+  carries the pattern and flags; its methods mirror the functions
+  without the `pattern`/`flags` arguments (e.g.
+  `pcre.compile("^foo$", "im").test(text)`).
 - `matchAll(pattern, text, flags = "")` - `list<dict>`.
 - `replace(pattern, replacement, text, flags = "")` - returns a `string`. Use `$1`, `$2`, `${name}` for backrefs.
 - `split(pattern, text, flags = "")` - returns a `list<string>`.

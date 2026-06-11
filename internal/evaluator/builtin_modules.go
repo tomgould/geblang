@@ -581,6 +581,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"matchAll": e.registryBuiltin("re", "matchAll"),
 			"replace":  e.registryBuiltin("re", "replace"),
 			"split":    e.registryBuiltin("re", "split"),
+			"compile":  e.registryBuiltin("re", "compile"),
 		},
 		"pcre": {
 			"test":     e.registryBuiltin("pcre", "test"),
@@ -591,6 +592,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"replace":  e.registryBuiltin("pcre", "replace"),
 			"split":    e.registryBuiltin("pcre", "split"),
 			"quote":    e.registryBuiltin("pcre", "quote"),
+			"compile":  e.registryBuiltin("pcre", "compile"),
 		},
 		"markdown": {
 			"parse":      e.registryBuiltin("markdown", "parse"),

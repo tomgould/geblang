@@ -304,10 +304,10 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"ulid": {},
 	},
 	"re": {
-		"match": {}, "matchAll": {}, "find": {}, "findAll": {}, "replace": {}, "split": {}, "test": {},
+		"match": {}, "matchAll": {}, "find": {}, "findAll": {}, "replace": {}, "split": {}, "test": {}, "compile": {},
 	},
 	"pcre": {
-		"match": {}, "matchAll": {}, "find": {}, "findAll": {}, "replace": {}, "split": {}, "test": {}, "quote": {},
+		"match": {}, "matchAll": {}, "find": {}, "findAll": {}, "replace": {}, "split": {}, "test": {}, "quote": {}, "compile": {},
 	},
 	"markdown": {
 		"parse": {}, "renderHtml": {}, "stripText": {},

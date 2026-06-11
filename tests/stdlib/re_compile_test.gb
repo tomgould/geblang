@@ -1,0 +1,53 @@
+/**
+ * @title re.compile / pcre.compile compiled-pattern handles
+ * @summary `compile` validates eagerly and returns a Pattern object
+ * whose methods mirror the module functions without the pattern
+ * argument; the plain module functions keep working unchanged.
+ */
+import test;
+import re;
+import pcre;
+
+class ReCompileTest extends test.Test {
+    @test
+    func patternMethodsMirrorModuleFunctions(): void {
+        let p = re.compile("[a-z]+[0-9]+");
+        this.assertTrue(p.test("foo123"));
+        this.assertFalse(p.test("FOO"));
+        this.assertEquals("foo123", p.find("__foo123__"));
+        this.assertEquals(2, p.findAll("a1 b2").length());
+        let m = p.match("xy42z");
+        this.assertEquals("xy42", m["text"]);
+        this.assertEquals("_ _", p.replace("_", "a1 b22"));
+        this.assertEquals(3, re.compile(",").split("a,b,c").length());
+    }
+
+    @test
+    func moduleFunctionsStillWork(): void {
+        this.assertTrue(re.test("[0-9]+", "42"));
+        this.assertEquals("42", re.find("[0-9]+", "x42"));
+    }
+
+    @test
+    func invalidPatternErrorsAtCompile(): void {
+        this.assertThrows(func(): void {
+            re.compile("(unclosed");
+        });
+    }
+
+    @test
+    func pcrePatternCarriesFlags(): void {
+        let p = pcre.compile("^foo$", "im");
+        this.assertTrue(p.test("FOO"));
+        this.assertTrue(p.test("bar\nfoo"));
+        this.assertFalse(pcre.compile("^foo$").test("FOO"));
+        this.assertEquals(2, pcre.compile("o+", "i").findAll("fOo boO").length());
+    }
+
+    @test
+    func pcreInvalidFlagErrorsAtCompile(): void {
+        this.assertThrows(func(): void {
+            pcre.compile("foo", "q");
+        });
+    }
+}

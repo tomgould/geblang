@@ -131,6 +131,7 @@ func registerAllBuiltins(r *Registry) {
 	registerURL(r)
 	registerUUID(r)
 	registerRe(r)
+	registerRegexCompile(r)
 	registerPCRE(r)
 	registerMarkdown(r)
 	registerTemplate(r)
@@ -3969,79 +3970,25 @@ func registerRe(r *Registry) {
 		return pattern.Value, text.Value, nil
 	}
 
-	r.Register("re", "test", func(args []runtime.Value) (runtime.Value, error) {
-		pattern, text, err := twoStrings(args, "re.test")
-		if err != nil {
-			return nil, err
-		}
-		re, err := compileCachedRegex(pattern)
-		if err != nil {
-			return nil, fmt.Errorf("re.test: invalid pattern: %v", err)
-		}
-		return runtime.Bool{Value: re.MatchString(text)}, nil
-	})
-	r.Register("re", "find", func(args []runtime.Value) (runtime.Value, error) {
-		pattern, text, err := twoStrings(args, "re.find")
-		if err != nil {
-			return nil, err
-		}
-		re, err := compileCachedRegex(pattern)
-		if err != nil {
-			return nil, fmt.Errorf("re.find: invalid pattern: %v", err)
-		}
-		match := re.FindString(text)
-		if match == "" && !re.MatchString(text) {
-			return runtime.Null{}, nil
-		}
-		return runtime.String{Value: match}, nil
-	})
-	r.Register("re", "findAll", func(args []runtime.Value) (runtime.Value, error) {
-		pattern, text, err := twoStrings(args, "re.findAll")
-		if err != nil {
-			return nil, err
-		}
-		re, err := compileCachedRegex(pattern)
-		if err != nil {
-			return nil, fmt.Errorf("re.findAll: invalid pattern: %v", err)
-		}
-		matches := re.FindAllString(text, -1)
-		elements := make([]runtime.Value, len(matches))
-		for i, m := range matches {
-			elements[i] = runtime.String{Value: m}
-		}
-		return &runtime.List{Elements: elements}, nil
-	})
-	r.Register("re", "match", func(args []runtime.Value) (runtime.Value, error) {
-		pattern, text, err := twoStrings(args, "re.match")
-		if err != nil {
-			return nil, err
-		}
-		re, err := compileCachedRegex(pattern)
-		if err != nil {
-			return nil, fmt.Errorf("re.match: invalid pattern: %v", err)
-		}
-		match := re.FindStringSubmatch(text)
-		if match == nil {
-			return runtime.Null{}, nil
-		}
-		return reMatchDict(re, match), nil
-	})
-	r.Register("re", "matchAll", func(args []runtime.Value) (runtime.Value, error) {
-		pattern, text, err := twoStrings(args, "re.matchAll")
-		if err != nil {
-			return nil, err
-		}
-		re, err := compileCachedRegex(pattern)
-		if err != nil {
-			return nil, fmt.Errorf("re.matchAll: invalid pattern: %v", err)
-		}
-		all := re.FindAllStringSubmatch(text, -1)
-		elements := make([]runtime.Value, 0, len(all))
-		for _, m := range all {
-			elements = append(elements, reMatchDict(re, m))
-		}
-		return &runtime.List{Elements: elements}, nil
-	})
+	reFn := func(name string, body func(re *regexp.Regexp, text string) runtime.Value) {
+		r.Register("re", name, func(args []runtime.Value) (runtime.Value, error) {
+			pattern, text, err := twoStrings(args, "re."+name)
+			if err != nil {
+				return nil, err
+			}
+			re, err := compileCachedRegex(pattern)
+			if err != nil {
+				return nil, fmt.Errorf("re.%s: invalid pattern: %v", name, err)
+			}
+			return body(re, text), nil
+		})
+	}
+	reFn("test", reTestCore)
+	reFn("find", reFindCore)
+	reFn("findAll", reFindAllCore)
+	reFn("match", reMatchCore)
+	reFn("matchAll", reMatchAllCore)
+	reFn("split", reSplitCore)
 	r.Register("re", "replace", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("re.replace expects (pattern, replacement, text)")
@@ -4056,24 +4003,61 @@ func registerRe(r *Registry) {
 		if err != nil {
 			return nil, fmt.Errorf("re.replace: invalid pattern: %v", err)
 		}
-		return runtime.String{Value: re.ReplaceAllString(text.Value, repl.Value)}, nil
+		return reReplaceCore(re, repl.Value, text.Value), nil
 	})
-	r.Register("re", "split", func(args []runtime.Value) (runtime.Value, error) {
-		pattern, text, err := twoStrings(args, "re.split")
-		if err != nil {
-			return nil, err
-		}
-		re, err := compileCachedRegex(pattern)
-		if err != nil {
-			return nil, fmt.Errorf("re.split: invalid pattern: %v", err)
-		}
-		parts := re.Split(text, -1)
-		elements := make([]runtime.Value, len(parts))
-		for i, p := range parts {
-			elements[i] = runtime.String{Value: p}
-		}
-		return &runtime.List{Elements: elements}, nil
-	})
+}
+
+// re operation cores, shared by the module functions and the compiled
+// Pattern handle. Each takes an already-compiled regex.
+func reTestCore(re *regexp.Regexp, text string) runtime.Value {
+	return runtime.Bool{Value: re.MatchString(text)}
+}
+
+func reFindCore(re *regexp.Regexp, text string) runtime.Value {
+	match := re.FindString(text)
+	if match == "" && !re.MatchString(text) {
+		return runtime.Null{}
+	}
+	return runtime.String{Value: match}
+}
+
+func reFindAllCore(re *regexp.Regexp, text string) runtime.Value {
+	matches := re.FindAllString(text, -1)
+	elements := make([]runtime.Value, len(matches))
+	for i, m := range matches {
+		elements[i] = runtime.String{Value: m}
+	}
+	return &runtime.List{Elements: elements}
+}
+
+func reMatchCore(re *regexp.Regexp, text string) runtime.Value {
+	match := re.FindStringSubmatch(text)
+	if match == nil {
+		return runtime.Null{}
+	}
+	return reMatchDict(re, match)
+}
+
+func reMatchAllCore(re *regexp.Regexp, text string) runtime.Value {
+	all := re.FindAllStringSubmatch(text, -1)
+	elements := make([]runtime.Value, 0, len(all))
+	for _, m := range all {
+		elements = append(elements, reMatchDict(re, m))
+	}
+	return &runtime.List{Elements: elements}
+}
+
+func reReplaceCore(re *regexp.Regexp, repl, text string) runtime.Value {
+	return runtime.String{Value: re.ReplaceAllString(text, repl)}
+}
+
+func reSplitCore(re *regexp.Regexp, text string) runtime.Value {
+	parts := re.Split(text, -1)
+	elements := make([]runtime.Value, len(parts))
+	for i, p := range parts {
+		elements[i] = runtime.String{Value: p}
+	}
+	return &runtime.List{Elements: elements}
 }
 
 var gfmMarkdown = goldmark.New(

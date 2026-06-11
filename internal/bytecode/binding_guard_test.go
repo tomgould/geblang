@@ -18,10 +18,9 @@ import (
 //     run time - the static-analysis contract makes early rejection
 //     authoritative).
 //
-// Error MESSAGE texts are not asserted: the three binder
-// implementations word them differently today. Unifying them is the
-// purpose of the shared-binder refactor; when that lands, this guard
-// gains message assertions.
+// With the shared binder (internal/binding) consumed by all three
+// implementations, dynamic invalid cells assert full message parity:
+// both backends must produce the identical canonical error text.
 
 type bindingSig struct {
 	name   string
@@ -68,6 +67,13 @@ var bindingCalls = []bindingCall{
 		"fixed": "1", "defaulted": "1|9", "variadic": "1|[]", "defvar": "1|9|[]"}},
 	{"unknownName", "(c: 1)", map[string]string{}},
 	{"duplicate", "(1, a: 2)", map[string]string{}},
+	// Positional after named fills the next unassigned slot, and named
+	// matching is case-insensitive - the evaluator diverged on both
+	// until it consumed the shared binder.
+	{"positionalAfterNamed", "(b: 9, 1)", map[string]string{
+		"defaulted": "1|9", "defvar": "1|9|[]"}},
+	{"namedCaseInsensitive", "(A: 1)", map[string]string{
+		"fixed": "1", "defaulted": "1|5", "variadic": "1|[]", "defvar": "1|5|[]"}},
 }
 
 type bindingContext struct {
@@ -80,7 +86,7 @@ type bindingContext struct {
 
 func wrapCatch(call string, catch bool) string {
 	if catch {
-		return "try { io.println(" + call + `); } catch (Error e) { io.println("CAUGHT " + e.class); }`
+		return "try { io.println(" + call + `); } catch (Error e) { io.println("CAUGHT " + e.class + ": " + e.message); }`
 	}
 	return "io.println(" + call + ");"
 }
@@ -151,7 +157,7 @@ func TestBindingGuardMatrix(t *testing.T) {
 						t.Fatalf("dynamic invalid call not caught: eval %q vm %q\n%s", evOut, vmOut, src)
 					}
 					if evOut != vmOut {
-						t.Fatalf("caught class diverges: eval %q vm %q\n%s", evOut, vmOut, src)
+						t.Fatalf("caught error diverges: eval %q vm %q\n%s", evOut, vmOut, src)
 					}
 				})
 			}

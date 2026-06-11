@@ -3052,6 +3052,25 @@ io.println(decoded["payload"]["sub"]);
 `, "true\nuser-1\nadmin\ntrue\nHS256\nuser-1\n")
 }
 
+// re.compile / pcre.compile return Pattern handles whose methods
+// mirror the module functions; the plain module functions are
+// unchanged (still pure native calls).
+func TestParityRegexCompileHandles(t *testing.T) {
+	runParity(t, `import io;
+import re;
+import pcre;
+let p = re.compile("[a-z]+[0-9]+");
+io.println(p.test("foo123"));
+io.println(p.find("__xy42__"));
+io.println("${p.findAll("a1 b2")}");
+io.println(p.replace("_", "a1 b22"));
+let pc = pcre.compile("^foo$", "im");
+io.println(pc.test("FOO"));
+io.println(pc.test("bar"));
+try { re.compile("(broken"); } catch (Error e) { io.println("caught"); }
+`, "true\nxy42\n"+`["a1", "b2"]`+"\n_ _\ntrue\nfalse\ncaught\n")
+}
+
 // crypt.jwk/jwks produce RFC 7517 documents and crypt.jwtVerify
 // accepts them, selecting by the token's kid and pinning the alg to
 // the matched key.

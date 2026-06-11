@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"geblang/internal/ast"
+	argbinding "geblang/internal/binding"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
 )
@@ -6230,7 +6231,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 			argc = len(provided)
 		}
 	} else if argc > len(function.ParamSlots) {
-		return 0, vm.runtimeError(instruction, "%s expects at most %d args, got %d", function.Name, len(function.ParamSlots), argc)
+		return 0, vm.runtimeError(instruction, "%s expects at most %d arguments, got %d", function.Name, len(function.ParamSlots), argc)
 	}
 	required := len(function.ParamSlots)
 	if function.Variadic && required > 0 {
@@ -6240,7 +6241,16 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 		required--
 	}
 	if argc < required {
-		return 0, vm.runtimeError(instruction, "%s expects at least %d args, got %d", function.Name, required, argc)
+		// Name the first unfilled parameter that has no default.
+		for i := argc; i < len(function.ParamNames); i++ {
+			if function.Variadic && i == len(function.ParamNames)-1 {
+				break
+			}
+			if i >= len(function.DefaultConstants) || function.DefaultConstants[i] < 0 {
+				return 0, vm.runtimeError(instruction, "%s missing argument %s", function.Name, function.ParamNames[i])
+			}
+		}
+		return 0, vm.runtimeError(instruction, "%s missing argument %d", function.Name, argc+1)
 	}
 	args := provided
 	if function.Variadic || argc != len(function.ParamSlots) {
@@ -6258,6 +6268,9 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 				continue
 			}
 			if i >= len(function.DefaultConstants) || function.DefaultConstants[i] < 0 {
+				if i < len(function.ParamNames) {
+					return 0, vm.runtimeError(instruction, "%s missing argument %s", function.Name, function.ParamNames[i])
+				}
 				return 0, vm.runtimeError(instruction, "%s missing argument %d", function.Name, i+1)
 			}
 			defaultIndex := function.DefaultConstants[i]
@@ -7559,6 +7572,26 @@ func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classInd
 	return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], args, nil)
 }
 
+func vmBindingSignature(function FunctionInfo, paramOffset int) argbinding.Signature {
+	paramNames := function.ParamNames
+	if paramOffset <= len(paramNames) {
+		paramNames = paramNames[paramOffset:]
+	} else {
+		paramNames = nil
+	}
+	hasDefault := make([]bool, len(paramNames))
+	for i := range paramNames {
+		paramIndex := i + paramOffset
+		hasDefault[i] = paramIndex < len(function.DefaultConstants) && function.DefaultConstants[paramIndex] >= 0
+	}
+	return argbinding.Signature{
+		FuncName:   function.Name,
+		ParamNames: paramNames,
+		HasDefault: hasDefault,
+		Variadic:   function.Variadic,
+	}
+}
+
 func (vm *VM) orderRuntimeArguments(instruction Instruction, function FunctionInfo, args []runtime.Value, names []string, paramOffset int) ([]runtime.Value, error) {
 	if len(args) != len(names) {
 		return nil, vm.runtimeError(instruction, "argument metadata mismatch")
@@ -7566,35 +7599,28 @@ func (vm *VM) orderRuntimeArguments(instruction Instruction, function FunctionIn
 	if len(function.ParamNames) < paramOffset {
 		return nil, vm.runtimeError(instruction, "function metadata for %s has invalid receiver offset", function.Name)
 	}
-	ordered := make([]runtime.Value, len(function.ParamNames)-paramOffset)
-	assigned := make([]bool, len(ordered))
-	positions := map[string]int{}
-	for i := paramOffset; i < len(function.ParamNames); i++ {
-		positions[function.ParamNames[i]] = i - paramOffset
+	sig := vmBindingSignature(function, paramOffset)
+	bargs := make([]argbinding.Arg, len(args))
+	for i, name := range names {
+		bargs[i].Name = name
 	}
-	nextPositional := 0
-	for i, arg := range args {
-		if names[i] == "" {
-			for nextPositional < len(ordered) && assigned[nextPositional] {
-				nextPositional++
-			}
-			if nextPositional >= len(ordered) {
-				return nil, vm.runtimeError(instruction, "%s received too many positional arguments", function.Name)
-			}
-			ordered[nextPositional] = arg
-			assigned[nextPositional] = true
-			nextPositional++
-			continue
+	result, err := argbinding.Order(sig, bargs)
+	if err != nil {
+		return nil, vm.runtimeError(instruction, "%s", err.Error())
+	}
+	ordered := make([]runtime.Value, len(result.Slots))
+	assigned := make([]bool, len(result.Slots))
+	for i, slot := range result.Slots {
+		if slot != argbinding.DefaultSlot {
+			ordered[i] = args[slot]
+			assigned[i] = true
 		}
-		position, ok := positions[strings.ToLower(names[i])]
-		if !ok {
-			return nil, vm.runtimeError(instruction, "%s has no parameter %s", function.Name, names[i])
-		}
-		if assigned[position] {
-			return nil, vm.runtimeError(instruction, "%s parameter %s passed more than once", function.Name, names[i])
-		}
-		ordered[position] = arg
-		assigned[position] = true
+	}
+	for _, argIndex := range result.TailArgs {
+		// Positional overflow into the variadic slot arrives unpacked;
+		// downstream packing consumes the trailing run.
+		ordered = append(ordered, args[argIndex])
+		assigned = append(assigned, true)
 	}
 	variadicIndex := -1
 	if function.Variadic && len(function.ParamNames) > paramOffset {
@@ -7609,9 +7635,6 @@ func (vm *VM) orderRuntimeArguments(instruction Instruction, function FunctionIn
 			continue
 		}
 		paramIndex := i + paramOffset
-		if paramIndex >= len(function.DefaultConstants) || function.DefaultConstants[paramIndex] < 0 {
-			return nil, vm.runtimeError(instruction, "%s missing argument before parameter %s", function.Name, function.ParamNames[paramIndex])
-		}
 		defaultIndex := function.DefaultConstants[paramIndex]
 		if defaultIndex < 0 || int(defaultIndex) >= vm.constantsLen() {
 			return nil, vm.runtimeError(instruction, "default argument constant out of range")
@@ -7619,6 +7642,9 @@ func (vm *VM) orderRuntimeArguments(instruction Instruction, function FunctionIn
 		ordered[i] = vm.constantValue(defaultIndex)
 		assigned[i] = true
 	}
+	// Normalise away trailing arguments that equal their declared
+	// default so overload selection and re-dispatch see one canonical
+	// shape; downstream default fill restores them.
 	for len(ordered) > 0 {
 		paramIndex := len(ordered) - 1 + paramOffset
 		if paramIndex >= len(function.DefaultConstants) || function.DefaultConstants[paramIndex] < 0 {
@@ -12679,35 +12705,36 @@ func (vm *VM) methodCallSpread(instruction Instruction, ip int) (int, error) {
 // orderNamedByParamNames places named/positional args into declared
 // parameter order; trailing unfilled slots are trimmed so the callee's
 // declared defaults engage, middle holes are an error.
-func orderNamedByParamNames(args []runtime.Value, names []string, paramNames []string) ([]runtime.Value, error) {
-	positions := map[string]int{}
-	for i, n := range paramNames {
-		positions[strings.ToLower(n)] = i
+func orderNamedByParamNames(fnName string, args []runtime.Value, names []string, paramNames []string) ([]runtime.Value, error) {
+	// This path has no default metadata (reflect targets and native
+	// wrappers carry names only), so every slot is treated as
+	// defaultable for ordering; trailing holes are trimmed for the
+	// downstream default fill and middle holes are rejected here -
+	// the documented defaults-must-trail contract for this dispatch
+	// shape.
+	sig := argbinding.Signature{
+		FuncName:   fnName,
+		ParamNames: paramNames,
+		HasDefault: make([]bool, len(paramNames)),
 	}
-	ordered := make([]runtime.Value, len(paramNames))
-	filled := make([]bool, len(paramNames))
-	next := 0
-	for i, arg := range args {
-		if names[i] == "" {
-			for next < len(ordered) && filled[next] {
-				next++
-			}
-			if next >= len(ordered) {
-				return nil, fmt.Errorf("too many positional arguments")
-			}
-			ordered[next] = arg
-			filled[next] = true
-			continue
+	for i := range sig.HasDefault {
+		sig.HasDefault[i] = true
+	}
+	bargs := make([]argbinding.Arg, len(args))
+	for i, name := range names {
+		bargs[i].Name = name
+	}
+	result, err := argbinding.Order(sig, bargs)
+	if err != nil {
+		return nil, err
+	}
+	ordered := make([]runtime.Value, len(result.Slots))
+	filled := make([]bool, len(result.Slots))
+	for i, slot := range result.Slots {
+		if slot != argbinding.DefaultSlot {
+			ordered[i] = args[slot]
+			filled[i] = true
 		}
-		pos, ok := positions[strings.ToLower(names[i])]
-		if !ok {
-			return nil, fmt.Errorf("no parameter %s", names[i])
-		}
-		if filled[pos] {
-			return nil, fmt.Errorf("parameter %s passed more than once", names[i])
-		}
-		ordered[pos] = arg
-		filled[pos] = true
 	}
 	end := len(ordered)
 	for end > 0 && !filled[end-1] {
@@ -12715,7 +12742,7 @@ func orderNamedByParamNames(args []runtime.Value, names []string, paramNames []s
 	}
 	for i := 0; i < end; i++ {
 		if !filled[i] {
-			return nil, fmt.Errorf("missing argument before parameter %s", paramNames[i])
+			return nil, fmt.Errorf("%s missing argument %s", fnName, paramNames[i])
 		}
 	}
 	return ordered[:end], nil
@@ -13397,7 +13424,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 			for _, p := range target.Function.Parameters {
 				paramNames = append(paramNames, p.Name)
 			}
-			ordered, oerr := orderNamedByParamNames(args, names, paramNames)
+			ordered, oerr := orderNamedByParamNames(methodName, args, names, paramNames)
 			if oerr != nil {
 				return 0, vm.runtimeError(instruction, "%s", oerr.Error())
 			}
@@ -13463,7 +13490,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 		if methodName == "__invoke" {
 			paramNames, perr := vm.receiverParamNames(instruction, receiver, methodName)
 			if perr == nil {
-				ordered, oerr := orderNamedByParamNames(args, names, paramNames)
+				ordered, oerr := orderNamedByParamNames(methodName, args, names, paramNames)
 				if oerr != nil {
 					return 0, vm.runtimeError(instruction, "%s", oerr.Error())
 				}

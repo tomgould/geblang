@@ -74,12 +74,14 @@ connect(host: "example.com", port: 443, tls: false);
 connect(host: "example.com", tls: false);     # default port kept
 ```
 
-Positional and named arguments can be mixed, but every positional
-argument must precede the first named one:
+Positional and named arguments can be mixed in either order. A
+positional argument fills the next parameter slot that nothing has
+claimed yet, so naming an earlier parameter does not block later
+positional ones:
 
 ```gb
-connect("example.com", tls: false);           # ok - positional then named
-connect(host: "example.com", 443);            # error - positional after named
+connect("example.com", tls: false);           # positional then named
+connect(host: "example.com", 443);            # named then positional: port=443
 ```
 
 Unknown names raise an error so typos surface immediately:
