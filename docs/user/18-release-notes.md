@@ -35,6 +35,12 @@
 - Compiled instructions are a third smaller in memory (packed source
   positions, consolidated operand storage), cutting a loaded server's
   resident memory by ~15% under sustained load at unchanged speed.
+- The evaluator (the `geblang test` runtime) gains allocation-free
+  integer arithmetic and comparison fast paths (identical floor
+  division/modulo and overflow-promotion semantics to the VM),
+  environments that hold small scopes inline without a map, and no
+  scope allocation at all for blocks that declare nothing. Recursive
+  integer workloads run about 60% faster under the evaluator.
 
 ### HTTP server
 

@@ -124,6 +124,42 @@ func (s *SpreadExpression) String() string       { return "..." + s.Value.String
 type BlockStatement struct {
 	Token      token.Token
 	Statements []Statement
+
+	scopeOnce  sync.Once
+	needsScope bool
+}
+
+// DeclaresBindings reports whether any statement in the block can
+// introduce a binding directly into the block's own scope. Blocks that
+// cannot declare anything run in the enclosing scope, skipping an
+// environment allocation; lookups and assignments behave identically
+// because an empty scope contributes nothing to the chain. The
+// statement set errs conservative: anything that might Define is
+// included.
+func (s *BlockStatement) DeclaresBindings() bool {
+	s.scopeOnce.Do(func() {
+		for _, stmt := range s.Statements {
+			if statementDeclaresBindings(stmt) {
+				s.needsScope = true
+				return
+			}
+		}
+	})
+	return s.needsScope
+}
+
+func statementDeclaresBindings(stmt Statement) bool {
+	switch t := stmt.(type) {
+	case *DeclarationStatement, *DestructuringStatement, *FunctionStatement,
+		*ClassStatement, *InterfaceStatement, *EnumStatement,
+		*ImportStatement, *FromImportStatement, *WithStatement,
+		*MatchStatement, *SelectStatement:
+		return true
+	case *ExportStatement:
+		return statementDeclaresBindings(t.Statement)
+	default:
+		return false
+	}
 }
 
 func (*BlockStatement) statementNode()         {}

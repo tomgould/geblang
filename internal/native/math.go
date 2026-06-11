@@ -149,6 +149,9 @@ func NumericCompare(left runtime.Value, right runtime.Value) (int, error) {
 			}
 		}
 	}
+	if c, ok := numericCompareIntFast(left, right); ok {
+		return c, nil
+	}
 	if l, ok := left.(runtime.String); ok {
 		if r, ok := right.(runtime.String); ok {
 			return strings.Compare(l.Value, r.Value), nil
@@ -495,4 +498,42 @@ func interpRat(v runtime.Value) *big.Rat {
 func interpFloat(v runtime.Value) float64 {
 	f, _ := runtime.NumericToFloat(v)
 	return f
+}
+
+// numericCompareIntFast compares int-representation mixes without Rat
+// allocation. A big Int outside int64 range is, by construction,
+// larger in magnitude than any SmallInt, so its sign decides.
+func numericCompareIntFast(left, right runtime.Value) (int, bool) {
+	if l, ok := left.(runtime.SmallInt); ok {
+		if r, ok := right.(runtime.Int); ok {
+			if r.Value.IsInt64() {
+				return compareInt64(l.Value, r.Value.Int64()), true
+			}
+			return -r.Value.Sign(), true
+		}
+		return 0, false
+	}
+	if l, ok := left.(runtime.Int); ok {
+		if r, ok := right.(runtime.SmallInt); ok {
+			if l.Value.IsInt64() {
+				return compareInt64(l.Value.Int64(), r.Value), true
+			}
+			return l.Value.Sign(), true
+		}
+		if r, ok := right.(runtime.Int); ok {
+			return l.Value.Cmp(r.Value), true
+		}
+	}
+	return 0, false
+}
+
+func compareInt64(l, r int64) int {
+	switch {
+	case l < r:
+		return -1
+	case l > r:
+		return 1
+	default:
+		return 0
+	}
 }

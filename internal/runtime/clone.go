@@ -66,12 +66,14 @@ func (s *cloneState) cloneEnvironment(env *Environment) *Environment {
 	if cloned, ok := s.envs[env]; ok {
 		return cloned
 	}
-	cloned := &Environment{store: map[string]Binding{}}
+	cloned := &Environment{}
 	s.envs[env] = cloned
 	cloned.outer = s.cloneEnvironment(env.outer)
-	for name, binding := range env.store {
-		cloned.store[name] = Binding{Value: s.cloneValue(binding.Value), Constant: binding.Constant}
-	}
+	// The memo above breaks recursion before any re-entry into this
+	// environment, so visiting under the read lock cannot self-deadlock.
+	env.ForEachBinding(func(name string, binding Binding) {
+		cloned.setLocked(name, Binding{Value: s.cloneValue(binding.Value), Constant: binding.Constant})
+	})
 	return cloned
 }
 

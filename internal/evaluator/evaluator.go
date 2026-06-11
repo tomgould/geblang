@@ -2211,6 +2211,11 @@ func (e *Evaluator) evalBlock(block *ast.BlockStatement, outer *runtime.Environm
 	if block == nil {
 		return signal{}, nil
 	}
+	if !block.DeclaresBindings() {
+		// Nothing in the block can bind a name in its own scope, so an
+		// enclosed environment would only add an empty chain hop.
+		return e.evalStatements(block.Statements, outer)
+	}
 	return e.evalStatements(block.Statements, runtime.NewEnclosedEnvironment(outer))
 }
 
@@ -24043,6 +24048,13 @@ func comparisonAttempts(operator string, left, right runtime.Value) []comparison
 }
 
 func (e *Evaluator) evalComparisonMethod(operator string, left, right runtime.Value) (runtime.Value, bool, error) {
+	// Dunder comparison needs an instance receiver on one side; skip
+	// the attempt-list allocation for primitive comparisons.
+	if _, ok := left.(*runtime.Instance); !ok {
+		if _, ok := right.(*runtime.Instance); !ok {
+			return nil, false, nil
+		}
+	}
 	for _, at := range comparisonAttempts(operator, left, right) {
 		instance, ok := at.recv.(*runtime.Instance)
 		if !ok {
@@ -24492,6 +24504,13 @@ func evalNumericInfix(operator string, left runtime.Value, right runtime.Value) 
 	// O(1) big.Int per arithmetic step; the storage benefit of
 	// SmallInt at parse-time pays for it as long as the loop body
 	// doesn't run arithmetic on every value.
+	if l, ok := left.(runtime.SmallInt); ok {
+		if r, ok := right.(runtime.SmallInt); ok {
+			if value, handled, err := evalSmallIntInfix(operator, l.Value, r.Value); handled {
+				return value, err
+			}
+		}
+	}
 	if s, ok := left.(runtime.SmallInt); ok {
 		left = runtime.NewInt64(s.Value)
 	}
@@ -24539,6 +24558,65 @@ func intToFloatValue(v runtime.Int) runtime.Float {
 // mixing decimal and float, which would silently lose decimal exactness.
 func decimalFloatArithError(operator string, left, right runtime.Value) error {
 	return fmt.Errorf("cannot mix decimal and float in %s: convert explicitly (got %s and %s)", operator, left.TypeName(), right.TypeName())
+}
+
+// evalSmallIntInfix is the allocation-free integer fast path, mirroring
+// the VM's smallIntBinary exactly: floor // and %, overflow promotion
+// to big Int. Operators it does not cover report handled=false and
+// fall through to the big-Int dispatcher.
+func evalSmallIntInfix(operator string, l int64, r int64) (runtime.Value, bool, error) {
+	switch operator {
+	case "+":
+		result := l + r
+		if (l^result)&(r^result) < 0 {
+			return runtime.Int{Value: new(big.Int).Add(big.NewInt(l), big.NewInt(r))}, true, nil
+		}
+		return runtime.SmallInt{Value: result}, true, nil
+	case "-":
+		result := l - r
+		if (l^r)&(l^result) < 0 {
+			return runtime.Int{Value: new(big.Int).Sub(big.NewInt(l), big.NewInt(r))}, true, nil
+		}
+		return runtime.SmallInt{Value: result}, true, nil
+	case "*":
+		result := l * r
+		if l != 0 && result/l != r {
+			return runtime.Int{Value: new(big.Int).Mul(big.NewInt(l), big.NewInt(r))}, true, nil
+		}
+		return runtime.SmallInt{Value: result}, true, nil
+	case "//":
+		if r == 0 {
+			return nil, true, fmt.Errorf("integer division by zero")
+		}
+		if l == math.MinInt64 && r == -1 {
+			return runtime.Int{Value: new(big.Int).Neg(big.NewInt(l))}, true, nil
+		}
+		q := l / r
+		rem := l - q*r
+		if rem != 0 && ((l < 0) != (r < 0)) {
+			q--
+		}
+		return runtime.SmallInt{Value: q}, true, nil
+	case "%":
+		if r == 0 {
+			return nil, true, fmt.Errorf("modulo by zero")
+		}
+		m := l % r
+		if m != 0 && ((l < 0) != (r < 0)) {
+			m += r
+		}
+		return runtime.SmallInt{Value: m}, true, nil
+	case "**":
+		if r < 0 {
+			return nil, true, fmt.Errorf("int exponent must be a non-negative int64")
+		}
+		result := new(big.Int).Exp(big.NewInt(l), big.NewInt(r), nil)
+		if result.IsInt64() {
+			return runtime.SmallInt{Value: result.Int64()}, true, nil
+		}
+		return runtime.Int{Value: result}, true, nil
+	}
+	return nil, false, nil
 }
 
 func evalIntInfix(operator string, left runtime.Int, right runtime.Int) (runtime.Value, error) {

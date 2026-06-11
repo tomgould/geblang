@@ -18,32 +18,120 @@ type Binding struct {
 
 // Environment is the evaluator's lexical scope. The mutex guards
 // concurrent access from async goroutines that share a closure
-// environment with the parent evaluator.
+// environment with the parent evaluator. The first few bindings live
+// in a fixed inline array - most scopes (call frames, blocks) hold a
+// handful of names, so the common case allocates no map and looks up
+// by short linear scan; larger scopes spill to the map.
+type envEntry struct {
+	name    string
+	binding Binding
+}
+
 type Environment struct {
 	mu           sync.RWMutex
+	inline       [4]envEntry
+	inlineCount  uint8
 	store        map[string]Binding
 	typeBindings map[string]string
 	outer        *Environment
 }
 
 func NewEnvironment() *Environment {
-	return &Environment{store: map[string]Binding{}}
+	return &Environment{}
 }
 
 func NewEnclosedEnvironment(outer *Environment) *Environment {
-	return &Environment{store: map[string]Binding{}, outer: outer}
+	return &Environment{outer: outer}
+}
+
+// lookupLocked finds the binding in this scope only. Callers hold mu.
+func (e *Environment) lookupLocked(name string) (Binding, bool) {
+	for i := uint8(0); i < e.inlineCount; i++ {
+		if e.inline[i].name == name {
+			return e.inline[i].binding, true
+		}
+	}
+	if e.store != nil {
+		b, ok := e.store[name]
+		return b, ok
+	}
+	return Binding{}, false
+}
+
+// setLocked inserts or overwrites the binding in this scope only.
+// Callers hold mu.
+func (e *Environment) setLocked(name string, b Binding) {
+	for i := uint8(0); i < e.inlineCount; i++ {
+		if e.inline[i].name == name {
+			e.inline[i].binding = b
+			return
+		}
+	}
+	if e.store != nil {
+		if _, ok := e.store[name]; ok {
+			e.store[name] = b
+			return
+		}
+	}
+	if int(e.inlineCount) < len(e.inline) {
+		e.inline[e.inlineCount] = envEntry{name: name, binding: b}
+		e.inlineCount++
+		return
+	}
+	if e.store == nil {
+		e.store = map[string]Binding{}
+	}
+	e.store[name] = b
+}
+
+// deleteLocked removes the binding from this scope only, reporting
+// whether it existed. Callers hold mu.
+func (e *Environment) deleteLocked(name string) bool {
+	for i := uint8(0); i < e.inlineCount; i++ {
+		if e.inline[i].name == name {
+			last := e.inlineCount - 1
+			e.inline[i] = e.inline[last]
+			e.inline[last] = envEntry{}
+			e.inlineCount = last
+			return true
+		}
+	}
+	if e.store != nil {
+		if _, ok := e.store[name]; ok {
+			delete(e.store, name)
+			return true
+		}
+	}
+	return false
+}
+
+// ForEachBinding visits every binding declared directly in this scope
+// under the read lock. Iteration order is unspecified.
+func (e *Environment) ForEachBinding(visit func(name string, b Binding)) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for i := uint8(0); i < e.inlineCount; i++ {
+		visit(e.inline[i].name, e.inline[i].binding)
+	}
+	for name, b := range e.store {
+		visit(name, b)
+	}
+}
+
+func (e *Environment) bindingCountLocked() int {
+	return int(e.inlineCount) + len(e.store)
 }
 
 func (e *Environment) Define(name string, value Value, constant bool) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if _, exists := e.store[name]; exists {
+	if _, exists := e.lookupLocked(name); exists {
 		return fmt.Errorf("%q is already declared in this scope", name)
 	}
 	if constant {
 		value = ShallowFreeze(value)
 	}
-	e.store[name] = Binding{Value: value, Constant: constant}
+	e.setLocked(name, Binding{Value: value, Constant: constant})
 	return nil
 }
 
@@ -52,45 +140,45 @@ func (e *Environment) Define(name string, value Value, constant bool) error {
 func (e *Environment) DefineImported(name string, value Value, source string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if existing, exists := e.store[name]; exists && !(existing.Imported && existing.ImportSource == source) {
+	if existing, exists := e.lookupLocked(name); exists && !(existing.Imported && existing.ImportSource == source) {
 		return fmt.Errorf("%q is already declared in this scope", name)
 	}
-	e.store[name] = Binding{Value: ShallowFreeze(value), Constant: true, Imported: true, ImportSource: source}
+	e.setLocked(name, Binding{Value: ShallowFreeze(value), Constant: true, Imported: true, ImportSource: source})
 	return nil
 }
 
 func (e *Environment) DefineFunction(name string, fn Function) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if binding, exists := e.store[name]; exists {
+	if binding, exists := e.lookupLocked(name); exists {
 		if binding.Imported {
 			return fmt.Errorf("%q is already declared in this scope", name)
 		}
 		switch value := binding.Value.(type) {
 		case Function:
-			e.store[name] = Binding{Value: OverloadedFunction{Name: name, Overloads: []Function{value, fn}}, Constant: true}
+			e.setLocked(name, Binding{Value: OverloadedFunction{Name: name, Overloads: []Function{value, fn}}, Constant: true})
 			return nil
 		case OverloadedFunction:
 			value.Overloads = append(value.Overloads, fn)
-			e.store[name] = Binding{Value: value, Constant: true}
+			e.setLocked(name, Binding{Value: value, Constant: true})
 			return nil
 		default:
 			return fmt.Errorf("%q is already declared in this scope", name)
 		}
 	}
-	e.store[name] = Binding{Value: fn, Constant: true}
+	e.setLocked(name, Binding{Value: fn, Constant: true})
 	return nil
 }
 
 func (e *Environment) Assign(name string, value Value) error {
 	e.mu.Lock()
-	if binding, exists := e.store[name]; exists {
+	if binding, exists := e.lookupLocked(name); exists {
 		if binding.Constant {
 			e.mu.Unlock()
 			return fmt.Errorf("cannot assign to constant %q", name)
 		}
 		binding.Value = value
-		e.store[name] = binding
+		e.setLocked(name, binding)
 		e.mu.Unlock()
 		return nil
 	}
@@ -104,7 +192,7 @@ func (e *Environment) Assign(name string, value Value) error {
 
 func (e *Environment) Get(name string) (Value, bool) {
 	e.mu.RLock()
-	if binding, exists := e.store[name]; exists {
+	if binding, exists := e.lookupLocked(name); exists {
 		e.mu.RUnlock()
 		return binding.Value, true
 	}
@@ -122,8 +210,7 @@ func (e *Environment) Get(name string) (Value, bool) {
 // fired.
 func (e *Environment) Delete(name string) bool {
 	e.mu.Lock()
-	if _, exists := e.store[name]; exists {
-		delete(e.store, name)
+	if e.deleteLocked(name) {
 		if e.typeBindings != nil {
 			delete(e.typeBindings, name)
 		}
@@ -194,7 +281,10 @@ func (e *Environment) TypeBindingNames() []string {
 func (e *Environment) Names() []string {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	names := make([]string, 0, len(e.store))
+	names := make([]string, 0, e.bindingCountLocked())
+	for i := uint8(0); i < e.inlineCount; i++ {
+		names = append(names, e.inline[i].name)
+	}
 	for name := range e.store {
 		names = append(names, name)
 	}
@@ -207,6 +297,14 @@ func (e *Environment) VisibleNames() []string {
 	var names []string
 	for env := e; env != nil; env = env.outer {
 		env.mu.RLock()
+		for i := uint8(0); i < env.inlineCount; i++ {
+			name := env.inline[i].name
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			names = append(names, name)
+		}
 		for name := range env.store {
 			if seen[name] {
 				continue

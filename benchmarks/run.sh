@@ -10,6 +10,8 @@
 #   benchmarks/run.sh --docker         # python/php/node in official containers
 #   benchmarks/run.sh --repeats 7
 #   benchmarks/run.sh --case numeric_loop
+#   benchmarks/run.sh --lang geblang          # skip the comparison languages
+#   benchmarks/run.sh --lang geblang,python
 #   benchmarks/run.sh --csv
 #
 # Environment variables:
@@ -37,6 +39,7 @@ CASE_ARGS=("2000000"     "28"          "5000"        "20000"        "10000"  "50
 REPEATS=5
 USE_DOCKER=0
 SELECTED_CASE=""
+SELECTED_LANGS=""
 OUTPUT_FORMAT="table"
 
 while [ $# -gt 0 ]; do
@@ -51,6 +54,10 @@ while [ $# -gt 0 ]; do
             SELECTED_CASE="$2"; shift 2 ;;
         --case=*)
             SELECTED_CASE="${1#--case=}"; shift ;;
+        --lang)
+            SELECTED_LANGS="$2"; shift 2 ;;
+        --lang=*)
+            SELECTED_LANGS="${1#--lang=}"; shift ;;
         --csv)
             OUTPUT_FORMAT="csv"; shift ;;
         -h|--help)
@@ -240,6 +247,19 @@ stats() {
 # ---- Main loop. ----
 
 LANGS=(geblang python php node)
+if [ -n "$SELECTED_LANGS" ]; then
+    IFS=',' read -r -a REQUESTED <<<"$SELECTED_LANGS"
+    FILTERED=()
+    for lang in "${REQUESTED[@]}"; do
+        case "$lang" in
+            geblang|python|php|node) FILTERED+=("$lang") ;;
+            *)
+                echo "unknown language in --lang: $lang (expected geblang, python, php, node)" >&2
+                exit 2 ;;
+        esac
+    done
+    LANGS=("${FILTERED[@]}")
+fi
 RESULTS=()        # tab-separated rows: case<TAB>lang<TAB>median<TAB>min<TAB>max<TAB>output
 OUTPUTS_KEY=()    # case-name lookup keys
 OUTPUTS_VAL=()    # the canonical output observed for each case
