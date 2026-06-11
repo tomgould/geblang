@@ -264,6 +264,10 @@ func (g *fuzzGen) signatureBlock() (decls string, calls []string) {
 		"(" + g.intLit() + ")",
 		"(" + g.intLit() + ", " + g.intLit() + ")",
 		"(" + g.intLit() + ", b: " + g.intLit() + ")",
+		"(a: " + g.intLit() + ", b: " + g.intLit() + ")",
+		"(b: " + g.intLit() + ", a: " + g.intLit() + ")",
+		"(...{\"a\": " + g.intLit() + ", \"b\": " + g.intLit() + "})",
+		"(...{\"a\": " + g.intLit() + "})",
 	}
 	if hasVariadic {
 		argShapes = append(argShapes,
@@ -294,8 +298,15 @@ func (g *fuzzGen) generatorBlock() (decls string, calls []string) {
 	var d strings.Builder
 	d.WriteString("class GenErr extends ValueError { func GenErr(string m) { parent(m); } }\n")
 	d.WriteString("func gen(): generator<int> {\n")
-	for i := 0; i < yields; i++ {
-		d.WriteString("  yield " + g.intLit() + ";\n")
+	if g.rng.Intn(2) == 0 {
+		for i := 0; i < yields; i++ {
+			d.WriteString("  yield " + g.intLit() + ";\n")
+		}
+	} else {
+		// Loop-driven yields: resumption interleaves with loop state.
+		d.WriteString("  for (i in 0..<" + strconv.Itoa(yields+1) + ") {\n")
+		d.WriteString("    yield (i * " + strconv.Itoa(1+g.rng.Intn(9)) + ");\n")
+		d.WriteString("  }\n")
 	}
 	switch g.rng.Intn(3) {
 	case 0:
@@ -312,6 +323,42 @@ func (g *fuzzGen) generatorBlock() (decls string, calls []string) {
 	return d.String(), calls
 }
 
+// loopBlock emits instruction-dense control flow: a for loop with
+// break/continue and compound assignment, a while-driven string
+// accumulator, and container index mutation. Broad straight-line
+// instruction coverage guards representation changes (e.g. operand
+// packing) where sparse expression trees would not.
+func (g *fuzzGen) loopBlock() (decls string, calls []string) {
+	limit := strconv.Itoa(2 + g.rng.Intn(9))
+	step := strconv.Itoa(1 + g.rng.Intn(4))
+	var d strings.Builder
+	d.WriteString("func acc(int n): int {\n")
+	d.WriteString("  int total = 0;\n")
+	d.WriteString("  for (i in 0..<n) {\n")
+	d.WriteString("    if (i % 3 == 1) { continue; }\n")
+	d.WriteString("    if (i > " + limit + ") { break; }\n")
+	d.WriteString("    total += (i * " + step + ");\n")
+	d.WriteString("  }\n")
+	d.WriteString("  return total;\n")
+	d.WriteString("}\n")
+	d.WriteString("func wloop(int n): string {\n")
+	d.WriteString("  string out = \"\";\n")
+	d.WriteString("  int i = n;\n")
+	d.WriteString("  while (i > 0) {\n")
+	d.WriteString("    out += (i as string);\n")
+	d.WriteString("    i -= 1;\n")
+	d.WriteString("  }\n")
+	d.WriteString("  return out;\n")
+	d.WriteString("}\n")
+	calls = append(calls,
+		"io.println(acc("+strconv.Itoa(g.rng.Intn(14))+"));",
+		"io.println(wloop("+strconv.Itoa(1+g.rng.Intn(5))+"));",
+		"let lxs = [3, 1, 2]; lxs[1] = lxs[1] + "+g.intLit()+"; io.println(\"${lxs.sorted()}\");",
+		"let ldd = {\"k\": "+g.intLit()+"}; ldd[\"k\"] = (ldd[\"k\"] as int) * 2; io.println(ldd[\"k\"]);",
+	)
+	return d.String(), calls
+}
+
 func (g *fuzzGen) program() string {
 	var b strings.Builder
 	b.WriteString("import io;\n")
@@ -319,7 +366,7 @@ func (g *fuzzGen) program() string {
 	// declarations cannot collide; the rest of the budget is scalar
 	// expressions and fault statements.
 	var sectionCalls []string
-	switch g.rng.Intn(4) {
+	switch g.rng.Intn(5) {
 	case 0:
 		decls, calls := g.classBlock()
 		b.WriteString(decls)
@@ -330,6 +377,10 @@ func (g *fuzzGen) program() string {
 		sectionCalls = calls
 	case 2:
 		decls, calls := g.generatorBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 3:
+		decls, calls := g.loopBlock()
 		b.WriteString(decls)
 		sectionCalls = calls
 	}

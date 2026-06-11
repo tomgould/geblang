@@ -32,6 +32,9 @@
   more requests per second than 1.17.0, with median latency cut from
   tens of milliseconds to ~1 ms, and VM-mode serving is now the
   fastest deployment path.
+- Compiled instructions are a third smaller in memory (packed source
+  positions, consolidated operand storage), cutting a loaded server's
+  resident memory by ~15% under sustained load at unchanged speed.
 
 ### HTTP server
 

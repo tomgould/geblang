@@ -2224,7 +2224,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return vm.runtimeError(*instruction, "%s", popErr.Error())
 			}
 			msg := fmt.Sprintf("%s; got %s (type: %s)", hint.Value, matchValue.Inspect(), matchValue.TypeName())
-			matchErrValue := vm.withErrorStackTrace(runtime.Error{Class: "MatchError", Message: msg}, instruction.Line)
+			matchErrValue := vm.withErrorStackTrace(runtime.Error{Class: "MatchError", Message: msg}, int(instruction.Line))
 			vm.pendingThrow = &matchErrValue
 			nextMatchIP, throwErr := vm.jumpToExceptionHandler(*instruction, ip)
 			if throwErr != nil {
@@ -3499,7 +3499,7 @@ func (vm *VM) throw(instruction Instruction, ip int) (int, error) {
 	if !ok {
 		return 0, vm.runtimeError(instruction, "throw expects Error, got %s", value.TypeName())
 	}
-	errValue = vm.withErrorStackTrace(errValue, instruction.Line)
+	errValue = vm.withErrorStackTrace(errValue, int(instruction.Line))
 	vm.pendingThrow = &errValue
 	return vm.jumpToExceptionHandler(instruction, ip)
 }
@@ -3513,7 +3513,7 @@ func (vm *VM) throwRecoverableError(instruction Instruction, ip int, err error) 
 		vm.pendingThrow = &captured
 		return vm.jumpToExceptionHandler(instruction, ip)
 	}
-	errValue := vm.withErrorStackTrace(runtime.NewRecoverableError(err), instruction.Line)
+	errValue := vm.withErrorStackTrace(runtime.NewRecoverableError(err), int(instruction.Line))
 	vm.pendingThrow = &errValue
 	return vm.jumpToExceptionHandler(instruction, ip)
 }
@@ -3601,7 +3601,7 @@ func (vm *VM) withErrorStackTrace(err runtime.Error, line int) runtime.Error {
 }
 
 func (vm *VM) throwTyped(instruction Instruction, ip int, class, message string) (int, error) {
-	errValue := vm.withErrorStackTrace(runtime.Error{Class: class, Message: message}, instruction.Line)
+	errValue := vm.withErrorStackTrace(runtime.Error{Class: class, Message: message}, int(instruction.Line))
 	vm.pendingThrow = &errValue
 	return vm.jumpToExceptionHandler(instruction, ip)
 }
@@ -5620,7 +5620,7 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	// fields to defaults for the new function.
 	frame := &vm.frames[len(vm.frames)-1]
 	frame.functionName = function.Name
-	frame.callLine = instruction.Line
+	frame.callLine = int(instruction.Line)
 	frame.negateReturn = false
 	frame.isErrorClass = false
 	frame.isImmutableClass = false
@@ -5994,7 +5994,7 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	frame.returnIP = ip
 	frame.returnOverride = nil
 	frame.functionName = function.Name
-	frame.callLine = instruction.Line
+	frame.callLine = int(instruction.Line)
 	frame.negateReturn = false
 	frame.isErrorClass = false
 	frame.isImmutableClass = false
@@ -6315,7 +6315,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	frame.returnIP = ip
 	frame.returnOverride = returnOverride
 	frame.functionName = function.Name
-	frame.callLine = instruction.Line
+	frame.callLine = int(instruction.Line)
 	frame.negateReturn = false
 	frame.isErrorClass = false
 	frame.isImmutableClass = false
@@ -17656,8 +17656,8 @@ func (e *vmRuntimeError) lazyTrace() func() string {
 
 func (vm *VM) runtimeError(instruction Instruction, format string, args ...any) error {
 	return &vmRuntimeError{
-		line:    instruction.Line,
-		column:  instruction.Column,
+		line:    int(instruction.Line),
+		column:  int(instruction.Column),
 		message: fmt.Sprintf(format, args...),
 		frames:  vm.snapshotTraceFrames(),
 	}
@@ -17669,7 +17669,7 @@ func (vm *VM) runtimeError(instruction Instruction, format string, args ...any) 
 // runtime.Error) across a VM boundary so the calling VM can catch it.
 func (vm *VM) runtimeErrorWith(instruction Instruction, inner error, format string, args ...any) error {
 	message := fmt.Sprintf(format, args...)
-	trace := vm.vmStackTrace(instruction.Line)
+	trace := vm.vmStackTrace(int(instruction.Line))
 	var prefix string
 	if instruction.Line > 0 {
 		prefix = fmt.Sprintf("bytecode runtime error at %d:%d: %s%s", instruction.Line, instruction.Column, message, trace)

@@ -5596,7 +5596,7 @@ func (c *Compiler) emit(op Op, operands ...int64) {
 }
 
 func (c *Compiler) emitAt(op Op, line int, column int, operands ...int64) {
-	c.chunk.Instructions = append(c.chunk.Instructions, Instruction{Op: op, Operands: operands, Line: line, Column: column})
+	c.chunk.Instructions = append(c.chunk.Instructions, Instruction{Op: op, Operands: operands, Line: int32(line), Column: clampColumn(column)})
 }
 
 func (c *Compiler) emitJump(op Op, line int, column int) int {

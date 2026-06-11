@@ -312,10 +312,23 @@ const (
 )
 
 type Instruction struct {
-	Op       Op
 	Operands []int64
-	Line     int
-	Column   int
+	Op       Op
+	// Line/Column are sized so the struct stays 32 bytes; positions
+	// only feed error rendering, where clamping is harmless.
+	Column uint16
+	Line   int32
+}
+
+// clampColumn saturates parser columns into the packed uint16 field.
+func clampColumn(column int) uint16 {
+	if column < 0 {
+		return 0
+	}
+	if column > 65535 {
+		return 65535
+	}
+	return uint16(column)
 }
 
 type Chunk struct {
@@ -760,8 +773,8 @@ func Decode(data []byte) (Chunk, error) {
 	for i := 0; i < instructionCount; i++ {
 		instruction := Instruction{
 			Op:     Op(reader.u8()),
-			Line:   int(reader.u16()),
-			Column: int(reader.u16()),
+			Line:   int32(reader.u16()),
+			Column: reader.u16(),
 		}
 		operandCount := int(reader.u16())
 		instruction.Operands = make([]int64, 0, operandCount)
