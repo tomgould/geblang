@@ -446,7 +446,8 @@ func smtpHeaderMap(value runtime.Value) (map[string][]string, error) {
 		return nil, fmt.Errorf("message.headers must be dict")
 	}
 	out := map[string][]string{}
-	for _, entry := range dict.Entries {
+	for _, __dk := range dict.EntryKeys() {
+		entry, _ := dict.GetEntry(__dk)
 		key, ok := entry.Key.(runtime.String)
 		if !ok {
 			return nil, fmt.Errorf("message.headers keys must be strings")

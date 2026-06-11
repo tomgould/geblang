@@ -63,11 +63,11 @@ func registerProfiler(r *Registry) {
 		elapsedNS := nowNS - snapWall
 		cpuDelta := (user + sys) - (snapUser + snapSys)
 		return profilerDict(map[string]runtime.Value{
-			"elapsed_ms":  runtime.Float{Value: float64(elapsedNS) / 1e6},
-			"cpu_ms":      runtime.Float{Value: float64(cpuDelta) / 1e6},
-			"heap_alloc":  runtime.NewInt64(int64(ms.HeapAlloc) - snapHeap),
-			"allocs":      runtime.NewInt64(int64(ms.TotalAlloc) - snapTotal),
-			"gc_count":    runtime.NewInt64(int64(ms.NumGC) - snapGC),
+			"elapsed_ms": runtime.Float{Value: float64(elapsedNS) / 1e6},
+			"cpu_ms":     runtime.Float{Value: float64(cpuDelta) / 1e6},
+			"heap_alloc": runtime.NewInt64(int64(ms.HeapAlloc) - snapHeap),
+			"allocs":     runtime.NewInt64(int64(ms.TotalAlloc) - snapTotal),
+			"gc_count":   runtime.NewInt64(int64(ms.NumGC) - snapGC),
 		}), nil
 	})
 
@@ -114,7 +114,7 @@ func profilerDict(fields map[string]runtime.Value) runtime.Dict {
 
 func profilerInt64(d runtime.Dict, key string) int64 {
 	k := runtime.String{Value: key}
-	e, ok := d.Entries[DictKey(k)]
+	e, ok := d.GetEntry(DictKey(k))
 	if !ok {
 		return 0
 	}

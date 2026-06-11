@@ -159,7 +159,8 @@ func singleArchiveEntries(args []runtime.Value, label string) ([]archiveEntry, e
 }
 
 func dictStringField(d runtime.Dict, field string) (string, error) {
-	for _, entry := range d.Entries {
+	for _, dk := range d.EntryKeys() {
+		entry, _ := d.GetEntry(dk)
 		key, ok := entry.Key.(runtime.String)
 		if !ok || key.Value != field {
 			continue
@@ -174,7 +175,8 @@ func dictStringField(d runtime.Dict, field string) (string, error) {
 }
 
 func dictDataField(d runtime.Dict, field string) ([]byte, error) {
-	for _, entry := range d.Entries {
+	for _, dk := range d.EntryKeys() {
+		entry, _ := d.GetEntry(dk)
 		key, ok := entry.Key.(runtime.String)
 		if !ok || key.Value != field {
 			continue

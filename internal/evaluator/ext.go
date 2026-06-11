@@ -595,7 +595,8 @@ func extMarshalValue(v runtime.Value, slots *[][]byte) (interface{}, error) {
 			}
 		}
 		obj := map[string]interface{}{}
-		for _, entry := range val.Entries {
+		for _, __dk := range val.EntryKeys() {
+			entry, _ := val.GetEntry(__dk)
 			k, ok := entry.Key.(runtime.String)
 			if !ok {
 				return nil, fmt.Errorf("extension dict keys must be strings, got %s", entry.Key.TypeName())

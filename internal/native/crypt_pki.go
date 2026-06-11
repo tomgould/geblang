@@ -693,7 +693,7 @@ func generateKeyByType(keyType, label string) (interface{}, string, error) {
 }
 
 func dictStr(d runtime.Dict, key string) string {
-	e, ok := d.Entries[DictKey(runtime.String{Value: key})]
+	e, ok := d.GetEntry(DictKey(runtime.String{Value: key}))
 	if !ok {
 		return ""
 	}
@@ -705,7 +705,7 @@ func dictStr(d runtime.Dict, key string) string {
 }
 
 func dictInt(d runtime.Dict, key string, defaultVal int) int {
-	e, ok := d.Entries[DictKey(runtime.String{Value: key})]
+	e, ok := d.GetEntry(DictKey(runtime.String{Value: key}))
 	if !ok {
 		return defaultVal
 	}
@@ -716,7 +716,7 @@ func dictInt(d runtime.Dict, key string, defaultVal int) int {
 }
 
 func parsePkixName(opts runtime.Dict, key string) pkix.Name {
-	entry, ok := opts.Entries[DictKey(runtime.String{Value: key})]
+	entry, ok := opts.GetEntry(DictKey(runtime.String{Value: key}))
 	if !ok {
 		return pkix.Name{}
 	}
@@ -744,7 +744,7 @@ func parsePkixName(opts runtime.Dict, key string) pkix.Name {
 }
 
 func parseDNSNames(opts runtime.Dict) []string {
-	entry, ok := opts.Entries[DictKey(runtime.String{Value: "dnsNames"})]
+	entry, ok := opts.GetEntry(DictKey(runtime.String{Value: "dnsNames"}))
 	if !ok {
 		return nil
 	}
@@ -762,7 +762,7 @@ func parseDNSNames(opts runtime.Dict) []string {
 }
 
 func parseIPAddresses(opts runtime.Dict) []net.IP {
-	entry, ok := opts.Entries[DictKey(runtime.String{Value: "ipAddresses"})]
+	entry, ok := opts.GetEntry(DictKey(runtime.String{Value: "ipAddresses"}))
 	if !ok {
 		return nil
 	}
@@ -1206,7 +1206,8 @@ func jwtOptsAlg(v runtime.Value, label string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("%s opts must be a dict", label)
 	}
-	for _, entry := range dict.Entries {
+	for _, dk := range dict.EntryKeys() {
+		entry, _ := dict.GetEntry(dk)
 		key, ok := entry.Key.(runtime.String)
 		if !ok || key.Value != "alg" {
 			continue
@@ -1226,7 +1227,8 @@ func jwtOptsAllowedAlgs(v runtime.Value, label string) ([]string, error) {
 	if !ok {
 		return nil, fmt.Errorf("%s opts must be a dict", label)
 	}
-	for _, entry := range dict.Entries {
+	for _, dk := range dict.EntryKeys() {
+		entry, _ := dict.GetEntry(dk)
 		key, ok := entry.Key.(runtime.String)
 		if !ok || key.Value != "allowedAlgs" {
 			continue
@@ -1256,7 +1258,8 @@ func jweOptsString(v runtime.Value, field, label string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("%s opts must be a dict", label)
 	}
-	for _, entry := range dict.Entries {
+	for _, dk := range dict.EntryKeys() {
+		entry, _ := dict.GetEntry(dk)
 		key, ok := entry.Key.(runtime.String)
 		if !ok || key.Value != field {
 			continue

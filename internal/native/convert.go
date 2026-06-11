@@ -180,10 +180,11 @@ func DictKey(value runtime.Value) string {
 		return dictKeyPrefixSet + "{" + strings.Join(parts, ",") + "}"
 	case runtime.Dict:
 		type kv struct{ k, v string }
-		pairs := make([]kv, 0, len(value.Entries))
-		for k, entry := range value.Entries {
+		pairs := make([]kv, 0, value.Len())
+		value.ForEachEntry(func(k string, entry runtime.DictEntry) bool {
 			pairs = append(pairs, kv{k, DictKey(entry.Value)})
-		}
+			return true
+		})
 		sort.Slice(pairs, func(i, j int) bool { return pairs[i].k < pairs[j].k })
 		parts := make([]string, len(pairs))
 		for i, p := range pairs {
@@ -435,51 +436,60 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 		return nil
 	case runtime.Dict:
 		buf.WriteByte('{')
-		n := len(v.Entries)
+		n := v.Len()
 		if n == 0 {
 			buf.WriteByte('}')
 			return nil
 		}
-		// Direct-encode fast path: when Order matches Entries and the
-		// keys are already non-decreasing (always true for parsed JSON
-		// that came from a prior alphabetical stringify), skip the
-		// scratch pairs slice + pool + sort entirely.
-		if v.Order != nil && len(*v.Order) == n {
-			sorted := true
-			var prev string
-			for i, dkey := range *v.Order {
-				entry, ok := v.Entries[dkey]
-				if !ok {
-					sorted = false
-					break
-				}
-				keyStr, isStr := entry.Key.(runtime.String)
-				if !isStr {
-					return fmt.Errorf("json.stringify only supports dicts with string keys")
-				}
-				if i > 0 && prev > keyStr.Value {
-					sorted = false
-					break
-				}
-				prev = keyStr.Value
+		// Direct-encode fast path: when the entries iterate in
+		// non-decreasing key order (always true for parsed JSON that
+		// came from a prior alphabetical stringify), emit them without
+		// the scratch pairs slice + pool + sort. A first pass over the
+		// ordered iteration decides; a second emits.
+		sorted := true
+		var keyErr error
+		var prev string
+		first := true
+		v.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
+			keyStr, isStr := entry.Key.(runtime.String)
+			if !isStr {
+				keyErr = fmt.Errorf("json.stringify only supports dicts with string keys")
+				return false
 			}
-			if sorted {
-				for i, dkey := range *v.Order {
-					entry := v.Entries[dkey]
-					if i > 0 {
-						buf.WriteByte(',')
-					}
-					if err := encodeJSONString(buf, entry.Key.(runtime.String).Value); err != nil {
-						return err
-					}
-					buf.WriteByte(':')
-					if err := encodeJSONValueInto(buf, entry.Value); err != nil {
-						return err
-					}
-				}
-				buf.WriteByte('}')
-				return nil
+			if !first && prev > keyStr.Value {
+				sorted = false
+				return false
 			}
+			prev = keyStr.Value
+			first = false
+			return true
+		})
+		if keyErr != nil {
+			return keyErr
+		}
+		if sorted {
+			i := 0
+			v.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
+				if i > 0 {
+					buf.WriteByte(',')
+				}
+				i++
+				if err := encodeJSONString(buf, entry.Key.(runtime.String).Value); err != nil {
+					keyErr = err
+					return false
+				}
+				buf.WriteByte(':')
+				if err := encodeJSONValueInto(buf, entry.Value); err != nil {
+					keyErr = err
+					return false
+				}
+				return true
+			})
+			if keyErr != nil {
+				return keyErr
+			}
+			buf.WriteByte('}')
+			return nil
 		}
 		// Fallback: collect into the pooled scratch slice and sort.
 		pairsPtr := jsonDictPairsPool.Get().(*jsonDictPairs)
@@ -488,15 +498,11 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 		if cap(pairs) < n {
 			pairs = make(jsonDictPairs, 0, n)
 		}
-		for _, entry := range v.Entries {
-			key, ok := entry.Key.(runtime.String)
-			if !ok {
-				*pairsPtr = pairs[:0]
-				jsonDictPairsPool.Put(pairsPtr)
-				return fmt.Errorf("json.stringify only supports dicts with string keys")
-			}
-			pairs = append(pairs, jsonDictPair{key: key.Value, value: entry.Value})
-		}
+		v.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
+			// Key type was validated by the sortedness pass above.
+			pairs = append(pairs, jsonDictPair{key: entry.Key.(runtime.String).Value, value: entry.Value})
+			return true
+		})
 		sort.Sort(pairs)
 		for i, p := range pairs {
 			if i > 0 {
@@ -658,7 +664,8 @@ func ValueToJSON(value runtime.Value) (any, error) {
 		return items, nil
 	case runtime.Dict:
 		items := map[string]any{}
-		for _, entry := range value.Entries {
+		for _, dk := range value.EntryKeys() {
+			entry, _ := value.GetEntry(dk)
 			key, ok := entry.Key.(runtime.String)
 			if !ok {
 				return nil, fmt.Errorf("json.stringify only supports dicts with string keys")
@@ -682,7 +689,8 @@ func ValueToTemplateData(value runtime.Value) (any, error) {
 	switch value := value.(type) {
 	case runtime.Dict:
 		items := map[string]any{}
-		for _, entry := range value.Entries {
+		for _, dk := range value.EntryKeys() {
+			entry, _ := value.GetEntry(dk)
 			key, ok := entry.Key.(runtime.String)
 			if !ok {
 				return nil, fmt.Errorf("template data only supports dicts with string keys")
@@ -743,7 +751,8 @@ func ValueToTOML(value runtime.Value) (any, error) {
 		return items, nil
 	case runtime.Dict:
 		items := map[string]any{}
-		for _, entry := range value.Entries {
+		for _, dk := range value.EntryKeys() {
+			entry, _ := value.GetEntry(dk)
 			key, ok := entry.Key.(runtime.String)
 			if !ok {
 				return nil, fmt.Errorf("toml.stringify only supports dicts with string keys")
@@ -796,7 +805,8 @@ func ValueToYAML(value runtime.Value) (any, error) {
 		return items, nil
 	case runtime.Dict:
 		items := map[string]any{}
-		for _, entry := range value.Entries {
+		for _, dk := range value.EntryKeys() {
+			entry, _ := value.GetEntry(dk)
 			key, ok := entry.Key.(runtime.String)
 			if !ok {
 				return nil, fmt.Errorf("yaml.stringify only supports dicts with string keys")

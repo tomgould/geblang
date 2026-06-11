@@ -65,7 +65,7 @@ func secureRandomOpenSession(args []runtime.Value) (runtime.Value, error) {
 	clientSeed := ""
 	if len(args) >= 1 {
 		if dict, ok := args[0].(runtime.Dict); ok {
-			if v, ok := dict.Entries[DictKey(runtime.String{Value: "clientSeed"})]; ok {
+			if v, ok := dict.GetEntry(DictKey(runtime.String{Value: "clientSeed"})); ok {
 				if s, ok := v.Value.(runtime.String); ok {
 					clientSeed = s.Value
 				}

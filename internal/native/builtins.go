@@ -3810,7 +3810,7 @@ func sameSiteString(value nethttp.SameSite) string {
 
 func dictLookup(dict runtime.Dict, key string) (runtime.Value, bool) {
 	keyValue := runtime.String{Value: key}
-	entry, ok := dict.Entries[DictKey(keyValue)]
+	entry, ok := dict.GetEntry(DictKey(keyValue))
 	if !ok {
 		return nil, false
 	}
@@ -3844,7 +3844,8 @@ func queryValues(value runtime.Value) (url.Values, error) {
 	if !ok {
 		return query, fmt.Errorf("query must be dict")
 	}
-	for _, entry := range dict.Entries {
+	for _, dk := range dict.EntryKeys() {
+		entry, _ := dict.GetEntry(dk)
 		key, ok := entry.Key.(runtime.String)
 		if !ok {
 			return query, fmt.Errorf("query keys must be strings")

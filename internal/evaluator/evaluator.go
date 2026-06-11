@@ -645,7 +645,7 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 		}
 		for _, field := range class.Fields {
 			key := runtime.String{Value: field.Name}
-			entry, hit := dict.Entries[native.DictKey(key)]
+			entry, hit := dict.GetEntry(native.DictKey(key))
 			if hit {
 				instance.Fields[field.Name] = entry.Value
 			}
@@ -660,7 +660,7 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 			paramName = param.Name.Value
 		}
 		key := runtime.String{Value: paramName}
-		entry, ok := dict.Entries[native.DictKey(key)]
+		entry, ok := dict.GetEntry(native.DictKey(key))
 		if ok {
 			args = append(args, entry.Value)
 			continue
@@ -2335,10 +2335,10 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 				if !ok {
 					return nil, fmt.Errorf("dict literal spread source must be dict, got %s", src.TypeName())
 				}
-				for _, k := range srcDict.OrderedKeys() {
-					srcEntry := srcDict.Entries[k]
+				srcDict.ForEachEntry(func(k string, srcEntry runtime.DictEntry) bool {
 					d.PutEntry(k, runtime.DictEntry{Key: srcEntry.Key, Value: srcEntry.Value})
-				}
+					return true
+				})
 				continue
 			}
 			key, err := e.evalExpression(entry.Key, env)
@@ -3017,15 +3017,15 @@ func collectionMatchesGenericType(value runtime.Value, base string, args []strin
 		if len(v.ElementTypes) >= 2 {
 			return typeNameSatisfies(v.ElementTypes[0], args[0]) && typeNameSatisfies(v.ElementTypes[1], args[1])
 		}
-		for _, e := range v.Entries {
-			if !valueMatchesType(e.Key, args[0]) {
+		matches := true
+		v.ForEachEntry(func(_ string, e runtime.DictEntry) bool {
+			if !valueMatchesType(e.Key, args[0]) || !valueMatchesType(e.Value, args[1]) {
+				matches = false
 				return false
 			}
-			if !valueMatchesType(e.Value, args[1]) {
-				return false
-			}
-		}
-		return true
+			return true
+		})
+		return matches
 	}
 	return false
 }
@@ -3306,7 +3306,8 @@ func httpHeadersFromValue(value runtime.Value) (runtime.HTTPHeaders, error) {
 		return copyHTTPHeaders(value), nil
 	case runtime.Dict:
 		out := runtime.HTTPHeaders{Values: map[string][]string{}}
-		for _, entry := range value.Entries {
+		for _, __dk := range value.EntryKeys() {
+			entry, _ := value.GetEntry(__dk)
 			key, ok := entry.Key.(runtime.String)
 			if !ok {
 				return out, fmt.Errorf("headers keys must be strings")
@@ -3562,7 +3563,7 @@ func nativeRequestConstructor(this *runtime.Instance, args []runtime.Value) (run
 	if !ok {
 		return nil, fmt.Errorf("Request constructor expects dict")
 	}
-	for key, value := range fieldsFromEntries(dict.Entries) {
+	for key, value := range fieldsFromDict(dict) {
 		this.Fields[key] = value
 	}
 	return runtime.Null{}, nil
@@ -3695,7 +3696,10 @@ func nativeResponseWithHeader(this *runtime.Instance, args []runtime.Value) (run
 	}
 	headers := map[string]runtime.DictEntry{}
 	if existing, ok := httpHeaderValue(this.Fields["headers"]); ok {
-		headers = httpHeadersToDict(existing).Entries
+		httpHeadersToDict(existing).ForEachEntry(func(k string, e runtime.DictEntry) bool {
+			headers[k] = e
+			return true
+		})
 	}
 	putDict(headers, name.Value, value)
 	return newResponseInstance(this.Class, this.Fields["status"], this.Fields["body"], runtime.Dict{Entries: headers}), nil
@@ -3836,10 +3840,16 @@ func nativeResponseHeader(this *runtime.Instance, args []runtime.Value) (runtime
 	}
 	if dict, ok := this.Fields["headers"].(runtime.Dict); ok {
 		canonical := http.CanonicalHeaderKey(name.Value)
-		for _, entry := range dict.Entries {
+		var found runtime.Value
+		dict.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 			if key, ok := entry.Key.(runtime.String); ok && http.CanonicalHeaderKey(key.Value) == canonical {
-				return entry.Value, nil
+				found = entry.Value
+				return false
 			}
+			return true
+		})
+		if found != nil {
+			return found, nil
 		}
 	}
 	return runtime.Null{}, nil
@@ -7498,7 +7508,7 @@ func (e *Evaluator) evalSelectorExpression(expr *ast.SelectorExpression, env *ru
 		case *runtime.List:
 			return runtime.SmallInt{Value: int64(len(v.Elements))}, nil
 		case runtime.Dict:
-			return runtime.SmallInt{Value: int64(len(v.Entries))}, nil
+			return runtime.SmallInt{Value: int64(v.Len())}, nil
 		case runtime.Set:
 			return runtime.SmallInt{Value: int64(len(v.Elements))}, nil
 		}
@@ -7514,7 +7524,7 @@ func collectionsLength(call *ast.CallExpression, args []runtime.Value) (runtime.
 	case *runtime.List:
 		return runtime.SmallInt{Value: int64(len(value.Elements))}, nil
 	case runtime.Dict:
-		return runtime.SmallInt{Value: int64(len(value.Entries))}, nil
+		return runtime.SmallInt{Value: int64(value.Len())}, nil
 	case runtime.Set:
 		return runtime.SmallInt{Value: int64(len(value.Elements))}, nil
 	case runtime.String:
@@ -7553,7 +7563,7 @@ func collectionsContains(call *ast.CallExpression, args []runtime.Value) (runtim
 		}
 		return runtime.Bool{Value: false}, nil
 	case runtime.Dict:
-		_, ok := value.Entries[dictKey(args[1])]
+		_, ok := value.GetEntry(dictKey(args[1]))
 		return runtime.Bool{Value: ok}, nil
 	case runtime.Set:
 		_, ok := value.Elements[dictKey(args[1])]
@@ -7908,16 +7918,19 @@ func valuesEqualSimple(left runtime.Value, right runtime.Value) bool {
 		return true
 	case runtime.Dict:
 		rightValue, ok := right.(runtime.Dict)
-		if !ok || len(leftValue.Entries) != len(rightValue.Entries) {
+		if !ok || leftValue.Len() != rightValue.Len() {
 			return false
 		}
-		for key, entry := range leftValue.Entries {
-			other, ok := rightValue.Entries[key]
+		equal := true
+		leftValue.ForEachEntry(func(key string, entry runtime.DictEntry) bool {
+			other, ok := rightValue.GetEntry(key)
 			if !ok || !valuesEqualSimple(entry.Key, other.Key) || !valuesEqualSimple(entry.Value, other.Value) {
+				equal = false
 				return false
 			}
-		}
-		return true
+			return true
+		})
+		return equal
 	case runtime.Set:
 		rightValue, ok := right.(runtime.Set)
 		if !ok || len(leftValue.Elements) != len(rightValue.Elements) {
@@ -8068,26 +8081,27 @@ func validateValueAgainstSchema(value runtime.Value, schema runtime.Dict, path s
 			return
 		}
 		required := schemaRequiredFields(schema)
-		for _, entry := range properties.Entries {
+		properties.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 			key, ok := entry.Key.(runtime.String)
 			if !ok {
 				*errors = append(*errors, runtime.String{Value: path + ": schema property keys must be strings"})
-				continue
+				return true
 			}
 			propertySchema, ok := entry.Value.(runtime.Dict)
 			if !ok {
 				*errors = append(*errors, runtime.String{Value: path + "." + key.Value + ": property schema must be dict"})
-				continue
+				return true
 			}
-			propertyValue, exists := object.Entries[dictKey(key)]
+			propertyValue, exists := object.GetEntry(dictKey(key))
 			if !exists {
 				if required[key.Value] {
 					*errors = append(*errors, runtime.String{Value: path + "." + key.Value + ": required field is missing"})
 				}
-				continue
+				return true
 			}
 			validateValueAgainstSchema(propertyValue.Value, propertySchema, path+"."+key.Value, errors)
-		}
+			return true
+		})
 	}
 	if itemsValue, ok := dictField(schema, "items"); ok {
 		itemSchema, ok := itemsValue.(runtime.Dict)
@@ -8219,17 +8233,18 @@ func (e *Evaluator) dotenvApply(call *ast.CallExpression, args []runtime.Value) 
 	if !ok {
 		return nil, fmt.Errorf("%s argument must be a dict", call.Callee.String())
 	}
-	for _, entry := range d.Entries {
+	d.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 		k, ok := entry.Key.(runtime.String)
 		if !ok {
-			continue
+			return true
 		}
 		v, ok := entry.Value.(runtime.String)
 		if !ok {
-			continue
+			return true
 		}
 		os.Setenv(k.Value, v.Value)
-	}
+		return true
+	})
 	return runtime.Null{}, nil
 }
 
@@ -8830,11 +8845,12 @@ func cliTableRows(rows *runtime.List, headers []string) ([][]string, []string, e
 		switch row := row.(type) {
 		case runtime.Dict:
 			if len(inferred) == 0 {
-				for _, entry := range row.Entries {
+				row.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 					if key, ok := entry.Key.(runtime.String); ok {
 						inferred = append(inferred, key.Value)
 					}
-				}
+					return true
+				})
 				sort.Strings(inferred)
 			}
 			values := make([]string, len(inferred))
@@ -8956,7 +8972,7 @@ func (e *Evaluator) metricsIncCommit(call *ast.CallExpression, name string, amou
 		entry.values[key] += amount
 		return runtime.Float{Value: entry.values[key]}, nil
 	}
-	if len(labels.Entries) > 0 {
+	if labels.Len() > 0 {
 		return nil, fmt.Errorf("metric %q is not declared; call metrics.counter(%q, {labels: ...}) first", name, name)
 	}
 	e.metrics[name] += amount
@@ -8995,7 +9011,7 @@ func (e *Evaluator) metricsSet(call *ast.CallExpression, args []runtime.Value) (
 		entry.values[key] = value
 		return runtime.Float{Value: value}, nil
 	}
-	if len(labels.Entries) > 0 {
+	if labels.Len() > 0 {
 		return nil, fmt.Errorf("metric %q is not declared; call metrics.gauge(%q, {labels: ...}) first", name.Value, name.Value)
 	}
 	e.metrics[name.Value] = value
@@ -9086,7 +9102,7 @@ type histState struct {
 // empty string. Extra labels not declared on the metric are rejected.
 func labelKeyFromDict(entry *metricsEntry, fields runtime.Dict) (string, []string, error) {
 	if len(entry.labelKeys) == 0 {
-		if len(fields.Entries) > 0 {
+		if fields.Len() > 0 {
 			return "", nil, fmt.Errorf("metric was declared with no labels")
 		}
 		return "", nil, nil
@@ -9095,14 +9111,14 @@ func labelKeyFromDict(entry *metricsEntry, fields runtime.Dict) (string, []strin
 	for _, k := range entry.labelKeys {
 		declared[native.DictKey(runtime.String{Value: k})] = k
 	}
-	for k := range fields.Entries {
+	for _, k := range fields.EntryKeys() {
 		if _, ok := declared[k]; !ok {
 			return "", nil, fmt.Errorf("undeclared label key %q", k)
 		}
 	}
 	values := make([]string, len(entry.labelKeys))
 	for i, k := range entry.labelKeys {
-		ent, ok := fields.Entries[native.DictKey(runtime.String{Value: k})]
+		ent, ok := fields.GetEntry(native.DictKey(runtime.String{Value: k}))
 		if !ok {
 			values[i] = ""
 			continue
@@ -9137,12 +9153,12 @@ func (e *Evaluator) declareMetric(call *ast.CallExpression, args []runtime.Value
 		if !ok {
 			return nil, fmt.Errorf("%s opts must be dict", call.Callee.String())
 		}
-		if helpEnt, ok := opts.Entries[native.DictKey(runtime.String{Value: "help"})]; ok {
+		if helpEnt, ok := opts.GetEntry(native.DictKey(runtime.String{Value: "help"})); ok {
 			if s, ok := helpEnt.Value.(runtime.String); ok {
 				entry.help = s.Value
 			}
 		}
-		if labelEnt, ok := opts.Entries[native.DictKey(runtime.String{Value: "labels"})]; ok {
+		if labelEnt, ok := opts.GetEntry(native.DictKey(runtime.String{Value: "labels"})); ok {
 			list, ok := labelEnt.Value.(*runtime.List)
 			if !ok {
 				return nil, fmt.Errorf("%s opts.labels must be list of strings", call.Callee.String())
@@ -9155,7 +9171,7 @@ func (e *Evaluator) declareMetric(call *ast.CallExpression, args []runtime.Value
 				entry.labelKeys = append(entry.labelKeys, s.Value)
 			}
 		}
-		if bucketEnt, ok := opts.Entries[native.DictKey(runtime.String{Value: "buckets"})]; ok {
+		if bucketEnt, ok := opts.GetEntry(native.DictKey(runtime.String{Value: "buckets"})); ok {
 			if kind != "histogram" {
 				return nil, fmt.Errorf("%s opts.buckets is only valid for histograms", call.Callee.String())
 			}
@@ -9415,7 +9431,7 @@ func (e *Evaluator) traceStart(call *ast.CallExpression, args []runtime.Value) (
 		if !ok {
 			return nil, fmt.Errorf("%s opts must be dict", call.Callee.String())
 		}
-		if parentEnt, ok := opts.Entries[native.DictKey(runtime.String{Value: "parent"})]; ok {
+		if parentEnt, ok := opts.GetEntry(native.DictKey(runtime.String{Value: "parent"})); ok {
 			parentID, err := traceHandleID(parentEnt.Value)
 			if err != nil {
 				return nil, fmt.Errorf("%s opts.parent: %v", call.Callee.String(), err)
@@ -9629,42 +9645,42 @@ func (o *otlpExportOpts) applyDict(call *ast.CallExpression, value runtime.Value
 	if !ok {
 		return fmt.Errorf("%s opts must be dict", call.Callee.String())
 	}
-	if ent, ok := dict.Entries[native.DictKey(runtime.String{Value: "serviceName"})]; ok {
+	if ent, ok := dict.GetEntry(native.DictKey(runtime.String{Value: "serviceName"})); ok {
 		s, ok := ent.Value.(runtime.String)
 		if !ok {
 			return fmt.Errorf("%s opts.serviceName must be string", call.Callee.String())
 		}
 		o.serviceName = s.Value
 	}
-	if ent, ok := dict.Entries[native.DictKey(runtime.String{Value: "scopeName"})]; ok {
+	if ent, ok := dict.GetEntry(native.DictKey(runtime.String{Value: "scopeName"})); ok {
 		s, ok := ent.Value.(runtime.String)
 		if !ok {
 			return fmt.Errorf("%s opts.scopeName must be string", call.Callee.String())
 		}
 		o.scopeName = s.Value
 	}
-	if ent, ok := dict.Entries[native.DictKey(runtime.String{Value: "scopeVersion"})]; ok {
+	if ent, ok := dict.GetEntry(native.DictKey(runtime.String{Value: "scopeVersion"})); ok {
 		s, ok := ent.Value.(runtime.String)
 		if !ok {
 			return fmt.Errorf("%s opts.scopeVersion must be string", call.Callee.String())
 		}
 		o.scopeVersion = s.Value
 	}
-	if ent, ok := dict.Entries[native.DictKey(runtime.String{Value: "resource"})]; ok {
+	if ent, ok := dict.GetEntry(native.DictKey(runtime.String{Value: "resource"})); ok {
 		res, ok := ent.Value.(runtime.Dict)
 		if !ok {
 			return fmt.Errorf("%s opts.resource must be dict<string, string>", call.Callee.String())
 		}
 		o.resource = stringDictFromRuntime(res)
 	}
-	if ent, ok := dict.Entries[native.DictKey(runtime.String{Value: "headers"})]; ok {
+	if ent, ok := dict.GetEntry(native.DictKey(runtime.String{Value: "headers"})); ok {
 		hd, ok := ent.Value.(runtime.Dict)
 		if !ok {
 			return fmt.Errorf("%s opts.headers must be dict<string, string>", call.Callee.String())
 		}
 		o.headers = stringDictFromRuntime(hd)
 	}
-	if ent, ok := dict.Entries[native.DictKey(runtime.String{Value: "timeoutMs"})]; ok {
+	if ent, ok := dict.GetEntry(native.DictKey(runtime.String{Value: "timeoutMs"})); ok {
 		n, ok := native.AsInt64(ent.Value)
 		if !ok {
 			return fmt.Errorf("%s opts.timeoutMs must be int", call.Callee.String())
@@ -9676,17 +9692,18 @@ func (o *otlpExportOpts) applyDict(call *ast.CallExpression, value runtime.Value
 
 func stringDictFromRuntime(d runtime.Dict) map[string]string {
 	out := map[string]string{}
-	for _, ent := range d.Entries {
+	d.ForEachEntry(func(_ string, ent runtime.DictEntry) bool {
 		k, ok := ent.Key.(runtime.String)
 		if !ok {
-			continue
+			return true
 		}
 		v, ok := ent.Value.(runtime.String)
 		if !ok {
-			continue
+			return true
 		}
 		out[k.Value] = v.Value
-	}
+		return true
+	})
 	return out
 }
 
@@ -9826,7 +9843,8 @@ func optionalAttrs(call *ast.CallExpression, args []runtime.Value, index int) (m
 	if !ok {
 		return nil, fmt.Errorf("%s attrs must be dict", call.Callee.String())
 	}
-	for _, entry := range dict.Entries {
+	for _, __dk := range dict.EntryKeys() {
+		entry, _ := dict.GetEntry(__dk)
 		key, ok := entry.Key.(runtime.String)
 		if !ok {
 			return nil, fmt.Errorf("%s attrs keys must be strings", call.Callee.String())
@@ -10025,7 +10043,7 @@ func (e *Evaluator) webRequestArg(fn runtime.Value, request runtime.Dict) runtim
 	if class == nil {
 		return request
 	}
-	return &runtime.Instance{Class: class, Fields: fieldsFromEntries(request.Entries)}
+	return &runtime.Instance{Class: class, Fields: fieldsFromDict(request)}
 }
 
 // webResponseArg returns a rich Response instance when the callable's parameter
@@ -10114,7 +10132,7 @@ func (e *Evaluator) webHandle(call *ast.CallExpression, args []runtime.Value) (r
 			continue
 		}
 		requestWithParams := copyDict(request)
-		putDict(requestWithParams.Entries, "params", params)
+		putDictV(requestWithParams, "params", params)
 		response, err := e.callValue(route.handler, []runtime.Value{e.webRequestArg(route.handler, requestWithParams)})
 		if err != nil {
 			return nil, err
@@ -10173,8 +10191,8 @@ func webWithHeader(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 		}
 		headers = copyDict(existing)
 	}
-	putDict(headers.Entries, name.Value, value)
-	putDict(out.Entries, "headers", headers)
+	putDictV(headers, name.Value, value)
+	putDictV(out, "headers", headers)
 	return out, nil
 }
 
@@ -10202,14 +10220,15 @@ func webParseMultipart(call *ast.CallExpression, args []runtime.Value) (runtime.
 	headersValue, _ := dictField(request, "headers")
 	contentType := ""
 	if headers, ok := headersValue.(runtime.Dict); ok {
-		for _, entry := range headers.Entries {
+		headers.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 			if key, ok := entry.Key.(runtime.String); ok && strings.EqualFold(key.Value, "Content-Type") {
 				if v, ok := entry.Value.(runtime.String); ok {
 					contentType = v.Value
-					break
+					return false
 				}
 			}
-		}
+			return true
+		})
 	}
 	if contentType == "" {
 		return nil, fmt.Errorf("%s request has no Content-Type header", call.Callee.String())
@@ -10304,7 +10323,7 @@ func matchWebRoute(route webRoute, method string, path string) (runtime.Dict, bo
 	params := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
 	for i, routePart := range routeParts {
 		if strings.HasPrefix(routePart, ":") && len(routePart) > 1 {
-			putDict(params.Entries, routePart[1:], runtime.String{Value: pathParts[i]})
+			putDictV(params, routePart[1:], runtime.String{Value: pathParts[i]})
 			continue
 		}
 		if routePart != pathParts[i] {
@@ -10324,9 +10343,10 @@ func splitWebPath(path string) []string {
 
 func copyDict(value runtime.Dict) runtime.Dict {
 	entries := map[string]runtime.DictEntry{}
-	for key, entry := range value.Entries {
+	value.ForEachEntry(func(key string, entry runtime.DictEntry) bool {
 		entries[key] = entry
-	}
+		return true
+	})
 	return runtime.Dict{Entries: entries}
 }
 
@@ -10734,8 +10754,8 @@ func (e *Evaluator) dispatchWatchEvents(handle *watchHandle, callback runtime.Fu
 				return
 			}
 			eventDict := runtime.Dict{Entries: map[string]runtime.DictEntry{}}
-			putDict(eventDict.Entries, "path", runtime.String{Value: event.Name})
-			putDict(eventDict.Entries, "type", runtime.String{Value: fsnotifyEventType(event.Op)})
+			putDictV(eventDict, "path", runtime.String{Value: event.Name})
+			putDictV(eventDict, "type", runtime.String{Value: fsnotifyEventType(event.Op)})
 			_, _ = child.applyFunction(callback, []runtime.Value{eventDict})
 		case _, ok := <-handle.watcher.Errors:
 			if !ok {
@@ -11157,7 +11177,8 @@ func (e *Evaluator) testMock(call *ast.CallExpression, args []runtime.Value) (ru
 	if !ok {
 		return nil, fmt.Errorf("%s second argument must be a dict<string, callable>", call.Callee.String())
 	}
-	for _, entry := range replacements.Entries {
+	for _, __dk := range replacements.EntryKeys() {
+		entry, _ := replacements.GetEntry(__dk)
 		fnameValue, ok := entry.Key.(runtime.String)
 		if !ok {
 			return nil, fmt.Errorf("%s dict keys must be strings", call.Callee.String())
@@ -11675,8 +11696,8 @@ func reflectFields(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 			entries = append(entries, runtime.Dict{Entries: fd})
 		}
 		sort.SliceStable(entries, func(i, j int) bool {
-			a := entries[i].(runtime.Dict).Entries[native.DictKey(runtime.String{Value: "name"})].Value.(runtime.String).Value
-			b := entries[j].(runtime.Dict).Entries[native.DictKey(runtime.String{Value: "name"})].Value.(runtime.String).Value
+			a := entries[i].(runtime.Dict).EntryValue(native.DictKey(runtime.String{Value: "name"})).(runtime.String).Value
+			b := entries[j].(runtime.Dict).EntryValue(native.DictKey(runtime.String{Value: "name"})).(runtime.String).Value
 			return a < b
 		})
 		return &runtime.List{Elements: entries}, nil
@@ -14222,18 +14243,40 @@ func putDict(entries map[string]runtime.DictEntry, key string, value runtime.Val
 	entries[dictKey(keyValue)] = runtime.DictEntry{Key: keyValue, Value: value}
 }
 
+// putDictV mutates a Dict through its accessor, so it works for both
+// literal map-state dicts and inline-store dicts.
+func putDictV(d runtime.Dict, key string, value runtime.Value) {
+	keyValue := runtime.String{Value: key}
+	d.PutEntry(dictKey(keyValue), runtime.DictEntry{Key: keyValue, Value: value})
+}
+
+func fieldsFromDict(d runtime.Dict) map[string]runtime.Value {
+	fields := map[string]runtime.Value{}
+	d.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
+		if key, ok := entry.Key.(runtime.String); ok {
+			fields[key.Value] = entry.Value
+		}
+		return true
+	})
+	return fields
+}
+
 func dictField(dict runtime.Dict, key string) (runtime.Value, bool) {
-	entry, ok := dict.Entries[dictKey(runtime.String{Value: key})]
+	entry, ok := dict.GetEntry(dictKey(runtime.String{Value: key}))
 	if ok {
 		return entry.Value, true
 	}
-	for _, entry := range dict.Entries {
-		stringKey, ok := entry.Key.(runtime.String)
-		if ok && stringKey.Value == key {
-			return entry.Value, true
+	var found runtime.Value
+	hit := false
+	dict.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
+		if stringKey, ok := entry.Key.(runtime.String); ok && stringKey.Value == key {
+			found = entry.Value
+			hit = true
+			return false
 		}
-	}
-	return nil, false
+		return true
+	})
+	return found, hit
 }
 
 func dictStringField(dict runtime.Dict, key string) (string, bool) {
@@ -14732,7 +14775,8 @@ func (e *Evaluator) websocketConnect(call *ast.CallExpression, args []runtime.Va
 		if !ok {
 			return nil, fmt.Errorf("%s headers must be dict<string, string>", call.Callee.String())
 		}
-		for _, entry := range headerDict.Entries {
+		for _, __dk := range headerDict.EntryKeys() {
+			entry, _ := headerDict.GetEntry(__dk)
 			key, keyOK := entry.Key.(runtime.String)
 			value, valueOK := entry.Value.(runtime.String)
 			if !keyOK || !valueOK {
@@ -15327,31 +15371,33 @@ func (e *Evaluator) amqpClose(call *ast.CallExpression, args []runtime.Value) (r
 }
 
 func dictBoolDefault(d runtime.Dict, key string, def bool) bool {
-	for _, entry := range d.Entries {
+	result := def
+	d.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 		k, ok := entry.Key.(runtime.String)
 		if !ok || k.Value != key {
-			continue
+			return true
 		}
 		if b, ok := entry.Value.(runtime.Bool); ok {
-			return b.Value
+			result = b.Value
 		}
-		return def
-	}
-	return def
+		return false
+	})
+	return result
 }
 
 func dictStringDefault(d runtime.Dict, key, def string) string {
-	for _, entry := range d.Entries {
+	result := def
+	d.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 		k, ok := entry.Key.(runtime.String)
 		if !ok || k.Value != key {
-			continue
+			return true
 		}
 		if s, ok := entry.Value.(runtime.String); ok {
-			return s.Value
+			result = s.Value
 		}
-		return def
-	}
-	return def
+		return false
+	})
+	return result
 }
 
 type kafkaReaderHandle struct {
@@ -15361,24 +15407,26 @@ type kafkaReaderHandle struct {
 }
 
 func dictStringList(d runtime.Dict, key string) []string {
-	for _, entry := range d.Entries {
+	var out []string
+	d.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 		k, ok := entry.Key.(runtime.String)
 		if !ok || k.Value != key {
-			continue
+			return true
 		}
 		list, ok := entry.Value.(*runtime.List)
 		if !ok {
-			return nil
+			out = nil
+			return false
 		}
-		out := make([]string, 0, len(list.Elements))
+		out = make([]string, 0, len(list.Elements))
 		for _, el := range list.Elements {
 			if s, ok := el.(runtime.String); ok {
 				out = append(out, s.Value)
 			}
 		}
-		return out
-	}
-	return nil
+		return false
+	})
+	return out
 }
 
 func (e *Evaluator) kafkaWriter(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -16264,12 +16312,18 @@ func requestHeaderValue(this *runtime.Instance, name string) string {
 	}
 	if dict, ok := this.Fields["headers"].(runtime.Dict); ok {
 		canonical := http.CanonicalHeaderKey(name)
-		for _, entry := range dict.Entries {
+		result := ""
+		dict.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 			if k, ok := entry.Key.(runtime.String); ok && http.CanonicalHeaderKey(k.Value) == canonical {
 				if val, ok := entry.Value.(runtime.String); ok {
-					return val.Value
+					result = val.Value
+					return false
 				}
 			}
+			return true
+		})
+		if result != "" {
+			return result
 		}
 	}
 	return ""
@@ -16635,15 +16689,15 @@ func (e *Evaluator) writeHTTPResponseValue(w http.ResponseWriter, response runti
 	if text, ok := response.(runtime.String); ok {
 		body = text
 	} else if dict, ok := response.(runtime.Dict); ok {
-		if value, ok := dict.Entries[dictKey(runtime.String{Value: "status"})]; ok {
+		if value, ok := dict.GetEntry(dictKey(runtime.String{Value: "status"})); ok {
 			if n, ok := toInt64(value.Value); ok {
 				status = int(n)
 			}
 		}
-		if value, ok := dict.Entries[dictKey(runtime.String{Value: "headers"})]; ok {
+		if value, ok := dict.GetEntry(dictKey(runtime.String{Value: "headers"})); ok {
 			writeHTTPHeaders(w.Header(), value.Value)
 		}
-		if value, ok := dict.Entries[dictKey(runtime.String{Value: "body"})]; ok {
+		if value, ok := dict.GetEntry(dictKey(runtime.String{Value: "body"})); ok {
 			body = value.Value
 		}
 	} else if _, ok := response.(runtime.Null); !ok {
@@ -17006,9 +17060,9 @@ func httpStreamResult(result runtime.Value, idx int, url string) runtime.Value {
 			v.Fields["_url"] = runtime.String{Value: url}
 		}
 	case runtime.Dict:
-		putDict(v.Entries, "index", runtime.NewInt64(int64(idx)))
+		putDictV(v, "index", runtime.NewInt64(int64(idx)))
 		if url != "" {
-			putDict(v.Entries, "url", runtime.String{Value: url})
+			putDictV(v, "url", runtime.String{Value: url})
 		}
 	}
 	return result
@@ -18772,7 +18826,8 @@ func processSpecFromOptions(call *ast.CallExpression, args []runtime.Value) (pro
 			return processSpec{}, fmt.Errorf("%s options.env must be dict<string, string>", call.Callee.String())
 		}
 		spec.env = map[string]string{}
-		for _, entry := range env.Entries {
+		for _, __dk := range env.EntryKeys() {
+			entry, _ := env.GetEntry(__dk)
 			key, keyOK := entry.Key.(runtime.String)
 			value, valueOK := entry.Value.(runtime.String)
 			if !keyOK || !valueOK {
@@ -19167,7 +19222,8 @@ func (e *Evaluator) procSpawn(call *ast.CallExpression, args []runtime.Value) (r
 		}
 		if value, found := dictField(opts, "env"); found {
 			if d, ok := value.(runtime.Dict); ok {
-				for _, entry := range d.Entries {
+				for _, __dk := range d.EntryKeys() {
+					entry, _ := d.GetEntry(__dk)
 					k, kok := entry.Key.(runtime.String)
 					v, vok := entry.Value.(runtime.String)
 					if !kok || !vok {
@@ -21392,7 +21448,8 @@ func valueToJSON(value runtime.Value) (any, error) {
 		return items, nil
 	case runtime.Dict:
 		items := map[string]any{}
-		for _, entry := range value.Entries {
+		for _, __dk := range value.EntryKeys() {
+			entry, _ := value.GetEntry(__dk)
 			key, ok := entry.Key.(runtime.String)
 			if !ok {
 				return nil, fmt.Errorf("json.stringify only supports dicts with string keys")
@@ -21442,7 +21499,8 @@ func valueToYAML(value runtime.Value) (any, error) {
 		return items, nil
 	case runtime.Dict:
 		items := map[string]any{}
-		for _, entry := range value.Entries {
+		for _, __dk := range value.EntryKeys() {
+			entry, _ := value.GetEntry(__dk)
 			key, ok := entry.Key.(runtime.String)
 			if !ok {
 				return nil, fmt.Errorf("yaml.stringify only supports dicts with string keys")
@@ -21594,7 +21652,8 @@ func valueToTOML(value runtime.Value) (any, error) {
 		return items, nil
 	case runtime.Dict:
 		items := map[string]any{}
-		for _, entry := range value.Entries {
+		for _, __dk := range value.EntryKeys() {
+			entry, _ := value.GetEntry(__dk)
 			key, ok := entry.Key.(runtime.String)
 			if !ok {
 				return nil, fmt.Errorf("toml.stringify only supports dicts with string keys")
@@ -21856,7 +21915,7 @@ func (e *Evaluator) evalIndexExpression(expr *ast.IndexExpression, env *runtime.
 		}
 		return listElement(value, i)
 	case runtime.Dict:
-		entry, ok := value.Entries[dictKey(index)]
+		entry, ok := value.GetEntry(dictKey(index))
 		if !ok {
 			return runtime.Null{}, nil
 		}
@@ -22470,8 +22529,9 @@ func dictSpreadCallArguments(dict runtime.Dict) ([]evaluatedCallArg, error) {
 		name  string
 		value runtime.Value
 	}
-	named := make([]namedArg, 0, len(dict.Entries))
-	for _, entry := range dict.Entries {
+	named := make([]namedArg, 0, dict.Len())
+	for _, __dk := range dict.EntryKeys() {
+		entry, _ := dict.GetEntry(__dk)
 		key, ok := entry.Key.(runtime.String)
 		if !ok {
 			return nil, fmt.Errorf("spread dict argument keys must be strings")
@@ -23055,10 +23115,12 @@ func descriptiveTypeName(value runtime.Value) string {
 		}
 		return "set"
 	case runtime.Dict:
-		for _, entry := range v.Entries {
-			return "dict<" + entry.Key.TypeName() + "," + entry.Value.TypeName() + ">"
-		}
-		return "dict"
+		result := "dict"
+		v.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
+			result = "dict<" + entry.Key.TypeName() + "," + entry.Value.TypeName() + ">"
+			return false
+		})
+		return result
 	case *runtime.Instance:
 		if v == nil || v.Class == nil || len(v.Class.TypeParameters) == 0 || len(v.TypeBindings) == 0 {
 			return value.TypeName()
@@ -23150,13 +23212,20 @@ func matchValueToTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 			keyIsTP := typeParams[strings.ToLower(typ.Arguments[0].Name)]
 			valIsTP := typeParams[strings.ToLower(typ.Arguments[1].Name)]
 			d := value.(runtime.Dict)
-			for _, entry := range d.Entries {
+			ok := true
+			d.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 				if !keyIsTP && !matchValueToTypeRef(typeParams, entry.Key, typ.Arguments[0]) {
+					ok = false
 					return false
 				}
 				if !valIsTP && !matchValueToTypeRef(typeParams, entry.Value, typ.Arguments[1]) {
+					ok = false
 					return false
 				}
+				return true
+			})
+			if !ok {
+				return false
 			}
 		}
 		return true
@@ -23200,10 +23269,16 @@ func collectionMismatchSuffix(value runtime.Value, typ *ast.TypeRef) string {
 		if len(typ.Arguments) < 2 {
 			return ""
 		}
-		for _, entry := range v.Entries {
+		msg := ""
+		v.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 			if !matchValueToTypeRef(nil, entry.Value, typ.Arguments[1]) {
-				return fmt.Sprintf(" (value for key %s is %s)", entry.Key.Inspect(), entry.Value.TypeName())
+				msg = fmt.Sprintf(" (value for key %s is %s)", entry.Key.Inspect(), entry.Value.TypeName())
+				return false
 			}
+			return true
+		})
+		if msg != "" {
+			return msg
 		}
 	}
 	return ""
@@ -23354,14 +23429,14 @@ func (e *Evaluator) inferGenericBindingsFromTypeRef(spec *ast.TypeRef, value run
 			return
 		}
 		d, ok := value.(runtime.Dict)
-		if !ok || len(d.Entries) == 0 {
+		if !ok || d.Len() == 0 {
 			return
 		}
-		for _, entry := range d.Entries {
+		d.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 			e.inferGenericBindingsFromTypeRef(spec.Arguments[0], entry.Key, typeParamSet, callEnv, this)
 			e.inferGenericBindingsFromTypeRef(spec.Arguments[1], entry.Value, typeParamSet, callEnv, this)
-			break
-		}
+			return false
+		})
 	}
 }
 
@@ -23961,7 +24036,7 @@ func (e *Evaluator) evalContains(needle, container runtime.Value) (runtime.Value
 		}
 		return runtime.Bool{Value: false}, nil
 	case runtime.Dict:
-		_, ok := c.Entries[dictKey(needle)]
+		_, ok := c.GetEntry(dictKey(needle))
 		return runtime.Bool{Value: ok}, nil
 	case runtime.Set:
 		_, ok := c.Elements[dictKey(needle)]
@@ -24283,16 +24358,19 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 		return true
 	case runtime.Dict:
 		rightValue, ok := right.(runtime.Dict)
-		if !ok || len(leftValue.Entries) != len(rightValue.Entries) {
+		if !ok || leftValue.Len() != rightValue.Len() {
 			return false
 		}
-		for key, entry := range leftValue.Entries {
-			other, ok := rightValue.Entries[key]
+		equal := true
+		leftValue.ForEachEntry(func(key string, entry runtime.DictEntry) bool {
+			other, ok := rightValue.GetEntry(key)
 			if !ok || !primitiveEqual(entry.Key, other.Key) || !primitiveEqual(entry.Value, other.Value) {
+				equal = false
 				return false
 			}
-		}
-		return true
+			return true
+		})
+		return equal
 	case runtime.Set:
 		rightValue, ok := right.(runtime.Set)
 		if !ok || len(leftValue.Elements) != len(rightValue.Elements) {
@@ -24861,10 +24939,11 @@ func dictKey(value runtime.Value) string {
 		return "S{" + strings.Join(parts, ",") + "}"
 	case runtime.Dict:
 		type kv struct{ k, v string }
-		pairs := make([]kv, 0, len(value.Entries))
-		for k, entry := range value.Entries {
+		pairs := make([]kv, 0, value.Len())
+		value.ForEachEntry(func(k string, entry runtime.DictEntry) bool {
 			pairs = append(pairs, kv{k, dictKey(entry.Value)})
-		}
+			return true
+		})
 		sort.Slice(pairs, func(i, j int) bool { return pairs[i].k < pairs[j].k })
 		parts := make([]string, len(pairs))
 		for i, p := range pairs {

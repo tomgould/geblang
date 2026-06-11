@@ -85,9 +85,10 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, fmt.Errorf("dict.copy expects no arguments")
 			}
 			copied := runtime.NewDict()
-			for _, k := range value.OrderedKeys() {
-				copied.PutEntry(k, value.Entries[k])
-			}
+			value.ForEachEntry(func(k string, e runtime.DictEntry) bool {
+				copied.PutEntry(k, e)
+				return true
+			})
 			return copied, nil
 		case "deepCopy":
 			if len(args) != 0 {
@@ -98,38 +99,37 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.keys expects no arguments")
 			}
-			ordered := value.OrderedKeys()
-			keys := make([]runtime.Value, 0, len(ordered))
-			for _, k := range ordered {
-				keys = append(keys, value.Entries[k].Key)
-			}
+			keys := make([]runtime.Value, 0, value.Len())
+			value.ForEachEntry(func(_ string, e runtime.DictEntry) bool {
+				keys = append(keys, e.Key)
+				return true
+			})
 			return &runtime.List{Elements: keys}, nil
 		case "values":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.values expects no arguments")
 			}
-			ordered := value.OrderedKeys()
-			values := make([]runtime.Value, 0, len(ordered))
-			for _, k := range ordered {
-				values = append(values, value.Entries[k].Value)
-			}
+			values := make([]runtime.Value, 0, value.Len())
+			value.ForEachEntry(func(_ string, e runtime.DictEntry) bool {
+				values = append(values, e.Value)
+				return true
+			})
 			return &runtime.List{Elements: values}, nil
 		case "items", "entries":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.%s expects no arguments", name)
 			}
-			ordered := value.OrderedKeys()
-			items := make([]runtime.Value, 0, len(ordered))
-			for _, k := range ordered {
-				entry := value.Entries[k]
+			items := make([]runtime.Value, 0, value.Len())
+			value.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 				items = append(items, &runtime.List{Elements: []runtime.Value{entry.Key, entry.Value}})
-			}
+				return true
+			})
 			return &runtime.List{Elements: items}, nil
 		case "get":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("dict.get expects one argument")
 			}
-			entry, ok := value.Entries[dictKey(args[0])]
+			entry, ok := value.GetEntry(dictKey(args[0]))
 			if !ok {
 				return runtime.Null{}, nil
 			}
@@ -147,17 +147,17 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.length expects no arguments")
 			}
-			return runtime.SmallInt{Value: int64(len(value.Entries))}, nil
+			return runtime.SmallInt{Value: int64(value.Len())}, nil
 		case "isEmpty":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.isEmpty expects no arguments")
 			}
-			return runtime.Bool{Value: len(value.Entries) == 0}, nil
+			return runtime.Bool{Value: value.Len() == 0}, nil
 		case "hasKey":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("dict.hasKey expects one argument")
 			}
-			_, ok := value.Entries[dictKey(args[0])]
+			_, ok := value.GetEntry(dictKey(args[0]))
 			return runtime.Bool{Value: ok}, nil
 		case "delete", "remove":
 			if len(args) != 1 {
@@ -175,18 +175,13 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen dict"}}
 			}
-			for k := range value.Entries {
-				delete(value.Entries, k)
-			}
-			if value.Order != nil {
-				*value.Order = (*value.Order)[:0]
-			}
+			value.Clear()
 			return runtime.Null{}, nil
 		case "contains":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("dict.contains expects one argument")
 			}
-			_, ok := value.Entries[dictKey(args[0])]
+			_, ok := value.GetEntry(dictKey(args[0]))
 			return runtime.Bool{Value: ok}, nil
 		case "bfs":
 			if len(args) != 1 {
@@ -200,7 +195,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				node := queue[0]
 				queue = queue[1:]
 				visited = append(visited, node)
-				if entry, ok := value.Entries[dictKey(node)]; ok {
+				if entry, ok := value.GetEntry(dictKey(node)); ok {
 					if neighbors, ok := entry.Value.(*runtime.List); ok {
 						for _, nb := range neighbors.Elements {
 							k := dictKey(nb)
@@ -230,7 +225,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				}
 				seen[k] = true
 				visited = append(visited, node)
-				if entry, ok := value.Entries[dictKey(node)]; ok {
+				if entry, ok := value.GetEntry(dictKey(node)); ok {
 					if neighbors, ok := entry.Value.(*runtime.List); ok {
 						for i := len(neighbors.Elements) - 1; i >= 0; i-- {
 							nb := neighbors.Elements[i]
@@ -248,7 +243,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			allNodes := map[string]runtime.Value{}
 			inDegree := map[string]int{}
-			for _, entry := range value.Entries {
+			value.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 				k := dictKey(entry.Key)
 				allNodes[k] = entry.Key
 				if _, ok := inDegree[k]; !ok {
@@ -263,7 +258,8 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 						inDegree[nbKey]++
 					}
 				}
-			}
+				return true
+			})
 			// Build sorted initial queue for deterministic output.
 			zeroKeys := make([]string, 0)
 			for k, deg := range inDegree {
@@ -281,7 +277,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				node := queue[0]
 				queue = queue[1:]
 				result = append(result, node)
-				if entry, ok := value.Entries[dictKey(node)]; ok {
+				if entry, ok := value.GetEntry(dictKey(node)); ok {
 					if neighbors, ok := entry.Value.(*runtime.List); ok {
 						for _, nb := range neighbors.Elements {
 							nbKey := dictKey(nb)
@@ -314,7 +310,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					found = true
 					break
 				}
-				if entry, ok := value.Entries[dictKey(node)]; ok {
+				if entry, ok := value.GetEntry(dictKey(node)); ok {
 					if neighbors, ok := entry.Value.(*runtime.List); ok {
 						for _, nb := range neighbors.Elements {
 							k := dictKey(nb)
@@ -349,13 +345,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if !ok {
 				return nil, fmt.Errorf("dict.merge expects a dict argument")
 			}
-			merged := runtime.Dict{Entries: make(map[string]runtime.DictEntry, len(value.Entries)+len(other.Entries))}
-			for k, e := range value.Entries {
-				merged.Entries[k] = e
-			}
-			for k, e := range other.Entries {
-				merged.Entries[k] = e
-			}
+			merged := runtime.NewDictHint(value.Len() + other.Len())
+			value.ForEachEntry(func(k string, e runtime.DictEntry) bool { merged.PutEntry(k, e); return true })
+			other.ForEachEntry(func(k string, e runtime.DictEntry) bool { merged.PutEntry(k, e); return true })
 			return merged, nil
 		}
 	case runtime.Set:

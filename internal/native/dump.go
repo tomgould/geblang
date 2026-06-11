@@ -25,8 +25,9 @@ func DumpValue(value runtime.Value) string {
 		}
 		return "list[" + strings.Join(parts, ", ") + "]"
 	case runtime.Dict:
-		parts := make([]string, 0, len(value.Entries))
-		for _, entry := range value.Entries {
+		parts := make([]string, 0, value.Len())
+		for _, dk := range value.EntryKeys() {
+			entry, _ := value.GetEntry(dk)
 			parts = append(parts, DumpValue(entry.Key)+": "+DumpValue(entry.Value))
 		}
 		sort.Strings(parts)

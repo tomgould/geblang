@@ -12,11 +12,12 @@ import (
 // ParseArgv parses a list of argument strings against a schema dict.
 //
 // Schema entry keys are flag names; each entry is a dict with:
-//   "type":     "bool" | "string" | "int" | "float"  (default "string")
-//   "short":    single-character alias, e.g. "v"
-//   "default":  default value
-//   "help":     description text
-//   "required": bool — error if the flag is absent and has no default
+//
+//	"type":     "bool" | "string" | "int" | "float"  (default "string")
+//	"short":    single-character alias, e.g. "v"
+//	"default":  default value
+//	"help":     description text
+//	"required": bool — error if the flag is absent and has no default
 //
 // Result dict keys: flag names with their parsed values, "_" for positional
 // args (list of strings), and "error" (null or an error message string).
@@ -25,7 +26,8 @@ func ParseArgv(argv *runtime.List, schema runtime.Dict) runtime.Dict {
 	shortToName := map[string]string{}
 	typeOf := map[string]string{}
 
-	for _, entry := range schema.Entries {
+	for _, dk := range schema.EntryKeys() {
+		entry, _ := schema.GetEntry(dk)
 		name, ok := entry.Key.(runtime.String)
 		if !ok {
 			continue
@@ -46,7 +48,8 @@ func ParseArgv(argv *runtime.List, schema runtime.Dict) runtime.Dict {
 	}
 
 	result := map[string]runtime.Value{}
-	for _, entry := range schema.Entries {
+	for _, dk := range schema.EntryKeys() {
+		entry, _ := schema.GetEntry(dk)
 		name, ok := entry.Key.(runtime.String)
 		if !ok {
 			continue
@@ -168,7 +171,8 @@ func ParseArgv(argv *runtime.List, schema runtime.Dict) runtime.Dict {
 	}
 
 	if parseErr == "" {
-		for _, entry := range schema.Entries {
+		for _, dk := range schema.EntryKeys() {
+			entry, _ := schema.GetEntry(dk)
 			name, ok := entry.Key.(runtime.String)
 			if !ok {
 				continue
@@ -215,7 +219,8 @@ func HelpText(name string, schema runtime.Dict) string {
 	sb.WriteString(name)
 	sb.WriteString(" [options] [args...]\n\nOptions:\n")
 
-	for _, entry := range schema.Entries {
+	for _, dk := range schema.EntryKeys() {
+		entry, _ := schema.GetEntry(dk)
 		flagName, ok := entry.Key.(runtime.String)
 		if !ok {
 			continue

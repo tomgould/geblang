@@ -536,7 +536,7 @@ func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value
 		}
 		for _, fieldName := range classInfo.FieldNames {
 			key := runtime.String{Value: fieldName}
-			entry, hit := dict.Entries[native.DictKey(key)]
+			entry, hit := dict.GetEntry(native.DictKey(key))
 			if hit {
 				instance.Fields[fieldName] = entry.Value
 			}
@@ -556,7 +556,7 @@ func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value
 			continue
 		}
 		key := runtime.String{Value: paramName}
-		entry, ok := dict.Entries[native.DictKey(key)]
+		entry, ok := dict.GetEntry(native.DictKey(key))
 		if !ok {
 			return nil, fmt.Errorf("deserialize %s: missing field %q", class.Name, paramName)
 		}
@@ -4462,7 +4462,7 @@ func (vm *VM) contains(needle, container runtime.Value) (runtime.Value, error) {
 		}
 		return runtime.Bool{Value: false}, nil
 	case runtime.Dict:
-		_, ok := c.Entries[dictKeyFor(needle)]
+		_, ok := c.GetEntry(dictKeyFor(needle))
 		return runtime.Bool{Value: ok}, nil
 	case runtime.Set:
 		_, ok := c.Elements[dictKeyFor(needle)]
@@ -4537,7 +4537,7 @@ func (vm *VM) index(instruction Instruction) error {
 		}
 		vm.push(runtime.NewInt64(int64(value.Value[i])))
 	case runtime.Dict:
-		entry, ok := value.Entries[dictKeyFor(index)]
+		entry, ok := value.GetEntry(dictKeyFor(index))
 		if !ok {
 			vm.push(runtime.Null{})
 			return nil
@@ -6175,14 +6175,14 @@ func (vm *VM) inferGenericBindingsFromSpec(spec vmTypeSpec, v runtime.Value, typ
 			return
 		}
 		d, ok := v.(runtime.Dict)
-		if !ok || len(d.Entries) == 0 {
+		if !ok || d.Len() == 0 {
 			return
 		}
-		for _, entry := range d.Entries {
+		d.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 			vm.bindOrRecurse(spec.args[0], entry.Key, typeParamSet, typeBindings)
 			vm.bindOrRecurse(spec.args[1], entry.Value, typeParamSet, typeBindings)
-			break
-		}
+			return false
+		})
 	}
 }
 
@@ -7017,7 +7017,7 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 				vm.push(runtime.SmallInt{Value: int64(len(v.Elements))})
 				return ip, nil
 			case runtime.Dict:
-				vm.push(runtime.SmallInt{Value: int64(len(v.Entries))})
+				vm.push(runtime.SmallInt{Value: int64(v.Len())})
 				return ip, nil
 			case runtime.Set:
 				vm.push(runtime.SmallInt{Value: int64(len(v.Elements))})
@@ -7669,16 +7669,22 @@ func spreadDictNamedArguments(dict runtime.Dict, positional []runtime.Value, par
 		name  string
 		value runtime.Value
 	}
-	named := make([]namedArg, 0, len(dict.Entries))
-	for _, entry := range dict.Entries {
+	named := make([]namedArg, 0, dict.Len())
+	var keyErr error
+	dict.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 		key, ok := entry.Key.(runtime.String)
 		if !ok {
-			return nil, nil, fmt.Errorf("spread dict argument keys must be strings")
+			keyErr = fmt.Errorf("spread dict argument keys must be strings")
+			return false
 		}
 		if len(known) > 0 && !known[strings.ToLower(key.Value)] {
-			continue
+			return true
 		}
 		named = append(named, namedArg{name: key.Value, value: entry.Value})
+		return true
+	})
+	if keyErr != nil {
+		return nil, nil, keyErr
 	}
 	sort.Slice(named, func(i, j int) bool { return named[i].name < named[j].name })
 	args := make([]runtime.Value, 0, len(positional)+len(named))
@@ -9116,10 +9122,11 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtim
 		}
 		return &runtime.List{Elements: elements}
 	case runtime.Dict:
-		entries := make(map[string]runtime.DictEntry, len(callable.Entries))
-		for key, entry := range callable.Entries {
+		entries := make(map[string]runtime.DictEntry, callable.Len())
+		callable.ForEachEntry(func(key string, entry runtime.DictEntry) bool {
 			entries[key] = runtime.DictEntry{Key: entry.Key, Value: vm.wrapStatefulNativeValue(entry.Value, false)}
-		}
+			return true
+		})
 		return runtime.Dict{Entries: entries}
 	default:
 		return value
@@ -9190,7 +9197,7 @@ func (vm *VM) collectionsNativeCall(fn string, args []runtime.Value) (runtime.Va
 		case *runtime.List:
 			return runtime.SmallInt{Value: int64(len(v.Elements))}, nil
 		case runtime.Dict:
-			return runtime.SmallInt{Value: int64(len(v.Entries))}, nil
+			return runtime.SmallInt{Value: int64(v.Len())}, nil
 		case runtime.Set:
 			return runtime.SmallInt{Value: int64(len(v.Elements))}, nil
 		case runtime.String:
@@ -9206,7 +9213,7 @@ func (vm *VM) collectionsNativeCall(fn string, args []runtime.Value) (runtime.Va
 		case *runtime.List:
 			return runtime.Bool{Value: len(v.Elements) == 0}, nil
 		case runtime.Dict:
-			return runtime.Bool{Value: len(v.Entries) == 0}, nil
+			return runtime.Bool{Value: v.Len() == 0}, nil
 		case runtime.Set:
 			return runtime.Bool{Value: len(v.Elements) == 0}, nil
 		case runtime.String:
@@ -9227,7 +9234,7 @@ func (vm *VM) collectionsNativeCall(fn string, args []runtime.Value) (runtime.Va
 			}
 			return runtime.Bool{Value: false}, nil
 		case runtime.Dict:
-			_, ok := v.Entries[dictKeyFor(args[1])]
+			_, ok := v.GetEntry(dictKeyFor(args[1]))
 			return runtime.Bool{Value: ok}, nil
 		case runtime.Set:
 			_, ok := v.Elements[dictKeyFor(args[1])]
@@ -11305,7 +11312,7 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 		}
 		for _, fieldName := range classInfo.FieldNames {
 			key := runtime.String{Value: fieldName}
-			entry, hit := dict.Entries[native.DictKey(key)]
+			entry, hit := dict.GetEntry(native.DictKey(key))
 			if hit {
 				instance.Fields[fieldName] = entry.Value
 			}
@@ -11320,7 +11327,7 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 	args := make([]runtime.Value, 0, len(ctor.ParamNames))
 	for _, paramName := range ctor.ParamNames {
 		key := runtime.String{Value: paramName}
-		entry, hit := dict.Entries[native.DictKey(key)]
+		entry, hit := dict.GetEntry(native.DictKey(key))
 		if !hit {
 			return nil, fmt.Errorf("deserialize %s: missing field %q", class.Name, paramName)
 		}
@@ -11924,15 +11931,15 @@ func vmCollectionMatchesGeneric(value runtime.Value, base string, args []string)
 		if len(v.ElementTypes) >= 2 {
 			return vmTypeNameSatisfies(v.ElementTypes[0], args[0]) && vmTypeNameSatisfies(v.ElementTypes[1], args[1])
 		}
-		for _, e := range v.Entries {
-			if !vmValueMatchesSimpleType(e.Key, args[0]) {
+		matches := true
+		v.ForEachEntry(func(_ string, e runtime.DictEntry) bool {
+			if !vmValueMatchesSimpleType(e.Key, args[0]) || !vmValueMatchesSimpleType(e.Value, args[1]) {
+				matches = false
 				return false
 			}
-			if !vmValueMatchesSimpleType(e.Value, args[1]) {
-				return false
-			}
-		}
-		return true
+			return true
+		})
+		return matches
 	}
 	return false
 }
@@ -12206,10 +12213,12 @@ func (vm *VM) descriptiveRuntimeTypeName(value runtime.Value) string {
 		}
 		return "set"
 	case runtime.Dict:
-		for _, entry := range v.Entries {
-			return "dict<" + entry.Key.TypeName() + "," + entry.Value.TypeName() + ">"
-		}
-		return "dict"
+		result := "dict"
+		v.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
+			result = "dict<" + entry.Key.TypeName() + "," + entry.Value.TypeName() + ">"
+			return false
+		})
+		return result
 	case *runtime.Instance:
 		if v == nil || v.Class == nil || len(v.Class.TypeParameters) == 0 || len(v.TypeBindings) == 0 {
 			return value.TypeName()
@@ -12496,13 +12505,20 @@ func (vm *VM) matchValueToTypeSpec(typeParams map[string]bool, value runtime.Val
 			keySpec := spec.args[0]
 			valSpec := spec.args[1]
 			d := value.(runtime.Dict)
-			for _, entry := range d.Entries {
+			ok := true
+			d.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 				if !typeParams[keySpec.baseLower] && !vm.matchValueToTypeSpec(typeParams, entry.Key, keySpec) {
+					ok = false
 					return false
 				}
 				if !typeParams[valSpec.baseLower] && !vm.matchValueToTypeSpec(typeParams, entry.Value, valSpec) {
+					ok = false
 					return false
 				}
+				return true
+			})
+			if !ok {
+				return false
 			}
 		}
 	default:
@@ -12561,10 +12577,16 @@ func (vm *VM) collectionMismatchSuffixStr(value runtime.Value, typ string) strin
 	case runtime.Dict:
 		if len(spec.args) == 2 {
 			valSpec := spec.args[1]
-			for _, entry := range v.Entries {
+			msg := ""
+			v.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 				if !vm.matchValueToTypeSpec(nil, entry.Value, valSpec) {
-					return fmt.Sprintf(" (value for key %s is %s)", entry.Key.Inspect(), entry.Value.TypeName())
+					msg = fmt.Sprintf(" (value for key %s is %s)", entry.Key.Inspect(), entry.Value.TypeName())
+					return false
 				}
+				return true
+			})
+			if msg != "" {
+				return msg
 			}
 		}
 	}
@@ -13939,10 +13961,11 @@ func (vm *VM) classMatches(classInfo ClassInfo, target string) bool {
 func cloneContainerDefault(v runtime.Value) runtime.Value {
 	switch val := v.(type) {
 	case runtime.Dict:
-		cloned := make(map[string]runtime.DictEntry, len(val.Entries))
-		for k, entry := range val.Entries {
+		cloned := make(map[string]runtime.DictEntry, val.Len())
+		val.ForEachEntry(func(k string, entry runtime.DictEntry) bool {
 			cloned[k] = entry
-		}
+			return true
+		})
 		return runtime.Dict{Entries: cloned}
 	case runtime.Set:
 		cloned := make(map[string]runtime.SetEntry, len(val.Elements))
@@ -14794,7 +14817,7 @@ func (vm *VM) dictCollectionsMethod(graph runtime.Dict, name string, args []runt
 			node := queue[0]
 			queue = queue[1:]
 			visited = append(visited, node)
-			if entry, ok := graph.Entries[native.DictKey(node)]; ok {
+			if entry, ok := graph.GetEntry(native.DictKey(node)); ok {
 				if neighbors, ok := entry.Value.(*runtime.List); ok {
 					for _, nb := range neighbors.Elements {
 						k := native.DictKey(nb)
@@ -14824,7 +14847,7 @@ func (vm *VM) dictCollectionsMethod(graph runtime.Dict, name string, args []runt
 			}
 			seen[k] = true
 			visited = append(visited, node)
-			if entry, ok := graph.Entries[native.DictKey(node)]; ok {
+			if entry, ok := graph.GetEntry(native.DictKey(node)); ok {
 				if neighbors, ok := entry.Value.(*runtime.List); ok {
 					for i := len(neighbors.Elements) - 1; i >= 0; i-- {
 						nb := neighbors.Elements[i]
@@ -14842,7 +14865,7 @@ func (vm *VM) dictCollectionsMethod(graph runtime.Dict, name string, args []runt
 		}
 		allNodes := map[string]runtime.Value{}
 		inDegree := map[string]int{}
-		for _, entry := range graph.Entries {
+		graph.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 			k := native.DictKey(entry.Key)
 			allNodes[k] = entry.Key
 			if _, ok := inDegree[k]; !ok {
@@ -14857,7 +14880,8 @@ func (vm *VM) dictCollectionsMethod(graph runtime.Dict, name string, args []runt
 					inDegree[nbKey]++
 				}
 			}
-		}
+			return true
+		})
 		zeroKeys := make([]string, 0)
 		for k, deg := range inDegree {
 			if deg == 0 {
@@ -14874,7 +14898,7 @@ func (vm *VM) dictCollectionsMethod(graph runtime.Dict, name string, args []runt
 			node := queue[0]
 			queue = queue[1:]
 			result = append(result, node)
-			if entry, ok := graph.Entries[native.DictKey(node)]; ok {
+			if entry, ok := graph.GetEntry(native.DictKey(node)); ok {
 				if neighbors, ok := entry.Value.(*runtime.List); ok {
 					for _, nb := range neighbors.Elements {
 						nbKey := native.DictKey(nb)
@@ -14907,7 +14931,7 @@ func (vm *VM) dictCollectionsMethod(graph runtime.Dict, name string, args []runt
 				found = true
 				break
 			}
-			if entry, ok := graph.Entries[native.DictKey(node)]; ok {
+			if entry, ok := graph.GetEntry(native.DictKey(node)); ok {
 				if neighbors, ok := entry.Value.(*runtime.List); ok {
 					for _, nb := range neighbors.Elements {
 						k := native.DictKey(nb)
@@ -15023,7 +15047,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		case *runtime.List:
 			return runtime.SmallInt{Value: int64(len(value.Elements))}, nil
 		case runtime.Dict:
-			return runtime.SmallInt{Value: int64(len(value.Entries))}, nil
+			return runtime.SmallInt{Value: int64(value.Len())}, nil
 		case runtime.Set:
 			return runtime.SmallInt{Value: int64(len(value.Elements))}, nil
 		case runtime.Range:
@@ -15062,7 +15086,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return runtime.Bool{Value: false}, nil
 		case runtime.Dict:
-			_, ok := value.Entries[native.DictKey(args[0])]
+			_, ok := value.GetEntry(native.DictKey(args[0]))
 			return runtime.Bool{Value: ok}, nil
 		case runtime.Set:
 			_, ok := value.Elements[native.DictKey(args[0])]
@@ -15707,7 +15731,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			}
 			return value.Elements[i], nil
 		case runtime.Dict:
-			entry, ok := value.Entries[dictKeyFor(args[0])]
+			entry, ok := value.GetEntry(dictKeyFor(args[0]))
 			if !ok {
 				return runtime.Null{}, nil
 			}
@@ -15751,9 +15775,10 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			return &runtime.List{Elements: elems}, nil
 		case runtime.Dict:
 			d := runtime.NewDict()
-			for _, k := range value.OrderedKeys() {
-				d.PutEntry(k, value.Entries[k])
-			}
+			value.ForEachEntry(func(k string, e runtime.DictEntry) bool {
+				d.PutEntry(k, e)
+				return true
+			})
 			return d, nil
 		case runtime.Set:
 			elements := make(map[string]runtime.SetEntry, len(value.Elements))
@@ -15980,7 +16005,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if !ok {
 			return nil, fmt.Errorf("%s has no method hasKey", receiver.TypeName())
 		}
-		_, exists := value.Entries[native.DictKey(args[0])]
+		_, exists := value.GetEntry(native.DictKey(args[0]))
 		return runtime.Bool{Value: exists}, nil
 	case "keys":
 		if len(args) != 0 {
@@ -15990,11 +16015,11 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if !ok {
 			return nil, fmt.Errorf("%s has no method keys", receiver.TypeName())
 		}
-		ordered := value.OrderedKeys()
-		keys := make([]runtime.Value, 0, len(ordered))
-		for _, k := range ordered {
-			keys = append(keys, value.Entries[k].Key)
-		}
+		keys := make([]runtime.Value, 0, value.Len())
+		value.ForEachEntry(func(_ string, e runtime.DictEntry) bool {
+			keys = append(keys, e.Key)
+			return true
+		})
 		return &runtime.List{Elements: keys}, nil
 	case "values":
 		if len(args) != 0 {
@@ -16004,11 +16029,11 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if !ok {
 			return nil, fmt.Errorf("%s has no method values", receiver.TypeName())
 		}
-		ordered := value.OrderedKeys()
-		values := make([]runtime.Value, 0, len(ordered))
-		for _, k := range ordered {
-			values = append(values, value.Entries[k].Value)
-		}
+		values := make([]runtime.Value, 0, value.Len())
+		value.ForEachEntry(func(_ string, e runtime.DictEntry) bool {
+			values = append(values, e.Value)
+			return true
+		})
 		return &runtime.List{Elements: values}, nil
 	case "items", "entries":
 		if len(args) != 0 {
@@ -16018,12 +16043,11 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if !ok {
 			return nil, native.UnknownMethodError(receiver.TypeName(), name)
 		}
-		ordered := value.OrderedKeys()
-		items := make([]runtime.Value, 0, len(ordered))
-		for _, k := range ordered {
-			entry := value.Entries[k]
+		items := make([]runtime.Value, 0, value.Len())
+		value.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 			items = append(items, &runtime.List{Elements: []runtime.Value{entry.Key, entry.Value}})
-		}
+			return true
+		})
 		return &runtime.List{Elements: items}, nil
 	case "first":
 		if len(args) != 0 {
@@ -16140,12 +16164,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			if v.Frozen {
 				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen dict"}
 			}
-			for k := range v.Entries {
-				delete(v.Entries, k)
-			}
-			if v.Order != nil {
-				*v.Order = (*v.Order)[:0]
-			}
+			v.Clear()
 			return runtime.Null{}, nil
 		default:
 			return nil, fmt.Errorf("%s has no method clear", receiver.TypeName())
@@ -16233,13 +16252,9 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if !ok2 {
 			return nil, fmt.Errorf("dict.merge expects a dict argument")
 		}
-		merged := runtime.Dict{Entries: make(map[string]runtime.DictEntry, len(dict.Entries)+len(other.Entries))}
-		for k, e := range dict.Entries {
-			merged.Entries[k] = e
-		}
-		for k, e := range other.Entries {
-			merged.Entries[k] = e
-		}
+		merged := runtime.NewDictHint(dict.Len() + other.Len())
+		dict.ForEachEntry(func(k string, e runtime.DictEntry) bool { merged.PutEntry(k, e); return true })
+		other.ForEachEntry(func(k string, e runtime.DictEntry) bool { merged.PutEntry(k, e); return true })
 		return merged, nil
 	case "abs":
 		if len(args) != 0 {
@@ -16495,16 +16510,19 @@ func valuesEqual(left runtime.Value, right runtime.Value) bool {
 		return true
 	case runtime.Dict:
 		rightValue, ok := right.(runtime.Dict)
-		if !ok || len(leftValue.Entries) != len(rightValue.Entries) {
+		if !ok || leftValue.Len() != rightValue.Len() {
 			return false
 		}
-		for key, entry := range leftValue.Entries {
-			other, ok := rightValue.Entries[key]
+		equal := true
+		leftValue.ForEachEntry(func(key string, entry runtime.DictEntry) bool {
+			other, ok := rightValue.GetEntry(key)
 			if !ok || !valuesEqual(entry.Key, other.Key) || !valuesEqual(entry.Value, other.Value) {
+				equal = false
 				return false
 			}
-		}
-		return true
+			return true
+		})
+		return equal
 	case runtime.Set:
 		rightValue, ok := right.(runtime.Set)
 		if !ok || len(leftValue.Elements) != len(rightValue.Elements) {

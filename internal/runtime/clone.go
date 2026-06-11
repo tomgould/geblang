@@ -106,16 +106,13 @@ func (s *cloneState) cloneValue(value Value) Value {
 		}
 		return cloned
 	case Dict:
-		entries := make(map[string]DictEntry, len(value.Entries))
-		for key, entry := range value.Entries {
-			entries[key] = DictEntry{Key: s.cloneValue(entry.Key), Value: s.cloneValue(entry.Value)}
-		}
-		var order *[]string
-		if value.Order != nil {
-			o := append([]string(nil), *value.Order...)
-			order = &o
-		}
-		return Dict{Entries: entries, Order: order, ElementTypes: append([]string(nil), value.ElementTypes...)}
+		cloned := NewDictHint(value.Len())
+		value.ForEachEntry(func(key string, entry DictEntry) bool {
+			cloned.PutEntry(key, DictEntry{Key: s.cloneValue(entry.Key), Value: s.cloneValue(entry.Value)})
+			return true
+		})
+		cloned.ElementTypes = append([]string(nil), value.ElementTypes...)
+		return cloned
 	case Set:
 		elements := make(map[string]SetEntry, len(value.Elements))
 		for key, entry := range value.Elements {

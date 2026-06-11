@@ -66,7 +66,7 @@ func (c *crossTypeCollector) visit(ref *ast.TypeRef) {
 		return
 	}
 	c.diags = append(c.diags, Diagnostic{
-		Line: ref.Token.Line,
+		Line:   ref.Token.Line,
 		Column: ref.Token.Column,
 		// An unknown qualified type is uninhabitable at runtime: no value
 		// matches it, so every call that exercises the annotation is

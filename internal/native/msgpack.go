@@ -267,19 +267,13 @@ func appendMsgpackDict(out []byte, d runtime.Dict) ([]byte, error) {
 }
 
 func dictOrderedPairs(d runtime.Dict) ([]runtime.Value, []runtime.Value) {
-	if d.Order == nil {
-		return nil, nil
-	}
-	keys := make([]runtime.Value, 0, len(*d.Order))
-	values := make([]runtime.Value, 0, len(*d.Order))
-	for _, k := range *d.Order {
-		entry, ok := d.Entries[k]
-		if !ok {
-			continue
-		}
+	keys := make([]runtime.Value, 0, d.Len())
+	values := make([]runtime.Value, 0, d.Len())
+	d.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 		keys = append(keys, entry.Key)
 		values = append(values, entry.Value)
-	}
+		return true
+	})
 	return keys, values
 }
 

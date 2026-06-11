@@ -56,6 +56,14 @@
   pairing with `http.shutdown` for graceful-drain entrypoints (a
   signal handler can shut down a server the main goroutine waits on).
 
+### Performance
+
+- Small dictionaries (up to eight entries) now use an inline storage
+  form instead of a hash map, so building them - parsing JSON,
+  assembling option dicts, request handling - allocates once instead
+  of several times. JSON round-trip throughput improves about 20%;
+  dictionary semantics are unchanged.
+
 ### Regular expressions
 
 - `re.compile(pattern)` and `pcre.compile(pattern, flags)` return a

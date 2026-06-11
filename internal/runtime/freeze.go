@@ -9,16 +9,14 @@ func FreezeShallowCopy(v Value) Value {
 		copy(elems, val.Elements)
 		return &List{Elements: elems, Frozen: true, ElementTypes: append([]string(nil), val.ElementTypes...)}
 	case Dict:
-		entries := make(map[string]DictEntry, len(val.Entries))
-		for k, e := range val.Entries {
-			entries[k] = e
-		}
-		var order *[]string
-		if val.Order != nil {
-			o := append([]string(nil), *val.Order...)
-			order = &o
-		}
-		return Dict{Entries: entries, Order: order, Frozen: true, ElementTypes: append([]string(nil), val.ElementTypes...)}
+		frozen := NewDictHint(val.Len())
+		val.ForEachEntry(func(k string, e DictEntry) bool {
+			frozen.PutEntry(k, e)
+			return true
+		})
+		frozen.Frozen = true
+		frozen.ElementTypes = append([]string(nil), val.ElementTypes...)
+		return frozen
 	case Set:
 		elements := make(map[string]SetEntry, len(val.Elements))
 		for k, e := range val.Elements {
@@ -75,10 +73,11 @@ func DeepFreeze(v Value) Value {
 		}
 		return &List{Elements: elems, Frozen: true}
 	case Dict:
-		entries := make(map[string]DictEntry, len(val.Entries))
-		for k, entry := range val.Entries {
+		entries := make(map[string]DictEntry, val.Len())
+		val.ForEachEntry(func(k string, entry DictEntry) bool {
 			entries[k] = DictEntry{Key: entry.Key, Value: DeepFreeze(entry.Value)}
-		}
+			return true
+		})
 		return Dict{Entries: entries, Frozen: true}
 	case Set:
 		elements := make(map[string]SetEntry, len(val.Elements))

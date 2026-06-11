@@ -220,29 +220,41 @@ func (v List) Inspect() string {
 }
 
 type Dict struct {
+	// data is the inline-capable shared store for dicts built through
+	// NewDict / NewDictHint. When nil, the dict is a literal-built
+	// map-state dict using Entries / Order directly. Accessors check
+	// data first; see dict_store.go.
+	data *dictData
+	// Entries / Order back literal-constructed dicts (Dict{Entries:...}).
 	Entries map[string]DictEntry
-	// Insertion-order key list, shared via pointer across value copies.
-	Order  *[]string
-	Frozen bool
+	Order   *[]string
+	Frozen  bool
 	// ElementTypes mirrors List.ElementTypes for dicts. When set, the
 	// slice has two entries: [keyType, valueType] for `dict<K, V>`.
 	ElementTypes []string
 }
 
 func NewDict() Dict {
-	order := make([]string, 0)
-	return Dict{Entries: map[string]DictEntry{}, Order: &order}
+	return Dict{data: &dictData{}}
 }
 
-// NewDictHint preallocates the Entries map and Order slice with a
-// capacity hint, saving 1-3 grow cycles on dicts that fill quickly
-// (parsed JSON objects, builder patterns).
+// NewDictHint sizes the store for n entries: dicts that stay at or
+// below dictInlineMax keep their entries inline (one allocation, no
+// map); larger ones start in the spilled map form.
 func NewDictHint(n int) Dict {
-	order := make([]string, 0, n)
-	return Dict{Entries: make(map[string]DictEntry, n), Order: &order}
+	d := &dictData{}
+	if n > dictInlineMax {
+		d.m = make(map[string]DictEntry, n)
+		d.order = make([]string, 0, n)
+	}
+	return Dict{data: d}
 }
 
 func (v Dict) PutEntry(key string, entry DictEntry) {
+	if v.data != nil {
+		v.data.set(key, entry)
+		return
+	}
 	if v.Entries == nil {
 		return
 	}
@@ -253,6 +265,10 @@ func (v Dict) PutEntry(key string, entry DictEntry) {
 }
 
 func (v Dict) DelEntry(key string) {
+	if v.data != nil {
+		v.data.del(key)
+		return
+	}
 	if v.Entries == nil {
 		return
 	}
@@ -271,9 +287,98 @@ func (v Dict) DelEntry(key string) {
 	}
 }
 
+// Clear removes all entries.
+func (v Dict) Clear() {
+	if v.data != nil {
+		v.data.clear()
+		return
+	}
+	if v.Entries != nil {
+		for k := range v.Entries {
+			delete(v.Entries, k)
+		}
+	}
+	if v.Order != nil {
+		*v.Order = (*v.Order)[:0]
+	}
+}
+
+// GetEntry looks up an entry by its DictKey string. The accessor
+// (with PutEntry / DelEntry / Len / ForEachEntry / EntryKeys) is the
+// stable surface that lets the storage representation change without
+// touching consumers.
+func (v Dict) GetEntry(key string) (DictEntry, bool) {
+	if v.data != nil {
+		return v.data.get(key)
+	}
+	if v.Entries == nil {
+		return DictEntry{}, false
+	}
+	e, ok := v.Entries[key]
+	return e, ok
+}
+
+// Len reports the number of entries.
+func (v Dict) Len() int {
+	if v.data != nil {
+		return v.data.length()
+	}
+	return len(v.Entries)
+}
+
+// EntryValue returns the value for key, or nil when absent. For
+// call sites that index then take .Value and assume presence.
+func (v Dict) EntryValue(key string) Value {
+	if v.data != nil {
+		e, _ := v.data.get(key)
+		return e.Value
+	}
+	if v.Entries == nil {
+		return nil
+	}
+	return v.Entries[key].Value
+}
+
+// ForEachEntry visits entries in insertion order. The callback returns
+// false to stop early. Order falls back to sorted keys when the Order
+// list is unpopulated (legacy construction paths), matching OrderedKeys.
+func (v Dict) ForEachEntry(fn func(key string, entry DictEntry) bool) {
+	if v.data != nil {
+		v.data.forEach(fn)
+		return
+	}
+	if v.Entries == nil {
+		return
+	}
+	if v.Order != nil && len(*v.Order) == len(v.Entries) {
+		for _, k := range *v.Order {
+			if e, ok := v.Entries[k]; ok {
+				if !fn(k, e) {
+					return
+				}
+			}
+		}
+		return
+	}
+	for _, k := range v.OrderedKeys() {
+		if !fn(k, v.Entries[k]) {
+			return
+		}
+	}
+}
+
+// EntryKeys returns a fresh slice of DictKey strings in insertion
+// order. Use ForEachEntry for hot iteration; EntryKeys suits loops
+// whose control flow (break to an outer scope, error returns) does
+// not fit a callback.
+func (v Dict) EntryKeys() []string { return v.OrderedKeys() }
+
 // OrderedKeys returns keys in insertion order; falls back to a sort
 // when Order is unpopulated (legacy construction paths).
 func (v Dict) OrderedKeys() []string {
+	if v.data != nil {
+		return v.data.orderedKeys()
+	}
 	if v.Order != nil && len(*v.Order) == len(v.Entries) {
 		out := make([]string, len(*v.Order))
 		copy(out, *v.Order)
@@ -292,7 +397,7 @@ func (v Dict) Inspect() string {
 	keys := v.OrderedKeys()
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
-		entry := v.Entries[k]
+		entry, _ := v.GetEntry(k)
 		kStr := inspectInsideContainer(entry.Key, 0)
 		vStr := inspectInsideContainer(entry.Value, 0)
 		parts = append(parts, kStr+": "+vStr)
@@ -339,14 +444,11 @@ func inspectInsideContainer(v Value, depth int) string {
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	case Dict:
-		keys := make([]string, 0, len(x.Entries))
-		for k := range x.Entries {
-			keys = append(keys, k)
-		}
+		keys := x.OrderedKeys()
 		sort.Strings(keys)
 		parts := make([]string, 0, len(keys))
 		for _, k := range keys {
-			entry := x.Entries[k]
+			entry, _ := x.GetEntry(k)
 			kStr := inspectInsideContainer(entry.Key, depth+1)
 			vStr := inspectInsideContainer(entry.Value, depth+1)
 			parts = append(parts, kStr+": "+vStr)
@@ -398,12 +500,11 @@ type SetEntry struct {
 // DictPairs returns insertion-ordered [key, value] pairs, the canonical
 // dict iteration view on both backends.
 func DictPairs(d Dict) []Value {
-	ordered := d.OrderedKeys()
-	values := make([]Value, 0, len(ordered))
-	for _, k := range ordered {
-		entry := d.Entries[k]
+	values := make([]Value, 0, d.Len())
+	d.ForEachEntry(func(_ string, entry DictEntry) bool {
 		values = append(values, &List{Elements: []Value{entry.Key, entry.Value}})
-	}
+		return true
+	})
 	return values
 }
 

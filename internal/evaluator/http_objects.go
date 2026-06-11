@@ -785,7 +785,8 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 			return nil, fmt.Errorf("Builder.withHeaders argument must be a dict")
 		}
 		next := cloneBuilder(this)
-		for _, entry := range dict.Entries {
+		for _, __dk := range dict.EntryKeys() {
+			entry, _ := dict.GetEntry(__dk)
 			name, ok := entry.Key.(runtime.String)
 			if !ok {
 				return nil, fmt.Errorf("Builder.withHeaders keys must be strings")

@@ -142,9 +142,10 @@ func writeXMLValue(out *bytes.Buffer, value runtime.Value) error {
 	}
 	out.WriteByte('<')
 	out.WriteString(name)
-	if attrsValue, ok := dict.Entries[dictKey("attributes")]; ok {
+	if attrsValue, ok := dict.GetEntry(dictKey("attributes")); ok {
 		if attrs, ok := attrsValue.Value.(runtime.Dict); ok {
-			for _, entry := range attrs.Entries {
+			for _, dk := range attrs.EntryKeys() {
+				entry, _ := attrs.GetEntry(dk)
 				key, ok := entry.Key.(runtime.String)
 				if !ok {
 					continue
@@ -162,12 +163,12 @@ func writeXMLValue(out *bytes.Buffer, value runtime.Value) error {
 		}
 	}
 	out.WriteByte('>')
-	if textValue, ok := dict.Entries[dictKey("text")]; ok {
+	if textValue, ok := dict.GetEntry(dictKey("text")); ok {
 		if text, ok := textValue.Value.(runtime.String); ok {
 			xml.EscapeText(out, []byte(text.Value))
 		}
 	}
-	if childrenValue, ok := dict.Entries[dictKey("children")]; ok {
+	if childrenValue, ok := dict.GetEntry(dictKey("children")); ok {
 		if children, ok := childrenValue.Value.(*runtime.List); ok {
 			for _, child := range children.Elements {
 				if err := writeXMLValue(out, child); err != nil {
@@ -183,7 +184,7 @@ func writeXMLValue(out *bytes.Buffer, value runtime.Value) error {
 }
 
 func xmlStringField(dict runtime.Dict, name string) (string, error) {
-	entry, ok := dict.Entries[dictKey(name)]
+	entry, ok := dict.GetEntry(dictKey(name))
 	if !ok {
 		return "", fmt.Errorf("xml element missing %s", name)
 	}

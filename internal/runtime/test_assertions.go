@@ -173,11 +173,12 @@ func ValuesEqual(left Value, right Value) bool {
 		return true
 	case Dict:
 		rightValue, ok := right.(Dict)
-		if !ok || len(leftValue.Entries) != len(rightValue.Entries) {
+		if !ok || leftValue.Len() != rightValue.Len() {
 			return false
 		}
-		for key, entry := range leftValue.Entries {
-			other, ok := rightValue.Entries[key]
+		for _, key := range leftValue.EntryKeys() {
+			entry, _ := leftValue.GetEntry(key)
+			other, ok := rightValue.GetEntry(key)
 			if !ok || !ValuesEqual(entry.Key, other.Key) || !ValuesEqual(entry.Value, other.Value) {
 				return false
 			}
@@ -366,7 +367,8 @@ func containsValue(haystack Value, needle Value) bool {
 		}
 		return false
 	case Dict:
-		for _, entry := range value.Entries {
+		for _, key := range value.EntryKeys() {
+			entry, _ := value.GetEntry(key)
 			if ValuesEqual(entry.Key, needle) {
 				return true
 			}

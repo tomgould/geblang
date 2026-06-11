@@ -882,13 +882,14 @@ func replFormatList(elements []runtime.Value, depth int) string {
 }
 
 func replFormatDict(v runtime.Dict, depth int) string {
-	if len(v.Entries) == 0 {
+	if v.Len() == 0 {
 		return "{}"
 	}
-	parts := make([]string, 0, len(v.Entries))
-	for _, entry := range v.Entries {
+	parts := make([]string, 0, v.Len())
+	v.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 		parts = append(parts, replNested(entry.Key, depth+1)+": "+replNested(entry.Value, depth+1))
-	}
+		return true
+	})
 	sort.Strings(parts)
 	return replBracket("{", "}", parts, depth)
 }

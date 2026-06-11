@@ -113,7 +113,8 @@ func csvOptionsFrom(args []runtime.Value, index int) (csvOptions, error) {
 	if !ok {
 		return opts, fmt.Errorf("options must be a dict")
 	}
-	for _, entry := range dict.Entries {
+	for _, dk := range dict.EntryKeys() {
+		entry, _ := dict.GetEntry(dk)
 		key, ok := entry.Key.(runtime.String)
 		if !ok {
 			return opts, fmt.Errorf("option keys must be strings")

@@ -1098,7 +1098,7 @@ func appendConstant(out []byte, value runtime.Value) ([]byte, error) {
 		 * `dict opts = {}` defaults. Encode just the empty marker;
 		 * non-empty constant dicts would need element serialisation
 		 * that the compiler doesn't emit. */
-		if len(value.Entries) != 0 {
+		if value.Len() != 0 {
 			return nil, fmt.Errorf("unsupported bytecode constant: non-empty dict literal")
 		}
 		return append(out, 10), nil
@@ -1255,17 +1255,24 @@ func appendMetadataValue(out []byte, value runtime.Value) ([]byte, error) {
 		return out, nil
 	case runtime.Dict:
 		out = append(out, 8)
-		out = binary.BigEndian.AppendUint16(out, uint16(len(value.Entries)))
-		for _, entry := range value.Entries {
+		out = binary.BigEndian.AppendUint16(out, uint16(value.Len()))
+		var dictErr error
+		value.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
 			var err error
 			out, err = appendMetadataValue(out, entry.Key)
 			if err != nil {
-				return nil, err
+				dictErr = err
+				return false
 			}
 			out, err = appendMetadataValue(out, entry.Value)
 			if err != nil {
-				return nil, err
+				dictErr = err
+				return false
 			}
+			return true
+		})
+		if dictErr != nil {
+			return nil, dictErr
 		}
 		return out, nil
 	case runtime.Set:
