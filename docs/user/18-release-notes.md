@@ -72,6 +72,13 @@
   are immutable. Identical on both runtimes; see the stdlib dataframe
   chapter.
 
+### Tooling
+
+- `geblang build --docker` writes a ready-to-build `Dockerfile` next to
+  the output binary (distroless base, NOTICES included, optional
+  `--docker-port` for `EXPOSE`; existing files preserved unless
+  `--force`).
+
 ### Database
 
 - `db.Rows` is now a true streaming cursor: a `next()`/`row()` loop (or

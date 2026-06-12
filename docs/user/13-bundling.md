@@ -161,6 +161,9 @@ geblang build --entry <module.name> --out <output-path> [<package-dir>]
 | `--entry` | yes | Canonical name of the entry module (must export `main`) |
 | `--out` | yes | Path for the output binary |
 | `--resource` | no | Extra resource to embed, in addition to the manifest `resources:`. Repeatable. `--resource <path>` keeps the project-relative path; `--resource <path>=<bundlePath>` remaps it (a directory's contents mirror under `<bundlePath>`), so a build step can embed processed copies without altering the source tree |
+| `--docker` | no | Also write a `Dockerfile` next to the binary (see below) |
+| `--docker-port` | no | Add `EXPOSE <port>` to the generated Dockerfile |
+| `--force` | no | Overwrite an existing generated Dockerfile |
 | `<package-dir>` | no | Package root directory (default: `.`) |
 
 Build the example package above:
@@ -201,6 +204,26 @@ Pass arguments to the bundled program the same way you would any other binary:
 
 The argument list is forwarded to the entry module's `main` function via
 `sys.args()`.
+
+## Docker Output
+
+`geblang build --docker` writes a `Dockerfile` into the output directory
+alongside the binary (1.19.0). The image copies the binary and its
+`NOTICES` sidecar into `gcr.io/distroless/base-debian12` (glibc included -
+the binary links libc dynamically) and runs it as the entrypoint:
+
+```sh
+geblang build --entry app.main --out dist/app --docker --docker-port 8085 .
+cd dist && docker build -t myapp . && docker run -p 8085:8085 myapp
+```
+
+`EXPOSE` is only emitted when `--docker-port` is given - a built binary is
+not necessarily a server. An existing `Dockerfile` is left unchanged
+unless `--force` is passed, so manual edits survive rebuilds. Arguments
+after `docker run <image>` flow to the binary as normal program
+arguments; the standard flags below work inside the container too. The
+typical reverse-proxy deployment runs the container on an internal port
+and fronts it with nginx.
 
 ## Standard Flags Of Built Binaries
 
