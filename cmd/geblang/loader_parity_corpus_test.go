@@ -267,6 +267,68 @@ for (v in helper.counts(3)) {
 }
 `,
 	},
+	{
+		name: "GenericInstanceofBindingsAcrossBoundary",
+		helper: `module helper;
+
+export class Box<T> {
+    T value;
+    func Box(T value) { this.value = value; }
+}
+`,
+		main: `import io;
+import helper;
+
+let s = helper.Box<string>("hi");
+io.println("${s instanceof helper.Box<string>} ${s instanceof helper.Box<int>} ${s instanceof helper.Box}");
+`,
+	},
+	{
+		name: "GenericMethodParamEnforcedAcrossBoundary",
+		helper: `module helper;
+
+export class Box<T> {
+    T value;
+    func Box(T value) { this.value = value; }
+    func put(T value): void { this.value = value; }
+}
+`,
+		main: `import io;
+import helper;
+
+let b = helper.Box<string>("hi");
+try {
+    b.put(42);
+    io.println("accepted");
+} catch (RuntimeError e) {
+    io.println("caught: " + e.message);
+}
+b.put("fine");
+io.println(b.value);
+`,
+	},
+	{
+		name: "GenericCtorExplicitTypeArgAcrossBoundary",
+		helper: `module helper;
+
+export class Box<T> {
+    T value;
+    func Box(T value) { this.value = value; }
+}
+`,
+		main: `import io;
+import helper;
+
+let ok = helper.Box<string>("hi");
+io.println(typeof(ok.value));
+try {
+    let bad = helper.Box<string>(42);
+    io.println("constructed");
+} catch (RuntimeError e) {
+    io.println("caught: " + e.message);
+}
+`,
+	},
 }
 
 // TestLoaderParityCorpus runs each two-module case through the real CLI

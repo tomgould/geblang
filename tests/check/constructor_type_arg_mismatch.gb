@@ -1,0 +1,11 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag a constructor call whose explicit
+ *          type arguments contradict a statically-known argument type.
+ */
+class Box<T> {
+    T value;
+    func Box(T value) { this.value = value; }
+}
+
+let bad = Box<string>(42);

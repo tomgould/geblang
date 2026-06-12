@@ -83,6 +83,9 @@ type Evaluator struct {
 	stderr               io.Writer
 	stdin                io.Reader
 	stdinReader          *bufio.Reader
+	// declAnnotation distinguishes a declaration annotation from other
+	// expected-type contexts (return position, arg hints) by pointer identity.
+	declAnnotation *ast.TypeRef
 	imports              map[string]bool
 	importNames          map[string]string
 	currentModule        string
@@ -2036,7 +2039,10 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 		value := runtime.Value(runtime.Null{})
 		expectedType := e.resolveTypeRef(stmt.Type)
 		if stmt.Value != nil {
+			prevDecl := e.declAnnotation
+			e.declAnnotation = expectedType
 			evaluated, err := e.evalExpressionWithExpectedType(stmt.Value, env, expectedType)
+			e.declAnnotation = prevDecl
 			if err != nil {
 				return signal{}, err
 			}
@@ -2441,6 +2447,19 @@ func (e *Evaluator) evalExpressionWithExpectedType(expr ast.Expression, env *run
 			}
 			if bound, ok := env.GetTypeBinding(typeName); ok {
 				typeName = bound
+			} else if base, args, isGeneric := splitGenericTypeName(typeName); isGeneric {
+				// Resolve type-param names inside the argument list too,
+				// so `x instanceof Box<T>` works in a generic frame.
+				resolvedAny := false
+				for i, a := range args {
+					if b, ok2 := env.GetTypeBinding(strings.TrimSpace(a)); ok2 {
+						args[i] = b
+						resolvedAny = true
+					}
+				}
+				if resolvedAny {
+					typeName = base + "<" + strings.Join(args, ",") + ">"
+				}
 			}
 			return runtime.Bool{Value: e.valueMatchesType(left, typeName)}, nil
 		}
@@ -2943,6 +2962,9 @@ func valueMatchesType(value runtime.Value, typeName string) bool {
 		}
 	}
 	if baseName, args, ok := splitGenericTypeName(typeName); ok {
+		if instance, isInstance := value.(*runtime.Instance); isInstance {
+			return instanceMatchesParameterizedClass(instance, baseName, args)
+		}
 		return collectionMatchesGenericType(value, baseName, args)
 	}
 	typeName = simpleTypeName(typeName)
@@ -2981,6 +3003,34 @@ func valueMatchesType(value runtime.Value, typeName string) bool {
 		return true
 	}
 	return typeNamesEqual(value.TypeName(), typeName)
+}
+
+// instanceMatchesParameterizedClass implements `x instanceof Box<string>`
+// for user generic classes: the class chain must contain the base, and
+// the instance's reified bindings must match the type arguments
+// invariantly (positional against the base class's declared params).
+// Unbound params and non-generic bases never match.
+func instanceMatchesParameterizedClass(instance *runtime.Instance, baseName string, args []string) bool {
+	base := simpleTypeName(baseName)
+	var declared []string
+	found := false
+	for class := instance.Class; class != nil; class = class.Parent {
+		if typeNamesEqual(class.Name, base) {
+			declared = class.TypeParameters
+			found = true
+			break
+		}
+	}
+	if !found || len(declared) == 0 || len(args) > len(declared) {
+		return false
+	}
+	for i, arg := range args {
+		bound, ok := instance.TypeBindings[declared[i]]
+		if !ok || !typeNamesEqual(bound, simpleTypeName(strings.TrimSpace(arg))) {
+			return false
+		}
+	}
+	return true
 }
 
 // splitGenericTypeName splits "list<int>" / "dict<string,int>" / "?list<int>"
@@ -5082,6 +5132,24 @@ func (e *Evaluator) errorParentChain(className string) []string {
 }
 
 func (e *Evaluator) instantiateClassFromCall(class *runtime.Class, call *ast.CallExpression, env *runtime.Environment, declared ...*ast.TypeRef) (runtime.Value, error) {
+	// Declaration-annotation args validate like explicit call-site type args.
+	if len(call.TypeArguments) == 0 && len(declared) > 0 && declared[0] != nil && declared[0] == e.declAnnotation {
+		exp := declared[0]
+		if exp.Operator == "" && len(exp.Arguments) > 0 && len(class.TypeParameters) > 0 && typeNamesEqual(exp.Name, class.Name) {
+			resolved := make([]*ast.TypeRef, len(exp.Arguments))
+			for i, a := range exp.Arguments {
+				resolved[i] = a
+				if a != nil && a.Operator == "" && a.Name != "" {
+					if bound, ok := env.GetTypeBinding(a.Name); ok && bound != "" {
+						resolved[i] = &ast.TypeRef{Token: a.Token, Name: bound, Nullable: a.Nullable}
+					}
+				}
+			}
+			copied := *call
+			copied.TypeArguments = resolved
+			call = &copied
+		}
+	}
 	if reason, abstract := classAbstractnessReason(class); abstract {
 		return nil, thrownError{value: e.withTrace(runtime.Error{Class: "RuntimeError", Message: reason, Parents: []string{"RuntimeError", "Error"}})}
 	}
@@ -5653,49 +5721,72 @@ func (e *Evaluator) checkClassTypeParamConstraints(class *runtime.Class, binding
 }
 
 func (e *Evaluator) checkConstraintSatisfied(typeName, paramName string, constraint *ast.TypeRef, env *runtime.Environment) error {
-	if constraint == nil {
+	if constraint == nil || e.constraintSatisfied(typeName, constraint, env) {
 		return nil
 	}
-	if constraint.Operator == "|" {
-		leftErr := e.checkConstraintSatisfied(typeName, paramName, constraint.Left, env)
-		if leftErr == nil {
-			return nil
+	return fmt.Errorf("type %s does not satisfy constraint %s for type parameter %s", typeName, constraintDisplayString(constraint), paramName)
+}
+
+func (e *Evaluator) constraintSatisfied(typeName string, constraint *ast.TypeRef, env *runtime.Environment) bool {
+	if constraint == nil {
+		return true
+	}
+	switch constraint.Operator {
+	case "|":
+		return e.constraintSatisfied(typeName, constraint.Left, env) || e.constraintSatisfied(typeName, constraint.Right, env)
+	case "&":
+		return e.constraintSatisfied(typeName, constraint.Left, env) && e.constraintSatisfied(typeName, constraint.Right, env)
+	}
+	leaf := constraint.Name
+	// Identity covers primitives and exact class names.
+	if typeNamesEqual(typeName, leaf) {
+		return true
+	}
+	boundVal, ok := env.Get(typeName)
+	if !ok {
+		return false
+	}
+	boundClass, ok := boundVal.(*runtime.Class)
+	if !ok {
+		return false
+	}
+	leafVal, ok := env.Get(leaf)
+	if !ok {
+		return false
+	}
+	if _, isIface := leafVal.(*runtime.Interface); isIface {
+		return classImplementsInterface(boundClass, leaf)
+	}
+	if leafClass, isClass := leafVal.(*runtime.Class); isClass {
+		for c := boundClass; c != nil; c = c.Parent {
+			if typeNamesEqual(c.Name, leafClass.Name) {
+				return true
+			}
 		}
-		rightErr := e.checkConstraintSatisfied(typeName, paramName, constraint.Right, env)
-		if rightErr == nil {
-			return nil
-		}
-		return fmt.Errorf("type %s does not satisfy constraint for %s: %s", typeName, paramName, constraint.Left.Name+"|"+constraint.Right.Name)
 	}
-	if constraint.Operator == "&" {
-		if err := e.checkConstraintSatisfied(typeName, paramName, constraint.Left, env); err != nil {
-			return err
-		}
-		return e.checkConstraintSatisfied(typeName, paramName, constraint.Right, env)
+	return false
+}
+
+// constraintDisplayString matches the VM's stored constraint expr with
+// the outermost parens stripped, keeping messages byte-identical.
+func constraintDisplayString(ref *ast.TypeRef) string {
+	if ref == nil {
+		return ""
 	}
-	// Leaf: check that typeName implements the named interface.
-	ifaceName := constraint.Name
-	ifaceVal, ok := env.Get(ifaceName)
-	if !ok {
-		return fmt.Errorf("constraint interface %q is not declared", ifaceName)
+	if ref.Operator != "" {
+		return constraintRefString(ref.Left) + ref.Operator + constraintRefString(ref.Right)
 	}
-	iface, ok := ifaceVal.(*runtime.Interface)
-	if !ok {
-		return fmt.Errorf("constraint %q is not an interface", ifaceName)
+	return ref.Name
+}
+
+func constraintRefString(ref *ast.TypeRef) string {
+	if ref == nil {
+		return ""
 	}
-	_ = iface // interface found and validated as *runtime.Interface
-	classVal, ok := env.Get(typeName)
-	if !ok {
-		return fmt.Errorf("type %s does not implement constraint interface %s for type parameter %s", typeName, ifaceName, paramName)
+	if ref.Operator != "" {
+		return "(" + constraintRefString(ref.Left) + ref.Operator + constraintRefString(ref.Right) + ")"
 	}
-	class, ok := classVal.(*runtime.Class)
-	if !ok {
-		return fmt.Errorf("type %s does not implement constraint interface %s for type parameter %s", typeName, ifaceName, paramName)
-	}
-	if !classImplementsInterface(class, ifaceName) {
-		return fmt.Errorf("type %s does not implement constraint interface %s for type parameter %s", typeName, ifaceName, paramName)
-	}
-	return nil
+	return ref.Name
 }
 
 func currentInstance(env *runtime.Environment) (*runtime.Instance, error) {
@@ -22903,6 +22994,25 @@ func (e *Evaluator) applyOverloadedFunction(label string, overloads []runtime.Fu
 		matchedArgs = append(matchedArgs, args)
 		matchedDropped = append(matchedDropped, dropped)
 	}
+	// Explicit type args break ties only; single-candidate mismatches stay
+	// with construct-site validation for the precise per-parameter error.
+	if len(matches) > 1 && len(call.TypeArguments) > 0 {
+		kept := matches[:0]
+		keptArgs := matchedArgs[:0]
+		keptDropped := matchedDropped[:0]
+		for i, fn := range matches {
+			if functionArgumentsMatchWithCallTypeArgs(fn, matchedArgs[i], call.TypeArguments) {
+				kept = append(kept, fn)
+				keptArgs = append(keptArgs, matchedArgs[i])
+				keptDropped = append(keptDropped, matchedDropped[i])
+			}
+		}
+		if len(kept) > 0 {
+			matches = kept
+			matchedArgs = keptArgs
+			matchedDropped = keptDropped
+		}
+	}
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("no matching overload for %s", label)
 	}
@@ -23182,14 +23292,69 @@ func functionArgumentsMatch(fn runtime.Function, args []runtime.Value) bool {
 	return true
 }
 
+// functionArgumentsMatchWithCallTypeArgs is functionArgumentsMatch with the
+// call site's explicit type args substituted into bound params.
+func functionArgumentsMatchWithCallTypeArgs(fn runtime.Function, args []runtime.Value, typeArgs []*ast.TypeRef) bool {
+	if len(typeArgs) == 0 || len(fn.TypeParameters) == 0 {
+		return functionArgumentsMatch(fn, args)
+	}
+	inherited := map[string]string{}
+	for k, v := range fn.TypeBindings {
+		inherited[k] = v
+	}
+	for i, t := range typeArgs {
+		if i >= len(fn.TypeParameters) {
+			break
+		}
+		if t == nil || t.Operator != "" || t.Name == "" {
+			continue
+		}
+		inherited[fn.TypeParameters[i]] = t.Name
+	}
+	typeParams := functionTypeParameterSetOrNil(fn)
+	isVariadic := len(fn.Parameters) > 0 && fn.Parameters[len(fn.Parameters)-1].Variadic
+	for i, arg := range args {
+		if arg == nil {
+			continue
+		}
+		paramIdx := i
+		if isVariadic && i >= len(fn.Parameters) {
+			paramIdx = len(fn.Parameters) - 1
+		} else if i >= len(fn.Parameters) {
+			return false
+		}
+		if !matchValueToTypeRefWith(typeParams, inherited, arg, fn.Parameters[paramIdx].Type) {
+			return false
+		}
+	}
+	return true
+}
+
 // functionArgumentsMatchError returns nil if all args match, or a descriptive error for the
-// first mismatched argument. Used for user-facing type mismatch errors.
-func functionArgumentsMatchError(fn runtime.Function, args []runtime.Value) error {
+// first mismatched argument. The receiver's reified bindings constrain
+// class-level T params; explicit fn bindings win on collision.
+func functionArgumentsMatchError(fn runtime.Function, args []runtime.Value, receiver *runtime.Instance) error {
 	if fn.Native != nil && len(fn.Parameters) == 0 {
 		return nil
 	}
 	typeParams := functionTypeParameterSetOrNil(fn)
 	inherited := fn.TypeBindings
+	// Constructors validate at the construct site, not against the receiver.
+	isConstructor := fn.OwnerClass != nil && fn.OwnerClass.Name == fn.Name
+	if receiver != nil && !isConstructor && len(receiver.TypeBindings) > 0 {
+		if len(inherited) == 0 {
+			inherited = receiver.TypeBindings
+		} else {
+			merged := make(map[string]string, len(inherited)+len(receiver.TypeBindings))
+			for k, v := range receiver.TypeBindings {
+				merged[k] = v
+			}
+			for k, v := range inherited {
+				merged[k] = v
+			}
+			inherited = merged
+		}
+	}
 	isVariadic := len(fn.Parameters) > 0 && fn.Parameters[len(fn.Parameters)-1].Variadic
 	for i, arg := range args {
 		if arg == nil {
@@ -23210,6 +23375,10 @@ func functionArgumentsMatchError(fn runtime.Function, args []runtime.Value) erro
 			name := fn.Name
 			if name == "" {
 				name = "anonymous"
+			}
+			// Methods report as Class.method, matching VM compiled names.
+			if receiver != nil && fn.OwnerClass != nil && fn.OwnerClass.Name != fn.Name {
+				name = fn.OwnerClass.Name + "." + fn.Name
 			}
 			suffix := collectionMismatchSuffix(arg, param.Type)
 			gotName := descriptiveTypeName(arg)
@@ -23871,7 +24040,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 	if !isVariadic && len(args) > len(fn.Parameters) {
 		return nil, fmt.Errorf("%s expects at most %d arguments, got %d", binding.DisplayName(fn.Name), len(fn.Parameters), len(args))
 	}
-	if err := functionArgumentsMatchError(fn, args); err != nil {
+	if err := functionArgumentsMatchError(fn, args, this); err != nil {
 		return nil, err
 	}
 	callEnv := runtime.NewEnclosedEnvironment(fn.Env)

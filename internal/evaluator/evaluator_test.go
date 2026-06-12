@@ -6485,15 +6485,20 @@ io.println(n.isT());
 Box<string> s = Box("hello");
 io.println(s.isT());
 
-Box<int> wrong = Box("not an int");
-io.println(wrong.isT());
+any raw = "not an int";
+try {
+    Box<int> wrong = Box(raw);
+    io.println(wrong.isT());
+} catch (RuntimeError e) {
+    io.println("caught: " + e.message);
+}
 `
 	prog := parser.New(lexer.New(input)).ParseProgram()
 	var out bytes.Buffer
 	if _, err := evaluator.New(&out).Eval(prog); err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
-	if got, want := out.String(), "true\ntrue\nfalse\n"; got != want {
+	if got, want := out.String(), "true\ntrue\ncaught: Box expects T for parameter 'v', got string\n"; got != want {
 		t.Fatalf("output: got %q, want %q", got, want)
 	}
 }

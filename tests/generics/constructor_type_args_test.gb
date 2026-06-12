@@ -1,0 +1,101 @@
+/**
+ * @title Constructor explicit type-argument enforcement
+ * @summary Explicit constructor type arguments constrain T-typed
+ *          parameters at runtime: Box<string>(42) throws RuntimeError,
+ *          inference stays open, covariant passing is accepted, and
+ *          subclass constructors enforce through parent() chains.
+ */
+import test;
+
+class Box<T> {
+    T value;
+    func Box(T value) { this.value = value; }
+}
+
+class Base<T> {
+    T value;
+    func Base(T value) { this.value = value; }
+}
+
+class Sub<T> extends Base<T> {
+    func Sub(T value) { parent(value); }
+}
+
+class Animal { func Animal() {} }
+class Dog extends Animal { func Dog() { parent(); } }
+
+class Pen<T> {
+    T occupant;
+    func Pen(T occupant) { this.occupant = occupant; }
+}
+
+class Pair<K, V> {
+    K key;
+    V value;
+    func Pair(K key, V value) {
+        this.key = key;
+        this.value = value;
+    }
+}
+
+class ConstructorTypeArgsTest extends test.Test {
+    @test
+    func explicitMismatchThrows(): void {
+        /* Routed through `any` so the static analyzer cannot prove the
+         * mismatch; this test pins the RUNTIME enforcement. */
+        any wrongValue = 42;
+        let threw = false;
+        try {
+            let b = Box<string>(wrongValue);
+        } catch (RuntimeError e) {
+            threw = true;
+            this.assertEquals("Box expects T for parameter 'value', got int", e.message);
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func explicitMatchConstructs(): void {
+        let b = Box<string>("hello");
+        this.assertEquals("hello", b.value);
+    }
+
+    @test
+    func inferenceStaysOpen(): void {
+        let b = Box(42);
+        this.assertEquals(42, b.value);
+    }
+
+    @test
+    func covariantArgumentAccepted(): void {
+        let p = Pen<Animal>(Dog());
+        this.assertTrue(p.occupant instanceof Dog);
+    }
+
+    @test
+    func subclassEnforcesThroughParent(): void {
+        any wrongValue = 42;
+        let threw = false;
+        try {
+            let s = Sub<string>(wrongValue);
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+        let ok = Sub<string>("fine");
+        this.assertEquals("fine", ok.value);
+    }
+
+    @test
+    func secondTypeParamEnforced(): void {
+        any wrongValue = "not-int";
+        let threw = false;
+        try {
+            let p = Pair<string, int>("k", wrongValue);
+        } catch (RuntimeError e) {
+            threw = true;
+            this.assertEquals("Pair expects V for parameter 'value', got string", e.message);
+        }
+        this.assertTrue(threw);
+    }
+}

@@ -123,6 +123,7 @@ type classInfo struct {
 	name       string
 	parent     string
 	implements []string
+	typeParams []string
 	methods    map[string][]methodInfo
 }
 
@@ -379,6 +380,9 @@ func (a *Analyzer) collectTypeDeclarations(stmts []ast.Statement) {
 			a.functions[key] = append(a.functions[key], info)
 		case *ast.ClassStatement:
 			info := classInfo{name: stmt.Name.Value, methods: map[string][]methodInfo{}}
+			for _, generic := range stmt.Generics {
+				info.typeParams = append(info.typeParams, generic.Name.Value)
+			}
 			if stmt.Extends != nil {
 				info.parent = stmt.Extends.Name
 			}
@@ -861,6 +865,7 @@ func (a *Analyzer) analyzeClassMembers(stmt *ast.ClassStatement) {
 
 func (a *Analyzer) analyzeDeclaration(stmt *ast.DeclarationStatement) {
 	a.checkBuiltinModuleShadow(stmt.Name, stmt.Type)
+	a.checkAnnotationConstructorCall(stmt)
 	var declared typeInfo
 	if stmt.Type != nil {
 		declared = a.typeInfoFromRef(stmt.Type)
@@ -1415,6 +1420,114 @@ func (a *Analyzer) validateCallExpression(expr ast.Expression, expected typeInfo
 	}
 }
 
+// checkConstructorTypeArgs flags Box<string>(42): explicit bindings
+// substitute into bare type-param params, then the normal compatibility
+// walk runs (covariant passing stays accepted; opaque args defer to runtime).
+func (a *Analyzer) checkConstructorTypeArgs(call *ast.CallExpression) {
+	if len(call.TypeArguments) == 0 {
+		return
+	}
+	ident, ok := call.Callee.(*ast.Identifier)
+	if !ok {
+		return
+	}
+	a.checkConstructorCallBindings(call, ident, call.TypeArguments)
+}
+
+// checkAnnotationConstructorCall applies the same validation to
+// `Box<int> x = Box("text")`: the annotation's args are the bindings.
+func (a *Analyzer) checkAnnotationConstructorCall(stmt *ast.DeclarationStatement) {
+	if stmt.Type == nil || stmt.Type.Operator != "" || len(stmt.Type.Arguments) == 0 || stmt.Value == nil {
+		return
+	}
+	call, ok := stmt.Value.(*ast.CallExpression)
+	if !ok || len(call.TypeArguments) > 0 {
+		return
+	}
+	ident, ok := call.Callee.(*ast.Identifier)
+	if !ok || ident.Value != stmt.Type.Name {
+		return
+	}
+	a.checkConstructorCallBindings(call, ident, stmt.Type.Arguments)
+}
+
+func (a *Analyzer) checkConstructorCallBindings(call *ast.CallExpression, ident *ast.Identifier, typeRefs []*ast.TypeRef) {
+	cls, ok := a.classes[ident.Value]
+	if !ok || len(cls.typeParams) == 0 {
+		return
+	}
+	bindings := map[string]typeInfo{}
+	for i, arg := range typeRefs {
+		if i >= len(cls.typeParams) {
+			break
+		}
+		if arg == nil || arg.Operator != "" || len(arg.Arguments) > 0 {
+			continue
+		}
+		ti := a.typeInfoFromRef(arg)
+		if ti.known {
+			bindings[strings.ToLower(cls.typeParams[i])] = ti
+		}
+	}
+	if len(bindings) == 0 {
+		return
+	}
+	ctors := cls.methods[strings.ToLower(ident.Value)]
+	if len(ctors) == 0 {
+		return
+	}
+	args := make([]typeInfo, 0, len(call.Arguments))
+	for _, arg := range call.Arguments {
+		if arg.Name != nil || arg.Spread {
+			return
+		}
+		argType := a.expressionTypeName(arg.Value)
+		// An `any`-typed argument is statically opaque; runtime
+		// enforcement owns that case.
+		if !argType.known || strings.EqualFold(argType.name, "any") {
+			return
+		}
+		args = append(args, argType)
+	}
+	classParams := map[string]bool{}
+	for _, p := range cls.typeParams {
+		classParams[strings.ToLower(p)] = true
+	}
+	expected := ""
+	for _, ctor := range ctors {
+		substituted := make([]typeInfo, len(ctor.parameters))
+		copy(substituted, ctor.parameters)
+		fullyBound := true
+		for i, p := range substituted {
+			if len(p.args) > 0 || !classParams[strings.ToLower(p.name)] {
+				continue
+			}
+			bound, isBound := bindings[strings.ToLower(p.name)]
+			if !isBound {
+				fullyBound = false
+				break
+			}
+			bound.nullable = bound.nullable || p.nullable
+			substituted[i] = bound
+		}
+		if !fullyBound {
+			return
+		}
+		if a.callArgumentsCompatible(args, substituted, ctor.minArgs) {
+			return
+		}
+		if expected == "" && len(args) >= ctor.minArgs && len(args) <= len(ctor.parameters) {
+			expected = displayTypeInfos(substituted)
+		}
+	}
+	if expected == "" {
+		// Arity mismatches are reported elsewhere; only the
+		// binding-contradiction case is this check's to flag.
+		return
+	}
+	a.errorAt(ident.Token, "no matching overload for %s: got (%s), expected (%s)", ident.Value, displayTypeInfos(args), expected)
+}
+
 // validateCallStatementArgs flags collection element-type mismatches on bare
 // statement calls (e.g. `wantStrings(ints);`) that the bytecode compiler cannot
 // see, since it strips collection element args. Scalar / arity / base-type
@@ -1618,6 +1731,10 @@ func (a *Analyzer) returnTypeCompatible(expected, actual typeInfo) bool {
 	if expected.name == "any" {
 		return true
 	}
+	// An `any` actual is statically opaque; runtime validation owns it.
+	if actual.known && strings.EqualFold(actual.name, "any") {
+		return true
+	}
 	if !actual.known {
 		return expected.nullable
 	}
@@ -1671,6 +1788,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		a.checkTypedCollectionMethodCall(expr)
 		a.checkPrimitiveMethodCall(expr)
 		a.checkClassMethodCall(expr)
+		a.checkConstructorTypeArgs(expr)
 		a.checkDeprecatedCall(expr)
 		if ident, ok := expr.Callee.(*ast.Identifier); ok {
 			if overloads := a.functions[strings.ToLower(ident.Value)]; len(overloads) > 0 {

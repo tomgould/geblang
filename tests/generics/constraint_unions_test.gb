@@ -1,0 +1,63 @@
+/**
+ * @title Union and intersection generic constraints
+ * @summary Constraints accept primitive, interface, and class leaves
+ *          combined with | and &, in both the bare (<T string|int>)
+ *          and `implements` spellings, at function and class
+ *          boundaries. Subclasses satisfy class leaves; mismatches
+ *          throw the canonical message.
+ */
+import test;
+
+interface Scored { func score(): int; }
+class Win implements Scored { func Win() {} func score(): int { return 1; } }
+class Animal { func Animal() {} }
+class Dog extends Animal { func Dog() { parent(); } }
+
+func pick<T implements string|int>(T v): string { return "${typeof(v)}"; }
+func bare<T string|int>(T v): string { return "${typeof(v)}"; }
+func scored<T implements Scored|Animal>(T v): string { return "${typeof(v)}"; }
+
+class Holder<T string|int> {
+    T value;
+    func Holder(T value) { this.value = value; }
+}
+
+class ConstraintUnionsTest extends test.Test {
+    @test
+    func primitiveUnionAcceptsBranches(): void {
+        this.assertEquals("int", pick(42));
+        this.assertEquals("string", pick("hi"));
+        this.assertEquals("int", bare(7));
+    }
+
+    @test
+    func primitiveUnionRejectsOthers(): void {
+        let threw = false;
+        try {
+            bare(true);
+        } catch (RuntimeError e) {
+            threw = true;
+            this.assertEquals("type bool does not satisfy constraint string|int for type parameter T", e.message);
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func interfaceLeafAndSubclassLeafSatisfy(): void {
+        this.assertEquals("Win", scored(Win()));
+        this.assertEquals("Dog", scored(Dog()));
+    }
+
+    @test
+    func classBoundaryEnforces(): void {
+        let h = Holder(7);
+        this.assertEquals(7, h.value);
+        let threw = false;
+        try {
+            let bad = Holder(true);
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+}

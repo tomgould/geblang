@@ -1,0 +1,88 @@
+/**
+ * @title Method type-parameter enforcement
+ * @summary T-typed method parameters are enforced against the
+ *          instance's reified bindings: put(42) on a Box<string>
+ *          throws RuntimeError. Covariant arguments pass, a method's
+ *          own type parameters stay inference-open, extends-clause
+ *          bindings enforce on inherited methods, and inferred
+ *          (unbound) instances stay unconstrained.
+ */
+import test;
+
+class Box<T> {
+    T value;
+    func Box(T value) { this.value = value; }
+    func put(T value): void { this.value = value; }
+    func tag<U>(U label): string { return "${typeof(label)}"; }
+}
+
+class IntBox extends Box<int> {
+    func IntBox(int value) { parent(value); }
+}
+
+class Animal { func Animal() {} }
+class Dog extends Animal { func Dog() { parent(); } }
+
+class Pen<T> {
+    T occupant;
+    func Pen(T occupant) { this.occupant = occupant; }
+    func admit(T next): void { this.occupant = next; }
+}
+
+class MethodTypeEnforcementTest extends test.Test {
+    @test
+    func mismatchThrows(): void {
+        let b = Box<string>("hello");
+        let threw = false;
+        try {
+            b.put(42);
+        } catch (RuntimeError e) {
+            threw = true;
+            this.assertEquals("Box.put expects T for parameter 'value', got int", e.message);
+        }
+        this.assertTrue(threw);
+        this.assertEquals("hello", b.value);
+    }
+
+    @test
+    func matchingCallSucceeds(): void {
+        let b = Box<string>("a");
+        b.put("b");
+        this.assertEquals("b", b.value);
+    }
+
+    @test
+    func covariantArgumentAccepted(): void {
+        let p = Pen<Animal>(Dog());
+        p.admit(Dog());
+        this.assertTrue(p.occupant instanceof Dog);
+    }
+
+    @test
+    func ownMethodTypeParamStaysOpen(): void {
+        let b = Box<string>("x");
+        this.assertEquals("int", b.tag(42));
+        this.assertEquals("string", b.tag("y"));
+    }
+
+    @test
+    func extendsClauseBindingEnforcedOnInheritedMethod(): void {
+        let ib = IntBox(7);
+        let threw = false;
+        try {
+            ib.put("nope");
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+        ib.put(9);
+        this.assertEquals(9, ib.value);
+    }
+
+    @test
+    func inferredInstanceStaysUnconstrained(): void {
+        let b = Box(42);
+        b.put(7);
+        this.assertEquals(7, b.value);
+    }
+}

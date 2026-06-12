@@ -2025,7 +2025,7 @@ func (l *bytecodeModuleLoader) CallModuleClosure(closure runtime.BytecodeClosure
 	return result, err
 }
 
-func (l *bytecodeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value) (runtime.Value, error) {
+func (l *bytecodeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value, typeArgs []string) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if class.Module == "" {
 		if !l.hasMainChunk {
@@ -2040,7 +2040,7 @@ func (l *bytecodeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass,
 		chunk = c
 	}
 	vm, pool := l.moduleVM(class.Module, chunk)
-	result, err := vm.ConstructClass(class.Index, args)
+	result, err := vm.ConstructClassWithTypeArgs(class.Index, args, typeArgs)
 	releaseModuleVM(pool, vm, err)
 	return result, err
 }

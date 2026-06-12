@@ -1,0 +1,85 @@
+/**
+ * @title Declaration-annotation type arguments and overload tie-breaks
+ * @summary A parameterized declaration annotation over a direct
+ *          constructor call validates like explicit call-site type
+ *          args: Box<int> x = Box("text") throws. Covariant and
+ *          matching initializers pass, inference without an annotation
+ *          stays open, and explicit type args resolve constructor
+ *          overload ties (Box<string>(42) picks Box(int value)).
+ */
+import test;
+
+class Box<T> {
+    T value;
+    func Box(T value) { this.value = value; }
+}
+
+class Animal { func Animal() {} }
+class Dog extends Animal { func Dog() { parent(); } }
+
+class Pen<T> {
+    T occupant;
+    func Pen(T occupant) { this.occupant = occupant; }
+}
+
+class Twin<T> {
+    any value;
+    string which;
+    func Twin(T value) {
+        this.value = value;
+        this.which = "generic";
+    }
+    func Twin(int value) {
+        this.value = value;
+        this.which = "int";
+    }
+}
+
+func opaque(any v): any { return v; }
+
+class AnnotationTypeArgsTest extends test.Test {
+    @test
+    func annotationMismatchThrows(): void {
+        let threw = false;
+        try {
+            Box<int> wrong = Box(opaque("text"));
+        } catch (RuntimeError e) {
+            threw = true;
+            this.assertEquals("Box expects T for parameter 'value', got string", e.message);
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func annotationMatchConstructs(): void {
+        Box<string> ok = Box("hello");
+        this.assertEquals("hello", ok.value);
+        this.assertTrue(ok instanceof Box<string>);
+    }
+
+    @test
+    func annotationCovariantAccepted(): void {
+        Pen<Animal> pen = Pen(Dog());
+        this.assertTrue(pen.occupant instanceof Dog);
+        this.assertTrue(pen instanceof Pen<Animal>);
+    }
+
+    @test
+    func inferenceWithoutAnnotationStaysOpen(): void {
+        let inf = Box(42);
+        this.assertEquals(42, inf.value);
+        this.assertTrue(inf instanceof Box<int>);
+    }
+
+    @test
+    func explicitTypeArgsBreakOverloadTie(): void {
+        let viaInt = Twin<string>(42);
+        this.assertEquals("int", viaInt.which);
+        let viaGeneric = Twin<string>("hi");
+        this.assertEquals("generic", viaGeneric.which);
+    }
+
+    /* The mismatch-neither-overload case (Twin<string> with a bool) is
+     * pinned by TestParityGenericCtorOverloadResolvedByExplicitTypeArgs;
+     * an opaque arg into overloads is compile-ambiguous here by design. */
+}

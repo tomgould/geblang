@@ -102,6 +102,10 @@ type VM struct {
 	// reads it during arg validation and again when planting the
 	// frame's type bindings, then leaves it for the caller to clear.
 	pendingTypeBindings map[string]string
+	// pendingCallTypeArgs carries positional explicit `<TypeArgs>` from
+	// OpPlantCallTypeArgs into the immediately following OpMethodCall,
+	// which consumes (or drops) them at entry.
+	pendingCallTypeArgs []string
 	// destructibleInstances tracks instances of classes that declare
 	// `func ~ClassName()`. The sweep in Cleanup() invokes their
 	// destructors in reverse-creation order. `del x` removes the
@@ -156,7 +160,10 @@ type ModuleLoader interface {
 	LoadModule(canonical string, alias string) (*runtime.Module, error)
 	CallModuleFunction(function runtime.BytecodeFunction, args []runtime.Value) (runtime.Value, error)
 	CallModuleClosure(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error)
-	ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value) (runtime.Value, error)
+	// ConstructModuleClass constructs class in its home chunk. typeArgs
+	// carries the call site's positional explicit `<TypeArgs>` (nil when
+	// none); the home VM zips them against the class's type parameters.
+	ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value, typeArgs []string) (runtime.Value, error)
 	CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value) (runtime.Value, error)
 	CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error)
 	// ModuleMethodParamNames exposes a cross-module method's declared
@@ -2867,6 +2874,27 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				}
 				vm.pendingTypeBindings[paramName.Value] = typeName.Value
 			}
+		case OpPlantCallTypeArgs:
+			if len(instruction.Operands) < 1 {
+				return vm.runtimeError(*instruction, "OpPlantCallTypeArgs: missing operands")
+			}
+			count := int(instruction.Operands[0])
+			if len(instruction.Operands) < 1+count {
+				return vm.runtimeError(*instruction, "OpPlantCallTypeArgs: operand count mismatch")
+			}
+			names := make([]string, 0, count)
+			for j := 0; j < count; j++ {
+				tIdx := instruction.Operands[1+j]
+				if int(tIdx) >= vm.constantsLen() {
+					return vm.runtimeError(*instruction, "OpPlantCallTypeArgs: constant index out of range")
+				}
+				typeName, ok := vm.constantValue(tIdx).(runtime.String)
+				if !ok {
+					return vm.runtimeError(*instruction, "OpPlantCallTypeArgs: constants must be strings")
+				}
+				names = append(names, typeName.Value)
+			}
+			vm.pendingCallTypeArgs = names
 		default:
 			return vm.fatalError(*instruction, "unknown opcode %d", instruction.Op)
 		}
@@ -5615,6 +5643,7 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	stackArgs := vm.stack[n-int(argc) : n]
 	if function.requiresParamValidation {
 		typeParams := function.typeParamSet
+		inherited := vm.pendingTypeBindings
 		specs := function.paramTypeSpecs
 		for i := 0; i < paramCount; i++ {
 			pt := function.ParamTypes[i]
@@ -5622,7 +5651,7 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 				continue
 			}
 			argKind := stackArgs[i].Kind
-			if i < len(specs) && specs[i].kind == vmTypeInt && argKind == runtime.VMKindSmallInt {
+			if len(inherited) == 0 && i < len(specs) && specs[i].kind == vmTypeInt && argKind == runtime.VMKindSmallInt {
 				continue
 			}
 			var spec vmTypeSpec
@@ -5631,7 +5660,7 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 			} else {
 				spec = vm.typeSpec(pt)
 			}
-			if !vm.matchVMValueToTypeSpec(typeParams, stackArgs[i], spec) {
+			if !vm.matchVMValueToTypeSpecWith(typeParams, inherited, stackArgs[i], spec) {
 				return 0, vm.runtimeError(instruction, "%s: argument %d expected %s, got %s", function.Name, i+1, pt, stackArgs[i].ToValue().TypeName())
 			}
 		}
@@ -5977,6 +6006,12 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	// when a typed-int param meets a SmallInt arg (the dominant case).
 	if function.requiresParamValidation {
 		typeParams := function.typeParamSet
+		inherited := vm.pendingTypeBindings
+		if len(function.ParamNames) > 0 && function.ParamNames[0] == "this" && paramCount > 0 && stackArgs[0].Kind == runtime.VMKindBoxed && !compiledConstructorName(function.Name) {
+			if inst, ok := stackArgs[0].Boxed.(*runtime.Instance); ok {
+				inherited = mergedTypeBindings(inherited, inst.TypeBindings)
+			}
+		}
 		specs := function.paramTypeSpecs
 		for i := 0; i < paramCount; i++ {
 			pt := function.ParamTypes[i]
@@ -5985,7 +6020,7 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 			}
 			argKind := stackArgs[i].Kind
 			// Fast path: typed-int param, SmallInt arg.
-			if i < len(specs) && specs[i].kind == vmTypeInt && argKind == runtime.VMKindSmallInt {
+			if len(inherited) == 0 && i < len(specs) && specs[i].kind == vmTypeInt && argKind == runtime.VMKindSmallInt {
 				continue
 			}
 			var spec vmTypeSpec
@@ -5994,7 +6029,7 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 			} else {
 				spec = vm.typeSpec(pt)
 			}
-			if !vm.matchVMValueToTypeSpec(typeParams, stackArgs[i], spec) {
+			if !vm.matchVMValueToTypeSpecWith(typeParams, inherited, stackArgs[i], spec) {
 				// Fall back to the slow path so the existing error
 				// reporting (which formats runtime.Value descriptions)
 				// runs uniformly.
@@ -6073,6 +6108,61 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 		vm.inheritInstanceTypeBindings(vm.forwardThis)
 	}
 	return int(function.Entry) - 1, nil
+}
+
+// compiledConstructorName reports the Class.Class constructor name form;
+// constructors validate at the construct site, not against the receiver.
+func compiledConstructorName(name string) bool {
+	dot := strings.IndexByte(name, '.')
+	if dot <= 0 || dot+1 >= len(name) {
+		return false
+	}
+	return name[:dot] == name[dot+1:]
+}
+
+// receiverTypeBindings returns the receiver's reified bindings when the
+// function's slot 0 is the implicit `this` param; nil otherwise.
+func receiverTypeBindings(function *FunctionInfo, first runtime.Value) map[string]string {
+	if len(function.ParamNames) == 0 || function.ParamNames[0] != "this" || first == nil {
+		return nil
+	}
+	if inst, ok := first.(*runtime.Instance); ok {
+		return inst.TypeBindings
+	}
+	return nil
+}
+
+// mergedTypeBindings overlays primary on secondary (primary wins).
+// Either map may be returned unmodified; callers must not mutate.
+func mergedTypeBindings(primary, secondary map[string]string) map[string]string {
+	if len(secondary) == 0 {
+		return primary
+	}
+	if len(primary) == 0 {
+		return secondary
+	}
+	merged := make(map[string]string, len(primary)+len(secondary))
+	for k, v := range secondary {
+		merged[k] = v
+	}
+	for k, v := range primary {
+		merged[k] = v
+	}
+	return merged
+}
+
+// matchVMValueToTypeSpecWith applies matchValueToTypeSpecWith's
+// bindings-before-own-type-param precedence to VMValues.
+func (vm *VM) matchVMValueToTypeSpecWith(typeParams map[string]bool, inherited map[string]string, value runtime.VMValue, spec vmTypeSpec) bool {
+	if len(inherited) > 0 {
+		if bound, ok := inherited[spec.base]; ok && bound != "" {
+			return vm.matchVMValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
+		}
+		if bound, ok := inherited[spec.baseLower]; ok && bound != "" {
+			return vm.matchVMValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
+		}
+	}
+	return vm.matchVMValueToTypeSpec(typeParams, value, spec)
 }
 
 // matchVMValueToTypeSpec is the VMValue-aware variant of
@@ -6303,10 +6393,44 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 			args[i] = cloneContainerDefault(vm.constantValue(defaultIndex))
 		}
 	}
+	receiverBindings := map[string]string(nil)
+	if function.requiresParamValidation && len(args) > 0 && !compiledConstructorName(function.Name) {
+		receiverBindings = receiverTypeBindings(function, args[0])
+	}
+	if !validateTypes && len(receiverBindings) > 0 {
+		// Prevalidated dispatch never checked T-typed params; enforce just those.
+		typeParams := function.typeParamSet
+		for i, arg := range args {
+			if i == 0 || arg == nil || i >= len(function.ParamTypes) || function.ParamTypes[i] == "" {
+				continue
+			}
+			if function.Variadic && i == len(function.ParamSlots)-1 {
+				break
+			}
+			spec := vm.typeSpec(function.ParamTypes[i])
+			bound, ok := receiverBindings[spec.base]
+			if !ok || bound == "" {
+				continue
+			}
+			if !vm.matchValueToTypeSpec(typeParams, arg, vm.typeSpec(bound)) {
+				paramName := ""
+				if i < len(function.ParamNames) {
+					paramName = function.ParamNames[i]
+				}
+				suffix := vm.collectionMismatchSuffixStr(arg, function.ParamTypes[i])
+				gotName := vm.descriptiveRuntimeTypeName(arg)
+				if suffix != "" {
+					gotName = arg.TypeName()
+				}
+				msg := fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, function.ParamTypes[i], paramName, gotName, suffix)
+				return vm.throwTyped(instruction, ip, "RuntimeError", msg)
+			}
+		}
+	}
 	if validateTypes && function.requiresParamValidation {
 		// Enforce parameter type annotations (skip the bundled variadic slot).
 		typeParams := function.typeParamSet
-		inherited := vm.pendingTypeBindings
+		inherited := mergedTypeBindings(vm.pendingTypeBindings, receiverBindings)
 		for i, arg := range args {
 			if function.Variadic && i == len(function.ParamSlots)-1 {
 				break
@@ -6638,6 +6762,9 @@ func (vm *VM) constructClass(instruction Instruction, ip int) (int, error) {
 
 func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex int64, args []runtime.Value, raw bool) (int, error) {
 	classInfo := vm.chunk.Classes[classIndex]
+	// Consumed before field initializers can inherit or clear them.
+	explicitBindings := vm.pendingTypeBindings
+	vm.pendingTypeBindings = nil
 	if !raw {
 		if decorated, ok := vm.decoratedClasses[classIndex]; ok {
 			switch dec := decorated.(type) {
@@ -6689,6 +6816,13 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 		},
 		Fields: map[string]runtime.Value{},
 	}
+	// Cross-module constructions have no following OpSetTypeBindings.
+	if len(explicitBindings) > 0 {
+		instance.TypeBindings = map[string]string{}
+		for k, v := range explicitBindings {
+			instance.TypeBindings[k] = v
+		}
+	}
 	// Inherit type bindings from each parent's extends-clause arguments
 	// (`class Sub extends Base<string>` propagates {T: "string"} to Sub).
 	// Walk the chain via ParentIndex so multi-level inheritance composes.
@@ -6736,9 +6870,35 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 		}
 		return ip, nil
 	}
-	functionIndex, err := vm.selectRuntimeFunction(instruction, classInfo.Name, classInfo.ConstructorIndices, args, 1)
+	functionIndex, err := vm.selectRuntimeFunctionWith(instruction, classInfo.Name, classInfo.ConstructorIndices, args, 1, explicitBindings)
 	if err != nil {
 		return 0, err
+	}
+	if len(explicitBindings) > 0 {
+		fn := &vm.chunk.Functions[functionIndex]
+		for i, arg := range args {
+			pi := i + 1 // slot 0 is the instance
+			if fn.Variadic && pi >= len(fn.ParamTypes)-1 {
+				pi = len(fn.ParamTypes) - 1
+			}
+			if arg == nil || pi >= len(fn.ParamTypes) || fn.ParamTypes[pi] == "" {
+				continue
+			}
+			if !vm.matchValueToTypeSpecWith(fn.typeParamSet, explicitBindings, arg, vm.typeSpec(fn.ParamTypes[pi])) {
+				paramName := ""
+				if pi < len(fn.ParamNames) {
+					paramName = fn.ParamNames[pi]
+				}
+				suffix := vm.collectionMismatchSuffixStr(arg, fn.ParamTypes[pi])
+				gotName := vm.descriptiveRuntimeTypeName(arg)
+				if suffix != "" {
+					gotName = arg.TypeName()
+				}
+				msg := fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", classInfo.Name, fn.ParamTypes[pi], paramName, gotName, suffix)
+				return vm.throwTyped(instruction, ip, "RuntimeError", msg)
+			}
+		}
+		vm.pendingTypeBindings = explicitBindings
 	}
 	callArgs := append([]runtime.Value{instance}, args...)
 	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, instance)
@@ -11384,6 +11544,73 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 	return vm.ConstructClass(class.Index, args)
 }
 
+// stageTypeArgsAsBindings zips positional explicit `<TypeArgs>` against
+// the class's declared type parameters and stages the result in
+// vm.pendingTypeBindings for the construction path to consume.
+func (vm *VM) stageTypeArgsAsBindings(classIndex int64, typeArgs []string) {
+	if len(typeArgs) == 0 || classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+		return
+	}
+	params := vm.chunk.Classes[classIndex].TypeParameters
+	if len(params) == 0 {
+		return
+	}
+	bindings := map[string]string{}
+	for i, name := range params {
+		if i >= len(typeArgs) {
+			break
+		}
+		if typeArgs[i] != "" {
+			bindings[name] = typeArgs[i]
+		}
+	}
+	if len(bindings) > 0 {
+		vm.pendingTypeBindings = bindings
+	}
+}
+
+// ConstructClassWithTypeArgs embeds the bindings in the wrapper itself:
+// runWrapper executes on a pooled callVM, so staging this VM's
+// pendingTypeBindings would never reach the executing VM.
+func (vm *VM) ConstructClassWithTypeArgs(index int64, args []runtime.Value, typeArgs []string) (runtime.Value, error) {
+	if index < 0 || int(index) >= len(vm.chunk.Classes) {
+		return nil, fmt.Errorf("class index out of range")
+	}
+	params := vm.chunk.Classes[index].TypeParameters
+	if len(typeArgs) == 0 || len(params) == 0 {
+		return vm.ConstructClass(index, args)
+	}
+	extended := make([]runtime.Value, 0, len(args)+len(params)*2)
+	extended = append(extended, args...)
+	plant := []int64{0}
+	count := int64(0)
+	for i, name := range params {
+		if i >= len(typeArgs) {
+			break
+		}
+		if typeArgs[i] == "" {
+			continue
+		}
+		plant = append(plant, int64(len(extended)))
+		extended = append(extended, runtime.String{Value: name})
+		plant = append(plant, int64(len(extended)))
+		extended = append(extended, runtime.String{Value: typeArgs[i]})
+		count++
+	}
+	if count == 0 {
+		return vm.ConstructClass(index, args)
+	}
+	plant[0] = count
+	wrapper := make([]Instruction, 0, len(args)+3)
+	for i := range args {
+		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i)}})
+	}
+	wrapper = append(wrapper, Instruction{Op: OpPlantCallTypeBindings, Operands: plant})
+	wrapper = append(wrapper, Instruction{Op: OpConstructClass, Operands: []int64{index, int64(len(args))}})
+	wrapper = append(wrapper, Instruction{Op: OpReturn})
+	return vm.runWrapper(extended, wrapper)
+}
+
 func (vm *VM) ConstructClass(index int64, args []runtime.Value) (runtime.Value, error) {
 	if index < 0 || int(index) >= len(vm.chunk.Classes) {
 		return nil, fmt.Errorf("class index out of range")
@@ -11765,8 +11992,9 @@ func shiftInstructionOperands(instruction *Instruction, instructionShift int, co
 				instruction.Operands[i] += int64(constantShift)
 			}
 		}
-	case OpSetTypeBindings, OpPlantCallTypeBindings:
-		// Operands: [count, pIdx1, tIdx1, pIdx2, tIdx2, ...] - all indices from 1 onward are constant indices.
+	case OpSetTypeBindings, OpPlantCallTypeBindings, OpPlantCallTypeArgs:
+		// Operands: count followed by constant indices (paired for the
+		// bindings ops, single for the positional type-args op).
 		for i := 1; i < len(instruction.Operands); i++ {
 			if instruction.Operands[i] >= 0 {
 				instruction.Operands[i] += int64(constantShift)
@@ -11866,6 +12094,20 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 		return nil
 	}
 	if instance, ok := value.(*runtime.Instance); ok {
+		if base, gargs, isGeneric := vmSplitGenericTypeName(stripModulePrefix(target)); isGeneric {
+			// Frame-bound type-param names in the args resolve first.
+			if len(vm.frames) > 0 {
+				if bindings := vm.frames[len(vm.frames)-1].typeBindings; bindings != nil {
+					for i, a := range gargs {
+						if bound, ok := bindings[a]; ok {
+							gargs[i] = bound
+						}
+					}
+				}
+			}
+			vm.push(runtime.Bool{Value: vm.instanceMatchesParameterizedClass(instance, base, gargs)})
+			return nil
+		}
 		// Try the chunk-local ClassInfo first (cheaper and lets
 		// classImplements consult the per-chunk interface table).
 		// Fall back to a direct walk of the runtime.Class parent
@@ -11910,6 +12152,42 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 	}
 	vm.push(runtime.Bool{Value: value.TypeName() == target})
 	return nil
+}
+
+// instanceMatchesParameterizedClass: class chain contains base AND
+// reified bindings match the args invariantly; unbound never matches.
+func (vm *VM) instanceMatchesParameterizedClass(instance *runtime.Instance, base string, args []string) bool {
+	chainMatches := false
+	if classInfo, ok := vm.classInfo(instance.Class.Name); ok && vm.classMatches(classInfo, base) {
+		chainMatches = true
+	}
+	if !chainMatches && runtimeClassMatches(instance.Class, base) {
+		chainMatches = true
+	}
+	if !chainMatches {
+		return false
+	}
+	var declared []string
+	if classInfo, ok := vm.classInfo(base); ok {
+		declared = classInfo.TypeParameters
+	} else {
+		for class := instance.Class; class != nil; class = class.Parent {
+			if strings.EqualFold(class.Name, base) {
+				declared = class.TypeParameters
+				break
+			}
+		}
+	}
+	if len(declared) == 0 || len(args) > len(declared) {
+		return false
+	}
+	for i, arg := range args {
+		bound, ok := instance.TypeBindings[declared[i]]
+		if !ok || !strings.EqualFold(bound, arg) {
+			return false
+		}
+	}
+	return true
 }
 
 func vmSplitGenericTypeName(typeName string) (string, []string, bool) {
@@ -12147,6 +12425,12 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 }
 
 func (vm *VM) selectRuntimeFunction(instruction Instruction, name string, indices []int64, args []runtime.Value, paramOffset int) (int64, error) {
+	return vm.selectRuntimeFunctionWith(instruction, name, indices, args, paramOffset, nil)
+}
+
+// selectRuntimeFunctionWith breaks overload-selection ties with explicit
+// bindings; single-candidate mismatches stay with construct-site validation.
+func (vm *VM) selectRuntimeFunctionWith(instruction Instruction, name string, indices []int64, args []runtime.Value, paramOffset int, inherited map[string]string) (int64, error) {
 	/* Fast path: most classes declare a single overload per method.
 	 * Skip the slice allocation + post-loop "ambiguous" check and
 	 * just verify arity + types directly on the lone candidate. */
@@ -12179,6 +12463,17 @@ func (vm *VM) selectRuntimeFunction(instruction Instruction, name string, indice
 			continue
 		}
 		matches = append(matches, index)
+	}
+	if len(matches) > 1 && len(inherited) > 0 {
+		kept := matches[:0]
+		for _, index := range matches {
+			if vm.runtimeArgumentsMatchWith(vm.chunk.Functions[index], args, paramOffset, inherited) {
+				kept = append(kept, index)
+			}
+		}
+		if len(kept) > 0 {
+			matches = kept
+		}
 	}
 	if len(matches) == 0 {
 		return 0, vm.runtimeError(instruction, "no matching overload for %s", name)
@@ -12216,6 +12511,10 @@ func (vm *VM) selectRuntimeNamedFunction(instruction Instruction, name string, i
 }
 
 func (vm *VM) runtimeArgumentsMatch(function FunctionInfo, args []runtime.Value, paramOffset int) bool {
+	return vm.runtimeArgumentsMatchWith(function, args, paramOffset, nil)
+}
+
+func (vm *VM) runtimeArgumentsMatchWith(function FunctionInfo, args []runtime.Value, paramOffset int, inherited map[string]string) bool {
 	if len(function.ParamTypes) == 0 {
 		return true
 	}
@@ -12229,13 +12528,13 @@ func (vm *VM) runtimeArgumentsMatch(function FunctionInfo, args []runtime.Value,
 			// Extra variadic args match the variadic param's element type.
 			paramIndex = len(function.ParamTypes) - 1
 		}
+		var spec vmTypeSpec
 		if paramIndex < len(function.paramTypeSpecs) && function.paramTypeSpecs[paramIndex].raw != "" {
-			if !vm.matchValueToTypeSpec(typeParams, arg, function.paramTypeSpecs[paramIndex]) {
-				return false
-			}
-			continue
+			spec = function.paramTypeSpecs[paramIndex]
+		} else {
+			spec = vm.typeSpec(function.ParamTypes[paramIndex])
 		}
-		if !vm.matchValueToTypeStr(typeParams, arg, function.ParamTypes[paramIndex]) {
+		if !vm.matchValueToTypeSpecWith(typeParams, inherited, arg, spec) {
 			return false
 		}
 	}
@@ -12379,9 +12678,9 @@ func (vm *VM) matchValueToTypeStrWith(typeParams map[string]bool, inherited map[
 }
 
 func (vm *VM) matchValueToTypeSpecWith(typeParams map[string]bool, inherited map[string]string, value runtime.Value, spec vmTypeSpec) bool {
-	if typeParams[spec.baseLower] {
-		return true
-	}
+	// Concrete bindings win over the bare-type-param accept, matching the
+	// evaluator: an explicit call-site binding (Box<string>(...)) constrains
+	// the function's own T rather than leaving it inference-open.
 	if len(inherited) > 0 {
 		if bound, ok := inherited[spec.base]; ok && bound != "" {
 			return vm.matchValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
@@ -12389,6 +12688,9 @@ func (vm *VM) matchValueToTypeSpecWith(typeParams map[string]bool, inherited map
 		if bound, ok := inherited[spec.baseLower]; ok && bound != "" {
 			return vm.matchValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
 		}
+	}
+	if typeParams[spec.baseLower] {
+		return true
 	}
 	return vm.matchValueToTypeSpec(typeParams, value, spec)
 }
@@ -12964,6 +13266,9 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 2 {
 		return 0, vm.fatalError(instruction, "method call instruction has invalid operands")
 	}
+	// Consumed here so planted type args cannot leak into a later call.
+	callTypeArgs := vm.pendingCallTypeArgs
+	vm.pendingCallTypeArgs = nil
 	nameIndex := instruction.Operands[0]
 	argc := int(instruction.Operands[1])
 	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
@@ -13330,7 +13635,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs("", "", args))
+			result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs("", "", args), callTypeArgs)
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -13362,7 +13667,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			 * chunk. Main-chunk classes have Module="" so the check
 			 * looks at both directions. */
 			if class.Module != vm.moduleName && vm.moduleLoader != nil {
-				result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs("", "", args))
+				result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs("", "", args), callTypeArgs)
 				if err != nil {
 					return vm.propagateModuleError(instruction, ip, err)
 				}
@@ -13370,9 +13675,10 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 				return ip, nil
 			}
 			if class.Raw {
+				vm.stageTypeArgsAsBindings(class.Index, callTypeArgs)
 				return vm.constructClassWithArgs(instruction, ip, class.Index, args, true)
 			}
-			result, err := vm.ConstructClass(class.Index, args)
+			result, err := vm.ConstructClassWithTypeArgs(class.Index, args, callTypeArgs)
 			if err != nil {
 				return 0, vm.runtimeError(instruction, "%s", err.Error())
 			}
@@ -14426,29 +14732,29 @@ func (vm *VM) checkTypeParamConstraints(instruction Instruction, function *Funct
 			continue
 		}
 		classInfo, found := vm.classInfo(boundName)
-		if !found {
-			return vm.runtimeError(instruction, "type %s does not implement constraint %s for type parameter %s", boundName, expr, paramName)
-		}
-		if !vm.classMatchesConstraintExpr(classInfo, expr) {
-			return vm.runtimeError(instruction, "type %s does not implement constraint %s for type parameter %s", boundName, expr, paramName)
+		if !vm.constraintExprSatisfied(boundName, classInfo, found, expr) {
+			return vm.runtimeError(instruction, "type %s does not satisfy constraint %s for type parameter %s", boundName, stripOuterConstraintParens(strings.TrimSpace(expr)), paramName)
 		}
 	}
 	return nil
 }
 
-func (vm *VM) classMatchesConstraintExpr(classInfo ClassInfo, expr string) bool {
+func (vm *VM) constraintExprSatisfied(boundName string, classInfo ClassInfo, found bool, expr string) bool {
 	expr = stripOuterConstraintParens(strings.TrimSpace(expr))
 	if idx := topLevelConstraintOperator(expr, "|"); idx >= 0 {
-		left := strings.TrimSpace(expr[:idx])
-		right := strings.TrimSpace(expr[idx+1:])
-		return vm.classMatchesConstraintExpr(classInfo, left) || vm.classMatchesConstraintExpr(classInfo, right)
+		return vm.constraintExprSatisfied(boundName, classInfo, found, expr[:idx]) || vm.constraintExprSatisfied(boundName, classInfo, found, expr[idx+1:])
 	}
 	if idx := topLevelConstraintOperator(expr, "&"); idx >= 0 {
-		left := strings.TrimSpace(expr[:idx])
-		right := strings.TrimSpace(expr[idx+1:])
-		return vm.classMatchesConstraintExpr(classInfo, left) && vm.classMatchesConstraintExpr(classInfo, right)
+		return vm.constraintExprSatisfied(boundName, classInfo, found, expr[:idx]) && vm.constraintExprSatisfied(boundName, classInfo, found, expr[idx+1:])
 	}
-	return vm.classImplements(classInfo, strings.TrimSpace(expr))
+	// Identity covers primitives and exact class names.
+	if strings.EqualFold(boundName, expr) {
+		return true
+	}
+	if !found {
+		return false
+	}
+	return vm.classImplements(classInfo, expr) || vm.classMatches(classInfo, expr)
 }
 
 func stripOuterConstraintParens(expr string) string {

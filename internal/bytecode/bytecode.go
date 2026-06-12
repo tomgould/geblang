@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(73)
+	Version = uint16(74)
 )
 
 type Op byte
@@ -211,6 +211,11 @@ const (
 	// already bound, making explicit-args strictly override
 	// inferred-from-arg bindings.
 	OpPlantCallTypeBindings
+	// OpPlantCallTypeArgs stages a selector call's explicit `<TypeArgs>`
+	// positionally ([count, typeName1Idx, ...]): the calling chunk cannot
+	// know the remote callee's type-parameter names, so the dispatch site
+	// zips them against the callee's declared params in its home chunk.
+	OpPlantCallTypeArgs
 	// OpRange implements the top-level `range(start, end[, step])`
 	// builtin. The single operand is the argument count (2 or 3).
 	// Pops that many integer-valued operands from the stack and

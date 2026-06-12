@@ -217,6 +217,7 @@ func (g *fuzzGen) classBlock() (decls string, calls []string) {
 	d.WriteString("  T item;\n")
 	d.WriteString("  func Box(T v) { this.item = v; }\n")
 	d.WriteString("  func get(): T { return this.item; }\n")
+	d.WriteString("  func put(T v): void { this.item = v; }\n")
 	d.WriteString("}\n")
 	ctors := []string{"Base", "Sub", "Leaf"}
 	c := ctors[g.rng.Intn(len(ctors))]
@@ -230,6 +231,19 @@ func (g *fuzzGen) classBlock() (decls string, calls []string) {
 		"io.println(inst instanceof Base);",
 		"let bx = Box("+g.intLit()+"); io.println(bx.get());",
 	)
+	// Explicit type-arg enforcement + binding-aware instanceof (1.20.0):
+	// matching constructions succeed, mismatching constructor and method
+	// args throw - class AND message must agree across backends.
+	wrap := func(body string) string {
+		return "try { " + body + " io.println(\"ok\"); } catch (Error e) { io.println(e.class); io.println(e.message); }"
+	}
+	if g.rng.Intn(2) == 0 {
+		calls = append(calls,
+			"let gb = Box<int>("+g.intLit()+"); io.println(gb.get()); io.println(gb instanceof Box<int>); io.println(gb instanceof Box<string>);",
+			wrap("let gbad = Box<string>("+g.intLit()+");"),
+			wrap("let gm = Box<int>("+g.intLit()+"); gm.put("+g.stringLit()+");"),
+		)
+	}
 	return d.String(), calls
 }
 

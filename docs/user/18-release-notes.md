@@ -1,5 +1,65 @@
 # Release Notes
 
+## 1.20.0
+
+### Language
+
+- Explicit constructor type arguments are enforced at runtime on both
+  runtimes: `Box<string>(42)` throws `RuntimeError` (previously the
+  bytecode runtime accepted it silently while the evaluator threw, and
+  the recorded bindings could contradict the stored value). Subtype
+  arguments still pass and calls without explicit type arguments stay
+  inference-open. Enforcement applies same-module and across module
+  boundaries. This is a behavior change for code that relied on the
+  silent acceptance.
+- Method parameters typed with a class-level type parameter are
+  enforced against the instance's reified bindings on both runtimes:
+  `put(42)` on a `Box<string>` throws
+  `Box.put expects T for parameter 'value', got int`. Inherited
+  methods enforce extends-clause bindings (`IntBox extends Box<int>`);
+  a method's own type parameters still bind per call. This is a
+  behavior change for code that relied on unchecked `T` parameters.
+- `instanceof` answers parameterized checks against user generic
+  classes from the instance's reified bindings, with the same
+  invariant model as `list<int>`: `b instanceof Box<string>` is true
+  when the class matches and `T` is bound to `string` (previously
+  always false). Bare-name checks are unchanged; type-parameter names
+  in the argument list resolve in generic frames.
+- A declaration annotation over a direct constructor call of the same
+  class validates like explicit type arguments:
+  `Box<int> x = Box("text")` is rejected (statically when the
+  contradiction is visible, at runtime otherwise). The annotation
+  still wins over inference for the recorded bindings; `let` without
+  an annotation stays inference-open. This is a behavior change.
+- Explicit type arguments resolve constructor overloads: with
+  `Box(T value)` and `Box(int value)` declared, `Box<string>(42)`
+  selects `Box(int value)` instead of reporting an ambiguous
+  overload. Bindings only break ties; single-candidate mismatches
+  keep the precise per-parameter error.
+- Calling a function declared to return `any` in a statically typed
+  context (typed parameter, generic constructor argument, typed
+  declaration) no longer fails compilation on the bytecode runtime;
+  the value is validated at runtime on both runtimes, matching the
+  evaluator's long-standing behavior.
+
+- Generic constraints accept primitive and class leaves alongside
+  interfaces, combined with `|` and `&`: `<T implements string|int>`
+  now works (previously primitives never satisfied a constraint), and
+  a class leaf is satisfied by the class or any subclass. A bare form
+  drops the keyword: `<T string|int>` on functions and classes means
+  the same thing. Constraint-violation messages are now identical on
+  both runtimes
+  (`type bool does not satisfy constraint string|int for type
+  parameter T`).
+
+### Static analysis
+
+- `geblang check` (and the compile path of `run`, `test`, and `build`)
+  reports `error[semantic]` when a constructor call's explicit type
+  arguments contradict a statically-known argument type
+  (`Box<string>(42)`). Covariant passing stays clean; `any`-typed,
+  named, and spread arguments defer to the runtime check.
+
 ## 1.19.0
 
 ### Language

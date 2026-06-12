@@ -2146,6 +2146,10 @@ func (p *Parser) parseGenericNames() []*ast.TypeParam {
 				next := p.parseTypeRefFromCurrent()
 				tp.Constraint = &ast.TypeRef{Operator: "&", Left: tp.Constraint, Right: next}
 			}
+		} else if p.peekTokenIs(token.Ident) || p.peekTokenIs(token.Question) {
+			// Bare constraint form: <T string|int> means <T implements string|int>.
+			p.nextToken()
+			tp.Constraint = p.parseTypeRefFromCurrent()
 		}
 		params = append(params, tp)
 		if !p.peekTokenIs(token.Comma) {

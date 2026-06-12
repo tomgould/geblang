@@ -552,7 +552,11 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 			if expected == "any" {
 				expected = ""
 			}
-			if err := c.compileExpressionWithExpected(stmt.Value, expected); err != nil {
+			value := stmt.Value
+			if injected, ok := annotationConstructorCall(stmt); ok {
+				value = injected
+			}
+			if err := c.compileExpressionWithExpected(value, expected); err != nil {
 				return err
 			}
 		}
@@ -3096,8 +3100,20 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				var orderedArgs []ast.Expression
 				var functionIndex int64
 				if len(classInfo.ConstructorIndices) > 0 {
+					var bindings map[string]string
+					if len(expr.TypeArguments) > 0 && len(classInfo.TypeParameters) > 0 {
+						bindings = map[string]string{}
+						for i, arg := range expr.TypeArguments {
+							if i >= len(classInfo.TypeParameters) {
+								break
+							}
+							if arg != nil && arg.Operator == "" && arg.Name != "" {
+								bindings[classInfo.TypeParameters[i]] = arg.Name
+							}
+						}
+					}
 					var err error
-					functionIndex, orderedArgs, err = c.selectFunctionIndicesCallIgnoringReturn(classInfo.Name, classInfo.ConstructorIndices, expr.Arguments, 1)
+					functionIndex, orderedArgs, err = c.selectFunctionIndicesCallBound(classInfo.Name, classInfo.ConstructorIndices, expr.Arguments, 1, false, bindings)
 					if err != nil {
 						return err
 					}
@@ -3118,6 +3134,9 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 						}
 					}
 				}
+				// Plant explicit `<TypeArgs>` before construction so the
+				// constructor's argument validation sees the caller's bindings.
+				c.emitPlantCallTypeBindings(expr, classInfo.TypeParameters)
 				c.emitAt(OpConstructClass, expr.Token.Line, expr.Token.Column, classIndex, int64(len(orderedArgs)))
 				// Explicit type arguments on the call site (e.g. `Container<T>(...)`)
 				// pin the reified bindings on the freshly-constructed instance, so
@@ -3483,6 +3502,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				}
 				return nil
 			}
+			c.emitPlantCallTypeArgs(expr)
 			c.emitAt(OpMethodCall, expr.Token.Line, expr.Token.Column, nameIndex, int64(len(expr.Arguments)))
 			if selector.Optional {
 				c.patchJump(optionalJump)
@@ -4528,6 +4548,58 @@ func (c *Compiler) emitPlantCallTypeBindings(expr *ast.CallExpression, typeParam
 	c.emitAt(OpPlantCallTypeBindings, expr.Token.Line, expr.Token.Column, operands...)
 }
 
+// annotationConstructorCall copies `Box<int> x = Box(...)`'s initializer
+// with the annotation's type args adopted; the AST stays untouched
+// because the formatter and LSP reprint it.
+func annotationConstructorCall(stmt *ast.DeclarationStatement) (*ast.CallExpression, bool) {
+	if stmt.Type == nil || stmt.Type.Operator != "" || len(stmt.Type.Arguments) == 0 || stmt.Value == nil {
+		return nil, false
+	}
+	call, ok := stmt.Value.(*ast.CallExpression)
+	if !ok || len(call.TypeArguments) > 0 {
+		return nil, false
+	}
+	name := ""
+	switch callee := call.Callee.(type) {
+	case *ast.Identifier:
+		name = callee.Value
+	case *ast.SelectorExpression:
+		if obj, ok := callee.Object.(*ast.Identifier); ok && callee.Name != nil {
+			name = obj.Value + "." + callee.Name.Value
+		}
+	}
+	if name == "" || name != stmt.Type.Name {
+		return nil, false
+	}
+	copied := *call
+	copied.TypeArguments = stmt.Type.Arguments
+	return &copied, true
+}
+
+// emitPlantCallTypeArgs stages a selector call's explicit `<TypeArgs>`
+// positionally; the dispatch site zips them against the callee's params.
+func (c *Compiler) emitPlantCallTypeArgs(expr *ast.CallExpression) {
+	if len(expr.TypeArguments) == 0 {
+		return
+	}
+	operands := []int64{0}
+	count := int64(0)
+	for _, arg := range expr.TypeArguments {
+		if arg == nil || arg.Operator != "" || arg.Name == "" {
+			continue
+		}
+		typeNameIdx := int64(len(c.chunk.Constants))
+		c.chunk.Constants = append(c.chunk.Constants, runtime.String{Value: arg.Name})
+		operands = append(operands, typeNameIdx)
+		count++
+	}
+	if count == 0 {
+		return
+	}
+	operands[0] = count
+	c.emitAt(OpPlantCallTypeArgs, expr.Token.Line, expr.Token.Column, operands...)
+}
+
 func expressionLocation(expr ast.Expression) (int, int) {
 	switch expr := expr.(type) {
 	case *ast.Identifier:
@@ -4848,10 +4920,17 @@ func (c *Compiler) selectFunctionIndicesCall(name string, indices []int64, args 
 }
 
 func (c *Compiler) selectFunctionIndicesCallIgnoringReturn(name string, indices []int64, args []ast.CallArgument, paramOffset int) (int64, []ast.Expression, error) {
-	return c.selectFunctionIndicesCallWithReturnFilter(name, indices, args, paramOffset, false)
+	return c.selectFunctionIndicesCallBound(name, indices, args, paramOffset, false, nil)
 }
 
 func (c *Compiler) selectFunctionIndicesCallWithReturnFilter(name string, indices []int64, args []ast.CallArgument, paramOffset int, filterReturn bool) (int64, []ast.Expression, error) {
+	return c.selectFunctionIndicesCallBound(name, indices, args, paramOffset, filterReturn, nil)
+}
+
+// selectFunctionIndicesCallBound breaks overload-selection ties with
+// explicit bindings; single-candidate mismatches stay with runtime
+// construct-site validation.
+func (c *Compiler) selectFunctionIndicesCallBound(name string, indices []int64, args []ast.CallArgument, paramOffset int, filterReturn bool, bindings map[string]string) (int64, []ast.Expression, error) {
 	matches := []int64{}
 	orderedMatches := [][]ast.Expression{}
 	for _, index := range indices {
@@ -4871,6 +4950,20 @@ func (c *Compiler) selectFunctionIndicesCallWithReturnFilter(name string, indice
 		}
 		matches = append(matches, index)
 		orderedMatches = append(orderedMatches, orderedArgs)
+	}
+	if len(matches) > 1 && len(bindings) > 0 {
+		kept := matches[:0]
+		keptOrdered := orderedMatches[:0]
+		for i, index := range matches {
+			if c.staticArgumentsMayMatchBound(c.chunk.Functions[index], orderedMatches[i], paramOffset, bindings) {
+				kept = append(kept, index)
+				keptOrdered = append(keptOrdered, orderedMatches[i])
+			}
+		}
+		if len(kept) > 0 {
+			matches = kept
+			orderedMatches = keptOrdered
+		}
 	}
 	if len(matches) == 0 {
 		if msg := c.overloadMismatchDetail(name, indices, args, paramOffset); msg != "" {
@@ -4940,6 +5033,10 @@ func (c *Compiler) overloadMismatchDetail(name string, indices []int64, args []a
 }
 
 func (c *Compiler) staticArgumentsMayMatch(function FunctionInfo, args []ast.Expression, paramOffset int) bool {
+	return c.staticArgumentsMayMatchBound(function, args, paramOffset, nil)
+}
+
+func (c *Compiler) staticArgumentsMayMatchBound(function FunctionInfo, args []ast.Expression, paramOffset int, bindings map[string]string) bool {
 	if len(function.ParamTypes) == 0 {
 		return true
 	}
@@ -4962,7 +5059,11 @@ func (c *Compiler) staticArgumentsMayMatch(function FunctionInfo, args []ast.Exp
 			}
 			paramIndex = variadicIndex
 		}
-		if !c.staticFunctionParamAssignable(function, function.ParamTypes[paramIndex], argType) {
+		paramType := function.ParamTypes[paramIndex]
+		if bound, ok := bindings[paramType]; ok && bound != "" {
+			paramType = bound
+		}
+		if !c.staticFunctionParamAssignable(function, paramType, argType) {
 			return false
 		}
 	}
@@ -5017,6 +5118,10 @@ func (c *Compiler) expressionStaticType(expr ast.Expression) string {
 
 func (c *Compiler) staticTypeAssignable(target string, actual string) bool {
 	if target == "" || strings.EqualFold(target, "any") || actual == "" {
+		return true
+	}
+	// An `any` actual is statically opaque; runtime validation owns it.
+	if strings.EqualFold(strings.TrimPrefix(actual, "?"), "any") {
 		return true
 	}
 	// Union target: value is assignable when it matches any branch.

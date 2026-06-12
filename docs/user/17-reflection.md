@@ -78,12 +78,21 @@ io.println(d instanceof Greeter);  # true (implements)
 ### Reified generics
 
 Generic type parameters are reified, so `instanceof` can test the element type
-of a parameterized collection:
+of a parameterized collection - and, with the same invariant model, the
+recorded bindings of a user generic class instance:
 
 ```gb
 let xs = [1, 2, 3];
 io.println(xs instanceof list<int>);     # true
 io.println(xs instanceof list<string>);  # false
+
+class Box<T> {
+    T value;
+    func Box(T v) { this.value = v; }
+}
+let b = Box<string>("hi");
+io.println(b instanceof Box<string>);    # true
+io.println(b instanceof Box<int>);       # false
 ```
 
 `reflect.typeBindings(value)` returns a dict mapping each type parameter name to

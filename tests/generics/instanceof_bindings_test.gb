@@ -1,0 +1,73 @@
+/**
+ * @title Parameterized instanceof for user generic classes
+ * @summary `x instanceof Box<string>` consults the instance's reified
+ *          type bindings invariantly: true when the class matches and
+ *          the bindings match, false on mismatch. Bare-name instanceof
+ *          is unchanged, inherited extends-clause bindings match
+ *          through the chain, partial argument lists compare as a
+ *          prefix, and frame-bound type params resolve inside generic
+ *          functions.
+ */
+import test;
+
+class Box<T> {
+    T value;
+    func Box(T value) { this.value = value; }
+}
+
+class IntBox extends Box<int> {
+    func IntBox(int value) { parent(value); }
+}
+
+class Pair<K, V> {
+    K key;
+    V value;
+    func Pair(K key, V value) {
+        this.key = key;
+        this.value = value;
+    }
+}
+
+func checkBox<T>(any v): bool {
+    return v instanceof Box<T>;
+}
+
+class InstanceofBindingsTest extends test.Test {
+    @test
+    func explicitBindingsMatch(): void {
+        let s = Box<string>("hi");
+        this.assertTrue(s instanceof Box<string>);
+        this.assertFalse(s instanceof Box<int>);
+        this.assertTrue(s instanceof Box);
+    }
+
+    @test
+    func inferredBindingsMatch(): void {
+        let b = Box(42);
+        this.assertTrue(b instanceof Box<int>);
+        this.assertFalse(b instanceof Box<string>);
+    }
+
+    @test
+    func extendsClauseBindingsMatchThroughChain(): void {
+        let ib = IntBox(7);
+        this.assertTrue(ib instanceof Box<int>);
+        this.assertTrue(ib instanceof IntBox);
+        this.assertFalse(ib instanceof Box<string>);
+    }
+
+    @test
+    func multiParamAndPrefix(): void {
+        let p = Pair<string, int>("k", 7);
+        this.assertTrue(p instanceof Pair<string, int>);
+        this.assertFalse(p instanceof Pair<string, string>);
+        this.assertTrue(p instanceof Pair<string>);
+    }
+
+    @test
+    func frameBoundArgResolves(): void {
+        let s = Box<string>("hi");
+        this.assertTrue(checkBox<string>(s));
+        this.assertFalse(checkBox<int>(s));
+    }
+}

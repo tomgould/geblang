@@ -1,0 +1,11 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag a declaration whose annotation type
+ *          arguments contradict the initializer constructor's argument.
+ */
+class Box<T> {
+    T value;
+    func Box(T value) { this.value = value; }
+}
+
+Box<int> wrong = Box("text");

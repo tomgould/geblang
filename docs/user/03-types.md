@@ -666,6 +666,67 @@ let c = Container<string>();
 io.println(reflect.typeBindings(c));   # {"T": <Type string>}
 ```
 
+### Enforcement of explicit type arguments
+
+Explicit type arguments are a contract, not a hint. When a constructor is
+called with an explicit `<TypeArgs>` clause, every constructor parameter
+typed with a bound type parameter is validated against the binding at
+runtime, on both runtimes:
+
+```gb
+class Box<T> {
+    T value;
+    func Box(T value) { this.value = value; }
+}
+
+let ok  = Box<string>("hello");   # fine
+let bad = Box<string>(42);        # RuntimeError: Box expects T for parameter 'value', got int
+```
+
+Subtype arguments still pass (`Pen<Animal>(Dog())` is fine), and a call
+without explicit type arguments stays inference-open (`Box(42)` binds
+`T = int` from the argument). When the contradiction is statically visible -
+a literal or a typed variable against an explicit type argument -
+`geblang check` reports it as `error[semantic]` before anything runs, and so
+do `geblang run`, `test`, and `build`.
+
+Method parameters typed with a class-level type parameter are enforced the
+same way, against the instance's reified bindings:
+
+```gb
+let b = Box<string>("hello");
+b.put(42);    # RuntimeError: Box.put expects T for parameter 'value', got int
+```
+
+This applies to inherited methods too: with `class IntBox extends Box<int>`,
+calling `put("nope")` on an `IntBox` throws, because the extends clause bound
+`T = int` for every instance. A method's *own* type parameters
+(`func tag<U>(U label)`) are unaffected - they bind per call as always.
+
+`instanceof` consults the same bindings. A parameterized check against a user
+generic class is true when the class matches and the recorded bindings match
+the type arguments exactly (the same invariant model as `list<int>`):
+
+```gb
+let s = Box<string>("hi");
+s instanceof Box<string>;   # true
+s instanceof Box<int>;      # false
+s instanceof Box;           # true (bare-name check is unchanged)
+```
+
+A declaration annotation over a direct constructor call of the same class is
+explicit type arguments by another spelling: `Box<int> x = Box("text")`
+validates exactly like `Box<int>("text")` and is rejected - statically by
+`geblang check` when the contradiction is visible, at runtime otherwise. The
+annotation still wins over inference for the recorded bindings; a `let`
+declaration without an annotation stays inference-open.
+
+Explicit type arguments also resolve constructor overloads. With both
+`Box(T value)` and `Box(int value)` declared, `Box<string>(42)` is not
+ambiguous: binding `T = string` rules the generic constructor out for an
+int, so `Box(int value)` is selected. The bindings only break ties - a
+single-candidate mismatch still reports the precise per-parameter error.
+
 ### Type inference
 
 The type parameter is inferred from the call arguments - you rarely need to
@@ -788,8 +849,9 @@ func show<T implements Printable>(T item): string {
 Without the constraint, calling methods on `T` is a type error because the
 compiler cannot verify that the method exists.
 
-Union constraints (`|`) mean the type must satisfy at least one of the
-interfaces. Intersection constraints (`,`) mean it must satisfy all of them:
+Union constraints (`|`) mean the type must satisfy at least one branch.
+Intersection constraints (`&`, or a comma after `implements`) mean it must
+satisfy all of them:
 
 ```gb
 # T must implement Swimmer OR Runner
@@ -797,6 +859,35 @@ func move<T implements Swimmer | Runner>(T item): void {}
 
 # T must implement both Printable AND Persistable
 func persist<T implements Printable, Persistable>(T item): void {}
+func archive<T implements Printable & Persistable>(T item): void {}
+```
+
+Constraint branches are not limited to interfaces. A primitive name
+(`string`, `int`, `float`, `bool`, `decimal`, `bytes`) is satisfied by that
+exact type, and a class name is satisfied by the class or any subclass:
+
+```gb
+func pick<T implements string|int>(T v): T { return v; }
+
+pick(42);      # ok: int branch
+pick("ada");   # ok: string branch
+pick(true);    # RuntimeError: type bool does not satisfy constraint string|int for type parameter T
+```
+
+When the constraint is not an interface, the `implements` keyword can be
+dropped - the bare form reads more naturally and means the same thing, on
+functions and classes alike:
+
+```gb
+func pick<T string|int>(T v): T { return v; }
+
+class Holder<T string|int> {
+    T value;
+    func Holder(T value) { this.value = value; }
+}
+
+Holder(7);        # ok, T = int
+Holder(true);     # RuntimeError: constraint violated at construction
 ```
 
 ### Generics on methods and interfaces

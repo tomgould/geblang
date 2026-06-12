@@ -235,7 +235,7 @@ func (l fakeModuleLoader) CallModuleClosure(closure runtime.BytecodeClosure, arg
 	return runtime.Null{}, fmt.Errorf("unexpected module closure call %s", closure.Name)
 }
 
-func (l fakeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value) (runtime.Value, error) {
+func (l fakeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value, typeArgs []string) (runtime.Value, error) {
 	return runtime.Null{}, fmt.Errorf("unexpected module class construction %s", class.Name)
 }
 

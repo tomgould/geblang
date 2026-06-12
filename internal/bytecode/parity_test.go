@@ -188,12 +188,12 @@ func (l *stdlibModuleLoader) CallModuleClosure(closure runtime.BytecodeClosure, 
 	return vm.CallClosure(closure, args)
 }
 
-func (l *stdlibModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value) (runtime.Value, error) {
+func (l *stdlibModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value, typeArgs []string) (runtime.Value, error) {
 	vm, err := l.newSubVM(class.Module)
 	if err != nil {
 		return nil, err
 	}
-	return vm.ConstructClass(class.Index, args)
+	return vm.ConstructClassWithTypeArgs(class.Index, args, typeArgs)
 }
 
 func (l *stdlibModuleLoader) DeserializeModuleClass(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, error) {
@@ -4470,6 +4470,10 @@ io.println(p.secondIsB());
 }
 
 func TestParityGenericDeclarationAnnotationWinsOverInference(t *testing.T) {
+	// The annotation pins the bindings (not inference), and since 1.20.0
+	// it also validates the constructor arguments like explicit
+	// call-site type args do; the mismatch is routed through `any` so
+	// the runtime path is what's pinned here.
 	runParity(t, `import io;
 
 class Box<T> {
@@ -4490,9 +4494,14 @@ io.println(n.isT());
 Box<string> s = Box("hello");
 io.println(s.isT());
 
-Box<int> wrong = Box("not an int");
-io.println(wrong.isT());
-`, "true\ntrue\nfalse\n")
+any raw = "not an int";
+try {
+    Box<int> wrong = Box(raw);
+    io.println(wrong.isT());
+} catch (RuntimeError e) {
+    io.println("caught: " + e.message);
+}
+`, "true\ntrue\ncaught: Box expects T for parameter 'v', got string\n")
 }
 
 func TestParityGenericListParamInfersElementType(t *testing.T) {

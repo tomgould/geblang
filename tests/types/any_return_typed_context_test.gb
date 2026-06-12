@@ -1,0 +1,54 @@
+/**
+ * @title any-returning calls in typed contexts
+ * @summary A call returning `any` is statically opaque: it compiles
+ *          into typed parameters, generic constructor arguments, and
+ *          typed declarations, with the actual value validated at
+ *          runtime.
+ */
+import test;
+
+class Box<T> {
+    T value;
+    func Box(T value) { this.value = value; }
+}
+
+func opaque(any v): any { return v; }
+func wantInt(int n): int { return n; }
+
+class AnyReturnTypedContextTest extends test.Test {
+    @test
+    func validValuePasses(): void {
+        this.assertEquals(42, wantInt(opaque(42)));
+    }
+
+    @test
+    func mismatchThrowsAtRuntime(): void {
+        let threw = false;
+        try {
+            wantInt(opaque("nope"));
+        } catch (RuntimeError e) {
+            threw = true;
+            this.assertEquals("wantInt expects int for parameter 'n', got string", e.message);
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func genericCtorArgValidatedAtRuntime(): void {
+        let ok = Box<string>(opaque("hi"));
+        this.assertEquals("hi", ok.value);
+        let threw = false;
+        try {
+            let bad = Box<string>(opaque(42));
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func typedDeclarationAccepts(): void {
+        int n = opaque(7);
+        this.assertEquals(7, n);
+    }
+}
