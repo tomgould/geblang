@@ -42,6 +42,15 @@
   the value is validated at runtime on both runtimes, matching the
   evaluator's long-standing behavior.
 
+- The element-tag write barrier on typed collections is now
+  hierarchy-aware and complete. Subclass and implementer writes pass
+  (`list<Animal>.push(Dog())` previously threw - name-equality only),
+  and the barrier covers every mutation surface: index assignment
+  (`xs[0] = v`), `list.set`, dict key AND value writes
+  (`d[k] = v`, `dict.set`), and `set.add` were previously unchecked.
+  Covariant generic passing is now sound: a `list<Dog>` received as
+  `list<Animal>` rejects a `Cat` write against its real tag. This is
+  a behavior change in both directions.
 - Generic constraints accept primitive and class leaves alongside
   interfaces, combined with `|` and `&`: `<T implements string|int>`
   now works (previously primitives never satisfied a constraint), and
@@ -59,6 +68,15 @@
   arguments contradict a statically-known argument type
   (`Box<string>(42)`). Covariant passing stays clean; `any`-typed,
   named, and spread arguments defer to the runtime check.
+- An unknown type name in an `instanceof` target is now an error
+  instead of silently evaluating to false (`x instanceof Nope`).
+  Cross-module trailing-name matching and generic type parameters
+  stay recognized; the check stands down when an import's surface
+  cannot be resolved.
+- An unknown type name in a generic constraint clause
+  (`<T implements Nope>`) is flagged at the declaration, like every
+  other annotation position, instead of only failing when the
+  function is called.
 
 ## 1.19.0
 

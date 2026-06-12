@@ -4103,7 +4103,7 @@ func (vm *VM) appendListSlot(instruction Instruction) error {
 	if list.Frozen {
 		return vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 	}
-	if len(list.ElementTypes) > 0 && !vmTypeNameSatisfies(value.TypeName(), list.ElementTypes[0]) {
+	if len(list.ElementTypes) > 0 && !vmValueSatisfiesElementTag(value, list.ElementTypes[0]) {
 		return vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot push %s to list<%s>", value.TypeName(), list.ElementTypes[0])}
 	}
 	list.Elements = append(list.Elements, value)
@@ -4624,6 +4624,9 @@ func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 		if value.Frozen {
 			return vm.throwTyped(instruction, ip, "ImmutableError", "cannot modify frozen list")
 		}
+		if len(value.ElementTypes) > 0 && !vmValueSatisfiesElementTag(newValue, value.ElementTypes[0]) {
+			return vm.throwTyped(instruction, ip, "TypeError", fmt.Sprintf("cannot assign %s to list<%s>", newValue.TypeName(), value.ElementTypes[0]))
+		}
 		i, err := indexInt(index)
 		if err != nil {
 			return 0, vm.runtimeError(instruction, "%s", err.Error())
@@ -4638,6 +4641,12 @@ func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 	case runtime.Dict:
 		if value.Frozen {
 			return vm.throwTyped(instruction, ip, "ImmutableError", "cannot modify frozen dict")
+		}
+		if err := vmCheckDictWriteTags(value, index, newValue); err != nil {
+			if typed, ok := err.(vmTypedError); ok {
+				return vm.throwTyped(instruction, ip, typed.class, typed.message)
+			}
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
 		}
 		value.PutEntry(dictKeyFor(index), runtime.DictEntry{Key: index, Value: newValue})
 	case *runtime.Instance:
@@ -10526,7 +10535,7 @@ func (vm *VM) listHigherOrderMethod(instruction Instruction, list *runtime.List,
 		if list.Frozen {
 			return nil, true, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 		}
-		if len(list.ElementTypes) > 0 && !vmTypeNameSatisfies(args[0].TypeName(), list.ElementTypes[0]) {
+		if len(list.ElementTypes) > 0 && !vmValueSatisfiesElementTag(args[0], list.ElementTypes[0]) {
 			return nil, true, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot %s %s to list<%s>", name, args[0].TypeName(), list.ElementTypes[0])}
 		}
 		list.Elements = append(list.Elements, nil)
@@ -12348,6 +12357,39 @@ func vmSplitTopLevelUnion(typeName string) ([]string, bool) {
 
 // vmTypeNameSatisfies handles `any` and union arms over the existing
 // case-insensitive invariance rule for tagged collections.
+// vmValueSatisfiesElementTag is the element-tag write barrier:
+// name-level match first, then the value's class hierarchy (subclass
+// and implementer writes into honestly-tagged collections are legal).
+func vmValueSatisfiesElementTag(value runtime.Value, tag string) bool {
+	if vmTypeNameSatisfies(value.TypeName(), tag) {
+		return true
+	}
+	if arms, ok := vmSplitTopLevelUnion(tag); ok {
+		for _, arm := range arms {
+			if vmValueSatisfiesElementTag(value, arm) {
+				return true
+			}
+		}
+		return false
+	}
+	return runtime.ValueSatisfiesHierarchyLeaf(value, stripModulePrefix(strings.TrimSpace(strings.TrimPrefix(tag, "?"))))
+}
+
+// vmCheckDictWriteTags enforces a tagged dict's key and value types on
+// any write path.
+func vmCheckDictWriteTags(dict runtime.Dict, key, value runtime.Value) error {
+	if len(dict.ElementTypes) < 2 {
+		return nil
+	}
+	if !vmValueSatisfiesElementTag(key, dict.ElementTypes[0]) {
+		return vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot use %s key in dict<%s, %s>", key.TypeName(), dict.ElementTypes[0], dict.ElementTypes[1])}
+	}
+	if !vmValueSatisfiesElementTag(value, dict.ElementTypes[1]) {
+		return vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot assign %s to dict<%s, %s>", value.TypeName(), dict.ElementTypes[0], dict.ElementTypes[1])}
+	}
+	return nil
+}
+
 func vmTypeNameSatisfies(have, want string) bool {
 	if want == "any" || want == "?any" {
 		return true
@@ -16236,6 +16278,9 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			if value.Frozen {
 				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 			}
+			if len(value.ElementTypes) > 0 && !vmValueSatisfiesElementTag(args[1], value.ElementTypes[0]) {
+				return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot assign %s to list<%s>", args[1].TypeName(), value.ElementTypes[0])}
+			}
 			i, err := indexInt(args[0])
 			if err != nil {
 				return nil, err
@@ -16251,6 +16296,9 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		case runtime.Dict:
 			if value.Frozen {
 				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen dict"}
+			}
+			if err := vmCheckDictWriteTags(value, args[0], args[1]); err != nil {
+				return nil, err
 			}
 			value.PutEntry(native.DictKey(args[0]), runtime.DictEntry{Key: args[0], Value: args[1]})
 			return runtime.Null{}, nil
@@ -16278,6 +16326,9 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			if dict.Frozen {
 				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen dict"}
 			}
+			if err := vmCheckDictWriteTags(dict, args[0], args[1]); err != nil {
+				return nil, err
+			}
 			dict.PutEntry(native.DictKey(args[0]), runtime.DictEntry{Key: args[0], Value: args[1]})
 			return runtime.Null{}, nil
 		}
@@ -16301,7 +16352,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			if list.Frozen {
 				return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 			}
-			if len(list.ElementTypes) > 0 && !vmTypeNameSatisfies(args[1].TypeName(), list.ElementTypes[0]) {
+			if len(list.ElementTypes) > 0 && !vmValueSatisfiesElementTag(args[1], list.ElementTypes[0]) {
 				return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot insert %s to list<%s>", args[1].TypeName(), list.ElementTypes[0])}
 			}
 			list.Elements = append(list.Elements, nil)
@@ -16320,6 +16371,9 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		if value.Frozen {
 			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen set"}
+		}
+		if len(value.ElementTypes) > 0 && !vmValueSatisfiesElementTag(args[0], value.ElementTypes[0]) {
+			return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot add %s to set<%s>", args[0].TypeName(), value.ElementTypes[0])}
 		}
 		value.Elements[native.DictKey(args[0])] = runtime.SetEntry{Value: args[0]}
 		return value, nil
@@ -16527,7 +16581,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		if list.Frozen {
 			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 		}
-		if len(list.ElementTypes) > 0 && !vmTypeNameSatisfies(args[0].TypeName(), list.ElementTypes[0]) {
+		if len(list.ElementTypes) > 0 && !vmValueSatisfiesElementTag(args[0], list.ElementTypes[0]) {
 			return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot push %s to list<%s>", args[0].TypeName(), list.ElementTypes[0])}
 		}
 		list.Elements = append(list.Elements, args[0])
@@ -16544,7 +16598,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
 		}
 		if len(list.ElementTypes) > 0 {
-			if !vmTypeNameSatisfies(args[0].TypeName(), list.ElementTypes[0]) {
+			if !vmValueSatisfiesElementTag(args[0], list.ElementTypes[0]) {
 				return nil, vmTypedError{
 					class:   "TypeError",
 					message: fmt.Sprintf("cannot append %s to list<%s>", args[0].TypeName(), list.ElementTypes[0]),
@@ -16570,7 +16624,7 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		if len(list.ElementTypes) > 0 {
 			for i, el := range other.Elements {
-				if !vmTypeNameSatisfies(el.TypeName(), list.ElementTypes[0]) {
+				if !vmValueSatisfiesElementTag(el, list.ElementTypes[0]) {
 					return nil, vmTypedError{
 						class:   "TypeError",
 						message: fmt.Sprintf("cannot extend list<%s> with %s at index %d", list.ElementTypes[0], el.TypeName(), i),

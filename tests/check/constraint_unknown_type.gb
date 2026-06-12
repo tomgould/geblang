@@ -1,0 +1,6 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an unknown type name in a generic
+ *          constraint, even when the function is never called.
+ */
+func f<T implements Nope>(T v): T { return v; }

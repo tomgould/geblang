@@ -1,0 +1,5 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag an unknown type name in instanceof.
+ */
+let z = (1 instanceof Nope);

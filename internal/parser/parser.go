@@ -1421,6 +1421,7 @@ func (p *Parser) parseDefaultInfix(left ast.Expression) ast.Expression {
 		typ := p.parseTypeRefFromCurrent()
 		ident := &ast.Identifier{Token: opTok, Value: typ.String()}
 		expr.Right = ident
+		expr.RightType = typ
 		return expr
 	}
 	p.nextToken()

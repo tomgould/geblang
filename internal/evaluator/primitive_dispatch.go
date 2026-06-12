@@ -141,6 +141,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen dict"}}
 			}
+			if err := checkDictWriteTags(value, args[0], args[1]); err != nil {
+				return nil, err
+			}
 			value.PutEntry(dictKey(args[0]), runtime.DictEntry{Key: args[0], Value: args[1]})
 			return runtime.Null{}, nil
 		case "length":
@@ -385,6 +388,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen set"}}
 			}
+			if len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(args[0], value.ElementTypes[0]) {
+				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot add %s to set<%s>", args[0].TypeName(), value.ElementTypes[0])}}
+			}
 			value.Elements[dictKey(args[0])] = runtime.SetEntry{Value: args[0]}
 			return value, nil
 		case "remove":
@@ -484,6 +490,9 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
+			}
+			if len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(args[1], value.ElementTypes[0]) {
+				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot assign %s to list<%s>", args[1].TypeName(), value.ElementTypes[0])}}
 			}
 			i, err := indexInt(args[0])
 			if err != nil {
@@ -599,7 +608,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 			}
-			if len(value.ElementTypes) > 0 && !typeNameSatisfies(args[0].TypeName(), value.ElementTypes[0]) {
+			if len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(args[0], value.ElementTypes[0]) {
 				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot push %s to list<%s>", args[0].TypeName(), value.ElementTypes[0])}}
 			}
 			value.Elements = append(value.Elements, args[0])
@@ -612,7 +621,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 			}
 			if len(value.ElementTypes) > 0 {
-				if !typeNameSatisfies(args[0].TypeName(), value.ElementTypes[0]) {
+				if !valueSatisfiesElementTag(args[0], value.ElementTypes[0]) {
 					return nil, thrownError{value: runtime.Error{
 						Class:   "TypeError",
 						Message: fmt.Sprintf("cannot append %s to list<%s>", args[0].TypeName(), value.ElementTypes[0]),
@@ -634,7 +643,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			if len(value.ElementTypes) > 0 {
 				for i, el := range other.Elements {
-					if !typeNameSatisfies(el.TypeName(), value.ElementTypes[0]) {
+					if !valueSatisfiesElementTag(el, value.ElementTypes[0]) {
 						return nil, thrownError{value: runtime.Error{
 							Class:   "TypeError",
 							Message: fmt.Sprintf("cannot extend list<%s> with %s at index %d", value.ElementTypes[0], el.TypeName(), i),
@@ -686,7 +695,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 			}
-			if len(value.ElementTypes) > 0 && !typeNameSatisfies(args[1].TypeName(), value.ElementTypes[0]) {
+			if len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(args[1], value.ElementTypes[0]) {
 				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot insert %s to list<%s>", args[1].TypeName(), value.ElementTypes[0])}}
 			}
 			value.Elements = append(value.Elements, nil)
@@ -866,7 +875,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if value.Frozen {
 				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 			}
-			if len(value.ElementTypes) > 0 && !typeNameSatisfies(args[0].TypeName(), value.ElementTypes[0]) {
+			if len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(args[0], value.ElementTypes[0]) {
 				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot %s %s to list<%s>", name, args[0].TypeName(), value.ElementTypes[0])}}
 			}
 			value.Elements = append(value.Elements, nil)

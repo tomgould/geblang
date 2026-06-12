@@ -1,0 +1,100 @@
+/**
+ * @title Element-tag write barrier
+ * @summary Typed collections enforce their reified element tags on
+ *          every write surface (push/insert/prepend/unshift, index
+ *          assignment, list.set, dict key and value writes, set.add),
+ *          including through covariant views and untyped aliases.
+ *          Subclass and implementer writes are legal.
+ */
+import test;
+
+interface Scored { func score(): int; }
+class Animal { func Animal() {} }
+class Dog extends Animal { func Dog() { parent(); } }
+class Cat extends Animal { func Cat() { parent(); } }
+class Win implements Scored { func Win() {} func score(): int { return 1; } }
+
+class ElementTagBarrierTest extends test.Test {
+    @test
+    func subtypeWritesPass(): void {
+        list<Animal> zoo = [];
+        zoo.push(Dog());
+        zoo[0] = Dog();
+        this.assertTrue(zoo[0] instanceof Dog);
+        list<Scored> scores = [];
+        scores.push(Win());
+        this.assertEquals(1, scores.length());
+        dict<string, Animal> da = {"seed": Dog()};
+        da["d"] = Dog();
+        this.assertTrue(da["d"] instanceof Dog);
+        set<Animal> sa = {Dog()};
+        sa.add(Dog());
+        this.assertEquals(2, sa.length());
+    }
+
+    @test
+    func indexAssignmentBarriered(): void {
+        list<Dog> dogs = [Dog()];
+        let threw = false;
+        try {
+            dogs[0] = Cat();
+        } catch (TypeError e) {
+            threw = true;
+            this.assertEquals("cannot assign Cat to list<Dog>", e.message);
+        }
+        this.assertTrue(threw);
+        this.assertTrue(dogs[0] instanceof Dog);
+    }
+
+    @test
+    func dictKeyAndValueBarriered(): void {
+        dict<string, Dog> dd = {"a": Dog()};
+        let valueThrew = false;
+        try {
+            dd["c"] = Cat();
+        } catch (TypeError e) {
+            valueThrew = true;
+        }
+        this.assertTrue(valueThrew);
+        let keyThrew = false;
+        any anyd = dd;
+        try {
+            anyd[42] = Dog();
+        } catch (TypeError e) {
+            keyThrew = true;
+            this.assertEquals("cannot use int key in dict<string, Dog>", e.message);
+        }
+        this.assertTrue(keyThrew);
+    }
+
+    @test
+    func setAddBarriered(): void {
+        /* Routed through any: the static layer flags the literal form,
+         * this pins the runtime barrier. */
+        set<Dog> ds = {Dog()};
+        any cat = Cat();
+        let threw = false;
+        try {
+            ds.add(cat);
+        } catch (TypeError e) {
+            threw = true;
+            this.assertEquals("cannot add Cat to set<Dog>", e.message);
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func covariantViewStillBarriered(): void {
+        list<Dog> dogs = [Dog()];
+        any alias = dogs;
+        let threw = false;
+        try {
+            alias.push(Cat());
+        } catch (TypeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+        alias.push(Dog());
+        this.assertEquals(2, dogs.length());
+    }
+}

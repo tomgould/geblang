@@ -122,6 +122,7 @@ func CrossModuleAnalysis(file string, program *ast.Program, opts Options) []Diag
 		if opts.CrossModule {
 			diags = append(diags, checkCrossModuleSymbols(file, program, opts)...)
 			diags = append(diags, checkCrossModuleTypes(file, program, opts)...)
+			diags = append(diags, checkInstanceofTypes(file, program, opts)...)
 		}
 	}
 	return diags

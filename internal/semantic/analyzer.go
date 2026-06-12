@@ -442,11 +442,13 @@ func (a *Analyzer) validateStmtAnnotations(stmt ast.Statement) {
 		a.validateExprAnnotations(s.Value)
 	case *ast.FunctionStatement:
 		pop := a.pushTypeParams(s.Generics)
+		a.validateGenericConstraints(s.Generics)
 		a.validateSignatureAnnotations(s.Parameters, s.ReturnType, "function "+nameOf(s.Name))
 		a.validateBlockAnnotations(s.Body)
 		pop()
 	case *ast.ClassStatement:
 		pop := a.pushTypeParams(s.Generics)
+		a.validateGenericConstraints(s.Generics)
 		a.checkTypeRefExists(s.Extends, "extends clause of "+nameOf(s.Name))
 		for _, iface := range s.Implements {
 			a.checkTypeRefExists(iface, "implements clause of "+nameOf(s.Name))
@@ -460,11 +462,13 @@ func (a *Analyzer) validateStmtAnnotations(stmt ast.Statement) {
 		pop()
 	case *ast.InterfaceStatement:
 		pop := a.pushTypeParams(s.Generics)
+		a.validateGenericConstraints(s.Generics)
 		for _, parent := range s.Parents {
 			a.checkTypeRefExists(parent, "extends clause of "+nameOf(s.Name))
 		}
 		for _, sig := range s.Methods {
 			sp := a.pushTypeParams(sig.Generics)
+			a.validateGenericConstraints(sig.Generics)
 			a.validateSignatureAnnotations(sig.Parameters, sig.ReturnType, "interface method "+nameOf(sig.Name))
 			sp()
 		}
@@ -557,6 +561,8 @@ func (a *Analyzer) validateExprAnnotations(expr ast.Expression) {
 	case *ast.InfixExpression:
 		a.validateExprAnnotations(e.Left)
 		a.validateExprAnnotations(e.Right)
+		// instanceof targets match cross-module types by trailing name, so
+		// bare-name validation needs export resolution (the check layer).
 	case *ast.AssignmentExpression:
 		a.validateExprAnnotations(e.Left)
 		a.validateExprAnnotations(e.Value)
@@ -906,6 +912,20 @@ var ambientErrorClasses = map[string]struct{}{
 	"PermissionError": {}, "AssertionError": {}, "FatalError": {},
 }
 
+// IsAmbientTypeName reports whether name is a primitive, pseudo-type,
+// ambient error class, or ambient native type - known without any
+// declaration or import.
+func IsAmbientTypeName(name string) bool {
+	if _, ok := builtinTypeNames[strings.ToLower(name)]; ok {
+		return true
+	}
+	if _, ok := ambientErrorClasses[name]; ok {
+		return true
+	}
+	_, ok := ambientNativeTypeNames[name]
+	return ok
+}
+
 func (a *Analyzer) isKnownTypeName(name string) bool {
 	if name == "" {
 		return true
@@ -966,6 +986,21 @@ func (a *Analyzer) checkTypeRefExists(ref *ast.TypeRef, context string) {
 		return
 	}
 	a.errorAt(ref.Token, "unknown type %q in %s", name, context)
+}
+
+// validateGenericConstraints flags unknown type names in constraint
+// clauses (<T implements Nope>), called with the params already pushed.
+func (a *Analyzer) validateGenericConstraints(generics []*ast.TypeParam) {
+	for _, g := range generics {
+		if g == nil || g.Constraint == nil {
+			continue
+		}
+		name := "type parameter"
+		if g.Name != nil {
+			name = "constraint of type parameter " + g.Name.Value
+		}
+		a.checkTypeRefExists(g.Constraint, name)
+	}
 }
 
 // pushTypeParams adds generic type-param names to scope and returns a
@@ -1280,6 +1315,10 @@ func (a *Analyzer) checkValueAgainstType(target typeInfo, expr ast.Expression, m
 	}
 	actual := a.expressionTypeName(expr)
 	if !actual.known {
+		return
+	}
+	// An `any` actual is statically opaque; runtime validation owns it.
+	if strings.EqualFold(actual.name, "any") {
 		return
 	}
 	tok := tokenOfExpression(expr)

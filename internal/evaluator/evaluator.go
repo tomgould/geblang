@@ -3164,6 +3164,39 @@ func splitTopLevelUnion(typeName string) ([]string, bool) {
 
 // typeNameSatisfies handles `any` and union arms over the existing
 // invariance-by-name rule for tagged collections.
+// checkDictWriteTags enforces a tagged dict's key and value types on
+// any write path.
+func checkDictWriteTags(dict runtime.Dict, key, value runtime.Value) error {
+	if len(dict.ElementTypes) < 2 {
+		return nil
+	}
+	if !valueSatisfiesElementTag(key, dict.ElementTypes[0]) {
+		return thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot use %s key in dict<%s, %s>", key.TypeName(), dict.ElementTypes[0], dict.ElementTypes[1])}}
+	}
+	if !valueSatisfiesElementTag(value, dict.ElementTypes[1]) {
+		return thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot assign %s to dict<%s, %s>", value.TypeName(), dict.ElementTypes[0], dict.ElementTypes[1])}}
+	}
+	return nil
+}
+
+// valueSatisfiesElementTag is the element-tag write barrier: name-level
+// match first, then the value's class hierarchy (subclass and
+// implementer writes into honestly-tagged collections are legal).
+func valueSatisfiesElementTag(value runtime.Value, tag string) bool {
+	if typeNameSatisfies(value.TypeName(), tag) {
+		return true
+	}
+	if arms, ok := splitTopLevelUnion(tag); ok {
+		for _, arm := range arms {
+			if valueSatisfiesElementTag(value, arm) {
+				return true
+			}
+		}
+		return false
+	}
+	return runtime.ValueSatisfiesHierarchyLeaf(value, simpleTypeName(strings.TrimSpace(tag)))
+}
+
 func typeNameSatisfies(have, want string) bool {
 	if want == "any" || want == "?any" {
 		return true
@@ -5643,26 +5676,11 @@ func lookupStaticValue(class *runtime.Class, name string) (runtime.Value, bool) 
 }
 
 func classImplementsInterface(class *runtime.Class, name string) bool {
-	for current := class; current != nil; current = current.Parent {
-		for _, iface := range current.Implements {
-			if interfaceMatches(iface, name) {
-				return true
-			}
-		}
-	}
-	return false
+	return runtime.ClassImplementsInterface(class, name)
 }
 
 func interfaceMatches(iface *runtime.Interface, name string) bool {
-	if strings.EqualFold(iface.Name, name) {
-		return true
-	}
-	for _, parent := range iface.Parents {
-		if interfaceMatches(parent, name) {
-			return true
-		}
-	}
-	return false
+	return runtime.InterfaceMatches(iface, name)
 }
 
 func validateInterfaceImplementation(class *runtime.Class, iface *runtime.Interface) error {
@@ -22292,6 +22310,10 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 			}
 		}
 	}
+	// Re-stamp: argument evaluation can move currentLine off this call site.
+	if call.Token.Line > 0 {
+		e.currentLine = call.Token.Line
+	}
 	return e.evalMethodCall(receiver, name, args)
 }
 
@@ -22589,6 +22611,9 @@ func (e *Evaluator) assignIndex(expr *ast.IndexExpression, newValue runtime.Valu
 		if value.Frozen {
 			return thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
 		}
+		if len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(newValue, value.ElementTypes[0]) {
+			return thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot assign %s to list<%s>", newValue.TypeName(), value.ElementTypes[0])}}
+		}
 		i, err := indexInt(index)
 		if err != nil {
 			return err
@@ -22604,6 +22629,9 @@ func (e *Evaluator) assignIndex(expr *ast.IndexExpression, newValue runtime.Valu
 	case runtime.Dict:
 		if value.Frozen {
 			return thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen dict"}}
+		}
+		if err := checkDictWriteTags(value, index, newValue); err != nil {
+			return err
 		}
 		value.PutEntry(dictKey(index), runtime.DictEntry{Key: index, Value: newValue})
 		return nil

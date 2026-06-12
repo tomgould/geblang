@@ -141,10 +141,20 @@ func collectTypeRefsStmt(stmt ast.Statement, fn func(*ast.TypeRef)) {
 		collectTypeRefsExpr(s.Iterable, fn)
 		collectTypeRefsBlock(s.Body, fn)
 	case *ast.FunctionStatement:
+		for _, g := range s.Generics {
+			if g != nil {
+				collectTypeRef(g.Constraint, fn)
+			}
+		}
 		collectTypeRefsParams(s.Parameters, fn)
 		collectTypeRef(s.ReturnType, fn)
 		collectTypeRefsBlock(s.Body, fn)
 	case *ast.ClassStatement:
+		for _, g := range s.Generics {
+			if g != nil {
+				collectTypeRef(g.Constraint, fn)
+			}
+		}
 		collectTypeRef(s.Extends, fn)
 		for _, impl := range s.Implements {
 			collectTypeRef(impl, fn)
@@ -265,6 +275,7 @@ func collectTypeRefsExpr(expr ast.Expression, fn func(*ast.TypeRef)) {
 	case *ast.InfixExpression:
 		collectTypeRefsExpr(e.Left, fn)
 		collectTypeRefsExpr(e.Right, fn)
+		collectTypeRef(e.RightType, fn)
 	case *ast.AssignmentExpression:
 		collectTypeRefsExpr(e.Left, fn)
 		collectTypeRefsExpr(e.Value, fn)

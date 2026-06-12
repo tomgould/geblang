@@ -47,6 +47,23 @@ func TestUncaughtRenderParity(t *testing.T) {
 		want   string
 	}{
 		{
+			name: "PrimitiveDispatchThrowAfterCallArg",
+			source: `import io;
+class Animal { func Animal() {} }
+class Dog extends Animal { func Dog() { parent(); } }
+class Cat extends Animal { func Cat() { parent(); } }
+func makeCat(): any { return Cat(); }
+func sneak(list<Animal> xs): void {
+    xs.push(makeCat());
+}
+list<Dog> dogs = [Dog()];
+sneak(dogs);
+`, // arg evaluation moves the eval's currentLine; the dispatch must re-stamp
+			want: `uncaught TypeError: cannot push Cat to list<Dog>
+  at sneak (line 7)
+  at <top level> (line 10)`,
+		},
+		{
 			name: "NestedThrow",
 			source: `import io;
 import errors;

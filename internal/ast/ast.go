@@ -923,6 +923,9 @@ type InfixExpression struct {
 	Left     Expression
 	Operator string
 	Right    Expression
+	// RightType carries the parsed TypeRef for `instanceof` (Right holds
+	// its stringified form) so annotation validators can see it.
+	RightType *TypeRef
 }
 
 func (*InfixExpression) expressionNode()        {}

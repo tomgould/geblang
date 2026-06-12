@@ -807,6 +807,26 @@ list<int> ints = [1, 2, 3];
 countStrings(ints);    # static + runtime error: list<int> is not list<string>
 ```
 
+Covariant passing is *sound* because every typed collection carries its
+reified element tag and enforces it on every write - `push`, `insert`,
+`prepend`, `unshift`, index assignment, `list.set`, dict key and value
+writes, and `set.add`. A function that received your `list<Dog>` through a
+`list<Animal>` parameter cannot smuggle a `Cat` into it; the write throws
+`TypeError` against the real tag, whatever the static view says:
+
+```gb
+func sneak(list<Animal> xs): void {
+    xs.push(Cat());   # TypeError: cannot push Cat to list<Dog>
+}
+
+list<Dog> dogs = [Dog()];
+sneak(dogs);
+```
+
+Writes that *honestly* satisfy the tag pass by hierarchy: a `Dog` or
+anything implementing a tagged interface goes into a `list<Animal>` or
+`list<Scored>` like you would expect.
+
 Covariance is convenient but, combined with mutation, is not fully
 sound: a function that takes `list<Animal>` could insert a `Cat` into a
 list the caller declared as `list<Dog>`. Re-validate at the next typed
