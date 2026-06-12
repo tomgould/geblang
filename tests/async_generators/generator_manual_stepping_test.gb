@@ -1,0 +1,54 @@
+/**
+ * @title Generator manual stepping test
+ * @summary next()/done()/close() on generator values: done() peeks
+ *          without consuming, next() yields null after exhaustion,
+ *          manual stepping composes with for-in, and close() ends
+ *          iteration early.
+ */
+import test;
+
+func counter(int n): generator<int> {
+    for (i in 1..n) {
+        yield i;
+    }
+}
+
+class GeneratorManualSteppingTest extends test.Test {
+    @test
+    func nextAndDoneStepThrough(): void {
+        let g = counter(2);
+        this.assertFalse(g.done());
+        this.assertEquals(1, g.next());
+        this.assertEquals(2, g.next());
+        this.assertTrue(g.done());
+        this.assertEquals(null, g.next());
+    }
+
+    @test
+    func doneDoesNotConsume(): void {
+        let g = counter(3);
+        this.assertFalse(g.done());
+        this.assertFalse(g.done());
+        this.assertEquals(1, g.next());
+    }
+
+    @test
+    func mixesWithForIn(): void {
+        let g = counter(3);
+        this.assertEquals(1, g.next());
+        int rest = 0;
+        for (v in g) {
+            rest = rest + v;
+        }
+        this.assertEquals(5, rest);
+    }
+
+    @test
+    func closeEndsIteration(): void {
+        let g = counter(10);
+        this.assertEquals(1, g.next());
+        g.close();
+        this.assertTrue(g.done());
+        this.assertEquals(null, g.next());
+    }
+}

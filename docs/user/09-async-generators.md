@@ -292,6 +292,32 @@ let upTo = func(int max): generator<int> {
 };
 ```
 
+### Manual stepping
+
+Generators can be stepped by hand instead of (or mixed with) `for-in`
+(1.19.0). `next()` advances and returns the next value, or `null` once
+the generator is exhausted; `done()` reports exhaustion without
+consuming a value (it peeks ahead, and the peeked value is returned by
+the following `next()`); `close()` ends iteration early and releases
+the producer:
+
+```gb
+let g = numbers();
+while (!g.done()) {
+    io.println(g.next());
+}
+
+let h = upTo(10);
+let first = h.next();     # take one by hand...
+for (n in h) {            # ...then hand the rest to for-in
+    io.println(n);
+}
+h.close();
+```
+
+For generators of nullable elements, prefer `done()` over checking
+`next()` for `null`.
+
 ## Iterable Parameters
 
 Use `iterable<T>` when an API accepts generator-like inputs:

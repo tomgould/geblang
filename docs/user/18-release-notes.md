@@ -25,6 +25,10 @@
 - Failing `geblang test` methods print the error's stack trace beneath
   the `FAIL` line. The REPL prints uncaught errors in the same
   canonical format.
+- Generators support manual stepping on both runtimes: `next()`
+  advances and returns the next value (`null` once exhausted),
+  `done()` peeks for exhaustion without consuming, and `close()` ends
+  iteration early. Manual stepping composes with `for-in`.
 - Imports are required: using a module as a selector base without
   importing it is now a semantic error on both runtimes and in
   `geblang check` (previously the bytecode runtime resolved built-in

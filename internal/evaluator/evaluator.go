@@ -7450,6 +7450,8 @@ func dirValue(value runtime.Value) []string {
 		names = primitiveMethodNamesFor("bool")
 	case runtime.NativeObject:
 		names = nativeObjectMethods(value.Kind)
+	case *runtime.Generator:
+		names = append([]string(nil), native.GeneratorMethods...)
 	case *runtime.NDArray:
 		names = append([]string(nil), native.NDArrayMethods...)
 	case *runtime.DataFrame:
@@ -22110,6 +22112,9 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 	}
 	if nativeObject, ok := receiver.(runtime.NativeObject); ok {
 		return e.NativeObjectMethod(nativeObject, name, args)
+	}
+	if gen, ok := receiver.(*runtime.Generator); ok {
+		return native.GeneratorMethod(gen, name, args)
 	}
 	if arr, ok := receiver.(*runtime.NDArray); ok {
 		return native.NDArrayMethod(arr, name, args)

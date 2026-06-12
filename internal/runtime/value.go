@@ -606,6 +606,9 @@ type Generator struct {
 	next     func() (Value, bool, error)
 	close    func()
 	closed   bool
+	// prefetch backs done(): it peeks one item ahead; Next consumes it first.
+	prefetched  Value
+	hasPrefetch bool
 }
 
 func NewGeneratorFromSlice(elements []Value) *Generator {
@@ -627,6 +630,13 @@ func (v *Generator) Next() (Value, bool, error) {
 		return nil, false, nil
 	}
 	v.mu.Lock()
+	if v.hasPrefetch {
+		value := v.prefetched
+		v.prefetched = nil
+		v.hasPrefetch = false
+		v.mu.Unlock()
+		return value, true, nil
+	}
 	if v.closed {
 		v.mu.Unlock()
 		return nil, false, nil
@@ -643,6 +653,29 @@ func (v *Generator) Next() (Value, bool, error) {
 	value := v.elements[v.index]
 	v.index++
 	return value, true, nil
+}
+
+// PeekDone reports exhaustion by prefetching one item; Next consumes
+// the prefetched item first, so done() never loses a value.
+func (v *Generator) PeekDone() (bool, error) {
+	v.mu.Lock()
+	if v.hasPrefetch {
+		v.mu.Unlock()
+		return false, nil
+	}
+	v.mu.Unlock()
+	value, ok, err := v.Next()
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return true, nil
+	}
+	v.mu.Lock()
+	v.prefetched = value
+	v.hasPrefetch = true
+	v.mu.Unlock()
+	return false, nil
 }
 
 func (v *Generator) Close() {

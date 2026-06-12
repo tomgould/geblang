@@ -13934,6 +13934,51 @@ io.println(db.query(conn, "SELECT name FROM t WHERE id = ?", 4)[0]["name"]);
 `, "15\ntrue\nn1\n4\nfalse\nn3\nn4\n")
 }
 
+// Manual generator stepping: next()/done()/close() mirror the
+// __next/__done iterator contract on both backends (1.19.0).
+func TestParityGeneratorManualStepping(t *testing.T) {
+	runParity(t, `import io;
+
+func gen(): generator<int> {
+    yield 1;
+    yield 2;
+    yield 3;
+}
+
+let g = gen();
+io.println(g.done());
+io.println(g.next());
+io.println(g.next());
+io.println(g.done());
+io.println(g.next());
+io.println(g.done());
+io.println(g.next());
+
+let h = gen();
+io.println(h.next());
+int rest = 0;
+for (v in h) {
+    rest = rest + v;
+}
+io.println("rest=${rest}");
+
+let c = gen();
+c.next();
+c.close();
+io.println(c.done());
+`, `false
+1
+2
+false
+3
+true
+null
+1
+rest=5
+true
+`)
+}
+
 // A cross-module inherited @immutable field locks after the parent ctor runs, on both backends.
 func TestParityCrossModuleImmutableField(t *testing.T) {
 	dir := t.TempDir()

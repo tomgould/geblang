@@ -66,6 +66,12 @@ let pool = db.Connection({
 });
 ```
 
+Parameterized queries use native prepared statements on all three drivers:
+PostgreSQL binds parameters over the extended protocol (pgx caches the
+server-side statements), MySQL uses the binary protocol's prepare/execute
+pair, and SQLite binds through its prepared-statement C API. Parameter
+values are never interpolated into SQL text.
+
 SQLite connections default to a five-second `busy_timeout` on every pooled
 connection so concurrent access waits instead of failing with
 `database is locked`; pass your own `busy_timeout` or `_pragma` DSN parameter

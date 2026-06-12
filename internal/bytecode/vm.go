@@ -13167,6 +13167,14 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			return 0, vm.runtimeError(instruction, "Task has no method %s", nameValue.Value)
 		}
 	}
+	if gen, ok := receiver.(*runtime.Generator); ok {
+		result, err := native.GeneratorMethod(gen, nameValue.Value, args)
+		if err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		vm.push(result)
+		return ip, nil
+	}
 	if arr, ok := receiver.(*runtime.NDArray); ok {
 		result, err := native.NDArrayMethod(arr, nameValue.Value, args)
 		if err != nil {
