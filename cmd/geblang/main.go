@@ -2299,6 +2299,23 @@ func (l *bytecodeModuleLoader) UnimplementedAbstractMethods(module, className st
 	return nil
 }
 
+func (l *bytecodeModuleLoader) ModuleMethodParamNames(module string, className string, methodName string) ([]string, error) {
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script class %s referenced without a main chunk", className)
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunks[module]
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", module)
+		}
+		chunk = c
+	}
+	return chunk.MethodParamNames(className, methodName)
+}
+
 func (l *bytecodeModuleLoader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if module == "" {

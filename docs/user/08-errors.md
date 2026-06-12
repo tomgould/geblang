@@ -307,6 +307,10 @@ try {
 | `toDict()` | `dict` | `{function, line}` |
 | `toString()` | `string` | Human-readable single frame |
 
+Method frames are qualified with their declaring class as `Class.method`
+(an inherited method reports the class that declared it, not the subclass
+instance). Plain functions report their bare name.
+
 For dictionary-oriented code, `errors.frames(e)` is shorthand for
 `errors.stackTrace(e).toList()`.
 
@@ -322,10 +326,29 @@ stack-overflow and other unrecoverable conditions surface as
 
 ## Stack Traces
 
-Uncaught runtime errors include source-aware stack information when available.
+An error that escapes to the top level prints a classed header followed
+by one line per stack frame, identically on the evaluator and the
+bytecode VM (1.19.0):
+
+```
+uncaught ValueError: x too big: 7
+  at inner (line 6)
+  at middle (line 12)
+  at <top level> (line 15)
+```
+
+Frames are innermost first. The innermost frame shows the line where the
+error happened; every caller frame shows the line of its call site; the
+final `<top level>` frame shows where top-level code entered the chain.
+Runtime faults use the same shape with the `RuntimeError` class. Method
+frames are qualified as `Class.method`, anonymous functions render as
+`<closure>`, and a deep tail-recursive run collapses into a single
+`at f (line 8) [x1000]` entry instead of a thousand identical lines.
+
 Caught errors expose the same information through `errors.StackTrace` and
 `errors.Frame`, which is more stable for logging, testing, and tooling than
-parsing the displayed uncaught-error output.
+parsing the displayed uncaught-error output. Failing `geblang test` methods
+report the same trace beneath the `FAIL` line.
 
 When you convert low-level failures into domain errors, preserve the useful
 message:

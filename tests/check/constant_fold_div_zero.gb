@@ -1,8 +1,9 @@
 /**
  * @category Tests
- * @summary geblang check warns on a literal `// 0` / `% 0`. The failure is
- * a catchable runtime throw on both backends (1.16.0); the analyzer flags
- * the inevitable throw as an advisory warning, not a compile error.
+ * @summary geblang check warns on a literal `/ 0`, `// 0`, or `% 0`. The
+ * failure is a catchable runtime throw on both backends (1.16.0); the analyzer
+ * flags the inevitable throw as an advisory warning, not a compile error.
  */
 let x = 5 // 0;
 let y = 5 % 0;
+let z = 5 / 0;

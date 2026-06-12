@@ -1,0 +1,44 @@
+/**
+ * @title Method frame name test
+ * @summary Caught-error stack frames qualify methods as the declaring
+ *          class in declared case (Class.method), including inherited
+ *          methods which report the declaring class, not the subclass.
+ */
+import test;
+
+class Worker {
+    func work(int x): int {
+        throw RuntimeError("method boom");
+    }
+}
+
+class Base {
+    func boom(): int {
+        throw RuntimeError("inherited boom");
+    }
+}
+
+class Sub extends Base {
+}
+
+class MethodFrameNameTest extends test.Test {
+    @test
+    func methodFrameIsQualified(): void {
+        try {
+            Worker().work(5);
+        } catch (RuntimeError e) {
+            let first = e.stackTrace().first();
+            this.assertEquals("Worker.work", first.function());
+        }
+    }
+
+    @test
+    func inheritedMethodFrameUsesDeclaringClass(): void {
+        try {
+            Sub().boom();
+        } catch (RuntimeError e) {
+            let first = e.stackTrace().first();
+            this.assertEquals("Base.boom", first.function());
+        }
+    }
+}

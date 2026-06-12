@@ -1046,12 +1046,15 @@ type Error struct {
 	// a caught-and-discarded runtime fault pays no trace-formatting cost.
 	// When StackTrace is non-empty it takes precedence (eager path).
 	TraceFn func() string
+	// TraceFrames holds the structured trace (innermost first) populated at throw time.
+	TraceFrames  []StackFrame
+	ErrorLine    int
+	TopLevelLine int
 }
 
 func (v Error) TypeName() string { return v.Class }
 
-// ResolvedStackTrace returns the eager StackTrace string when set,
-// otherwise formats the lazy trace, otherwise empty.
+// ResolvedStackTrace returns the first available trace: eager StackTrace, TraceFn, then FramesTrace.
 func (v Error) ResolvedStackTrace() string {
 	if v.StackTrace != "" {
 		return v.StackTrace
@@ -1059,12 +1062,29 @@ func (v Error) ResolvedStackTrace() string {
 	if v.TraceFn != nil {
 		return v.TraceFn()
 	}
+	if t := v.FramesTrace(); t != "" {
+		return t
+	}
 	return ""
 }
 
-// HasStackTrace reports whether any trace (eager or lazy) is available.
+// FramesTrace renders TraceFrames in the stored-StackTrace convention (no leading newline, no header).
+func (v Error) FramesTrace() string {
+	if len(v.TraceFrames) == 0 {
+		return ""
+	}
+	u := UncaughtError{Class: v.Class, ErrorLine: v.ErrorLine, Frames: v.TraceFrames, TopLevelLine: v.TopLevelLine}
+	full := u.Render()
+	idx := strings.Index(full, "\n")
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimPrefix(full[idx:], "\n")
+}
+
+// HasStackTrace reports whether any trace (eager, lazy, or structured) is available.
 func (v Error) HasStackTrace() bool {
-	return strings.TrimSpace(v.StackTrace) != "" || v.TraceFn != nil
+	return strings.TrimSpace(v.StackTrace) != "" || v.TraceFn != nil || len(v.TraceFrames) > 0
 }
 
 // IsFatal reports whether the error must bypass every try/catch (even

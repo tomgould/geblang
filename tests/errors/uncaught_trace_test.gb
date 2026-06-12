@@ -1,0 +1,88 @@
+/**
+ * @title Structured stack trace test
+ * @summary Caught errors expose structured frames: the throw site on
+ *          the innermost frame, call-site lines on caller frames, a
+ *          trailing <top level> frame, tail-recursion expansion, and
+ *          <closure> naming for anonymous functions.
+ */
+import test;
+import errors;
+
+func inner(int x): int {
+    throw RuntimeError("trace boom");
+}
+
+func middle(int x): int {
+    return inner(x);
+}
+
+func down(int n): int {
+    if (n == 0) {
+        throw RuntimeError("bottom");
+    }
+    return down(n - 1);
+}
+
+class UncaughtTraceTest extends test.Test {
+    @test
+    func framesReflectThrowAndCallSites(): void {
+        try {
+            middle(5);
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            this.assertEquals("inner", frames[0].function());
+            this.assertEquals(12, frames[0].line());
+            this.assertEquals("middle", frames[1].function());
+            this.assertEquals(16, frames[1].line());
+            let last = frames[frames.length() - 1];
+            this.assertEquals("<top level>", last.function());
+        }
+    }
+
+    @test
+    func faultIsClassedRuntimeErrorWithTrace(): void {
+        int zero = 0;
+        try {
+            let x = 10 / zero;
+        } catch (RuntimeError e) {
+            this.assertEquals("decimal division by zero", e.message);
+            this.assertTrue(errors.hasStackTrace(e));
+            this.assertTrue(e.stackTrace().length() > 0);
+        }
+    }
+
+    @test
+    func tailRecursiveThrowExpandsRepeatedFrames(): void {
+        try {
+            down(50);
+        } catch (RuntimeError e) {
+            let frames = e.stackTrace().frames();
+            int downCount = 0;
+            for (f in frames) {
+                if (f.function() == "down") {
+                    downCount = downCount + 1;
+                }
+            }
+            this.assertEquals(51, downCount);
+            this.assertEquals("down", frames[0].function());
+        }
+    }
+
+    @test
+    func closureFramesUseClosureName(): void {
+        let f = func(int x): int {
+            throw RuntimeError("anon boom");
+        };
+        try {
+            f(1);
+        } catch (RuntimeError e) {
+            this.assertEquals("<closure>", e.stackTrace().first().function());
+        }
+    }
+
+    @test
+    func freshErrorHasNoTraceUntilThrown(): void {
+        let e = errors.new("ValueError", "never thrown");
+        this.assertFalse(errors.hasStackTrace(e));
+    }
+}

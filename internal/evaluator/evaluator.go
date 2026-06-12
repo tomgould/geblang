@@ -124,6 +124,8 @@ type Evaluator struct {
 	deferFrames          []*deferFrame
 	yieldFrames          []*yieldFrame
 	callStack            []evalFrame
+	currentLine          int // most recent statement/call/throw line, for error attribution
+	topLevelLine         int // line of the call that left the top-level frame
 	callDepth            int
 	maxCallDepth         int
 	// classStack tracks the lexical class of the currently executing
@@ -551,10 +553,11 @@ type deferFrame struct {
 }
 
 type evalFrame struct {
-	name string
-	line int
-	fn   *runtime.Function
-	env  *runtime.Environment // environment at function entry (for per-frame variable inspection)
+	name     string
+	line     int
+	callLine int // source line of the call that entered this frame
+	fn       *runtime.Function
+	env      *runtime.Environment // environment at function entry (for per-frame variable inspection)
 }
 
 type generatorItem struct {
@@ -578,6 +581,34 @@ type signal struct {
 
 type thrownError struct {
 	value runtime.Error
+}
+
+// destructorFailure recovers the typed throw from a destructor error; non-throw faults class as RuntimeError.
+func destructorFailure(err error) runtime.Error {
+	var thrown thrownError
+	if errors.As(err, &thrown) {
+		return thrown.value
+	}
+	return runtime.NewRecoverableError(err)
+}
+
+// uncaughtFromError converts a top-level thrownError exit to the canonical contract; other errors pass through.
+func uncaughtFromError(err error) error {
+	var thrown thrownError
+	if errors.As(err, &thrown) {
+		return uncaughtFromThrown(thrown.value)
+	}
+	return err
+}
+
+func uncaughtFromThrown(v runtime.Error) *runtime.UncaughtError {
+	return &runtime.UncaughtError{
+		Class:        v.Class,
+		Message:      v.Message,
+		ErrorLine:    v.ErrorLine,
+		Frames:       v.TraceFrames,
+		TopLevelLine: v.TopLevelLine,
+	}
 }
 
 func (e thrownError) Error() string {
@@ -873,21 +904,17 @@ func (e *Evaluator) Eval(program *ast.Program) (result Result, err error) {
 	e.pushDeferFrame()
 	sig, err := e.evalTopLevelStatements(program.Statements, env)
 	if err != nil {
-		return Result{}, err
+		return Result{}, uncaughtFromError(err)
 	}
 	sig, err = e.runAndPopDefers(sig)
 	if err != nil {
-		return Result{}, err
+		return Result{}, uncaughtFromError(err)
 	}
 	if sig.exited {
 		return Result{ExitCode: sig.exitCode, Exited: true}, nil
 	}
 	if sig.kind == "throw" && sig.thrown != nil {
-		msg := "uncaught " + sig.thrown.Inspect()
-		if sig.thrown.StackTrace != "" {
-			msg += sig.thrown.StackTrace
-		}
-		return Result{}, fmt.Errorf("%s", msg)
+		return Result{}, uncaughtFromThrown(*sig.thrown)
 	}
 	return Result{ExitCode: 0}, nil
 }
@@ -914,7 +941,7 @@ func (e *Evaluator) runDestructorSweep() {
 			}
 			inst.Destroyed = true
 			if _, err := e.applyFunctionWithThis(*inst.Class.Destructor, nil, inst); err != nil {
-				fmt.Fprintf(e.stderr, "destructor for %s: %v\n", inst.Class.Name, err)
+				fmt.Fprintln(e.stderr, runtime.RenderDestructorFailure(inst.Class.Name, destructorFailure(err)))
 			}
 		}
 	}
@@ -1983,6 +2010,9 @@ func mergeDecoratedClassMetadata(original *runtime.Class, decorated *runtime.Cla
 }
 
 func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) (signal, error) {
+	if line := statementLine(stmt); line > 0 {
+		e.currentLine = line
+	}
 	switch stmt := stmt.(type) {
 	case *ast.ModuleStatement:
 		return signal{}, nil
@@ -2117,6 +2147,9 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 			e.registerDefer(stmt.Value, env)
 			return signal{}, nil
 		case "throw":
+			if stmt.Token.Line > 0 {
+				e.currentLine = stmt.Token.Line
+			}
 			value, err := e.evalExpression(stmt.Value, env)
 			if err != nil {
 				return signal{}, err
@@ -4785,7 +4818,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 	if stmt.Destructor != nil {
 		dtor := stmt.Destructor
 		methodTypeParams := append(typeParameterNames(dtor.Generics), classTypeParams...)
-		fn := runtime.Function{Name: dtor.Name.Value, Doc: dtor.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(dtor.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(dtor.Parameters), ReturnType: e.resolveTypeRef(dtor.ReturnType), Body: dtor.Body, Env: env, Decorators: dtor.Decorators, Target: "method", Async: dtor.Async, IsGenerator: false, ForwardThis: true}
+		fn := runtime.Function{Name: "~" + dtor.Name.Value, Doc: dtor.Doc, TypeParameters: methodTypeParams, TypeParamConstraints: mergeTypeParamConstraints(typeParamConstraints(dtor.Generics), classTypeParamConstraints), Parameters: e.resolveParameters(dtor.Parameters), ReturnType: e.resolveTypeRef(dtor.ReturnType), Body: dtor.Body, Env: env, Decorators: dtor.Decorators, Target: "method", Async: dtor.Async, IsGenerator: false, ForwardThis: true}
 		decorated, err := e.applyCallableFunctionDecorators(fn, dtor.Decorators, env)
 		if err != nil {
 			return nil, err
@@ -6741,6 +6774,9 @@ func (e *Evaluator) applyCallableValueRaw(callee runtime.Value, call *ast.CallEx
 		if err != nil {
 			return nil, err
 		}
+		if call.Token.Line > 0 {
+			e.currentLine = call.Token.Line
+		}
 		if fn.ForwardThis {
 			if value, ok := env.Get("this"); ok {
 				if instance, ok := value.(*runtime.Instance); ok {
@@ -6764,6 +6800,9 @@ func (e *Evaluator) applyCallableValueRaw(callee runtime.Value, call *ast.CallEx
 		args, err := e.evalFunctionCallArguments(method, call, env)
 		if err != nil {
 			return nil, err
+		}
+		if call.Token.Line > 0 {
+			e.currentLine = call.Token.Line
 		}
 		return e.applyFunctionWithThis(method, args, instance)
 	}
@@ -6790,6 +6829,9 @@ func (e *Evaluator) stampDecoratedClassResult(callee ast.Expression, result runt
 }
 
 func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runtime.Environment, expected *ast.TypeRef) (runtime.Value, error) {
+	if call.Token.Line > 0 {
+		e.currentLine = call.Token.Line
+	}
 	if ident, ok := call.Callee.(*ast.Identifier); ok && ident.Value == "parent" {
 		this, err := currentInstance(env)
 		if err != nil {
@@ -7019,6 +7061,9 @@ func (e *Evaluator) callModuleExport(module, name string, call *ast.CallExpressi
 		args, err := e.evalFunctionCallArguments(fn, call, env)
 		if err != nil {
 			return nil, err
+		}
+		if call.Token.Line > 0 {
+			e.currentLine = call.Token.Line
 		}
 		return e.applyFunction(fn, args)
 	}
@@ -11119,7 +11164,7 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 			}
 			if testErr != nil {
 				failed++
-				failures = append(failures, runtime.String{Value: method.Name + ": " + testErr.Error()})
+				failures = append(failures, runtime.String{Value: method.Name + ": " + failureWithTrace(testErr)})
 				tests = append(tests, testCaseDict(method.Name, false, testErr.Error()))
 				continue
 			}
@@ -11145,6 +11190,18 @@ func (e *Evaluator) testRun(call *ast.CallExpression, args []runtime.Value) (run
 	putDict(entries, "failures", &runtime.List{Elements: failures})
 	putDict(entries, "tests", &runtime.List{Elements: tests})
 	return runtime.Dict{Entries: entries}, nil
+}
+
+// failureWithTrace appends the thrown error's trace to a test-failure line so the default runner output shows where the failure happened.
+func failureWithTrace(err error) string {
+	msg := err.Error()
+	var thrown thrownError
+	if errors.As(err, &thrown) {
+		if t := thrown.value.FramesTrace(); t != "" {
+			return msg + "\n" + t
+		}
+	}
+	return msg
 }
 
 // skipDecoratorReason returns the optional string argument of a @Skip decorator.
@@ -15706,9 +15763,13 @@ func (e *Evaluator) httpServe(call *ast.CallExpression, args []runtime.Value) (r
 	if err != nil {
 		return nil, err
 	}
+	debug, err := parseDebugFlag(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	server := &http.Server{
 		Addr:     addr.Value,
-		Handler:  e.httpHandler(handler, pool, tp, maxBody),
+		Handler:  e.httpHandler(handler, pool, tp, maxBody, serveDebugEnabled(debug)),
 		ErrorLog: errLog,
 	}
 	if tlsCfg != nil {
@@ -15760,11 +15821,15 @@ func (e *Evaluator) httpListen(call *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
+	debug, err := parseDebugFlag(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	listener, err := net.Listen("tcp", addr.Value)
 	if err != nil {
 		return nil, err
 	}
-	server := &http.Server{Handler: e.httpHandler(handler, pool, tp, maxBody), ErrorLog: errLog}
+	server := &http.Server{Handler: e.httpHandler(handler, pool, tp, maxBody, serveDebugEnabled(debug)), ErrorLog: errLog}
 	handle := &httpServerHandle{server: server, listener: listener, done: make(chan error, 1), pool: pool, certPEM: certPEM}
 	e.httpServerMu.Lock()
 	e.nextHTTPServerID++
@@ -16035,7 +16100,7 @@ func waitHTTPServerDone(handle *httpServerHandle) error {
 	return err
 }
 
-func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool, tp *trustedProxies, maxBody int64) http.Handler {
+func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool, tp *trustedProxies, maxBody int64, debug bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if pool != nil && !pool.IsUnbounded() {
 			if err := pool.Acquire(r.Context()); err != nil {
@@ -16074,7 +16139,14 @@ func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool,
 		}
 		response, err := e.callHTTPHandler(handler, r, body, tp)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			headline, rendered := serveErrorParts(err)
+			if debug {
+				fmt.Fprintln(e.stderr, rendered)
+				http.Error(w, rendered, http.StatusInternalServerError)
+			} else {
+				fmt.Fprintf(e.stderr, "http.serve: handler error: %s\n", headline)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
 			return
 		}
 		e.writeHTTPResponse(w, r, response)
@@ -16162,6 +16234,51 @@ func parseMaxBodyBytes(opts runtime.Value, label string) (int64, error) {
 		return 0, fmt.Errorf("%s opts.maxBodyBytes must be a non-negative int", label)
 	}
 	return n, nil
+}
+
+// parseDebugFlag reads opts.debug for http.serve/listen.
+func parseDebugFlag(opts runtime.Value, label string) (bool, error) {
+	dict, ok := opts.(runtime.Dict)
+	if !ok {
+		return false, nil
+	}
+	v, ok := dictField(dict, "debug")
+	if !ok {
+		return false, nil
+	}
+	b, ok := v.(runtime.Bool)
+	if !ok {
+		return false, fmt.Errorf("%s opts.debug must be a bool", label)
+	}
+	return b.Value, nil
+}
+
+// serveDebugEnabled folds the opts.debug flag with the GEBLANG_DEBUG env switch.
+func serveDebugEnabled(optDebug bool) bool {
+	if optDebug {
+		return true
+	}
+	v := os.Getenv("GEBLANG_DEBUG")
+	return v != "" && v != "0"
+}
+
+// serveErrorParts extracts a one-line headline and the full canonical render from a handler error.
+func serveErrorParts(err error) (string, string) {
+	var thrown thrownError
+	if errors.As(err, &thrown) {
+		v := thrown.value
+		return v.Inspect(), uncaughtFromThrown(v).Render()
+	}
+	var uncaught *runtime.UncaughtError
+	if errors.As(err, &uncaught) {
+		headline := uncaught.Class
+		if uncaught.Message != "" {
+			headline += ": " + uncaught.Message
+		}
+		return headline, uncaught.Render()
+	}
+	rerr := runtime.NewRecoverableError(err)
+	return rerr.Inspect(), uncaughtFromThrown(rerr).Render()
 }
 
 // trustedProxies matches peer IPs allowed to set X-Forwarded-* headers.
@@ -21772,6 +21889,9 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 			return nil, err
 		}
 		if method, ok := lookupStaticMethod(class, "__callStatic"); ok {
+			if call.Token.Line > 0 {
+				e.currentLine = call.Token.Line
+			}
 			return e.applyFunction(method, []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}})
 		}
 		return nil, fmt.Errorf("unknown static method %s.%s", class.Name, name)
@@ -21786,6 +21906,9 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 			return nil, err
 		}
 		if method, ok := lookupMethod(instance.Class, "__call"); ok {
+			if call.Token.Line > 0 {
+				e.currentLine = call.Token.Line
+			}
 			return e.applyFunctionWithThis(method, []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}}, instance)
 		}
 		return nil, native.UnknownMethodError(instance.Class.Name, name)
@@ -22616,6 +22739,10 @@ func (e *Evaluator) applyOverloadedFunction(label string, overloads []runtime.Fu
 			merged[chosen.TypeParameters[i]] = t.Name
 		}
 		chosen.TypeBindings = merged
+	}
+	// Re-stamp: argument evaluation above can move currentLine off this call site.
+	if call.Token.Line > 0 {
+		e.currentLine = call.Token.Line
 	}
 	return e.applyFunctionWithThis(chosen, matchedArgs[0], this)
 }
@@ -23733,11 +23860,18 @@ func (e *Evaluator) pushFunction(fn *runtime.Function, env *runtime.Environment)
 	if fn != nil && fn.Body != nil {
 		line = fn.Body.Token.Line
 	}
-	name := "<anonymous>"
+	name := "<closure>"
 	if fn != nil && fn.Name != "" {
 		name = fn.Name
+		// Qualify methods by declaring class to match the VM registry.
+		if fn.OwnerClass != nil {
+			name = fn.OwnerClass.Name + "." + name
+		}
 	}
-	e.callStack = append(e.callStack, evalFrame{name: name, line: line, fn: fn, env: env})
+	if len(e.callStack) == 0 {
+		e.topLevelLine = e.currentLine
+	}
+	e.callStack = append(e.callStack, evalFrame{name: name, line: line, callLine: e.currentLine, fn: fn, env: env})
 }
 
 func (e *Evaluator) popFunction() {
@@ -23753,23 +23887,30 @@ func (e *Evaluator) currentFunction() *runtime.Function {
 	return e.callStack[len(e.callStack)-1].fn
 }
 
-func (e *Evaluator) callStackTrace() string {
-	var sb strings.Builder
-	for i := len(e.callStack) - 1; i >= 0; i-- {
-		frame := e.callStack[i]
-		if frame.line > 0 {
-			fmt.Fprintf(&sb, "\n  at %s (line %d)", frame.name, frame.line)
-		} else {
-			fmt.Fprintf(&sb, "\n  at %s", frame.name)
+// captureFrames maps the eval call stack to contract frames: frame i displays the line where it called inward (callStack[i+1].callLine), innermost displays errorLine via CallLine 0.
+func (e *Evaluator) captureFrames() ([]runtime.StackFrame, int, int) {
+	n := len(e.callStack)
+	frames := make([]runtime.StackFrame, 0, n)
+	for i := n - 1; i >= 0; i-- {
+		line := 0
+		if i+1 < n {
+			line = e.callStack[i+1].callLine
 		}
+		frames = append(frames, runtime.StackFrame{Name: e.callStack[i].name, CallLine: line})
 	}
-	sb.WriteString("\n  at <top level>")
-	return sb.String()
+	topLevelLine := e.topLevelLine
+	if n > 0 {
+		topLevelLine = e.callStack[0].callLine
+	} else {
+		// No frames: the throw/fault happened at module top level; show its line.
+		topLevelLine = e.currentLine
+	}
+	return runtime.CollapseFrames(frames), e.currentLine, topLevelLine
 }
 
 func (e *Evaluator) withTrace(err runtime.Error) runtime.Error {
-	if err.StackTrace == "" {
-		err.StackTrace = e.callStackTrace()
+	if !err.HasStackTrace() {
+		err.TraceFrames, err.ErrorLine, err.TopLevelLine = e.captureFrames()
 	}
 	return err
 }

@@ -1,6 +1,7 @@
 module messaging.rabbitmq;
 
 import amqp;
+import async;
 import bytes;
 import json;
 

@@ -404,6 +404,49 @@ func (g *fuzzGen) program() string {
 	return b.String()
 }
 
+// uncaughtProgram emits a program whose final statement throws or faults
+// with nothing catching it; the rendered uncaught output (header + frame
+// lines) is a guarded parity surface since 1.19.0.
+func (g *fuzzGen) uncaughtProgram() string {
+	var b strings.Builder
+	b.WriteString("import io;\n")
+	rt := func(n int) string { return "(\"" + strconv.Itoa(n) + "\".toInt())" }
+	msg := g.stringLit()
+	switch g.rng.Intn(7) {
+	case 0: // plain call chain
+		b.WriteString("func inner(int x): int { throw ValueError(" + msg + "); }\n")
+		b.WriteString("func middle(int x): int { let r = inner(x + 1); return r; }\n")
+		b.WriteString("io.println(\"pre\");\n")
+		b.WriteString("io.println(middle(" + g.intLit() + "));\n")
+	case 1: // method throw
+		b.WriteString("class Boomer {\n  func work(int x): int { throw ValueError(" + msg + "); }\n}\n")
+		b.WriteString("io.println(Boomer().work(" + g.intLit() + "));\n")
+	case 2: // self tail recursion (collapse path)
+		depth := 2 + g.rng.Intn(40)
+		b.WriteString("func down(int n): int {\n  if (n == 0) { throw ValueError(" + msg + "); }\n  return down(n - 1);\n}\n")
+		b.WriteString("io.println(down(" + strconv.Itoa(depth) + "));\n")
+	case 3: // deferred throw
+		b.WriteString("func explode() { throw ValueError(" + msg + "); }\n")
+		b.WriteString("func run() {\n  defer explode();\n  io.println(\"body\");\n}\n")
+		b.WriteString("run();\n")
+	case 4: // runtime fault, uncaught (runtime operands defeat constant folding)
+		if g.rng.Intn(2) == 0 {
+			b.WriteString("let xs = [" + g.intLit() + ", " + g.intLit() + "];\n")
+			b.WriteString("io.println(xs[" + rt(7+g.rng.Intn(90)) + "]);\n")
+		} else {
+			b.WriteString("io.println(" + rt(1+g.rng.Intn(99)) + " // " + rt(0) + ");\n")
+		}
+	case 5: // caught then rethrown, escaping at top level
+		b.WriteString("func origin() { throw ValueError(" + msg + "); }\n")
+		b.WriteString("func relay() {\n  try { origin(); } catch (ValueError e) { throw e; }\n}\n")
+		b.WriteString("relay();\n")
+	default: // closure throw
+		b.WriteString("let f = func(int x): int { throw ValueError(" + msg + "); };\n")
+		b.WriteString("io.println(f(" + g.intLit() + "));\n")
+	}
+	return b.String()
+}
+
 func fuzzRunBoth(source string) (evOut string, evErr error, vmOut string, vmErr error, compileErr error) {
 	p := parser.New(lexer.New(source))
 	program := p.ParseProgram()
@@ -436,14 +479,27 @@ func TestParityFuzz(t *testing.T) {
 	}
 	g := &fuzzGen{rng: rand.New(rand.NewSource(seed))}
 	for i := 0; i < iters; i++ {
-		src := g.program()
+		wantUncaught := i%4 == 3
+		var src string
+		if wantUncaught {
+			src = g.uncaughtProgram()
+		} else {
+			src = g.program()
+		}
 		evOut, evErr, vmOut, vmErr, compileErr := fuzzRunBoth(src)
 		if compileErr != nil {
 			t.Fatalf("generated program did not compile (seed %d, iter %d): %v\n%s", seed, i, compileErr, src)
 		}
+		if wantUncaught && evErr == nil {
+			t.Fatalf("uncaught program did not fail (seed %d, iter %d)\n%s", seed, i, src)
+		}
 		if (evErr == nil) != (vmErr == nil) {
 			t.Fatalf("PARITY: success/failure divergence (seed %d, iter %d)\nprogram:\n%s\neval err: %v\nvm err: %v\neval out: %q\nvm out: %q",
 				seed, i, src, evErr, vmErr, evOut, vmOut)
+		}
+		if evErr != nil && vmErr != nil && evErr.Error() != vmErr.Error() {
+			t.Fatalf("PARITY: uncaught-render divergence (seed %d, iter %d)\nprogram:\n%s\n--- eval ---\n%s\n--- vm ---\n%s",
+				seed, i, src, evErr.Error(), vmErr.Error())
 		}
 		if evOut != vmOut {
 			t.Fatalf("PARITY: stdout divergence (seed %d, iter %d)\nprogram:\n%s\neval: %q\nvm:   %q",

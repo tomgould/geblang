@@ -581,6 +581,27 @@ Absent (or `0`) means unlimited:
 http.listen(":8080", handler, { "maxBodyBytes": 10 * 1024 * 1024 });
 ```
 
+#### Handler errors and debug mode
+
+When a handler throws and nothing catches it, the client receives a
+generic `500 Internal Server Error` body and the server logs one line
+to stderr (`http.serve: handler error: ValueError: ...`). Error text is
+never sent to clients in this default mode (1.19.0; earlier releases
+returned the raw error text in the 500 body).
+
+During development, enable debug mode to get the full stack trace both
+in the server log and in the 500 response body. Set the `debug` server
+option, or set the `GEBLANG_DEBUG` environment variable to any
+non-empty value other than `0`:
+
+```gb
+http.listen(":8080", handler, { "debug": true });
+```
+
+```sh
+GEBLANG_DEBUG=1 geblang server.gb
+```
+
 #### Graceful shutdown
 
 `http.shutdown(server, timeoutMs = 5000)` stops accepting new

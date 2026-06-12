@@ -2,7 +2,6 @@ package evaluator
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"sort"
 
@@ -62,9 +61,9 @@ func (s *Session) Eval(program *ast.Program) (SessionResult, error) {
 			if err != nil {
 				var thrown thrownError
 				if errors.As(err, &thrown) {
-					return SessionResult{}, fmt.Errorf("uncaught %s", thrown.value.Inspect())
+					return SessionResult{}, uncaughtFromThrown(thrown.value)
 				}
-				return SessionResult{}, fmt.Errorf("uncaught RuntimeError: %s", err.Error())
+				return SessionResult{}, &runtime.UncaughtError{Class: "RuntimeError", Message: err.Error()}
 			}
 			if exit, ok := value.(exitValue); ok {
 				return SessionResult{ExitCode: exit.code, Exited: true}, nil
@@ -78,18 +77,18 @@ func (s *Session) Eval(program *ast.Program) (SessionResult, error) {
 			sig, err := s.evaluator.evalStatements(program.Statements[:len(program.Statements)-1], s.env)
 			if err != nil {
 				_, _ = s.evaluator.runAndPopDefers(signal{})
-				return SessionResult{}, err
+				return SessionResult{}, uncaughtFromError(err)
 			}
 			if sig.kind != "" || sig.exited {
 				sig, err = s.evaluator.runAndPopDefers(sig)
 				if err != nil {
-					return SessionResult{}, err
+					return SessionResult{}, uncaughtFromError(err)
 				}
 				if sig.exited {
 					return SessionResult{ExitCode: sig.exitCode, Exited: true}, nil
 				}
 				if sig.kind == "throw" && sig.thrown != nil {
-					return SessionResult{}, fmt.Errorf("uncaught %s", sig.thrown.Inspect())
+					return SessionResult{}, uncaughtFromThrown(*sig.thrown)
 				}
 				return SessionResult{}, nil
 			}
@@ -98,19 +97,19 @@ func (s *Session) Eval(program *ast.Program) (SessionResult, error) {
 				_, _ = s.evaluator.runAndPopDefers(signal{})
 				var thrown thrownError
 				if errors.As(err, &thrown) {
-					return SessionResult{}, fmt.Errorf("uncaught %s", thrown.value.Inspect())
+					return SessionResult{}, uncaughtFromThrown(thrown.value)
 				}
-				return SessionResult{}, fmt.Errorf("uncaught RuntimeError: %s", err.Error())
+				return SessionResult{}, &runtime.UncaughtError{Class: "RuntimeError", Message: err.Error()}
 			}
 			sig, err = s.evaluator.runAndPopDefers(signal{})
 			if err != nil {
-				return SessionResult{}, err
+				return SessionResult{}, uncaughtFromError(err)
 			}
 			if sig.exited {
 				return SessionResult{ExitCode: sig.exitCode, Exited: true}, nil
 			}
 			if sig.kind == "throw" && sig.thrown != nil {
-				return SessionResult{}, fmt.Errorf("uncaught %s", sig.thrown.Inspect())
+				return SessionResult{}, uncaughtFromThrown(*sig.thrown)
 			}
 			if exit, ok := value.(exitValue); ok {
 				return SessionResult{ExitCode: exit.code, Exited: true}, nil
@@ -122,17 +121,17 @@ func (s *Session) Eval(program *ast.Program) (SessionResult, error) {
 	sig, err := s.evaluator.evalStatements(program.Statements, s.env)
 	if err != nil {
 		_, _ = s.evaluator.runAndPopDefers(signal{})
-		return SessionResult{}, err
+		return SessionResult{}, uncaughtFromError(err)
 	}
 	sig, err = s.evaluator.runAndPopDefers(sig)
 	if err != nil {
-		return SessionResult{}, err
+		return SessionResult{}, uncaughtFromError(err)
 	}
 	if sig.exited {
 		return SessionResult{ExitCode: sig.exitCode, Exited: true}, nil
 	}
 	if sig.kind == "throw" && sig.thrown != nil {
-		return SessionResult{}, fmt.Errorf("uncaught %s", sig.thrown.Inspect())
+		return SessionResult{}, uncaughtFromThrown(*sig.thrown)
 	}
 	return SessionResult{}, nil
 }

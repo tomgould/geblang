@@ -1,8 +1,6 @@
 package evaluator
 
 import (
-	"reflect"
-
 	"geblang/internal/ast"
 	"geblang/internal/runtime"
 )
@@ -87,7 +85,7 @@ func (e *Evaluator) snapshotFrames(currentPath string, currentLine int, currentE
 		f := e.callStack[i]
 		name := f.name
 		if name == "" {
-			name = "<anonymous>"
+			name = "<closure>"
 		}
 		frames = append(frames, DebugFrame{Name: name, Path: currentPath, Line: f.line})
 		frameVars = append(frameVars, snapshotEnv(f.env))
@@ -116,20 +114,58 @@ func snapshotEnv(env *runtime.Environment) []DebugVariable {
 	return vars
 }
 
-// statementLine extracts the source line from any AST statement via reflection.
-// All concrete statement types have Token token.Token as their first field.
 func statementLine(stmt ast.Statement) int {
-	v := reflect.ValueOf(stmt)
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
+	switch s := stmt.(type) {
+	case *ast.ModuleStatement:
+		return s.Token.Line
+	case *ast.ImportStatement:
+		return s.Token.Line
+	case *ast.FromImportStatement:
+		return s.Token.Line
+	case *ast.ExportStatement:
+		return s.Token.Line
+	case *ast.InitStatement:
+		return s.Token.Line
+	case *ast.TypeAliasStatement:
+		return s.Token.Line
+	case *ast.DeclarationStatement:
+		return s.Token.Line
+	case *ast.DestructuringStatement:
+		return s.Token.Line
+	case *ast.FunctionStatement:
+		return s.Token.Line
+	case *ast.ClassStatement:
+		return s.Token.Line
+	case *ast.InterfaceStatement:
+		return s.Token.Line
+	case *ast.EnumStatement:
+		return s.Token.Line
+	case *ast.ExpressionStatement:
+		return s.Token.Line
+	case *ast.ReturnStatement:
+		return s.Token.Line
+	case *ast.YieldStatement:
+		return s.Token.Line
+	case *ast.SimpleStatement:
+		return s.Token.Line
+	case *ast.IfStatement:
+		return s.Token.Line
+	case *ast.WhileStatement:
+		return s.Token.Line
+	case *ast.ForStatement:
+		return s.Token.Line
+	case *ast.TryStatement:
+		return s.Token.Line
+	case *ast.MatchStatement:
+		return s.Token.Line
+	case *ast.SelectStatement:
+		return s.Token.Line
+	case *ast.WithStatement:
+		return s.Token.Line
+	case *ast.DelStatement:
+		return s.Token.Line
+	case *ast.BlockStatement:
+		return s.Token.Line
 	}
-	tok := v.FieldByName("Token")
-	if !tok.IsValid() {
-		return 0
-	}
-	line := tok.FieldByName("Line")
-	if !line.IsValid() {
-		return 0
-	}
-	return int(line.Int())
+	return 0
 }

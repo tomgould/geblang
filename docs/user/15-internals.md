@@ -901,6 +901,20 @@ Geblang itself and distributed as source files in the `stdlib/` directory:
 These modules are installed alongside the `geblang` binary and are found via
 `StdlibPaths`. They are compiled and cached like any other user module.
 
+### Dual-name module authoring
+
+A stdlib `.gb` module may share its canonical name with a native module
+(`async.sync`, `store`): the stdlib surface wins externally and calls
+that miss its exports fall back to the native registry. A dual-name
+module must not export a member whose name also exists on its native
+namesake - the fallback relies on the two surfaces being disjoint, and
+an overlapping name would resolve native-first on the evaluator but
+stdlib-first on the VM. The engine test suite enforces disjointness for
+every bundled dual-name module. When the native side needs functions
+the wrapper reuses internally, give the native module a distinct name
+(the convention is a `native` suffix, as with `ffinative`) and import
+that, rather than colliding on the shared name.
+
 ---
 
 ## CLI: `cmd/geblang`

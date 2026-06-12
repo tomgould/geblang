@@ -1053,7 +1053,7 @@ func TestRunREPLMarksRuntimeErrors(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code: got %d, stderr=%q", code, errOut.String())
 	}
-	if !strings.Contains(errOut.String(), "Error: uncaught RuntimeError: decimal division by zero") {
+	if !strings.Contains(errOut.String(), "uncaught RuntimeError: decimal division by zero\n  at <top level>") {
 		t.Fatalf("stderr: %q", errOut.String())
 	}
 }

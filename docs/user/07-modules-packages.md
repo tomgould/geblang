@@ -13,6 +13,17 @@ An import binds a module under that name for qualified access (`name.member`).
 Imported module bindings are constants and cannot be reassigned, so importing
 the same module twice under the same name is idempotent.
 
+Imports are required: using a module as a selector base without importing it
+is a semantic error on both runtimes (1.19.0). Before 1.19.0 the bytecode
+runtime resolved built-in modules without an import while the evaluator
+rejected them at runtime; the static error makes the two agree and surfaces
+the missing import in `geblang check`.
+
+```gb
+io.println(math.sqrt(4.0));   /* error[semantic]: module "math" is used
+                                 without an import; add 'import math;' */
+```
+
 ```gb
 import json;
 import json; # harmless
@@ -338,6 +349,11 @@ module is fine even if its file is named like a built-in - for example a file
 canonical name is `myapp.errors`, not `errors`. Choose a top-level namespace for
 your own modules (e.g. `myapp.*`) and you will never collide.
 
+A stray local file that does declare a reserved name is never selected by
+imports: `import math;` next to an offending local `math.gb` still binds the
+built-in `math` on both runtimes, and running the offending file itself
+reports the reserved-name error.
+
 The `geblang` namespace is also reserved. `import geblang.X` resolves explicitly
 and unambiguously to the built-in module `X` (whether native or stdlib):
 
@@ -366,13 +382,8 @@ stdlib externally and the native internally:
   async.sync;`) resolves to the native module so the wrapper can call
   its primitives.
 
-A dual-name stdlib module must not export a member whose name also
-exists on its native namesake. The fallback above relies on the two
-surfaces being disjoint; a name present in both is ambiguous and is not
-guaranteed to resolve the same way everywhere. When the native side
-needs functions the wrapper reuses internally, give the native module a
-distinct name (the convention is a `native` suffix, as with
-`ffinative`) and import that, rather than colliding on the shared name.
+The two surfaces of a bundled dual-name module are always disjoint, so
+a member resolves the same way on both runtimes.
 
 ## Multi-Module Layout
 

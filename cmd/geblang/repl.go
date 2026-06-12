@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -807,7 +808,12 @@ func evalREPLSource(source string, session *evaluator.Session, out io.Writer, er
 	}
 	result, err := session.Eval(program)
 	if err != nil {
-		fmt.Fprintf(errOut, "Error: %v\n", err)
+		var uncaught *runtime.UncaughtError
+		if errors.As(err, &uncaught) {
+			fmt.Fprintln(errOut, uncaught.Render())
+		} else {
+			fmt.Fprintf(errOut, "Error: %v\n", err)
+		}
 		return
 	}
 	if result.Exited {
@@ -1095,10 +1101,18 @@ func parseAnalyzeREPLSource(source string, errOut io.Writer, session *evaluator.
 		}
 	}
 	if diagnostics := analyzer.Analyze(program); len(diagnostics) > 0 {
+		blocked := false
 		for _, diagnostic := range diagnostics {
+			if diagnostic.Severity == semantic.SeverityWarning {
+				fmt.Fprintln(errOut, "warning: "+diagnostic.Message)
+				continue
+			}
 			fmt.Fprintln(errOut, diagnostic.Message)
+			blocked = true
 		}
-		return nil, false
+		if blocked {
+			return nil, false
+		}
 	}
 	return program, true
 }

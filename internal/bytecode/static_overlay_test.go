@@ -34,9 +34,9 @@ func compileStaticOverlay(t *testing.T) (bytecode.Chunk, int64, int64) {
 	var bumpIndex, readIndex int64 = -1, -1
 	for index, fn := range chunk.Functions {
 		switch fn.Name {
-		case "counter.bump":
+		case "Counter.bump":
 			bumpIndex = int64(index)
-		case "counter.read":
+		case "Counter.read":
 			readIndex = int64(index)
 		}
 	}

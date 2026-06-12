@@ -787,7 +787,7 @@ func Decode(data []byte) (Chunk, error) {
 	chunk.Functions = make([]FunctionInfo, 0, functionCount)
 	for i := 0; i < functionCount; i++ {
 		function := FunctionInfo{
-			Name: strings.ToLower(string(reader.read(int(reader.u16())))),
+			Name: string(reader.read(int(reader.u16()))),
 		}
 		function.Doc = reader.string()
 		typeParamCount := int(reader.u16())
@@ -1588,4 +1588,37 @@ func (r *byteReader) metadataValue() runtime.Value {
 		}
 		return runtime.Null{}
 	}
+}
+
+// MethodParamNames resolves a class method's declared parameter names
+// (receiver slot dropped), walking same-chunk parents. The module
+// loader uses it so dict spread can order named args for a
+// cross-module method call.
+func (c *Chunk) MethodParamNames(className, methodName string) ([]string, error) {
+	lowerClass := strings.ToLower(className)
+	for i := range c.Classes {
+		if strings.ToLower(c.Classes[i].Name) != lowerClass {
+			continue
+		}
+		info := c.Classes[i]
+		lowered := strings.ToLower(methodName)
+		for {
+			if indices, ok := info.Methods[lowered]; ok {
+				if len(indices) != 1 {
+					return nil, fmt.Errorf("cannot use dict spread with overloaded method %s.%s", className, methodName)
+				}
+				fn := c.Functions[indices[0]]
+				if len(fn.ParamNames) > 0 {
+					return fn.ParamNames[1:], nil
+				}
+				return nil, nil
+			}
+			if info.ParentIndex >= 0 && int(info.ParentIndex) < len(c.Classes) {
+				info = c.Classes[info.ParentIndex]
+				continue
+			}
+			return nil, fmt.Errorf("unknown method %s.%s", className, methodName)
+		}
+	}
+	return nil, fmt.Errorf("unknown class %s", className)
 }

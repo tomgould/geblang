@@ -256,6 +256,14 @@ func (l *stdlibModuleLoader) CallModuleMethod(module string, className string, m
 	return vm.CallInstanceMethod(instance, methodName, args)
 }
 
+func (l *stdlibModuleLoader) ModuleMethodParamNames(module string, className string, methodName string) ([]string, error) {
+	chunk, ok := l.chunks[module]
+	if !ok {
+		return nil, fmt.Errorf("module %s is not loaded", module)
+	}
+	return chunk.MethodParamNames(className, methodName)
+}
+
 func (l *stdlibModuleLoader) CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 	vm, err := l.newSubVM(module)
 	if err != nil {
@@ -13555,6 +13563,183 @@ io.println(m as int);
 	if vmOut.String() != want {
 		t.Fatalf("vm output: %q want %q", vmOut.String(), want)
 	}
+}
+
+// Dict spread into a CROSS-MODULE instance method orders named args on
+// both backends (closes known-divergence 16 via ModuleMethodParamNames).
+func TestParityCrossModuleDictSpreadMethod(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "shapes.gb"), []byte(`module shapes;
+export class Box {
+    func Box() {}
+    func describe(int width, int height, string label): string {
+        return "${label}:${width}x${height}";
+    }
+}
+`), 0o644); err != nil {
+		t.Fatalf("write shapes: %v", err)
+	}
+	source := `import io;
+import shapes;
+let b = shapes.Box();
+let opts = {"label": "crate", "height": 4, "width": 9};
+io.println(b.describe(...opts));
+io.println(b.describe(...{"width": 1, "height": 2, "label": "tiny", "ignored": true}));
+`
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+	const want = "crate:9x4\ntiny:1x2\n"
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: %q want %q", evOut.String(), want)
+	}
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: %q want %q", vmOut.String(), want)
+	}
+}
+
+// TestParityCollectionsSurfaceSweep pins one valid call for every
+// collections function on both backends. The module is dual-implemented
+// (evaluator wrappers vs the VM's collectionsNativeCall switch), so this
+// sweep is the drift guard for that surface (audit G, 2026-06-12).
+func TestParityCollectionsSurfaceSweep(t *testing.T) {
+	runParity(t, `import io;
+import collections;
+
+let xs = [3, 1, 2];
+let pairs = [[1, "a"], [2, "b"]];
+let graph = {"a": ["b"], "b": []};
+let sel = func(int x): int { return x; };
+let pred = func(int x): bool { return x > 1; };
+let acc = func(int a, int x): int { return a + x; };
+let zipf = func(int a, int b): int { return a + b; };
+
+func probe(string name, any result) {
+    io.println("${name}=${result}");
+}
+
+probe("map", collections.map(xs, sel));
+probe("filter", collections.filter(xs, pred));
+probe("reduce", collections.reduce(xs, acc, 0));
+probe("find", collections.find(xs, pred));
+probe("findLast", collections.findLast(xs, pred));
+probe("all", collections.all(xs, pred));
+probe("any", collections.any(xs, pred));
+probe("sorted", collections.sorted(xs));
+probe("sortBy", collections.sortBy(xs, sel));
+probe("sortBy3", collections.sortBy(xs, sel, true));
+probe("minBy", collections.minBy(xs, sel));
+probe("maxBy", collections.maxBy(xs, sel));
+probe("sumBy", collections.sumBy(xs, sel));
+probe("averageBy", collections.averageBy(xs, sel));
+probe("topBy", collections.topBy(xs, sel, 2));
+probe("topK", collections.topK(xs, 2));
+probe("bottomK", collections.bottomK(xs, 2));
+probe("frequencies", collections.frequencies(xs));
+probe("mode", collections.mode(xs));
+probe("unique", collections.unique([1, 1, 2]));
+probe("uniqueBy", collections.uniqueBy(xs, sel));
+probe("chunk", collections.chunk(xs, 2));
+probe("windowed", collections.windowed(xs, 2));
+probe("flatten", collections.flatten([[1], [2]]));
+probe("flatMap", collections.flatMap(xs, func(int x): list<int> { return [x, x]; }));
+probe("enumerate", collections.enumerate(["a", "b"]));
+probe("partition", collections.partition(xs, pred));
+probe("groupBy", collections.groupBy(xs, sel));
+probe("indexBy", collections.indexBy(xs, sel));
+probe("zip", collections.zip([1, 2], ["a", "b"]));
+probe("zipWith", collections.zipWith([1, 2], [10, 20], zipf));
+probe("unzip", collections.unzip(pairs));
+probe("takeWhile", collections.takeWhile(xs, pred));
+probe("dropWhile", collections.dropWhile(xs, pred));
+probe("binarySearch", collections.binarySearch([1, 2, 3], 2));
+probe("lowerBound", collections.lowerBound([1, 2, 2, 3], 2));
+probe("upperBound", collections.upperBound([1, 2, 2, 3], 2));
+probe("containsBy", collections.containsBy(xs, 2, sel));
+probe("difference", collections.difference([1, 2, 3], [2]));
+probe("differenceBy", collections.differenceBy([1, 2, 3], [2], sel));
+probe("intersection", collections.intersection([1, 2, 3], [2, 3]));
+probe("intersectionBy", collections.intersectionBy([1, 2, 3], [2, 3], sel));
+probe("scan", collections.scan(xs, 0, acc));
+probe("length", collections.length(xs));
+probe("isEmpty", collections.isEmpty(xs));
+probe("contains", collections.contains(xs, 2));
+probe("bfs", collections.bfs(graph, "a"));
+probe("dfs", collections.dfs(graph, "a"));
+probe("topologicalSort", collections.topologicalSort(graph));
+probe("shortestPath", collections.shortestPath(graph, "a", "b"));
+`, `map=[3, 1, 2]
+filter=[3, 2]
+reduce=6
+find=3
+findLast=2
+all=false
+any=true
+sorted=[1, 2, 3]
+sortBy=[1, 2, 3]
+sortBy3=[3, 2, 1]
+minBy=1
+maxBy=3
+sumBy=6
+averageBy=2
+topBy=[3, 2]
+topK=[3, 2]
+bottomK=[1, 2]
+frequencies={1: 1, 2: 1, 3: 1}
+mode=3
+unique=[1, 2]
+uniqueBy=[3, 2, 1]
+chunk=[[3, 2], [1]]
+windowed=[[3, 2], [2, 1]]
+flatten=[1, 2]
+flatMap=[3, 3, 2, 2, 1, 1]
+enumerate=[[0, "a"], [1, "b"]]
+partition=[[3, 2], [1]]
+groupBy={1: [1], 2: [2], 3: [3]}
+indexBy=-1
+zip=[[1, "a"], [2, "b"]]
+zipWith=[11, 22]
+unzip=[[1, 2], ["a", "b"]]
+takeWhile=[3, 2]
+dropWhile=[1]
+binarySearch=1
+lowerBound=1
+upperBound=3
+containsBy=true
+difference=[1, 3]
+differenceBy=[1, 3]
+intersection=[2, 3]
+intersectionBy=[2, 3]
+scan=[0, 3, 5, 6]
+length=3
+isEmpty=false
+contains=true
+bfs=["a", "b"]
+dfs=["a", "b"]
+topologicalSort=["a", "b"]
+shortestPath=["a", "b"]
+`)
 }
 
 // A cross-module inherited @immutable field locks after the parent ctor runs, on both backends.

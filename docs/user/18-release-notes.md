@@ -1,5 +1,54 @@
 # Release Notes
 
+## 1.19.0
+
+### Language
+
+- Uncaught errors render identically on both runtimes: a classed header
+  (`uncaught ValueError: ...`) followed by a full stack trace with one
+  line per frame, ending in `<top level>` with its line. The
+  `bytecode runtime error at L:C:` prefix is gone.
+- The bytecode runtime no longer drops the calling function's frame for
+  `return f(x)` calls, and traces survive module boundaries and
+  deferred calls intact. Deep tail-recursive frames collapse into a
+  single `[xN]` trace line on both runtimes.
+- Runtime faults (division by zero, index out of range) report as
+  `RuntimeError` consistently, and `errors.frames()` returns structured
+  frame data on both runtimes without string parsing.
+- Trace frame naming is canonical: methods qualify as `Class.method` in
+  declared case (inherited methods report the declaring class),
+  anonymous functions render as `<closure>`. `reflect.methods` returns
+  declared-case names on both runtimes.
+- A throw escaping a deferred call now keeps its class and trace: it is
+  catchable as its original class (previously the bytecode runtime
+  reported a wrapped `RuntimeError`).
+- Failing `geblang test` methods print the error's stack trace beneath
+  the `FAIL` line. The REPL prints uncaught errors in the same
+  canonical format.
+- Imports are required: using a module as a selector base without
+  importing it is now a semantic error on both runtimes and in
+  `geblang check` (previously the bytecode runtime resolved built-in
+  modules bare while the evaluator threw at runtime). This is a
+  behavior change for scripts that relied on the bare access.
+- A failing destructor is reported identically on both runtimes: one
+  stderr block with the error class, message, and `Class.~Name` frame
+  attribution (previously the bytecode runtime wrote a wrapped form to
+  stdout and the evaluator omitted the trace).
+- Dict spread now works on cross-module instance methods
+  (`inst.m(...opts)` where the class lives in another module);
+  previously the bytecode runtime rejected it.
+- The advisory `div-by-zero` warning covers literal `/ 0` alongside
+  `//` and `%`, and REPL warnings no longer block evaluation: the
+  snippet runs (and throws canonically) after the warning prints.
+
+### HTTP
+
+- `http.serve`/`http.listen`: uncaught handler errors no longer send
+  error text to the client. Production responses are a generic 500 and
+  the server logs one line to stderr. Set the `debug: true` server
+  option or the `GEBLANG_DEBUG` environment variable to log and return
+  full traces during development. This is a behavior change.
+
 ## 1.18.0
 
 ### Language

@@ -12,7 +12,7 @@ import test;
 class ErrorModelTest extends test.Test {
     @test
     func divisionByZeroIsCatchable(): void {
-        this.assertThrowsOf(func(): void { let x = 1 / 0; }, "RuntimeError");
+        this.assertThrowsOf(func(): void { int z = 0; let x = 1 / z; }, "RuntimeError");
     }
 
     @test
@@ -33,7 +33,8 @@ class ErrorModelTest extends test.Test {
     @test
     func runtimeFaultCarriesAMessage(): void {
         try {
-            let x = 1 / 0;
+            int z = 0;
+            let x = 1 / z;
         } catch (Error e) {
             this.assertTrue(e.message.contains("division by zero"));
             return;

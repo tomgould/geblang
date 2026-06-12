@@ -1,0 +1,7 @@
+/**
+ * @category Tests
+ * @summary Using a known engine module as a selector base without an
+ * import is a semantic error: the evaluator always threw at runtime and
+ * the VM resolved pure natives bare; as of 1.19.0 both reject statically.
+ */
+let m = math.sqrt(4.0);

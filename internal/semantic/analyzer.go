@@ -1639,7 +1639,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 	case *ast.InfixExpression:
 		a.analyzeExpression(expr.Left)
 		a.analyzeExpression(expr.Right)
-		if expr.Operator == "//" || expr.Operator == "%" {
+		if expr.Operator == "//" || expr.Operator == "%" || expr.Operator == "/" {
 			if lit, ok := expr.Right.(*ast.IntegerLiteral); ok && strings.Trim(lit.Value, "0_") == "" {
 				a.ruleWarningAt(expr.Token, "div-by-zero", "%q by literal zero always throws at runtime", expr.Operator)
 			}
@@ -1649,6 +1649,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 	case *ast.PostfixExpression:
 		a.analyzeExpression(expr.Left)
 	case *ast.SelectorExpression:
+		a.checkUnimportedModuleSelector(expr)
 		if !a.isModuleValueRef(expr.Object) {
 			a.analyzeExpression(expr.Object)
 		}
@@ -1695,6 +1696,43 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 func (a *Analyzer) isModuleValueRef(expr ast.Expression) bool {
 	ident, ok := expr.(*ast.Identifier)
 	return ok && a.moduleAliases[ident.Value]
+}
+
+// checkUnimportedModuleSelector errors when a known engine module name is the base of a selector without an import; the VM resolved pure natives bare while the evaluator threw at runtime (import required as of 1.19.0).
+func (a *Analyzer) checkUnimportedModuleSelector(expr *ast.SelectorExpression) {
+	ident, ok := expr.Object.(*ast.Identifier)
+	if !ok {
+		return
+	}
+	name := ident.Value
+	switch name {
+	case "string", "bytes", "int", "float", "decimal", "bool", "list", "dict", "set", "any", "null", "void", "this", "parent":
+		return
+	}
+	if a.moduleAliases[name] || a.importedNames[name] {
+		return
+	}
+	if _, declared := a.declaredNames[name]; declared {
+		return
+	}
+	if _, bound := a.lookup(name); bound {
+		return
+	}
+	if _, isClass := a.classes[name]; isClass {
+		return
+	}
+	if _, isEnum := a.enums[name]; isEnum {
+		return
+	}
+	for alias := range a.moduleAliases {
+		if strings.HasPrefix(alias, name+".") {
+			return
+		}
+	}
+	if !native.IsNativeModule(name) {
+		return
+	}
+	a.errorAt(ident.Token, "module %q is used without an import; add 'import %s;'", name, name)
 }
 
 // dir(M) accepts a module name as its argument.

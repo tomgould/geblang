@@ -105,7 +105,7 @@ func registerErrors(r *Registry) {
 		if !ok {
 			return nil, fmt.Errorf("errors.stackTrace: argument must be an error, got %s", args[0].TypeName())
 		}
-		return ParseErrorStackTrace(err.ResolvedStackTrace()), nil
+		return buildErrorStackTrace(err), nil
 	})
 
 	r.Register("errors", "frames", func(args []runtime.Value) (runtime.Value, error) {
@@ -116,7 +116,7 @@ func registerErrors(r *Registry) {
 		if !ok {
 			return nil, fmt.Errorf("errors.frames: argument must be an error, got %s", args[0].TypeName())
 		}
-		return errorStackFrameList(ParseErrorStackTrace(err.ResolvedStackTrace()).Frames), nil
+		return errorStackFrameList(buildErrorStackTrace(err).Frames), nil
 	})
 
 	r.Register("errors", "hasStackTrace", func(args []runtime.Value) (runtime.Value, error) {
@@ -160,6 +160,42 @@ func ParseErrorStackTrace(raw string) runtime.ErrorStackTrace {
 		trace.Frames = append(trace.Frames, frame)
 	}
 	return trace
+}
+
+// maxFrameExpansion caps how many ErrorStackFrame entries one repeated StackFrame may produce.
+const maxFrameExpansion = 100
+
+// buildErrorStackTrace prefers structured TraceFrames; falls back to string parsing.
+func buildErrorStackTrace(err runtime.Error) runtime.ErrorStackTrace {
+	raw := err.ResolvedStackTrace()
+	if len(err.TraceFrames) == 0 {
+		return ParseErrorStackTrace(raw)
+	}
+	var frames []runtime.ErrorStackFrame
+	// innermost frame uses ErrorLine (not CallLine)
+	firstName := err.TraceFrames[0].Name
+	if firstName == "" {
+		firstName = "<closure>"
+	}
+	frames = append(frames, runtime.ErrorStackFrame{Function: firstName, Line: int64(err.ErrorLine)})
+	for _, sf := range err.TraceFrames[1:] {
+		name := sf.Name
+		if name == "" {
+			name = "<closure>"
+		}
+		repeat := sf.Repeat
+		if repeat < 1 {
+			repeat = 1
+		}
+		if repeat > maxFrameExpansion {
+			repeat = maxFrameExpansion
+		}
+		for i := 0; i < repeat; i++ {
+			frames = append(frames, runtime.ErrorStackFrame{Function: name, Line: int64(sf.CallLine)})
+		}
+	}
+	frames = append(frames, runtime.ErrorStackFrame{Function: "<top level>", Line: int64(err.TopLevelLine)})
+	return runtime.ErrorStackTrace{Raw: raw, Frames: frames}
 }
 
 func ErrorStackTraceMethod(trace runtime.ErrorStackTrace, name string, args []runtime.Value) (runtime.Value, error) {
@@ -217,12 +253,12 @@ func ErrorMethod(err runtime.Error, name string, args []runtime.Value) (runtime.
 		if len(args) != 0 {
 			return nil, fmt.Errorf("%s.stackTrace expects no arguments", err.Class)
 		}
-		return ParseErrorStackTrace(err.ResolvedStackTrace()), nil
+		return buildErrorStackTrace(err), nil
 	case "frames":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("%s.frames expects no arguments", err.Class)
 		}
-		return errorStackFrameList(ParseErrorStackTrace(err.ResolvedStackTrace()).Frames), nil
+		return errorStackFrameList(buildErrorStackTrace(err).Frames), nil
 	case "hasStackTrace":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("%s.hasStackTrace expects no arguments", err.Class)

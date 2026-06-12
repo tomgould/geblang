@@ -40,14 +40,16 @@ type Compiler struct {
 	enums           map[string]int64
 	typeAliases     map[string]*ast.TypeRef
 	inFunc          int
-	classStack      []int64
-	finalizers      []finalizerContext
-	expectedTypes   []string
-	returnTypes     []string
-	reflectFuncs    map[string]runtime.DecoratorTarget
-	reflectClasses  map[string]runtime.DecoratorTarget
-	reflectMethods  map[string]map[string]runtime.DecoratorTarget
-	reflectStatics  map[string]map[string]runtime.DecoratorTarget
+	// Registry index of the function body being compiled (-1 at top level); gates TCE to self-calls.
+	currentFuncIndex int64
+	classStack       []int64
+	finalizers       []finalizerContext
+	expectedTypes    []string
+	returnTypes      []string
+	reflectFuncs     map[string]runtime.DecoratorTarget
+	reflectClasses   map[string]runtime.DecoratorTarget
+	reflectMethods   map[string]map[string]runtime.DecoratorTarget
+	reflectStatics   map[string]map[string]runtime.DecoratorTarget
 	// moduleAliases maps an `import X as Y` alias name to its canonical
 	// dotted module path. Populated for every native (bytecode-callable)
 	// import so module-recognition sites can translate `Y.fn(...)` calls
@@ -119,6 +121,7 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 			Compiler:   compilerVersion,
 		},
 		AssertionsDisabled:  AssertionsDisabled,
+		currentFuncIndex:    -1,
 		globals:             map[string]int64{},
 		globalTypes:         map[string]string{},
 		globalDeclKinds:     map[string]globalDecl{},
@@ -743,6 +746,10 @@ func (c *Compiler) tryEmitTailCall(stmt *ast.ReturnStatement) (bool, error) {
 	if err != nil {
 		return false, nil
 	}
+	// TCE only for self-recursion: eliding a different caller's frame destroys its trace entry.
+	if index != c.currentFuncIndex {
+		return false, nil
+	}
 	fn := c.chunk.Functions[index]
 	if fn.Async || fn.IsGenerator || fn.Variadic {
 		return false, nil
@@ -1124,7 +1131,12 @@ func (c *Compiler) compileFunctionWithPrologue(stmt *ast.FunctionStatement, name
 	// enclosing for-loop's iterator close (whose slot lives in another frame).
 	savedLoops, savedFinalizers := c.loops, c.finalizers
 	c.loops, c.finalizers = nil, nil
-	defer func() { c.loops, c.finalizers = savedLoops, savedFinalizers }()
+	savedFuncIndex := c.currentFuncIndex
+	c.currentFuncIndex = index
+	defer func() {
+		c.loops, c.finalizers = savedLoops, savedFinalizers
+		c.currentFuncIndex = savedFuncIndex
+	}()
 	if prologue != nil {
 		if err := prologue(); err != nil {
 			c.inFunc--
@@ -5720,7 +5732,7 @@ func (c *Compiler) declareFunction(name string) int64 {
 	key := strings.ToLower(name)
 	index := int64(len(c.chunk.Functions))
 	c.funcs[key] = append(c.funcs[key], index)
-	c.chunk.Functions = append(c.chunk.Functions, FunctionInfo{Name: key})
+	c.chunk.Functions = append(c.chunk.Functions, FunctionInfo{Name: name})
 	return index
 }
 

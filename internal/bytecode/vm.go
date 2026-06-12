@@ -10,6 +10,7 @@ import (
 	"math"
 	"math/big"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ import (
 type VM struct {
 	chunk   Chunk
 	stdout  io.Writer
+	stderr  io.Writer
 	stack   []runtime.VMValue
 	globals []runtime.VMValue
 	// globalsMu guards bulk operations on the globals slice used by the
@@ -157,6 +159,9 @@ type ModuleLoader interface {
 	ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value) (runtime.Value, error)
 	CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value) (runtime.Value, error)
 	CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error)
+	// ModuleMethodParamNames exposes a cross-module method's declared
+	// parameter names so dict spread can order named args at the call site.
+	ModuleMethodParamNames(module string, className string, methodName string) ([]string, error)
 	// CallParentInModule invokes the parent class's constructor or
 	// method on the supplied instance inside the parent module's chunk.
 	// className is looked up in the target chunk regardless of
@@ -232,15 +237,18 @@ type FunctionDecoratorState struct {
 const DefaultMaxCallDepth = 10000
 
 type callFrame struct {
-	returnIP         int
-	basePointer      int
-	localCount       int
-	returnOverride   runtime.Value
-	typeBindings     map[string]string
-	generator        chan vmGeneratorItem
-	generatorDone    <-chan struct{}
-	functionName     string
-	callLine         int
+	returnIP       int
+	basePointer    int
+	localCount     int
+	returnOverride runtime.Value
+	typeBindings   map[string]string
+	generator      chan vmGeneratorItem
+	generatorDone  <-chan struct{}
+	functionName   string
+	callLine       int // callLine is the frame's entry call site; stable across tail reuse.
+	// tailRepeat/tailCallLine track self-tail-call frame reuse for the [xN] trace collapse.
+	tailRepeat       int
+	tailCallLine     int
 	negateReturn     bool
 	isErrorClass     bool
 	isImmutableClass bool
@@ -290,6 +298,8 @@ type deferredAction struct {
 	// signature when the queue runs. nil when the defer used the
 	// positional-only opcode.
 	names []string
+	// line is the defer statement's source line; trace frames for a throwing deferred call show it as the caller's call site.
+	line int
 }
 
 type exceptionHandler struct {
@@ -355,17 +365,22 @@ type vmTypedError struct {
 
 func (e vmTypedError) Error() string { return e.class + ": " + e.message }
 
-// vmThrownError carries a runtime.Error across a VM boundary so the
-// caller VM can re-throw it as a catchable pendingThrow instead of
-// losing the class / parent-chain information by collapsing it to a
-// plain string. Used when a closure called via the moduleLoader
-// throws - the sub-VM packages its pendingThrow into a vmThrownError
-// and the caller VM's invocation site unwraps it.
+// vmThrownError carries a runtime.Error across a VM boundary without collapsing it to a plain string.
 type vmThrownError struct {
 	err runtime.Error
 }
 
-func (e vmThrownError) Error() string { return "uncaught " + e.err.Inspect() }
+// Rendered canonically so a thrown error escaping via Go error paths prints the same as top-level uncaught.
+func (e vmThrownError) Error() string {
+	u := runtime.UncaughtError{
+		Class:        e.err.Class,
+		Message:      e.err.Message,
+		ErrorLine:    e.err.ErrorLine,
+		Frames:       runtime.CollapseFrames(e.err.TraceFrames),
+		TopLevelLine: e.err.TopLevelLine,
+	}
+	return u.Render()
+}
 
 // ErrorClass exposes the carried Geblang error class so a typed throw
 // (e.g. TestSkip) survives the native-to-script boundary via runtime.TypedError.
@@ -667,11 +682,27 @@ func (vm *VM) Cleanup() error {
 			}
 			inst.Destroyed = true
 			if _, err := vm.CallFunctionRaw(classInfo.DestructorIndex, []runtime.Value{inst}); err != nil {
-				fmt.Fprintf(vm.stdout, "destructor for %s: %v\n", inst.Class.Name, err)
+				fmt.Fprintln(vm.destructorStderr(), runtime.RenderDestructorFailure(inst.Class.Name, destructorFailure(err)))
 			}
 		}
 	}
 	return nil
+}
+
+func (vm *VM) destructorStderr() io.Writer {
+	if vm.stderr != nil {
+		return vm.stderr
+	}
+	return os.Stderr
+}
+
+// destructorFailure recovers the typed throw from a destructor error; non-throw faults class as RuntimeError.
+func destructorFailure(err error) runtime.Error {
+	var thrown vmThrownError
+	if errors.As(err, &thrown) {
+		return thrown.err
+	}
+	return runtime.NewRecoverableError(err)
 }
 
 // GlobalsSnapshot returns a copy of the current globals as a
@@ -2265,7 +2296,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				}
 				args[i] = v
 			}
-			vm.addDefer(deferredAction{kind: deferKindNative, name: nameConst.Value, args: args})
+			vm.addDefer(deferredAction{kind: deferKindNative, name: nameConst.Value, args: args, line: int(instruction.Line)})
 		case OpDeferFuncCall:
 			if len(instruction.Operands) != 2 {
 				return vm.fatalError(*instruction, "defer func call instruction has invalid operands")
@@ -2283,7 +2314,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				}
 				args[i] = v
 			}
-			vm.addDefer(deferredAction{kind: deferKindFunc, funcIdx: funcIdx, args: args})
+			vm.addDefer(deferredAction{kind: deferKindFunc, funcIdx: funcIdx, args: args, line: int(instruction.Line)})
 		case OpDeferMethodCall:
 			if len(instruction.Operands) != 2 {
 				return vm.fatalError(*instruction, "defer method call instruction has invalid operands")
@@ -2309,7 +2340,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
-			vm.addDefer(deferredAction{kind: deferKindMethod, name: nameConst.Value, receiver: receiver, args: args})
+			vm.addDefer(deferredAction{kind: deferKindMethod, name: nameConst.Value, receiver: receiver, args: args, line: int(instruction.Line)})
 		case OpDeferCallableCall:
 			if len(instruction.Operands) != 1 {
 				return vm.fatalError(*instruction, "defer callable call instruction has invalid operands")
@@ -2327,7 +2358,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
-			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args})
+			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args, line: int(instruction.Line)})
 		case OpDeferNativeCallNamed:
 			if len(instruction.Operands) < 2 {
 				return vm.fatalError(*instruction, "defer named native call has invalid operands")
@@ -2353,7 +2384,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return err
 			}
-			vm.addDefer(deferredAction{kind: deferKindNative, name: nameConst.Value, args: args, names: names})
+			vm.addDefer(deferredAction{kind: deferKindNative, name: nameConst.Value, args: args, names: names, line: int(instruction.Line)})
 		case OpDeferMethodCallNamed:
 			if len(instruction.Operands) < 2 {
 				return vm.fatalError(*instruction, "defer named method call has invalid operands")
@@ -2383,7 +2414,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
-			vm.addDefer(deferredAction{kind: deferKindMethod, name: nameConst.Value, receiver: receiver, args: args, names: names})
+			vm.addDefer(deferredAction{kind: deferKindMethod, name: nameConst.Value, receiver: receiver, args: args, names: names, line: int(instruction.Line)})
 		case OpDeferCallableCallNamed:
 			if len(instruction.Operands) < 1 {
 				return vm.fatalError(*instruction, "defer named callable call has invalid operands")
@@ -2408,7 +2439,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
-			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args, names: names})
+			vm.addDefer(deferredAction{kind: deferKindCallable, value: callable, args: args, names: names, line: int(instruction.Line)})
 		case OpPrintln:
 			value, err := vm.pop()
 			if err != nil {
@@ -3563,9 +3594,8 @@ func (vm *VM) faultToRuntimeError(loopErr error) (runtime.Error, bool) {
 	}
 	var rt *vmRuntimeError
 	if errors.As(loopErr, &rt) {
-		// Routed fault: keep the message but defer trace formatting so a
-		// caught-and-discarded fault never pays the O(frames) trace cost.
-		return runtime.Error{Class: "RuntimeError", Message: rt.message, Parents: []string{"RuntimeError", "Error"}, TraceFn: rt.lazyTrace()}, false
+		return runtime.Error{Class: "RuntimeError", Message: rt.message, Parents: []string{"RuntimeError", "Error"},
+			TraceFrames: rt.frames, ErrorLine: rt.line, TopLevelLine: rt.topLevelLine}, false
 	}
 	full := loopErr.Error()
 	msg := cleanRuntimeFaultMessage(full)
@@ -3578,29 +3608,23 @@ func (vm *VM) faultToRuntimeError(loopErr error) (runtime.Error, bool) {
 	return runtime.Error{Class: "RuntimeError", Message: msg, Parents: []string{"RuntimeError", "Error"}, StackTrace: trace}, false
 }
 
-// cleanRuntimeFaultMessage strips the "bytecode runtime error at L:C: "
-// prefix and the trailing stack trace from a VM error string so a
-// caught fault's message matches what the evaluator surfaces.
 func cleanRuntimeFaultMessage(s string) string {
 	if idx := strings.Index(s, "\n"); idx >= 0 {
 		s = s[:idx]
-	}
-	const atPrefix = "bytecode runtime error at "
-	const plainPrefix = "bytecode runtime error: "
-	if strings.HasPrefix(s, atPrefix) {
-		if c := strings.Index(s, ": "); c >= 0 {
-			return s[c+2:]
-		}
-	}
-	if strings.HasPrefix(s, plainPrefix) {
-		return s[len(plainPrefix):]
 	}
 	return s
 }
 
 func (vm *VM) withErrorStackTrace(err runtime.Error, line int) runtime.Error {
-	if err.StackTrace == "" {
-		err.StackTrace = vm.vmStackTrace(line)
+	if !err.HasStackTrace() {
+		frames, topLevel := vm.snapshotContractFrames()
+		if len(frames) == 0 && topLevel == 0 {
+			// Top-level throw: show the failing instruction's line.
+			topLevel = line
+		}
+		err.TraceFrames = frames
+		err.ErrorLine = line
+		err.TopLevelLine = topLevel
 	}
 	return err
 }
@@ -3620,12 +3644,7 @@ func (vm *VM) rethrow(instruction Instruction, ip int) (int, error) {
 
 func (vm *VM) jumpToExceptionHandler(instruction Instruction, ip int) (int, error) {
 	if len(vm.exceptionHandlers) == 0 {
-		thrown := *vm.pendingThrow
-		// Wrap a vmThrownError so caller VMs can recover the original
-		// runtime.Error (with its class + parent chain) and re-throw
-		// it as a typed pendingThrow rather than collapsing it to a
-		// plain string at the boundary.
-		return 0, vm.runtimeErrorWith(instruction, vmThrownError{err: thrown}, "uncaught %s", thrown.Inspect())
+		return 0, vm.uncaughtThrowError(instruction, *vm.pendingThrow)
 	}
 	handler := vm.exceptionHandlers[len(vm.exceptionHandlers)-1]
 	vm.exceptionHandlers = vm.exceptionHandlers[:len(vm.exceptionHandlers)-1]
@@ -4957,7 +4976,7 @@ func (vm *VM) iterNext(instruction Instruction) (bool, error) {
 func (vm *VM) raiseIteratorFault(instruction Instruction, err error) error {
 	var thrown vmThrownError
 	if errors.As(err, &thrown) {
-		return vm.runtimeErrorWith(instruction, thrown, "uncaught %s", thrown.err.Inspect())
+		return vm.uncaughtThrowError(instruction, thrown.err)
 	}
 	return vm.runtimeError(instruction, "%s", err.Error())
 }
@@ -5625,7 +5644,9 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	// fields to defaults for the new function.
 	frame := &vm.frames[len(vm.frames)-1]
 	frame.functionName = function.Name
-	frame.callLine = int(instruction.Line)
+	// Keep frame.callLine at the original entry site; the tail-call site is the [xN] line.
+	frame.tailRepeat++
+	frame.tailCallLine = int(instruction.Line)
 	frame.negateReturn = false
 	frame.isErrorClass = false
 	frame.isImmutableClass = false
@@ -6000,6 +6021,8 @@ func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *Fu
 	frame.returnOverride = nil
 	frame.functionName = function.Name
 	frame.callLine = int(instruction.Line)
+	frame.tailRepeat = 0
+	frame.tailCallLine = 0
 	frame.negateReturn = false
 	frame.isErrorClass = false
 	frame.isImmutableClass = false
@@ -6333,6 +6356,8 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	frame.returnOverride = returnOverride
 	frame.functionName = function.Name
 	frame.callLine = int(instruction.Line)
+	frame.tailRepeat = 0
+	frame.tailCallLine = 0
 	frame.negateReturn = false
 	frame.isErrorClass = false
 	frame.isImmutableClass = false
@@ -9646,6 +9671,28 @@ func (vm *VM) addDefer(action deferredAction) {
 	vm.defers[current] = append(vm.defers[current], action)
 }
 
+// mergeBoundaryFrames splices this VM's frames onto an error thrown in a sub-VM (defer wrapper, module hop), whose trace stops at the boundary; boundaryLine is the call site in this VM.
+func (vm *VM) mergeBoundaryFrames(thrown runtime.Error, boundaryLine int) runtime.Error {
+	outer, outerTop := vm.snapshotContractFrames()
+	if len(outer) > 0 {
+		outer[0].CallLine = boundaryLine
+		thrown.TraceFrames = append(append([]runtime.StackFrame{}, thrown.TraceFrames...), outer...)
+		thrown.TopLevelLine = outerTop
+	} else if thrown.TopLevelLine == 0 {
+		thrown.TopLevelLine = boundaryLine
+	}
+	return thrown
+}
+
+// wrapDeferError preserves a typed throw from a deferred call (catch class and trace survive); only non-throw faults get the deferred-context wrap.
+func (vm *VM) wrapDeferError(instruction Instruction, deferLine int, err error, format string, args ...any) error {
+	var thrown vmThrownError
+	if errors.As(err, &thrown) {
+		return vm.uncaughtThrowError(instruction, vm.mergeBoundaryFrames(thrown.err, deferLine))
+	}
+	return vm.runtimeError(instruction, format, args...)
+}
+
 func (vm *VM) runDefers(instruction Instruction) error {
 	if len(vm.defers) == 0 {
 		return nil
@@ -9687,14 +9734,14 @@ func (vm *VM) runDefers(instruction Instruction) error {
 		case deferKindNative:
 			if len(action.names) > 0 {
 				if _, err := vm.evalNativeCallWithNames(action.name, action.args, action.names); err != nil {
-					return vm.runtimeError(instruction, "deferred call %s: %v", action.name, err)
+					return vm.wrapDeferError(instruction, action.line, err, "deferred call %s: %v", action.name, err)
 				}
 			} else if _, err := vm.evalNativeCall(action.name, action.args); err != nil {
-				return vm.runtimeError(instruction, "deferred call %s: %v", action.name, err)
+				return vm.wrapDeferError(instruction, action.line, err, "deferred call %s: %v", action.name, err)
 			}
 		case deferKindFunc:
 			if _, err := vm.CallFunction(action.funcIdx, action.args); err != nil {
-				return vm.runtimeError(instruction, "deferred call: %v", err)
+				return vm.wrapDeferError(instruction, action.line, err, "deferred call: %v", err)
 			}
 		case deferKindMethod:
 			instance, ok := action.receiver.(*runtime.Instance)
@@ -9710,7 +9757,7 @@ func (vm *VM) runDefers(instruction Instruction) error {
 				args = reordered
 			}
 			if _, err := vm.CallMethod(instance, action.name, args); err != nil {
-				return vm.runtimeError(instruction, "deferred method call %s: %v", action.name, err)
+				return vm.wrapDeferError(instruction, action.line, err, "deferred method call %s: %v", action.name, err)
 			}
 		case deferKindCallable:
 			args := action.args
@@ -9722,7 +9769,7 @@ func (vm *VM) runDefers(instruction Instruction) error {
 				args = reordered
 			}
 			if _, err := vm.callCallable(action.value, args); err != nil {
-				return vm.runtimeError(instruction, "deferred callable call: %v", err)
+				return vm.wrapDeferError(instruction, action.line, err, "deferred callable call: %v", err)
 			}
 		default:
 			return vm.runtimeError(instruction, "unknown deferred action kind")
@@ -12788,8 +12835,18 @@ func (vm *VM) receiverParamNames(instruction Instruction, receiver runtime.Value
 			return vm.receiverParamNames(instruction, r.Callable, methodName)
 		}
 	case *runtime.Instance:
-		if r.Class == nil || r.Class.Module != vm.moduleName {
+		if r.Class == nil {
 			return nil, vm.runtimeError(instruction, "cannot use dict spread with a cross-module method")
+		}
+		if r.Class.Module != vm.moduleName {
+			if vm.moduleLoader == nil {
+				return nil, vm.runtimeError(instruction, "cannot use dict spread with a cross-module method")
+			}
+			names, err := vm.moduleLoader.ModuleMethodParamNames(r.Class.Module, r.Class.Name, methodName)
+			if err != nil {
+				return nil, vm.runtimeError(instruction, "%s", err.Error())
+			}
+			return names, nil
 		}
 		classInfo, ok := vm.classInfo(r.Class.Name)
 		if !ok {
@@ -13525,6 +13582,22 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 			}
 		}
 		return 0, vm.runtimeError(instruction, "named method arguments are only supported for class instances")
+	}
+	if instance.Class != nil && instance.Class.Module != vm.moduleName && vm.moduleLoader != nil {
+		paramNames, perr := vm.moduleLoader.ModuleMethodParamNames(instance.Class.Module, instance.Class.Name, methodName)
+		if perr != nil {
+			return 0, vm.runtimeError(instruction, "%s", perr.Error())
+		}
+		ordered, oerr := orderNamedByParamNames(instance.Class.Name+"."+methodName, args, names, paramNames)
+		if oerr != nil {
+			return 0, vm.runtimeError(instruction, "%s", oerr.Error())
+		}
+		result, cerr := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, methodName, instance, ordered)
+		if cerr != nil {
+			return vm.propagateModuleError(instruction, ip, cerr)
+		}
+		vm.push(result)
+		return ip, nil
 	}
 	classInfo, ok := vm.classInfo(instance.Class.Name)
 	if !ok {
@@ -17624,112 +17697,95 @@ func ensureSlot(values *[]runtime.VMValue, slot int64, label string) error {
 	return nil
 }
 
-// traceFrame is the cheap per-frame snapshot captured at throw time so
-// the (O(frames)) trace string can be formatted lazily.
-type traceFrame struct {
-	name     string
-	callLine int
-}
-
-func (vm *VM) snapshotTraceFrames() []traceFrame {
-	out := make([]traceFrame, len(vm.frames))
-	for i := range vm.frames {
-		out[i] = traceFrame{name: vm.frames[i].functionName, callLine: vm.frames[i].callLine}
+// Converts outermost-first frame snapshot to innermost-first contract frames; frame i pairs its CallLine with frame i+1's callLine.
+func (vm *VM) snapshotContractFrames() (frames []runtime.StackFrame, topLevelLine int) {
+	n := len(vm.frames)
+	if n == 0 {
+		return nil, 0
 	}
-	return out
-}
-
-// formatTraceFrames renders a frame snapshot into the "\n  at ..." trace
-// string. Byte-identical to the previous vmStackTrace output.
-func formatTraceFrames(frames []traceFrame, errorLine int) string {
-	if len(frames) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	N := len(frames)
-	innerName := frames[N-1].name
-	if innerName == "" {
-		innerName = "<anonymous>"
-	}
-	if errorLine > 0 {
-		fmt.Fprintf(&sb, "\n  at %s (line %d)", innerName, errorLine)
-	} else {
-		fmt.Fprintf(&sb, "\n  at %s", innerName)
-	}
-	for i := N - 1; i >= 0; i-- {
-		line := frames[i].callLine
-		var callerName string
-		if i > 0 {
-			callerName = frames[i-1].name
-			if callerName == "" {
-				callerName = "<anonymous>"
-			}
-		} else {
-			callerName = "<top level>"
+	frames = make([]runtime.StackFrame, 0, n)
+	for k := 0; k < n; k++ {
+		i := n - 1 - k
+		callLine := 0
+		if i+1 < n {
+			callLine = vm.frames[i+1].callLine
 		}
-		if line > 0 {
-			fmt.Fprintf(&sb, "\n  at %s (line %d)", callerName, line)
-		} else {
-			fmt.Fprintf(&sb, "\n  at %s", callerName)
+		frames = append(frames, runtime.StackFrame{Name: vm.frames[i].functionName, CallLine: callLine})
+		if r := vm.frames[i].tailRepeat; r > 0 {
+			// Self-recursive TCE reused one frame; surface the elided repeats as a collapsed [xN] entry.
+			frames = append(frames, runtime.StackFrame{Name: vm.frames[i].functionName, CallLine: vm.frames[i].tailCallLine, Repeat: r})
 		}
 	}
-	return sb.String()
-}
-
-func (vm *VM) vmStackTrace(errorLine int) string {
-	return formatTraceFrames(vm.snapshotTraceFrames(), errorLine)
+	return frames, vm.frames[0].callLine
 }
 
 // vmRuntimeError is the error vm.runtimeError returns. It snapshots the
-// call frames cheaply at throw time but defers the expensive trace
-// formatting to Error() / lazyTrace(), so a runtime fault that is caught
-// and discarded never pays the O(frames) trace-string cost.
+// call frames cheaply at throw time and renders through the canonical
+// runtime.UncaughtError so the user-facing output matches the evaluator.
 type vmRuntimeError struct {
-	line, column int
+	line         int
 	message      string
-	frames       []traceFrame
+	frames       []runtime.StackFrame
+	topLevelLine int
 }
 
-func (e *vmRuntimeError) Error() string {
-	trace := formatTraceFrames(e.frames, e.line)
-	if e.line > 0 {
-		return fmt.Sprintf("bytecode runtime error at %d:%d: %s%s", e.line, e.column, e.message, trace)
+func (e *vmRuntimeError) uncaught() *runtime.UncaughtError {
+	return &runtime.UncaughtError{
+		Class:        "RuntimeError",
+		Message:      e.message,
+		ErrorLine:    e.line,
+		Frames:       runtime.CollapseFrames(e.frames),
+		TopLevelLine: e.topLevelLine,
 	}
-	return fmt.Sprintf("bytecode runtime error: %s%s", e.message, trace)
 }
 
-// lazyTrace returns a closure that formats the trace on demand (leading
-// newline stripped, matching the stored-StackTrace form).
-func (e *vmRuntimeError) lazyTrace() func() string {
-	frames, line := e.frames, e.line
-	return func() string {
-		return strings.TrimPrefix(formatTraceFrames(frames, line), "\n")
-	}
-}
+func (e *vmRuntimeError) Error() string { return e.uncaught().Render() }
 
 func (vm *VM) runtimeError(instruction Instruction, format string, args ...any) error {
+	frames, topLevel := vm.snapshotContractFrames()
+	if len(frames) == 0 && topLevel == 0 {
+		// Top-level fault: show the failing instruction's line.
+		topLevel = int(instruction.Line)
+	}
 	return &vmRuntimeError{
-		line:    int(instruction.Line),
-		column:  int(instruction.Column),
-		message: fmt.Sprintf(format, args...),
-		frames:  vm.snapshotTraceFrames(),
+		line:         int(instruction.Line),
+		message:      fmt.Sprintf(format, args...),
+		frames:       frames,
+		topLevelLine: topLevel,
 	}
 }
 
-// runtimeErrorWith wraps the formatted runtime-error message around a
-// caller-supplied inner error so the chain can be unwrapped with
-// errors.As. Used to thread a vmThrownError (carrying the underlying
-// runtime.Error) across a VM boundary so the calling VM can catch it.
-func (vm *VM) runtimeErrorWith(instruction Instruction, inner error, format string, args ...any) error {
-	message := fmt.Sprintf(format, args...)
-	trace := vm.vmStackTrace(int(instruction.Line))
-	var prefix string
-	if instruction.Line > 0 {
-		prefix = fmt.Sprintf("bytecode runtime error at %d:%d: %s%s", instruction.Line, instruction.Column, message, trace)
-	} else {
-		prefix = fmt.Sprintf("bytecode runtime error: %s%s", message, trace)
+// Prefers the thrown error's captured frames over the live snapshot so the trace shows the original throw site.
+func (vm *VM) uncaughtThrowError(instruction Instruction, thrown runtime.Error) error {
+	frames := thrown.TraceFrames
+	errorLine := thrown.ErrorLine
+	topLevel := thrown.TopLevelLine
+	if len(frames) == 0 {
+		var topLine int
+		frames, topLine = vm.snapshotContractFrames()
+		if errorLine == 0 {
+			errorLine = int(instruction.Line)
+		}
+		if topLevel == 0 {
+			topLevel = topLine
+		}
+		// Top-level throw with no frames: show the failing instruction's line.
+		if topLevel == 0 && len(frames) == 0 {
+			topLevel = int(instruction.Line)
+		}
+		// Stamp resolved location back so the unwrapped error and the wrapper agree.
+		thrown.TraceFrames = frames
+		thrown.ErrorLine = errorLine
+		thrown.TopLevelLine = topLevel
 	}
-	return &wrappedError{prefix: prefix, inner: inner}
+	u := &runtime.UncaughtError{
+		Class:        thrown.Class,
+		Message:      thrown.Message,
+		ErrorLine:    errorLine,
+		Frames:       runtime.CollapseFrames(frames),
+		TopLevelLine: topLevel,
+	}
+	return &wrappedError{prefix: u.Render(), inner: vmThrownError{err: thrown}}
 }
 
 // wrappedError preserves Unwrap support so callers can recover the
@@ -17752,7 +17808,7 @@ func (e *wrappedError) Unwrap() error { return e.inner }
 func (vm *VM) propagateModuleError(instruction Instruction, ip int, err error) (int, error) {
 	var thrown vmThrownError
 	if errors.As(err, &thrown) {
-		captured := thrown.err
+		captured := vm.mergeBoundaryFrames(thrown.err, int(instruction.Line))
 		vm.pendingThrow = &captured
 		return vm.jumpToExceptionHandler(instruction, ip)
 	}
