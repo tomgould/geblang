@@ -1,0 +1,31 @@
+import io;
+import db;
+import sys;
+import time;
+import async;
+
+let path = sys.args()[0];
+int tasks = sys.args()[1].toInt();
+int queriesPerTask = sys.args()[2].toInt();
+let conn = db.Connection({"driver": "sqlite", "dsn": path, "maxOpenConns": 16});
+
+let start = time.monotonicNs();
+let workers = [];
+for (t in 0..<tasks) {
+    let w = async.run(func(): int {
+        int hits = 0;
+        for (q in 0..<queriesPerTask) {
+            let id = (t * queriesPerTask + q) % 999983 + 1;
+            let rows = conn.query("SELECT name, val FROM t WHERE id = ?", id).all();
+            if (rows.length() == 1) { hits = hits + 1; }
+        }
+        return hits;
+    });
+    workers = workers.push(w);
+}
+let results = await async.all(workers);
+int total = 0;
+for (r in results) { total = total + r; }
+let ms = (time.monotonicNs() - start) // 1000000;
+io.println("hits=${total} ms=${ms}");
+conn.close();

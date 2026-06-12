@@ -59,19 +59,19 @@ func (e *Evaluator) dataframeFromQuery(call *ast.CallExpression, args []runtime.
 	if len(args) < 2 {
 		return nil, fmt.Errorf("%s expects a connection, sql text, and optional parameters", call.Callee.String())
 	}
-	db, err := e.dbHandle(dfConnHandle(args[0]))
+	db, err := e.dbHandle(args[0])
 	if err != nil {
 		return nil, err
 	}
-	query, ok := args[1].(runtime.String)
-	if !ok {
-		return nil, fmt.Errorf("%s query must be a string", call.Callee.String())
-	}
-	sqlArgs, err := dbArgs(args[2:])
+	driver, err := e.dbDriverFromValue(args[0])
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(query.Value, sqlArgs...)
+	query, sqlArgs, err := dbStandardQueryAndArgs(call, driver, args[1:])
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(query, sqlArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +94,7 @@ func (e *Evaluator) dataframeToTable(call *ast.CallExpression, args []runtime.Va
 	if !ok {
 		return nil, fmt.Errorf("%s expects a dataframe first", call.Callee.String())
 	}
-	db, err := e.dbHandle(dfConnHandle(args[1]))
+	db, err := e.dbHandle(args[1])
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func (e *Evaluator) dataframeToTable(call *ast.CallExpression, args []runtime.Va
 	if len(frame.Cols) == 0 {
 		return nil, fmt.Errorf("%s: the dataframe has no columns", call.Callee.String())
 	}
-	driver, err := e.dbDriverFromValue(dfConnHandle(args[1]))
+	driver, err := e.dbDriverFromValue(args[1])
 	if err != nil {
 		return nil, err
 	}
@@ -187,15 +187,4 @@ func dfColumnCell(c *runtime.DFColumn, row int) runtime.Value {
 	default:
 		return runtime.Bool{Value: c.Bool[row]}
 	}
-}
-
-// dfConnHandle unwraps a db.Connection instance to its raw handle so
-// fromQuery/toTable accept the object form db.connect returns.
-func dfConnHandle(v runtime.Value) runtime.Value {
-	if inst, ok := v.(*runtime.Instance); ok {
-		if h, ok := inst.Fields["handle"]; ok {
-			return h
-		}
-	}
-	return v
 }

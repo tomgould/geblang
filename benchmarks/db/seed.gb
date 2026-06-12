@@ -1,0 +1,12 @@
+import io;
+import db;
+import sys;
+
+let path = sys.args()[0];
+let conn = db.Connection("sqlite", path);
+conn.exec("PRAGMA journal_mode=WAL");
+conn.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, val REAL)");
+conn.exec("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 1000000) INSERT INTO t SELECT x, 'name' || x, x * 1.5 FROM c");
+let n = conn.query("SELECT COUNT(*) AS n FROM t").all()[0]["n"];
+io.println("seeded ${n}");
+conn.close();

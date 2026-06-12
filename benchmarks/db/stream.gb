@@ -1,0 +1,29 @@
+import io;
+import db;
+import sys;
+import time;
+
+let path = sys.args()[0];
+let mode = sys.args()[1];
+let conn = db.Connection("sqlite", path);
+
+let start = time.monotonicNs();
+if (mode == "stream") {
+    let rows = conn.query("SELECT id, name, val FROM t");
+    int count = 0;
+    while (rows.next()) {
+        let row = rows.row();
+        count = count + 1;
+    }
+    io.println("streamed ${count}");
+} else if (mode == "all") {
+    let rows = conn.query("SELECT id, name, val FROM t").all();
+    io.println("eager ${rows.length()}");
+} else {
+    let h = db.open("sqlite", path);
+    let rows = db.query(h, "SELECT id, name, val FROM t");
+    io.println("functional ${rows.length()}");
+}
+let ms = (time.monotonicNs() - start) // 1000000;
+io.println("ms=${ms}");
+conn.close();

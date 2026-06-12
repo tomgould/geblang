@@ -271,12 +271,17 @@ type httpFetchStreamHandle struct {
 }
 
 type dbRowsHandle struct {
-	rows      *sql.Rows
-	columns   []string
-	current   runtime.Value
-	cache     []runtime.Value
-	closed    bool
-	exhausted bool
+	rows     *sql.Rows
+	columns  []string
+	textCols []bool
+	current  runtime.Value
+	// cache backs all/get/first random access; empty and unused until one
+	// of those is called, so a plain next()/row() scan stays O(1) memory.
+	cache      []runtime.Value
+	caching    bool
+	prefetched runtime.Value
+	closed     bool
+	exhausted  bool
 }
 
 type dbStmtHandle struct {
@@ -4245,6 +4250,34 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 		}
 		return e.dbRowsAll(this)
 	}}}
+	rowsClass.Methods["__iter"] = []runtime.Function{{Name: "__iter", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		return this, nil
+	}}}
+	rowsClass.Methods["__done"] = []runtime.Function{{Name: "__done", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		h, err := e.dbRowsHandle(this)
+		if err != nil {
+			return nil, err
+		}
+		ok, err := dbRowsPrefetch(h)
+		if err != nil {
+			return nil, err
+		}
+		return runtime.Bool{Value: !ok}, nil
+	}}}
+	rowsClass.Methods["__next"] = []runtime.Function{{Name: "__next", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		h, err := e.dbRowsHandle(this)
+		if err != nil {
+			return nil, err
+		}
+		ok, err := dbRowsAdvance(h)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return runtime.Null{}, nil
+		}
+		return h.current, nil
+	}}}
 
 	transactionClass := &runtime.Class{
 		Name:    "Transaction",
@@ -4373,7 +4406,7 @@ func (e *Evaluator) registerDBRows(rows *sql.Rows) (runtime.Value, error) {
 	e.dbMu.Lock()
 	e.nextDBRowsID++
 	id := e.nextDBRowsID
-	e.dbRows[id] = &dbRowsHandle{rows: rows, columns: columns}
+	e.dbRows[id] = &dbRowsHandle{rows: rows, columns: columns, textCols: sqlTextColumns(rows)}
 	e.dbMu.Unlock()
 	return &runtime.Instance{Class: class, Fields: map[string]runtime.Value{"handle": runtime.NewInt64(id)}}, nil
 }
@@ -4414,9 +4447,27 @@ func (e *Evaluator) dbRowsNext(instance *runtime.Instance) (runtime.Value, error
 	if err != nil {
 		return nil, err
 	}
+	ok, err := dbRowsAdvance(rows)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.Bool{Value: ok}, nil
+}
+
+// dbRowsAdvance moves the cursor one row (honouring a prefetched row from
+// the iterator protocol) and stores it as current.
+func dbRowsAdvance(rows *dbRowsHandle) (bool, error) {
+	if rows.prefetched != nil {
+		rows.current = rows.prefetched
+		rows.prefetched = nil
+		if rows.caching {
+			rows.cache = append(rows.cache, rows.current)
+		}
+		return true, nil
+	}
 	if rows.closed || rows.exhausted {
 		rows.current = nil
-		return runtime.Bool{Value: false}, nil
+		return false, nil
 	}
 	if !rows.rows.Next() {
 		rows.current = nil
@@ -4424,20 +4475,43 @@ func (e *Evaluator) dbRowsNext(instance *runtime.Instance) (runtime.Value, error
 		rows.closed = true
 		if err := rows.rows.Err(); err != nil {
 			_ = rows.rows.Close()
-			return nil, err
+			return false, err
 		}
 		if err := rows.rows.Close(); err != nil {
-			return nil, err
+			return false, err
 		}
-		return runtime.Bool{Value: false}, nil
+		return false, nil
 	}
-	row, err := scanSQLRow(rows.rows, rows.columns)
+	row, err := scanSQLRow(rows.rows, rows.columns, rows.textCols)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 	rows.current = row
-	rows.cache = append(rows.cache, row)
-	return runtime.Bool{Value: true}, nil
+	if rows.caching {
+		rows.cache = append(rows.cache, row)
+	}
+	return true, nil
+}
+
+// dbRowsPrefetch peeks one row ahead for the for-in protocol's __done.
+func dbRowsPrefetch(rows *dbRowsHandle) (bool, error) {
+	if rows.prefetched != nil {
+		return true, nil
+	}
+	saved := rows.current
+	ok, err := dbRowsAdvance(rows)
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		// Advance cached it already when caching; stash without re-caching.
+		rows.prefetched = rows.current
+		if rows.caching && len(rows.cache) > 0 {
+			rows.cache = rows.cache[:len(rows.cache)-1]
+		}
+	}
+	rows.current = saved
+	return ok, nil
 }
 
 func (e *Evaluator) dbRowsAll(instance *runtime.Instance) (runtime.Value, error) {
@@ -4445,6 +4519,7 @@ func (e *Evaluator) dbRowsAll(instance *runtime.Instance) (runtime.Value, error)
 	if err != nil {
 		return nil, err
 	}
+	rows.caching = true
 	for !rows.closed && !rows.exhausted {
 		next, err := e.dbRowsNext(instance)
 		if err != nil {
@@ -4471,6 +4546,7 @@ func (e *Evaluator) dbRowsGet(instance *runtime.Instance, index int64) (runtime.
 	if err != nil {
 		return nil, err
 	}
+	rows.caching = true
 	for int64(len(rows.cache)) <= index && !rows.closed && !rows.exhausted {
 		next, err := e.dbRowsNext(instance)
 		if err != nil {
@@ -13204,11 +13280,18 @@ func (e *Evaluator) dbOpen(call *ast.CallExpression, args []runtime.Value) (runt
 	if err != nil {
 		return nil, err
 	}
+	if driverName == "sqlite" {
+		dsn = sqliteDSNWithBusyTimeout(dsn)
+	}
 	db, err := sql.Open(driverName, dsn)
 	if err != nil {
 		return nil, err
 	}
 	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := dbApplyPoolOptions(call, db, args); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -13228,15 +13311,15 @@ func (e *Evaluator) dbExec(call *ast.CallExpression, args []runtime.Value) (runt
 	if err != nil {
 		return nil, err
 	}
-	query, ok := args[1].(runtime.String)
-	if !ok {
-		return nil, fmt.Errorf("%s query must be string", call.Callee.String())
-	}
-	sqlArgs, err := dbArgs(args[2:])
+	driver, err := e.dbDriverFromValue(args[0])
 	if err != nil {
 		return nil, err
 	}
-	result, err := db.Exec(query.Value, sqlArgs...)
+	query, sqlArgs, err := dbStandardQueryAndArgs(call, driver, args[1:])
+	if err != nil {
+		return nil, err
+	}
+	result, err := db.Exec(query, sqlArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -13284,15 +13367,15 @@ func (e *Evaluator) dbQuery(call *ast.CallExpression, args []runtime.Value) (run
 	if err != nil {
 		return nil, err
 	}
-	query, ok := args[1].(runtime.String)
-	if !ok {
-		return nil, fmt.Errorf("%s query must be string", call.Callee.String())
-	}
-	sqlArgs, err := dbArgs(args[2:])
+	driver, err := e.dbDriverFromValue(args[0])
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(query.Value, sqlArgs...)
+	query, sqlArgs, err := dbStandardQueryAndArgs(call, driver, args[1:])
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(query, sqlArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -13589,6 +13672,67 @@ func (e *Evaluator) dbStmtClose(call *ast.CallExpression, args []runtime.Value) 
 	return runtime.Null{}, stmt.stmt.Close()
 }
 
+// dbApplyPoolOptions applies pool tuning from the connect-time options
+// dict (previously only db.configure applied them, so the dict form
+// silently ignored maxOpenConns and churned connections at Go's
+// 2-idle default). Bare connections default to 8 idle conns; setting
+// maxOpenConns without maxIdleConns aligns idle to open.
+func dbApplyPoolOptions(call *ast.CallExpression, db *sql.DB, args []runtime.Value) error {
+	var options runtime.Dict
+	hasOptions := false
+	if len(args) == 1 {
+		if d, ok := args[0].(runtime.Dict); ok {
+			options = d
+			hasOptions = true
+		}
+	}
+	maxOpen, hasMaxOpen := 0, false
+	maxIdle, hasMaxIdle := 0, false
+	if hasOptions {
+		if value, ok := dictField(options, "maxOpenConns"); ok {
+			n, err := intOption(call, value, "maxOpenConns")
+			if err != nil {
+				return err
+			}
+			maxOpen, hasMaxOpen = n, true
+		}
+		if value, ok := dictField(options, "maxIdleConns"); ok {
+			n, err := intOption(call, value, "maxIdleConns")
+			if err != nil {
+				return err
+			}
+			maxIdle, hasMaxIdle = n, true
+		}
+		if value, ok := dictField(options, "connMaxLifetimeMs"); ok {
+			n, err := intOption(call, value, "connMaxLifetimeMs")
+			if err != nil {
+				return err
+			}
+			db.SetConnMaxLifetime(time.Duration(n) * time.Millisecond)
+		}
+		if value, ok := dictField(options, "connMaxIdleTimeMs"); ok {
+			n, err := intOption(call, value, "connMaxIdleTimeMs")
+			if err != nil {
+				return err
+			}
+			db.SetConnMaxIdleTime(time.Duration(n) * time.Millisecond)
+		}
+	}
+	switch {
+	case hasMaxOpen && hasMaxIdle:
+		db.SetMaxOpenConns(maxOpen)
+		db.SetMaxIdleConns(maxIdle)
+	case hasMaxOpen:
+		db.SetMaxOpenConns(maxOpen)
+		db.SetMaxIdleConns(maxOpen)
+	case hasMaxIdle:
+		db.SetMaxIdleConns(maxIdle)
+	default:
+		db.SetMaxIdleConns(8)
+	}
+	return nil
+}
+
 func (e *Evaluator) dbConfigure(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("%s expects database handle and options", call.Callee.String())
@@ -13742,25 +13886,14 @@ func sqlRowsToRuntime(rows *sql.Rows) (runtime.Value, error) {
 	if err != nil {
 		return nil, err
 	}
+	textCols := sqlTextColumns(rows)
 	out := []runtime.Value{}
 	for rows.Next() {
-		raw := make([]any, len(columns))
-		dest := make([]any, len(columns))
-		for i := range raw {
-			dest[i] = &raw[i]
-		}
-		if err := rows.Scan(dest...); err != nil {
+		row, err := scanSQLRow(rows, columns, textCols)
+		if err != nil {
 			return nil, err
 		}
-		entries := map[string]runtime.DictEntry{}
-		for i, column := range columns {
-			value, err := sqlValueToRuntime(raw[i])
-			if err != nil {
-				return nil, err
-			}
-			putDict(entries, column, value)
-		}
-		out = append(out, runtime.Dict{Entries: entries})
+		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -13768,7 +13901,23 @@ func sqlRowsToRuntime(rows *sql.Rows) (runtime.Value, error) {
 	return &runtime.List{Elements: out}, nil
 }
 
-func scanSQLRow(rows *sql.Rows, columns []string) (runtime.Value, error) {
+// sqlTextColumns marks columns whose []byte scan values are text, not
+// binary (MySQL returns TEXT/VARCHAR/DECIMAL/DATETIME as []byte); only
+// BLOB/BINARY-typed columns stay bytes.
+func sqlTextColumns(rows *sql.Rows) []bool {
+	types, err := rows.ColumnTypes()
+	if err != nil {
+		return nil
+	}
+	out := make([]bool, len(types))
+	for i, t := range types {
+		name := strings.ToUpper(t.DatabaseTypeName())
+		out[i] = !strings.Contains(name, "BLOB") && !strings.Contains(name, "BINARY")
+	}
+	return out
+}
+
+func scanSQLRow(rows *sql.Rows, columns []string, textCols []bool) (runtime.Value, error) {
 	raw := make([]any, len(columns))
 	dest := make([]any, len(columns))
 	for i := range raw {
@@ -13779,6 +13928,9 @@ func scanSQLRow(rows *sql.Rows, columns []string) (runtime.Value, error) {
 	}
 	entries := map[string]runtime.DictEntry{}
 	for i, column := range columns {
+		if b, ok := raw[i].([]byte); ok && i < len(textCols) && textCols[i] {
+			raw[i] = string(b)
+		}
 		value, err := sqlValueToRuntime(raw[i])
 		if err != nil {
 			return nil, err
@@ -13921,7 +14073,36 @@ func (e *Evaluator) takeStmtHandle(value runtime.Value) (*dbStmtHandle, error) {
 	return stmt, nil
 }
 
+// sqliteDSNWithBusyTimeout defaults busy_timeout for every pooled
+// connection (a PRAGMA exec would reach only one); override by passing
+// any _pragma or busy_timeout in the DSN. :memory: stays untouched
+// (each pooled conn owns a private database; BUSY cannot occur).
+func sqliteDSNWithBusyTimeout(dsn string) string {
+	if dsn == ":memory:" || strings.Contains(dsn, "busy_timeout") || strings.Contains(dsn, "_pragma") {
+		return dsn
+	}
+	const pragma = "_pragma=busy_timeout(5000)"
+	if strings.HasPrefix(dsn, "file:") {
+		if strings.Contains(dsn, "?") {
+			return dsn + "&" + pragma
+		}
+		return dsn + "?" + pragma
+	}
+	return "file:" + dsn + "?" + pragma
+}
+
 func dbHandleID(value runtime.Value) (int64, error) {
+	// Class-API objects (db.Connection / Transaction / Statement / Rows)
+	// carry their raw id in a handle field; unwrap so the functional API
+	// composes with them.
+	if inst, ok := value.(*runtime.Instance); ok {
+		if h, ok := inst.GetField("handle"); ok {
+			return dbHandleID(h)
+		}
+	}
+	if small, ok := value.(runtime.SmallInt); ok {
+		return small.Value, nil
+	}
 	id, ok := value.(runtime.Int)
 	if !ok || !id.Value.IsInt64() {
 		return 0, fmt.Errorf("database handle must be int")

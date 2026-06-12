@@ -1,4 +1,4 @@
-.PHONY: all test test-go test-lang test-pgvector check-lang build build-with-path install bench bench-web bench-docker run repl check doctor cache-stats clean fmt docs docker-build compose-build vscode-build vscode-install vscode-install-wsl vscode-install-native
+.PHONY: all test test-go test-lang test-pgvector check-lang build build-with-path install bench bench-web bench-db bench-docker run repl check doctor cache-stats clean fmt docs docker-build compose-build vscode-build vscode-install vscode-install-wsl vscode-install-native
 
 BINARY ?= geblang
 GO ?= go
@@ -87,6 +87,9 @@ bench: build
 
 bench-web: build
 	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto GEBLANG_BIN=$(PWD)/$(BINARY) ./benchmarks/web/run.sh
+
+bench-db: build
+	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto GEBLANG_BIN=$(PWD)/$(BINARY) ./benchmarks/db/run.sh
 
 bench-docker: build
 	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto GEBLANG_BIN=$(PWD)/$(BINARY) ./benchmarks/run.sh --docker

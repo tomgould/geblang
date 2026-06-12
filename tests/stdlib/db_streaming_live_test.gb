@@ -1,0 +1,70 @@
+/**
+ * @title Live database streaming test
+ * @summary db.Rows streaming and for-in iteration against real
+ *          PostgreSQL and MySQL servers. Gated on GEBLANG_PG_DSN /
+ *          GEBLANG_MYSQL_DSN: each test skips when its DSN is unset,
+ *          so the suite stays hermetic by default (run via
+ *          scripts/test-pgvector.sh or a manual server for postgres).
+ */
+import test;
+import sys;
+import db;
+
+class DbStreamingLiveTest extends test.Test {
+    func dsn(string name): string {
+        let v = sys.getenv(name);
+        return v ?? "";
+    }
+
+    func exerciseStreaming(string driver, string dsn): void {
+        let conn = db.Connection(driver, dsn);
+        conn.exec("DROP TABLE IF EXISTS geblang_stream_t");
+        conn.exec("CREATE TABLE geblang_stream_t (id BIGINT PRIMARY KEY, name TEXT)");
+        for (i in 1..5) {
+            conn.exec("INSERT INTO geblang_stream_t (id, name) VALUES (?, ?)", i, "name${i}");
+        }
+
+        /* for-in streams without materialising */
+        int count = 0;
+        int sum = 0;
+        for (row in conn.query("SELECT id FROM geblang_stream_t ORDER BY id")) {
+            count = count + 1;
+            sum = sum + (row["id"] as int);
+        }
+        this.assertEquals(5, count);
+        this.assertEquals(15, sum);
+
+        /* streaming next() then remaining-rows all() */
+        let rows = conn.query("SELECT id FROM geblang_stream_t ORDER BY id");
+        this.assertTrue(rows.next());
+        this.assertEquals(1, rows.row()["id"]);
+        this.assertEquals(4, rows.all().length());
+
+        /* functional API composes with the connection object */
+        let viaFunctional = db.query(conn, "SELECT name FROM geblang_stream_t WHERE id = ?", 3);
+        this.assertEquals("name3", viaFunctional[0]["name"]);
+
+        conn.exec("DROP TABLE geblang_stream_t");
+        conn.close();
+    }
+
+    @test
+    func postgresStreaming(): void {
+        let dsn = this.dsn("GEBLANG_PG_DSN");
+        if (dsn == "") {
+            this.skip("GEBLANG_PG_DSN unset");
+            return;
+        }
+        this.exerciseStreaming("postgres", dsn);
+    }
+
+    @test
+    func mysqlStreaming(): void {
+        let dsn = this.dsn("GEBLANG_MYSQL_DSN");
+        if (dsn == "") {
+            this.skip("GEBLANG_MYSQL_DSN unset");
+            return;
+        }
+        this.exerciseStreaming("mysql", dsn);
+    }
+}

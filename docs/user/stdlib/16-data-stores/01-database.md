@@ -51,6 +51,26 @@ let mysqlSocket = db.Connection(
 );
 ```
 
+The options-dict form accepts pool tuning alongside the driver and DSN, applied
+at connect time: `maxOpenConns`, `maxIdleConns`, `connMaxLifetimeMs`,
+`connMaxIdleTimeMs`. Setting `maxOpenConns` without `maxIdleConns` keeps the
+idle pool the same size; with no pool options the idle pool defaults to 8
+connections. Size `maxOpenConns` to your expected concurrency - a shared
+connection then serves parallel tasks and handlers at full speed:
+
+```gb
+let pool = db.Connection({
+    "driver": "postgres",
+    "dsn": pgUrl,
+    "maxOpenConns": 16,
+});
+```
+
+SQLite connections default to a five-second `busy_timeout` on every pooled
+connection so concurrent access waits instead of failing with
+`database is locked`; pass your own `busy_timeout` or `_pragma` DSN parameter
+to override.
+
 The repository includes runnable examples:
 
 - `examples/sqlite.gb` uses a local SQLite file and runs without external
@@ -210,14 +230,32 @@ stmt.close();
 ## Rows
 
 `Connection.query`, `Transaction.query`, and `Statement.query` return `db.Rows`.
-Rows are streaming cursors in the class API. Use `next()` to advance, `row()` to
-read the current row, and `close()` when you are done. Exhausting a cursor closes
-the native SQL rows automatically, but `defer rows.close()` is still the normal
-pattern when a function may return early.
+Rows are streaming cursors: a `next()`/`row()` loop (or a `for-in` loop) holds
+one row at a time regardless of result-set size, so scanning millions of rows
+stays at constant memory on every driver (SQLite, PostgreSQL, MySQL).
+Exhausting a cursor closes the native SQL rows automatically, but
+`defer rows.close()` is still the normal pattern when a function may return
+early.
+
+Cursors are iterable directly (1.19.0):
+
+```gb
+for (row in conn.query("select id, name from users")) {
+    io.println(row["name"]);
+}
+```
+
+The random-access methods (`all()`, `first()`, `get(i)`, `length()`,
+`isEmpty()`, `toList()`) start caching rows from the moment they are first
+called. Mixing styles is allowed and has remaining-rows semantics: rows
+already consumed by `next()` before the first random-access call are not
+replayed - `rows.next(); rows.all()` returns everything after the first row.
 
 The functional API (`db.query`, `db.txQuery`, and `db.stmtQuery`) keeps returning
-an eager `list<dict>` for adapter code that wants raw handles or already expects
-materialized result sets.
+an eager `list<dict>` for code that expects materialized result sets. As of
+1.19.0 the functional helpers also accept `Connection`/`Transaction`/`Statement`
+objects (not just raw handles) and normalize `?` placeholders per driver,
+exactly like the class API.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
@@ -225,7 +263,7 @@ materialized result sets.
 | `row()` | `dict|null` | Current row after `next()`, or `null` before/after iteration |
 | `columns()` | `list<string>` | Column names for the result set |
 | `close()` | `void` | Close the cursor |
-| `all()` | `list<dict>` | Drain the cursor and return all cached and remaining rows |
+| `all()` | `list<dict>` | Drain the cursor and return the cached and remaining rows |
 | `length()` | `int` | Drain the cursor and return the number of rows |
 | `isEmpty()` | `bool` | Read enough to determine whether the result set is empty |
 | `first()` | `dict|null` | First row or `null`; reads and caches it if needed |

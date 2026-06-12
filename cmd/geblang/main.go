@@ -1,6 +1,7 @@
 package main
 
 import (
+	goruntime "runtime"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +45,9 @@ func main() {
 	// GEBLANG_PPROF=addr starts Go's pprof HTTP endpoint for engine
 	// profiling (dev tool; no effect when unset).
 	if addr := os.Getenv("GEBLANG_PPROF"); addr != "" {
+		// Mutex/block sampling so /debug/pprof/mutex and /block attribute contention.
+		goruntime.SetMutexProfileFraction(5)
+		goruntime.SetBlockProfileRate(1000000)
 		go func() {
 			if err := http.ListenAndServe(addr, nil); err != nil {
 				fmt.Fprintf(os.Stderr, "geblang: pprof listener: %v\n", err)

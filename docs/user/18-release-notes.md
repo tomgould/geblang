@@ -68,6 +68,34 @@
   are immutable. Identical on both runtimes; see the stdlib dataframe
   chapter.
 
+### Database
+
+- `db.Rows` is now a true streaming cursor: a `next()`/`row()` loop (or
+  the new `for (row in rows)` iteration) holds one row at a time, so a
+  million-row scan runs in constant memory on SQLite, PostgreSQL, and
+  MySQL (measured ~830 MB down to ~39 MB). The random-access methods
+  (`all`, `first`, `get`, `length`, `isEmpty`) cache from their first
+  call; mixing styles has remaining-rows semantics.
+- Connection pool options (`maxOpenConns`, `maxIdleConns`,
+  `connMaxLifetimeMs`, `connMaxIdleTimeMs`) in the `db.Connection`
+  options dict now apply at connect time (previously only
+  `db.configure` applied them, and concurrent load against a shared
+  connection churned the pool at Go's 2-idle default - 32 concurrent
+  query tasks improved from 175 ms to 33 ms). With no pool options the
+  idle pool defaults to 8.
+- SQLite connections default to a five-second `busy_timeout` on every
+  pooled connection, eliminating spurious `database is locked` errors
+  under concurrency; override with your own DSN pragma.
+- The functional helpers (`db.query`, `db.exec`, ...) accept
+  `Connection`/`Transaction`/`Statement` objects as well as raw
+  handles, and normalize `?` placeholders per driver like the class
+  API.
+- MySQL `TEXT`/`VARCHAR`/`DECIMAL` columns now arrive as strings
+  (previously raw bytes); only `BLOB`/`BINARY` columns map to `bytes`.
+- New env-gated live test suite for PostgreSQL and MySQL streaming
+  (`GEBLANG_PG_DSN` / `GEBLANG_MYSQL_DSN`) and a `make bench-db`
+  benchmark target.
+
 ### HTTP
 
 - `http.serve`/`http.listen`: uncaught handler errors no longer send

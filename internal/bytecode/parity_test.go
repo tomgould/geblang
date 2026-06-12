@@ -13908,6 +13908,32 @@ io.println(loaded.dtypes());
 `)
 }
 
+// db.Rows streams without caching; for-in iterates the cursor; all()
+// after streaming returns the REMAINING rows (1.19.0 semantics).
+func TestParityDBRowsStreaming(t *testing.T) {
+	runParityStateful(t, `import db;
+import io;
+let conn = db.connect("sqlite", ":memory:");
+conn.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)");
+for (i in 1..5) {
+    conn.exec("INSERT INTO t (id, name) VALUES (?, ?)", i, "n${i}");
+}
+int sum = 0;
+for (row in conn.query("SELECT id FROM t ORDER BY id")) {
+    sum = sum + (row["id"] as int);
+}
+io.println(sum);
+let rows = conn.query("SELECT id, name FROM t ORDER BY id");
+io.println(rows.next());
+io.println(rows.row()["name"]);
+io.println(rows.all().length());
+io.println(rows.next());
+let eager = conn.query("SELECT name FROM t WHERE id = ?", 3).all();
+io.println(eager[0]["name"]);
+io.println(db.query(conn, "SELECT name FROM t WHERE id = ?", 4)[0]["name"]);
+`, "15\ntrue\nn1\n4\nfalse\nn3\nn4\n")
+}
+
 // A cross-module inherited @immutable field locks after the parent ctor runs, on both backends.
 func TestParityCrossModuleImmutableField(t *testing.T) {
 	dir := t.TempDir()
