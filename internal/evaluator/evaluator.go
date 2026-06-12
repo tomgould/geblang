@@ -7374,6 +7374,16 @@ func dirValue(value runtime.Value) []string {
 		names = primitiveMethodNamesFor("bool")
 	case runtime.NativeObject:
 		names = nativeObjectMethods(value.Kind)
+	case *runtime.NDArray:
+		names = append([]string(nil), native.NDArrayMethods...)
+	case *runtime.DataFrame:
+		names = append([]string(nil), native.DataFrameMethods...)
+	case *runtime.DFSeries:
+		names = append([]string(nil), native.DFSeriesMethods...)
+	case *runtime.DFExpr:
+		names = append([]string(nil), native.DFExprMethods...)
+	case *runtime.DFGroupBy:
+		names = append([]string(nil), native.DFGroupByMethods...)
 	case runtime.DateTimeInstant:
 		names = append([]string(nil), native.DateTimeInstantMethods...)
 	case runtime.DateTimeDuration:
@@ -21919,6 +21929,21 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 	}
 	if nativeObject, ok := receiver.(runtime.NativeObject); ok {
 		return e.NativeObjectMethod(nativeObject, name, args)
+	}
+	if arr, ok := receiver.(*runtime.NDArray); ok {
+		return native.NDArrayMethod(arr, name, args)
+	}
+	if frame, ok := receiver.(*runtime.DataFrame); ok {
+		return native.DataFrameMethod(frame, name, args)
+	}
+	if series, ok := receiver.(*runtime.DFSeries); ok {
+		return native.DFSeriesMethod(series, name, args)
+	}
+	if expr, ok := receiver.(*runtime.DFExpr); ok {
+		return native.DFExprMethod(expr, name, args)
+	}
+	if group, ok := receiver.(*runtime.DFGroupBy); ok {
+		return native.DFGroupByMethod(group, name, args)
 	}
 	if instant, ok := receiver.(runtime.DateTimeInstant); ok {
 		return native.DateTimeInstantMethod(instant, name, args)

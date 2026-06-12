@@ -127,6 +127,12 @@ Operations, introspection, and extension:
 - [Image](image.html): portable native raster-image module (PNG, JPEG, GIF,
   WebP decode; PNG/JPEG/GIF encode); load, blank, resize, crop, rotate, and
   encode with no system library required.
+- [ndarray](ndarray.html): N-dimensional numeric arrays - elementwise
+  arithmetic with broadcasting, zero-copy views, reductions, linear algebra,
+  and seeded random generation.
+- [dataframe](dataframe.html): columnar data frames - typed columns with null
+  masks, expression filtering, grouping and joins, and CSV/JSON/SQL IO; numeric
+  columns bridge to ndarray.
 - [Utility Modules](utilities.html): miscellaneous result, option, and helper
   modules that do not fit one larger category.
 

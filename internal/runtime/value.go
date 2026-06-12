@@ -445,7 +445,6 @@ func inspectInsideContainer(v Value, depth int) string {
 		return "[" + strings.Join(parts, ", ") + "]"
 	case Dict:
 		keys := x.OrderedKeys()
-		sort.Strings(keys)
 		parts := make([]string, 0, len(keys))
 		for _, k := range keys {
 			entry, _ := x.GetEntry(k)

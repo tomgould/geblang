@@ -647,12 +647,16 @@ func TestParityContainerInspectIsJSONLike(t *testing.T) {
 io.println({"name": "Ada", "age": 36});
 io.println(["a", "b", 1, true, null]);
 io.println({"nested": {"a": [1, 2], "b": "x"}});
+io.println([{"zeta": 1, "alpha": 2}]);
+io.println({"outer": {"zeta": 1, "alpha": 2}});
 io.println("plain");
 io.println(42);
 io.println(["with \"quote\""]);
 `, `{"name": "Ada", "age": 36}
 ["a", "b", 1, true, null]
 {"nested": {"a": [1, 2], "b": "x"}}
+[{"zeta": 1, "alpha": 2}]
+{"outer": {"zeta": 1, "alpha": 2}}
 plain
 42
 ["with \"quote\""]
@@ -13739,6 +13743,168 @@ bfs=["a", "b"]
 dfs=["a", "b"]
 topologicalSort=["a", "b"]
 shortestPath=["a", "b"]
+`)
+}
+
+// TestParityNDArraySurface pins the ndarray module surface on both
+// backends: constructors, views, elementwise ops, reductions, linalg.
+func TestParityNDArraySurface(t *testing.T) {
+	runParity(t, `import io;
+import ndarray as nd;
+
+let a = nd.array([[1.0, 2.0], [3.0, 4.0]]);
+io.println(a.shape());
+io.println(a.dtype());
+io.println(a.sum());
+io.println(a.mean());
+io.println(a.t().toList());
+io.println(a.add(a).toList());
+io.println(a.mulScalar(10).toList());
+io.println(a.matmul(nd.eye(2)).toList());
+let m = a.gt(2.0);
+io.println(m.toList());
+io.println(a.where(m).toList());
+let r = nd.arange(0, 10, 3);
+io.println(r.toList());
+io.println(r.sum());
+io.println(nd.linspace(0.0, 1.0, 5).toList());
+let s = nd.solve(nd.array([[2.0, 0.0], [0.0, 4.0]]), nd.array([2.0, 8.0]));
+io.println(s.toList());
+io.println(nd.det(nd.array([[1.0, 2.0], [3.0, 4.0]])));
+io.println(nd.random([2, 2], {"seed": 42}).shape());
+io.println(a.slice([[0, 1], [0, 2]]).toList());
+io.println(a.sum({"axis": 0}).toList());
+io.println(nd.array([1, 2, 3]).dtype());
+io.println(nd.array([1, 2, 3]).astype("float64").toList());
+`, `[2, 2]
+float64
+10
+2.5
+[[1, 3], [2, 4]]
+[[2, 4], [6, 8]]
+[[10, 20], [30, 40]]
+[[1, 2], [3, 4]]
+[[0, 0], [1, 1]]
+[3, 4]
+[0, 3, 6, 9]
+18
+[0, 0.25, 0.5, 0.75, 1]
+[1, 2]
+-2
+[2, 2]
+[[1, 2]]
+[4, 6]
+int64
+[1, 2, 3]
+`)
+}
+
+// Seeded ndarray.random must be reproducible and identical across backends.
+func TestParityNDArrayRandomSeeded(t *testing.T) {
+	runParity(t, `import io;
+import ndarray as nd;
+
+let a = nd.random([2, 2], {"seed": 7});
+let b = nd.random([2, 2], {"seed": 7});
+io.println(a.sub(b).sum());
+io.println(a.eq(b).sum());
+`, "0\n4\n")
+}
+
+// TestParityDataFrameSurface pins the dataframe module surface on both
+// backends: construction, expressions, verbs, grouping, joins, codecs.
+func TestParityDataFrameSurface(t *testing.T) {
+	runParity(t, `import io;
+import dataframe as df;
+
+let users = df.fromDict({
+    "name": ["Ada", "Grace", "Linus", "Ken"],
+    "age": [36, 41, null, 55],
+    "country": ["UK", "US", "FI", "US"],
+    "active": [true, true, false, true]
+});
+io.println(users.shape());
+io.println(users.columns());
+io.println(users.dtypes());
+io.println(users.col("age").mean());
+io.println(users.col("age").isNull().toList());
+
+let adults = users.filter(df.col("age").gt(38).and_(df.col("active").eq(true)));
+io.println(adults.col("name").toList());
+
+let derived = users.withColumn("ageMonths", df.col("age").mul(12));
+io.println(derived.col("ageMonths").toList());
+
+io.println(users.sort("age", {"desc": true}).col("name").toList());
+io.println(users.dropNulls(["age"]).rows());
+io.println(users.fillNull("age", 0).col("age").toList());
+
+let byCountry = users.groupBy("country").agg({"age": ["mean", "max"], "name": "count"});
+io.println(byCountry.sort("country", {}).toDicts());
+
+let orders = df.fromRecords([
+    {"userName": "Ada", "amount": 100},
+    {"userName": "Ken", "amount": 50},
+    {"userName": "Ada", "amount": 25},
+    {"userName": "Zoe", "amount": 70}
+]);
+let joined = orders.rename({"userName": "name"}).join(users, {"on": "name", "how": "left"});
+io.println(joined.shape());
+io.println(joined.sort("amount", {}).col("country").toList());
+
+let csvText = users.toCsv();
+let back = df.fromCsv(csvText);
+io.println(back.dtypes());
+io.println(back.col("age").toList());
+
+io.println(df.fromJson("[{\"a\": 1, \"b\": \"x\"}, {\"a\": 2}]").toDicts());
+io.println(df.concat([users.head(1), users.tail(1)]).col("name").toList());
+io.println(users.describe().col("age").toList());
+`, `[4, 4]
+["name", "age", "country", "active"]
+{"name": "string", "age": "int64", "country": "string", "active": "bool"}
+44
+[false, false, true, false]
+["Grace", "Ken"]
+[432, 492, null, 660]
+["Ken", "Grace", "Ada", "Linus"]
+3
+[36, 41, 0, 55]
+[{"country": "FI", "age_mean": null, "age_max": null, "name_count": 1}, {"country": "UK", "age_mean": 36, "age_max": 36, "name_count": 1}, {"country": "US", "age_mean": 48, "age_max": 55, "name_count": 2}]
+[4, 5]
+["UK", "US", null, "UK"]
+{"name": "string", "age": "int64", "country": "string", "active": "bool"}
+[36, 41, null, 55]
+[{"a": 1, "b": "x"}, {"a": 2, "b": null}]
+["Ada", "Ken"]
+[3, 44, 9.848857801796104, 36, 55]
+`)
+}
+
+// TestParityDataFrameIO pins the stateful dataframe IO surface: CSV
+// file round trip and SQL load/store through in-memory SQLite.
+func TestParityDataFrameIO(t *testing.T) {
+	runParityStateful(t, `import io;
+import db;
+import dataframe as df;
+
+let users = df.fromDict({"name": ["Ada", "Grace"], "age": [36, null]});
+let dir = io.tempDir();
+let path = dir + "/users.csv";
+df.writeCsv(users, path);
+let back = df.readCsv(path, {"types": {"age": "int"}});
+io.println(back.dtypes());
+io.println(back.col("age").toList());
+
+let conn = db.connect("sqlite", ":memory:");
+df.toTable(users, conn, "users");
+let loaded = df.fromQuery(conn, "SELECT name, age FROM users ORDER BY name");
+io.println(loaded.toDicts());
+io.println(loaded.dtypes());
+`, `{"name": "string", "age": "int64"}
+[36, null]
+[{"age": 36, "name": "Ada"}, {"age": null, "name": "Grace"}]
+{"age": "int64", "name": "string"}
 `)
 }
 

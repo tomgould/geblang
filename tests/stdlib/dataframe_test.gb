@@ -1,0 +1,149 @@
+/**
+ * @title dataframe module test
+ * @summary Columnar frames: construction with dtype inference and null
+ *          masks, expression filtering, derivation, sorting, grouping
+ *          with aggregation, joins, CSV/JSON round trips, and the
+ *          ndarray bridge on numeric columns.
+ */
+import test;
+import io;
+import db;
+import dataframe as df;
+
+class DataFrameTest extends test.Test {
+    func sample(): any {
+        return df.fromDict({
+            "name": ["Ada", "Grace", "Linus", "Ken"],
+            "age": [36, 41, null, 55],
+            "country": ["UK", "US", "FI", "US"],
+            "active": [true, true, false, true]
+        });
+    }
+
+    @test
+    func constructionAndDtypes(): void {
+        let users = this.sample();
+        this.assertEquals([4, 4], users.shape());
+        this.assertEquals(["name", "age", "country", "active"], users.columns());
+        this.assertEquals("int64", users.dtypes()["age"]);
+        this.assertEquals("string", users.dtypes()["name"]);
+        this.assertEquals("bool", users.dtypes()["active"]);
+        this.assertEquals(4, users.rows());
+    }
+
+    @test
+    func nullsMaskAndFill(): void {
+        let users = this.sample();
+        this.assertEquals([false, false, true, false], users.col("age").isNull().toList());
+        this.assertEquals(3, users.dropNulls(["age"]).rows());
+        this.assertEquals([36, 41, 0, 55], users.fillNull("age", 0).col("age").toList());
+        this.assertEquals(44.0, users.col("age").mean());
+    }
+
+    @test
+    func expressionFilterAndDerive(): void {
+        let users = this.sample();
+        let adults = users.filter(df.col("age").gt(38).and_(df.col("active").eq(true)));
+        this.assertEquals(["Grace", "Ken"], adults.col("name").toList());
+
+        let derived = users.withColumn("ageMonths", df.col("age").mul(12));
+        this.assertEquals([432, 492, null, 660], derived.col("ageMonths").toList());
+
+        let renamed = users.rename({"age": "years"}).drop(["active"]);
+        this.assertEquals(["name", "years", "country"], renamed.columns());
+    }
+
+    @test
+    func sortHeadUnique(): void {
+        let users = this.sample();
+        this.assertEquals(["Ken", "Grace", "Ada", "Linus"], users.sort("age", {"desc": true}).col("name").toList());
+        this.assertEquals(["Ada"], users.head(1).col("name").toList());
+        this.assertEquals(["Ken"], users.tail(1).col("name").toList());
+        this.assertEquals(3, users.unique("country").rows());
+    }
+
+    @test
+    func groupByAgg(): void {
+        let users = this.sample();
+        let grouped = users.groupBy("country").agg({"age": ["mean", "max"], "name": "count"}).sort("country", {});
+        this.assertEquals(["FI", "UK", "US"], grouped.col("country").toList());
+        this.assertEquals([null, 36, 48.0], grouped.col("age_mean").toList());
+        this.assertEquals([1, 1, 2], grouped.col("name_count").toList());
+    }
+
+    @test
+    func joinsAndConcat(): void {
+        let users = this.sample();
+        let orders = df.fromRecords([
+            {"name": "Ada", "amount": 100},
+            {"name": "Zoe", "amount": 70}
+        ]);
+        let left = orders.join(users, {"on": "name", "how": "left"});
+        this.assertEquals(2, left.rows());
+        this.assertEquals(["UK", null], left.sort("amount", {"desc": true}).col("country").toList());
+
+        let inner = orders.join(users, {"on": "name", "how": "inner"});
+        this.assertEquals(1, inner.rows());
+
+        this.assertEquals(8, df.concat([users, users]).rows());
+    }
+
+    @test
+    func csvAndJsonRoundTrip(): void {
+        let users = this.sample();
+        let back = df.fromCsv(users.toCsv());
+        this.assertEquals(users.dtypes(), back.dtypes());
+        this.assertEquals([36, 41, null, 55], back.col("age").toList());
+
+        let typed = df.fromCsv("a,b\n1,x\n2,y\n", {"types": {"a": "float"}});
+        this.assertEquals("float64", typed.dtypes()["a"]);
+
+        let recs = df.fromJson("[{\"a\": 1, \"b\": \"x\"}, {\"a\": 2}]");
+        this.assertEquals([{"a": 1, "b": "x"}, {"a": 2, "b": null}], recs.toDicts());
+    }
+
+    @test
+    func ndarrayBridge(): void {
+        let users = this.sample();
+        let ages = users.dropNulls(["age"]).col("age").values();
+        this.assertEquals("ndarray.NDArray", typeof(ages) as string);
+        this.assertEquals(132.0, ages.sum());
+    }
+
+    @test
+    func csvFileRoundTrip(): void {
+        let users = this.sample();
+        let path = io.tempDir() + "/df_users_test.csv";
+        df.writeCsv(users, path);
+        let back = df.readCsv(path, {"types": {"age": "int"}});
+        this.assertEquals(users.dtypes(), back.dtypes());
+        this.assertEquals([36, 41, null, 55], back.col("age").toList());
+    }
+
+    @test
+    func sqlRoundTrip(): void {
+        let users = this.sample();
+        let conn = db.connect("sqlite", ":memory:");
+        this.assertEquals(4, df.toTable(users, conn, "users"));
+        let loaded = df.fromQuery(conn, "SELECT name, age FROM users WHERE age IS NOT NULL ORDER BY age");
+        this.assertEquals(3, loaded.rows());
+        this.assertEquals([36, 41, 55], loaded.col("age").toList());
+        this.assertEquals("int64", loaded.dtypes()["age"]);
+    }
+
+    @test
+    func errorsAreCatchable(): void {
+        try {
+            this.sample().filter(df.col("missing").gt(1));
+            this.fail("unknown column must throw");
+        } catch (RuntimeError e) {
+            this.assertTrue(e.message.contains("unknown column"));
+        }
+        try {
+            this.sample().groupBy("country").agg({"name": "mean"});
+            this.fail("mean of a string column must throw");
+        } catch (RuntimeError e) {
+            this.assertTrue(e.message.contains("numeric"));
+        }
+    }
+}

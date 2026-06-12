@@ -9190,7 +9190,8 @@ func isStatefulNativeModule(module string) bool {
 	switch module {
 	case "io", "sys", "secrets", "process", "procnative", "sshnative",
 		"http", "websocket", "smtp", "web", "db", "ext", "ffinative", "net", "test", "log", "watch",
-		"csv", "schema", "serde", "metrics", "trace", "profile", "path", "async", "dotenv", "cli":
+		"csv", "schema", "serde", "metrics", "trace", "profile", "path", "async", "dotenv", "cli",
+		"dataframe":
 		return true
 	default:
 		return false
@@ -13165,6 +13166,46 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		default:
 			return 0, vm.runtimeError(instruction, "Task has no method %s", nameValue.Value)
 		}
+	}
+	if arr, ok := receiver.(*runtime.NDArray); ok {
+		result, err := native.NDArrayMethod(arr, nameValue.Value, args)
+		if err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		vm.push(result)
+		return ip, nil
+	}
+	if frame, ok := receiver.(*runtime.DataFrame); ok {
+		result, err := native.DataFrameMethod(frame, nameValue.Value, args)
+		if err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		vm.push(result)
+		return ip, nil
+	}
+	if series, ok := receiver.(*runtime.DFSeries); ok {
+		result, err := native.DFSeriesMethod(series, nameValue.Value, args)
+		if err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		vm.push(result)
+		return ip, nil
+	}
+	if expr, ok := receiver.(*runtime.DFExpr); ok {
+		result, err := native.DFExprMethod(expr, nameValue.Value, args)
+		if err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		vm.push(result)
+		return ip, nil
+	}
+	if group, ok := receiver.(*runtime.DFGroupBy); ok {
+		result, err := native.DFGroupByMethod(group, nameValue.Value, args)
+		if err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		vm.push(result)
+		return ip, nil
 	}
 	if instant, ok := receiver.(runtime.DateTimeInstant); ok {
 		result, err := native.DateTimeInstantMethod(instant, nameValue.Value, args)

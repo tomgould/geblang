@@ -37,9 +37,36 @@
 - Dict spread now works on cross-module instance methods
   (`inst.m(...opts)` where the class lives in another module);
   previously the bytecode runtime rejected it.
+- Dicts nested inside containers now print in insertion order like
+  top-level dicts, completing the 1.5.1 insertion-order contract (a
+  leftover alphabetical sort applied only to nested rendering;
+  `json.stringify` output remains alphabetical by design).
 - The advisory `div-by-zero` warning covers literal `/ 0` alongside
   `//` and `%`, and REPL warnings no longer block evaluation: the
   snippet runs (and throws canonically) after the warning prints.
+
+### Standard library
+
+- New `ndarray` module: N-dimensional numeric arrays over contiguous
+  typed storage (`float64` / `int64`). Constructors (`array`, `zeros`,
+  `ones`, `full`, `eye`, `arange`, `linspace`), elementwise arithmetic
+  with NumPy-style broadcasting, zero-copy slice/transpose/reshape
+  views, comparisons with masked selection (`where`), whole-array and
+  per-axis reductions, linear algebra (`matmul`, `dot`, `solve`,
+  `inv`, `det`), and seeded random generation (`random`, `randn`).
+  Identical on both runtimes; see the stdlib ndarray chapter.
+- New `dataframe` module: columnar frames with typed columns
+  (`float64` / `int64` / `string` / `bool`) and per-column null masks.
+  Construction from dicts, records, CSV, JSON, and SQL queries;
+  expression-based `filter`/`withColumn` (`dataframe.col("age").gt(30)`
+  evaluated columnwise in native code); `sort`, `unique`, `rename`,
+  `drop`, `dropNulls`, `fillNull`, `describe`; `groupBy().agg()` with
+  count/sum/mean/min/max/std/first/last/collect; hash joins
+  (inner/left/right/outer) and `concat`; `readCsv`/`writeCsv`,
+  `fromQuery`/`toTable` for files and databases. Numeric columns
+  expose their data as 1-D ndarrays via `Series.values()`. All verbs
+  are immutable. Identical on both runtimes; see the stdlib dataframe
+  chapter.
 
 ### HTTP
 

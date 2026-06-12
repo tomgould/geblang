@@ -312,6 +312,15 @@ var pureBuiltins = map[string]map[string]struct{}{
 	"markdown": {
 		"parse": {}, "renderHtml": {}, "stripText": {},
 	},
+	"dataframe": {
+		"fromDict": {}, "fromRecords": {}, "fromCsv": {}, "fromJson": {},
+		"col": {}, "lit": {}, "concat": {},
+	},
+	"ndarray": {
+		"array": {}, "zeros": {}, "ones": {}, "full": {}, "eye": {},
+		"arange": {}, "linspace": {}, "random": {}, "randn": {},
+		"solve": {}, "inv": {}, "det": {},
+	},
 	"args": {
 		"parse": {}, "help": {},
 	},
