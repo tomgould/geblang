@@ -66,6 +66,28 @@ mask; `where(mask)` selects the masked elements as a 1-D array:
 let big = a.where(a.gt(2.0));
 ```
 
+### Operators
+
+The arithmetic operators map to the elementwise methods, with scalars
+on either side, and unary minus negates:
+
+```gb
+let c = a + b;        # a.add(b), broadcasting included
+let d = 2 * a - 1;    # scalars mix on either side
+let e = a ** 2;       # a.pow(2)
+let f = -a;           # a.neg()
+```
+
+The ordering operators return masks, so a NumPy-style selection reads
+naturally:
+
+```gb
+let big = a.where(a > 2.0);
+```
+
+`==` and `!=` keep their language-wide meaning; use `eq()` / `ne()` for
+elementwise equality masks.
+
 ## Reductions
 
 `sum`, `mean`, `min`, `max` reduce the whole array, or along one axis

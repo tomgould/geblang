@@ -24487,6 +24487,12 @@ func (e *Evaluator) evalPrefix(operator string, right runtime.Value) (runtime.Va
 		case runtime.Float:
 			return runtime.Float{Value: -value.Value}, nil
 		default:
+			if result, handled, err := native.UnaryMinusValue(right); handled {
+				if err != nil {
+					return nil, err
+				}
+				return result, nil
+			}
 			return nil, fmt.Errorf("- expects numeric value, got %s", right.TypeName())
 		}
 	case "~":
@@ -25170,6 +25176,12 @@ func evalNumericInfix(operator string, left runtime.Value, right runtime.Value) 
 			return nil, decimalFloatArithError(operator, left, right)
 		}
 	}
+	if result, handled, err := native.BinaryOperatorValue(operator, left, right); handled {
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
 	return nil, native.UnsupportedOperandsError(operator, left.TypeName(), right.TypeName())
 }
 
@@ -25368,6 +25380,12 @@ func evalFloatInfix(operator string, left runtime.Float, right runtime.Float) (r
 }
 
 func evalComparison(operator string, left runtime.Value, right runtime.Value) (runtime.Value, error) {
+	if result, handled, err := native.BinaryOperatorValue(operator, left, right); handled {
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
 	cmp, err := compareValues(left, right)
 	if err != nil {
 		return nil, err

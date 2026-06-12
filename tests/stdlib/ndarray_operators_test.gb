@@ -1,0 +1,89 @@
+/**
+ * @title ndarray and dataframe operator support
+ * @summary Arithmetic operators (+ - * / ** and unary -) work
+ *          elementwise on ndarrays and numeric series with scalars on
+ *          either side; ordering operators return mask arrays;
+ *          dataframe expressions build with operators; pivot spreads a
+ *          column into per-value columns with aggregation.
+ */
+import test;
+import ndarray as nd;
+import dataframe as df;
+
+class NDArrayOperatorsTest extends test.Test {
+    @test
+    func arithmeticElementwise(): void {
+        let a = nd.array([1, 2, 3]);
+        let b = nd.array([10, 20, 30]);
+        this.assertEquals([11, 22, 33], (a + b).toList());
+        this.assertEquals([9, 18, 27], (b - a).toList());
+        this.assertEquals([2, 4, 6], (a * 2).toList());
+        this.assertEquals([2, 4, 6], (2 * a).toList());
+        this.assertEquals([1, 4, 9], (a ** 2).toList());
+        this.assertEquals([-1, -2, -3], (-a).toList());
+    }
+
+    @test
+    func scalarLeftDivisionAndSubtraction(): void {
+        let a = nd.array([1, 2, 4]);
+        this.assertEquals([8, 4, 2], (8 / a).toList());
+        this.assertEquals([9, 8, 6], (10 - a).toList());
+    }
+
+    @test
+    func orderingReturnsMasks(): void {
+        let a = nd.array([1, 5, 3]);
+        let b = nd.array([2, 4, 3]);
+        this.assertEquals([1, 0, 0], (a < b).toList());
+        this.assertEquals([0, 1, 1], (a >= b).toList());
+        this.assertEquals([1, 0, 1], (a <= b).toList());
+        this.assertEquals([0, 1, 0], (a > b).toList());
+    }
+
+    @test
+    func mismatchedOperandThrows(): void {
+        let a = nd.array([1, 2]);
+        any text = "x";
+        let threw = false;
+        try {
+            let bad = a + text;
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func exprOperatorSugar(): void {
+        let frame = df.fromDict({"age": [25, 35, 45], "score": [1, 2, 3]});
+        this.assertEquals(2, frame.filter(df.col("age") > 30).rows());
+        this.assertEquals(1, frame.filter(df.col("age") <= 25).rows());
+        let derived = frame.withColumn("sum", df.col("age") + df.col("score"));
+        this.assertEquals([26, 37, 48], derived.col("sum").toList());
+    }
+
+    @test
+    func seriesOperatorsReturnArrays(): void {
+        let frame = df.fromDict({"age": [25, 35, 45]});
+        let s = frame.col("age");
+        this.assertEquals([26, 36, 46], (s + 1).toList());
+        this.assertEquals([50, 70, 90], (s * 2).toList());
+        this.assertEquals([-25, -35, -45], (-s).toList());
+    }
+
+    @test
+    func pivotSpreadsAndAggregates(): void {
+        let sales = df.fromDict({
+            "region": ["north", "north", "south", "south", "north"],
+            "quarter": ["q1", "q2", "q1", "q2", "q1"],
+            "amount": [10, 20, 30, 40, 5]
+        });
+        let p = sales.pivot({"index": "region", "columns": "quarter", "values": "amount", "agg": "sum"});
+        this.assertEquals(["region", "q1", "q2"], p.columns());
+        this.assertEquals(2, p.rows());
+        let first = p.toDicts()[0];
+        this.assertEquals("north", first["region"]);
+        this.assertEquals(15, first["q1"]);
+        this.assertEquals(20, first["q2"]);
+    }
+}

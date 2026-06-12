@@ -61,6 +61,17 @@ Expression methods: comparisons `gt lt gte lte eq ne` (against a value
 or another expression), logic `and_ or_ not`, arithmetic
 `add sub mul div` (string `add` concatenates), and `isNull()`.
 
+The comparison and arithmetic operators build the same expressions, so
+filters and derivations read like Polars:
+
+```gb
+users.filter(df.col("age") > 30);
+users.withColumn("total", df.col("price") * df.col("qty"));
+```
+
+`==` and `!=` keep their language-wide meaning; use `eq()` / `ne()` in
+expressions.
+
 ## Derivation and nulls
 
 ```gb
@@ -92,6 +103,17 @@ Aggregations: `count`, `sum`, `mean`, `min`, `max`, `std`, `first`,
 accepts one name or a list for composite keys. Joins are hash joins on
 one key column; `how` is `inner`, `left`, `right`, or `outer`, and
 clashing non-key column names get `_left` / `_right` suffixes.
+
+`pivot` spreads one column's values into new columns, one row per
+distinct index value, aggregating the values column per cell:
+
+```gb
+sales.pivot({"index": "region", "columns": "quarter", "values": "amount", "agg": "sum"});
+```
+
+`agg` accepts the aggregators above except `collect` and defaults to
+`sum`. Rows whose index or columns cell is null are skipped; empty
+cells are null. New columns appear in first-seen order.
 
 ## Series and the ndarray bridge
 

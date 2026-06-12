@@ -796,3 +796,124 @@ func dfJoin(left, right *runtime.DataFrame, on, how string) (*runtime.DataFrame,
 	appendSide(right, rightIdx, on, "_right")
 	return out, nil
 }
+
+// dfPivot spreads `columns` values into new columns, one row per
+// distinct `index` value, aggregating `values` per cell. Rows with a
+// null index or columns cell are skipped; empty cells are null.
+func dfPivot(frame *runtime.DataFrame, opts runtime.Dict) (*runtime.DataFrame, error) {
+	str := func(key string) (string, error) {
+		v, ok := ndDictValue(opts, key)
+		if !ok {
+			return "", fmt.Errorf("dataframe.pivot requires opts.%s", key)
+		}
+		s, ok := v.(runtime.String)
+		if !ok {
+			return "", fmt.Errorf("dataframe.pivot opts.%s must be a string", key)
+		}
+		return s.Value, nil
+	}
+	indexName, err := str("index")
+	if err != nil {
+		return nil, err
+	}
+	columnsName, err := str("columns")
+	if err != nil {
+		return nil, err
+	}
+	valuesName, err := str("values")
+	if err != nil {
+		return nil, err
+	}
+	agg := "sum"
+	if v, ok := ndDictValue(opts, "agg"); ok {
+		s, ok := v.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("dataframe.pivot opts.agg must be a string")
+		}
+		agg = s.Value
+	}
+	if agg == "collect" {
+		return nil, fmt.Errorf("dataframe.pivot does not support agg \"collect\"")
+	}
+	idxCol, ok := frame.Column(indexName)
+	if !ok {
+		return nil, fmt.Errorf("unknown column %q", indexName)
+	}
+	colCol, ok := frame.Column(columnsName)
+	if !ok {
+		return nil, fmt.Errorf("unknown column %q", columnsName)
+	}
+	valCol, ok := frame.Column(valuesName)
+	if !ok {
+		return nil, fmt.Errorf("unknown column %q", valuesName)
+	}
+	type cellKey struct{ idx, col string }
+	var idxOrder, colOrder []string
+	idxFirstRow := map[string]int{}
+	colDisplay := map[string]string{}
+	cellRows := map[cellKey][]int{}
+	for i := 0; i < idxCol.Len(); i++ {
+		if idxCol.IsNull(i) || colCol.IsNull(i) {
+			continue
+		}
+		ik := dfGroupKey([]*runtime.DFColumn{idxCol}, i)
+		ck := dfGroupKey([]*runtime.DFColumn{colCol}, i)
+		if _, seen := idxFirstRow[ik]; !seen {
+			idxFirstRow[ik] = i
+			idxOrder = append(idxOrder, ik)
+		}
+		if _, seen := colDisplay[ck]; !seen {
+			colDisplay[ck] = dfCellDisplay(colCol, i)
+			colOrder = append(colOrder, ck)
+		}
+		key := cellKey{idx: ik, col: ck}
+		cellRows[key] = append(cellRows[key], i)
+	}
+	out := &runtime.DataFrame{}
+	idxVals := make([]runtime.Value, len(idxOrder))
+	for gi, ik := range idxOrder {
+		idxVals[gi] = dfCellValue(idxCol, idxFirstRow[ik])
+	}
+	built, err := dfBuildColumn(indexName, idxVals)
+	if err != nil {
+		return nil, err
+	}
+	out.Cols = append(out.Cols, built)
+	for _, ck := range colOrder {
+		vals := make([]runtime.Value, len(idxOrder))
+		for gi, ik := range idxOrder {
+			rows, has := cellRows[cellKey{idx: ik, col: ck}]
+			if !has {
+				vals[gi] = runtime.Null{}
+				continue
+			}
+			v, err := dfAggregate(valCol, rows, agg)
+			if err != nil {
+				return nil, err
+			}
+			vals[gi] = v
+		}
+		built, err := dfBuildColumn(colDisplay[ck], vals)
+		if err != nil {
+			return nil, err
+		}
+		out.Cols = append(out.Cols, built)
+	}
+	return out, nil
+}
+
+// dfCellDisplay renders a cell as a pivot column name.
+func dfCellDisplay(c *runtime.DFColumn, i int) string {
+	switch v := dfCellValue(c, i).(type) {
+	case runtime.String:
+		return v.Value
+	case runtime.SmallInt:
+		return strconv.FormatInt(v.Value, 10)
+	case runtime.Bool:
+		return strconv.FormatBool(v.Value)
+	case runtime.Float:
+		return strconv.FormatFloat(v.Value, 'g', -1, 64)
+	default:
+		return "null"
+	}
+}

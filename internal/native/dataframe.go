@@ -15,7 +15,7 @@ var (
 		"shape", "columns", "dtypes", "rows", "head", "tail", "describe",
 		"col", "select", "filter", "sort", "unique",
 		"withColumn", "rename", "drop", "dropNulls", "fillNull",
-		"groupBy", "join", "toCsv", "toJson", "toDicts",
+		"groupBy", "join", "pivot", "toCsv", "toJson", "toDicts",
 	}
 	DFSeriesMethods = []string{
 		"name", "dtype", "length", "values", "toList", "isNull",
@@ -557,6 +557,15 @@ func DataFrameMethod(frame *runtime.DataFrame, name string, args []runtime.Value
 			}
 		}
 		return &runtime.DFGroupBy{Frame: frame, Keys: keys}, nil
+	case "pivot":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("dataframe.pivot expects an options dict")
+		}
+		opts, ok := args[0].(runtime.Dict)
+		if !ok {
+			return nil, fmt.Errorf("dataframe.pivot options must be a dict")
+		}
+		return dfPivot(frame, opts)
 	case "join":
 		if len(args) != 2 {
 			return nil, fmt.Errorf("dataframe.join expects another frame and an options dict")

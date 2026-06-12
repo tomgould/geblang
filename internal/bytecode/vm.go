@@ -3223,6 +3223,13 @@ func (vm *VM) negate(instruction Instruction, ip int) (int, error) {
 	case runtime.Float:
 		vm.push(runtime.Float{Value: -value.Value})
 	default:
+		if result, handled, err := native.UnaryMinusValue(value); handled {
+			if err != nil {
+				return 0, vm.runtimeError(instruction, "%s", err.Error())
+			}
+			vm.push(result)
+			return ip, nil
+		}
 		return 0, vm.runtimeError(instruction, "- expects numeric value")
 	}
 	return ip, nil
@@ -3331,6 +3338,14 @@ func (vm *VM) compare(instruction Instruction, ip int) (int, error) {
 				vm.frames[len(vm.frames)-1].negateReturn = true
 			}
 			return nextIP, nil
+		}
+		opSymbol := map[Op]string{OpLess: "<", OpGreater: ">", OpLessEqual: "<=", OpGreaterEqual: ">="}[instruction.Op]
+		if result, handled, err := native.BinaryOperatorValue(opSymbol, left, right); handled {
+			if err != nil {
+				return 0, vm.runtimeError(instruction, "%s", err.Error())
+			}
+			vm.push(result)
+			return ip, nil
 		}
 		cmp, err := native.NumericCompare(left, right)
 		if err != nil {
@@ -3825,6 +3840,13 @@ func (vm *VM) binaryNumericValues(instruction Instruction, left runtime.Value, r
 	}
 	if isNumericValue(left) && isNumericValue(right) {
 		return vm.decimalFloatArithError(instruction, left, right)
+	}
+	if result, handled, err := native.BinaryOperatorValue(binaryOpSymbol(instruction.Op), left, right); handled {
+		if err != nil {
+			return vm.runtimeError(instruction, "%s", err.Error())
+		}
+		vm.push(result)
+		return nil
 	}
 	return vm.runtimeError(instruction, "%s", native.UnsupportedOperandsError(binaryOpSymbol(instruction.Op), left.TypeName(), right.TypeName()).Error())
 }

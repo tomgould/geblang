@@ -61,6 +61,20 @@
   (`type bool does not satisfy constraint string|int for type
   parameter T`).
 
+### Standard library
+
+- `ndarray` and `dataframe` gain operator support: `+ - * / **` and
+  unary `-` work elementwise on arrays and numeric series (scalars on
+  either side, broadcasting included), `< > <= >=` on arrays return
+  0/1 masks (`a.where(a > 2.0)`), and dataframe expressions build
+  with operators (`df.col("age") > 30`,
+  `df.col("price") * df.col("qty")`). `==` and `!=` keep their
+  language-wide meaning everywhere; `eq()`/`ne()` cover elementwise
+  equality. Series operator results are ndarrays.
+- `dataframe.pivot({"index", "columns", "values", "agg"})` spreads a
+  column's values into per-value columns with aggregation (default
+  `sum`; any groupBy aggregator except `collect`).
+
 ### Static analysis
 
 - `geblang check` (and the compile path of `run`, `test`, and `build`)
