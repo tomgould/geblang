@@ -14084,13 +14084,14 @@ func sqliteDSNWithBusyTimeout(dsn string) string {
 		return dsn
 	}
 	const pragma = "_pragma=busy_timeout(5000)"
-	if strings.HasPrefix(dsn, "file:") {
-		if strings.Contains(dsn, "?") {
-			return dsn + "&" + pragma
-		}
-		return dsn + "?" + pragma
+	out := dsn
+	if !strings.HasPrefix(out, "file:") {
+		out = "file:" + out
 	}
-	return "file:" + dsn + "?" + pragma
+	if strings.Contains(out, "?") {
+		return out + "&" + pragma
+	}
+	return out + "?" + pragma
 }
 
 func dbHandleID(value runtime.Value) (int64, error) {
