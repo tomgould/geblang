@@ -750,6 +750,72 @@ io.println(td.length() > 0);
 `, "true\ntrue\ntrue\ntrue\ntrue\n")
 }
 
+func TestParitySysOSVersion(t *testing.T) {
+	runParity(t, `import io;
+import sys;
+let v = sys.osVersion();
+io.println(v.length() > 0);
+`, "true\n")
+}
+
+func TestParityProcessIdentity(t *testing.T) {
+	runParityStateful(t, `import io;
+import process;
+io.println(process.pid() > 0);
+io.println(process.ppid() > 0);
+io.println(typeof(process.uid()) == "int");
+io.println(typeof(process.gid()) == "int");
+io.println(process.euid() >= 0);
+io.println(process.egid() >= 0);
+io.println(typeof(process.groups()) == "list");
+`, "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n")
+}
+
+func TestParityProcessExistsAndInfo(t *testing.T) {
+	runParityStateful(t, `import io;
+import process;
+io.println(process.exists(process.pid()));
+let info = process.info(process.pid());
+io.println(info["pid"] == process.pid());
+io.println(typeof(info["name"]) == "string");
+io.println(info == null);
+`, "true\ntrue\ntrue\nfalse\n")
+}
+
+func TestParityProcessList(t *testing.T) {
+	runParityStateful(t, `import io;
+import process;
+let all = process.list();
+let self = process.pid();
+let found = false;
+for (entry in all) {
+    if (entry["pid"] == self) { found = true; }
+}
+io.println(all.length() > 0);
+io.println(found);
+`, "true\ntrue\n")
+}
+
+func TestParityProcessControlGated(t *testing.T) {
+	runParityStateful(t, `import io;
+import process;
+func gated(string label, func body): void {
+    try {
+        body();
+        io.println("${label}: NO ERROR");
+    } catch (PermissionError e) {
+        io.println("${label}: gated");
+    } catch (Error e) {
+        io.println("${label}: ${e.class}");
+    }
+}
+gated("kill", func(): void { process.kill(1); });
+gated("signal", func(): void { process.signal(1, "TERM"); });
+gated("setuid", func(): void { process.setuid(0); });
+gated("setgid", func(): void { process.setgid(0); });
+`, "kill: gated\nsignal: gated\nsetuid: gated\nsetgid: gated\n")
+}
+
 func TestParityDefaultArgInReturnPosition(t *testing.T) {
 	runParity(t, `import io;
 func helper(string greeting = "hi"): string {

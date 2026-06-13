@@ -299,21 +299,116 @@ directly.
 
 ## Package Manifest
 
-`geblang.yaml` describes package roots, source paths, and extensions. User
-modules resolve from the current script/package roots before the bundled source
-stdlib.
+A package is any directory with a `geblang.yaml` manifest at its root. The
+manifest names the package, points at its source, lists its dependencies, and
+declares the resources a release binary should embed. The toolchain (`geblang`,
+`geblang test`, `geblang build`, `geblang check`) finds a manifest by walking up
+from the current file, so a manifest placed above your code configures
+resolution for everything beneath it. `geblang.yml` and `geblang.json` are
+accepted as alternate filenames.
 
-Example:
+Scaffold one with `geblang init`:
 
-```yaml
-name: acme.tools
-source:
-  - src
+```sh
+geblang init                                  # name inferred from the directory
+geblang init --name acme.tools --source src
 ```
 
-With that manifest, `import app.users;` can resolve to `src/app/users.gb`.
-Keeping source under `src/` also lets tests, examples, and generated files sit
-outside the import tree.
+`geblang init` writes `geblang.yaml` (defaulting to `version: 0.1.0` and
+`source: src`), creates the source directory, and refuses to overwrite an
+existing manifest unless `--force` is given. With no `--name`, the package name
+is derived from the current directory.
+
+### Fields
+
+```yaml
+name: acme.tools          # package namespace (the canonical module prefix)
+version: 0.1.0            # informational; also embedded by geblang build
+source: src               # primary module root, relative to the manifest
+paths:                    # extra module roots, relative to the manifest
+  - generated
+resources:                # files embedded into a geblang build binary
+  - templates
+  - assets
+dependencies:             # other packages, by mount name (see below)
+  shared: ../shared
+  httplib:
+    git: https://github.com/acme/httplib
+    version: v1.4.0
+```
+
+| Field | Purpose |
+|-------|---------|
+| `name` | The package namespace and canonical module prefix. With `source: src`, the file `src/app/users.gb` is imported as `import app.users;`. Pick a top-level namespace you own (e.g. `acme.*`) to avoid colliding with a reserved built-in name. |
+| `version` | Free-form version string. Resolution ignores it; `geblang build` embeds it as the binary's version (shown by the built binary's `--version`). |
+| `source` | The primary module root, a single directory. Its tree resolves as modules: `import app.users;` finds `<source>/app/users.gb` or `<source>/app/users/init.gb`. When omitted, the manifest's own directory is the root. |
+| `paths` | Additional module roots, each relative to the manifest, searched after `source`. Use for generated or co-located code that should also resolve as modules. `modulePaths` is accepted as an alias and merged in. |
+| `resources` | Files and directories embedded into the binary by `geblang build`, so a single-file release can read them at runtime. They are not part of the import tree. See the Bundling chapter for details. |
+| `dependencies` | Other packages this one imports, each mounted under a name and pointing at a local path or a git repository (next section). |
+
+A nested `package:` block with `name:` and `version:` keys is accepted as an
+alternative to the top-level `name` and `version`.
+
+### Module resolution order
+
+For an ordinary (non-reserved) name, the resolver searches, in order: this
+package's roots (`source`, then each `paths` entry), each dependency's roots
+(transitively), the bundled source stdlib, then any directory on `GEBLANG_PATH`.
+The first matching `<name>.gb` (or `<name>/init.gb`) wins. Reserved built-in
+names always resolve to the built-in regardless of local files (see Reserved
+built-in module names below), so resolution is identical on the evaluator and
+the bytecode VM.
+
+### Dependencies
+
+Each dependency is keyed by the name it is mounted under and is either a path or
+a git source.
+
+**Path dependencies** point at another package on disk, relative to the
+manifest. A bare string is shorthand for a path; the mapping form is equivalent:
+
+```yaml
+dependencies:
+  shared: ../shared
+  widgets:
+    path: ../packages/widgets
+```
+
+The target must itself be a package (have its own `geblang.yaml`); its `source`,
+`paths`, and transitive dependencies are all honored. Path dependencies need no
+install step.
+
+**Git dependencies** point at a remote repository:
+
+```yaml
+dependencies:
+  httplib:
+    git: https://github.com/acme/httplib
+    version: v1.4.0      # tag or branch; `latest` for the newest semver tag; omit for the default branch
+```
+
+`geblang install` clones every git dependency into `vendor/<name>` beside the
+manifest and pins the resolved commit in `geblang.lock`:
+
+```sh
+geblang install                                              # fetch all declared git deps
+geblang install https://github.com/acme/httplib              # add one and fetch it
+geblang install https://github.com/acme/httplib@v1.4.0 http  # pin a version, mount as http
+```
+
+The add form appends the dependency to `geblang.yaml`, inferring the mount name
+from the URL's last path segment when you omit it. A git dependency that has not
+been installed is skipped during resolution until you run `geblang install`.
+Commit `geblang.lock` so collaborators and CI resolve the same commits:
+
+```yaml
+# geblang.lock
+dependencies:
+  httplib:
+    url: https://github.com/acme/httplib
+    version: v1.4.0
+    commit: 9f2c1ab4e8d7b6...
+```
 
 ## Source Stdlib
 

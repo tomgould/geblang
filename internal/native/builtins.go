@@ -89,6 +89,7 @@ func registerAllBuiltins(r *Registry) {
 	registerMarkdown(r)
 	registerTemplate(r)
 	registerSys(r)
+	registerProcess(r)
 	registerArgs(r)
 	registerErrors(r)
 	registerFreeze(r)

@@ -29,6 +29,7 @@ io.println(sys.cwd());
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `platform()` | `string` | Host OS name, such as `linux`, `darwin`, or `windows` |
+| `osVersion()` | `string` | OS kernel/release string (Linux: uname release) |
 | `arch()` | `string` | CPU architecture, such as `amd64` or `arm64` |
 | `hostname()` | `string` | Hostname |
 | `pid()` | `int` | Current process ID |
@@ -44,6 +45,11 @@ io.println(sys.pid() as string);
 io.println(sys.homedir());
 io.println(sys.tmpdir());
 ```
+
+`platform()` names the OS; `osVersion()` complements it with the kernel/release
+string (on Linux, the `uname` release such as `6.6.0-generic`). `osVersion()` is
+implemented on Linux; on platforms where it is not yet available it throws a
+catchable error naming the platform rather than returning an empty string.
 
 Use `sys.tmpdir()` with `path.join` when you need a location, and `io.tempFile`
 or `io.tempDir` when you want Geblang to create a unique path for you.
@@ -333,6 +339,79 @@ proc.closeStdin();
 io.println(proc.readStdout());
 io.println(proc.wait());
 ```
+
+### Current-process identity and credentials
+
+The running script is itself a process, so its identity and credentials are
+`process` functions. These are read-only and need no launch capability.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `process.pid()` | `int` | Current process id (same value as `sys.pid()`) |
+| `process.ppid()` | `int` | Parent process id |
+| `process.uid()` | `int` | Real user id (unix) |
+| `process.gid()` | `int` | Real group id (unix) |
+| `process.euid()` | `int` | Effective user id (unix) |
+| `process.egid()` | `int` | Effective group id (unix) |
+| `process.groups()` | `list<int>` | Supplementary group ids (unix) |
+
+The credential functions (`uid`, `gid`, `euid`, `egid`, `groups`) are unix
+concepts. On platforms where they do not apply they throw a catchable error
+naming the platform rather than returning a misleading zero.
+
+### Inspecting other processes
+
+Query processes by pid. These are read-only and need no launch capability.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `process.list()` | `list<dict<string, any>>` | Running processes, each `{pid, ppid, name, cmdline, state}` |
+| `process.info(pid)` | `dict<string, any>` | One process, or `null` when the pid is absent |
+| `process.exists(pid)` | `bool` | Whether a process with that pid is running |
+
+```gb
+let self = process.info(process.pid());
+io.println(self["name"]);
+for (entry in process.list()) {
+    io.println("${entry["pid"]} ${entry["name"]}");
+}
+```
+
+`list` and `info` are implemented on Linux (read from `/proc`). On platforms
+where they are not yet available they throw a catchable error naming the
+platform. `exists` is available on all platforms.
+
+### Privileged operations
+
+Changing credentials or signalling an arbitrary process is dangerous, so these
+operations are gated behind the `--allow-process-control` launch flag. Without
+it, each throws a catchable `PermissionError` whose message names the flag.
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `process.setuid(uid)` | `void` | Set the real user id (unix, root-only) |
+| `process.setgid(gid)` | `void` | Set the real group id (unix, root-only) |
+| `process.kill(pid)` | `void` | Send SIGKILL to an arbitrary pid |
+| `process.signal(pid, name)` | `void` | Send a named signal (`TERM`, `KILL`, `INT`, `HUP`, `QUIT`, `USR1`, `USR2`, `STOP`, `CONT`) to an arbitrary pid |
+
+```gb
+try {
+    process.signal(targetPid, "TERM");
+} catch (PermissionError e) {
+    io.println(e.message);
+}
+```
+
+Enable the privileged subset by launching with the flag:
+
+```sh
+geblang --allow-process-control app.gb
+```
+
+The `Process` handle methods `kill()` and `signal()` (above) act on a child the
+script launched and stay ungated; only `process.kill(pid)` and
+`process.signal(pid, name)` by arbitrary pid are gated. On Windows the signal set
+is limited to `KILL`; other names throw a catchable error.
 
 ## Intercepting Signals
 

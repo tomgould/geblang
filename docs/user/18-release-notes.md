@@ -1,5 +1,33 @@
 # Release Notes
 
+## 1.21.0
+
+### Process and system management
+
+- `sys.osVersion()` returns the OS kernel and release string, complementing
+  `sys.platform()` and `sys.arch()`.
+- The `process` module reports the running process's own identity and
+  credentials: `pid()`, `ppid()`, `uid()`, `gid()`, `euid()`, `egid()`, and
+  `groups()`.
+- It can inspect other running processes with `process.list()`,
+  `process.info(pid)`, and `process.exists(pid)`.
+- Privileged control of arbitrary processes (`process.setuid()`,
+  `process.setgid()`, `process.kill(pid)`, `process.signal(pid, sig)`) is gated
+  behind the opt-in `--allow-process-control` launch flag and raises a
+  `PermissionError` when the flag is absent. Handle methods acting on a process
+  the script launched itself stay ungated.
+- Identity and credential functions are unix-oriented and process enumeration
+  is Linux-first; a function unsupported on the host platform raises a clear,
+  catchable error rather than returning an empty or wrong result.
+
+### Fixes
+
+- Nullable typed-collection element tags accept `null`: a `null` may be written
+  into a `list<?int>` or a `dict<string, ?int>` on every write surface
+  (`push`, `insert`, index assignment, `set`, `add`), while a non-nullable
+  `list<int>` still rejects it. Identical on both backends.
+- The bytecode VM's unary-minus type error now matches the evaluator's wording.
+
 ## 1.20.0
 
 ### Language

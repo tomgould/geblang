@@ -182,7 +182,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 	},
 	"sys": {
 		"hostname": {}, "pid": {}, "goroutineId": {}, "platform": {}, "arch": {},
-		"tmpdir": {}, "homedir": {}, "username": {}, "environ": {},
+		"tmpdir": {}, "homedir": {}, "username": {}, "environ": {}, "osVersion": {},
 	},
 	"json": {
 		"parse": {}, "stringify": {}, "validate": {}, "tryParse": {},

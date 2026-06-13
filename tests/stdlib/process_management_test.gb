@@ -1,0 +1,89 @@
+/**
+ * @title process management + sys.osVersion
+ * @summary Current-process identity/credentials, external process
+ * queries by pid, and the --allow-process-control gate on the
+ * privileged ops. Shape-based: values are system-dependent.
+ */
+import test;
+import process;
+import sys;
+
+class ProcessManagementTest extends test.Test {
+    @test
+    func identityReads(): void {
+        this.assertTrue(process.pid() > 0);
+        this.assertTrue(process.ppid() > 0);
+        this.assertTrue(typeof(process.uid()) == "int");
+        this.assertTrue(typeof(process.gid()) == "int");
+        this.assertTrue(process.euid() >= 0);
+        this.assertTrue(process.egid() >= 0);
+        this.assertTrue(typeof(process.groups()) == "list");
+    }
+
+    @test
+    func currentPidMatchesSys(): void {
+        this.assertEquals(sys.pid(), process.pid());
+    }
+
+    @test
+    func existsAndInfoForSelf(): void {
+        this.assertTrue(process.exists(process.pid()));
+        let info = process.info(process.pid());
+        this.assertNotNull(info);
+        this.assertEquals(process.pid(), info["pid"]);
+        this.assertTrue(typeof(info["name"]) == "string");
+        this.assertTrue(typeof(info["state"]) == "string");
+    }
+
+    @test
+    func infoForAbsentPidIsNull(): void {
+        this.assertNull(process.info(2147483646));
+    }
+
+    @test
+    func listContainsSelf(): void {
+        let all = process.list();
+        this.assertTrue(all.length() > 0);
+        let self = process.pid();
+        let found = false;
+        for (entry in all) {
+            if (entry["pid"] == self) { found = true; }
+        }
+        this.assertTrue(found);
+    }
+
+    @test
+    func osVersionIsNonEmpty(): void {
+        let v = sys.osVersion();
+        this.assertTrue(typeof(v) == "string");
+        this.assertTrue(v.length() > 0);
+    }
+
+    @test
+    func killWithoutFlagIsGated(): void {
+        this.assertThrowsOf(func(): void {
+            process.kill(1);
+        }, "PermissionError", "--allow-process-control");
+    }
+
+    @test
+    func signalWithoutFlagIsGated(): void {
+        this.assertThrowsOf(func(): void {
+            process.signal(1, "TERM");
+        }, "PermissionError");
+    }
+
+    @test
+    func setuidWithoutFlagIsGated(): void {
+        this.assertThrowsOf(func(): void {
+            process.setuid(0);
+        }, "PermissionError");
+    }
+
+    @test
+    func setgidWithoutFlagIsGated(): void {
+        this.assertThrowsOf(func(): void {
+            process.setgid(0);
+        }, "PermissionError");
+    }
+}

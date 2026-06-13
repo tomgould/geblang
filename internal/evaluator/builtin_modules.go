@@ -147,6 +147,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"homedir":            e.registryBuiltin("sys", "homedir"),
 			"username":           e.registryBuiltin("sys", "username"),
 			"environ":            e.registryBuiltin("sys", "environ"),
+			"osVersion":          e.registryBuiltin("sys", "osVersion"),
 		},
 		"process": {
 			"run": func(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -207,6 +208,20 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 				}
 				return &runtime.Instance{Class: e.processClass, Fields: map[string]runtime.Value{"handle": handle}}, nil
 			},
+			"pid":     e.registryBuiltin("process", "pid"),
+			"ppid":    e.registryBuiltin("process", "ppid"),
+			"uid":     e.registryBuiltin("process", "uid"),
+			"gid":     e.registryBuiltin("process", "gid"),
+			"euid":    e.registryBuiltin("process", "euid"),
+			"egid":    e.registryBuiltin("process", "egid"),
+			"groups":  e.registryBuiltin("process", "groups"),
+			"list":    e.registryBuiltin("process", "list"),
+			"info":    e.registryBuiltin("process", "info"),
+			"exists":  e.registryBuiltin("process", "exists"),
+			"setuid":  e.registryBuiltin("process", "setuid"),
+			"setgid":  e.registryBuiltin("process", "setgid"),
+			"kill":    e.registryBuiltin("process", "kill"),
+			"signal":  e.registryBuiltin("process", "signal"),
 		},
 		"procnative": {
 			"spawn":  e.procSpawn,
