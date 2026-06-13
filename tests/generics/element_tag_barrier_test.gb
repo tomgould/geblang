@@ -97,4 +97,30 @@ class ElementTagBarrierTest extends test.Test {
         alias.push(Dog());
         this.assertEquals(2, dogs.length());
     }
+
+    @test
+    func nullableTagAcceptsNull(): void {
+        list<?int> xs = [1, null];
+        xs.push(5);
+        xs.push(null);
+        xs[0] = null;
+        this.assertEquals(4, xs.length());
+        dict<string, ?int> d = {"a": 1};
+        d["b"] = null;
+        this.assertEquals(2, d.length());
+    }
+
+    @test
+    func nonNullableTagRejectsNullAtRuntime(): void {
+        list<int> strict = [1];
+        any n = null;
+        let threw = false;
+        try {
+            strict.push(n);
+        } catch (TypeError e) {
+            threw = true;
+            this.assertEquals("cannot push null to list<int>", e.message);
+        }
+        this.assertTrue(threw);
+    }
 }

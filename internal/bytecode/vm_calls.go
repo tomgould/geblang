@@ -1,0 +1,2561 @@
+package bytecode
+
+import (
+	"fmt"
+	"geblang/internal/ast"
+	argbinding "geblang/internal/binding"
+	"geblang/internal/native"
+	"geblang/internal/runtime"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
+
+// tailCall replaces the top frame's function with a new one. Used by
+// OpTailCall for `return f(args)` in tail position. The current
+// frame's returnIP, returnOverride, and locals buffer are reused
+// (or replaced if LocalCount differs). Defers and exception handlers
+// in the caller MUST be empty - the compiler enforces this.
+func (vm *VM) tailCall(instruction Instruction) (int, error) {
+	if len(instruction.Operands) != 2 {
+		return 0, vm.fatalError(instruction, "tail call instruction has invalid operands")
+	}
+	index := instruction.Operands[0]
+	argc := instruction.Operands[1]
+	if index < 0 || int(index) >= len(vm.chunk.Functions) {
+		return 0, vm.runtimeError(instruction, "tail call function index out of range")
+	}
+	function := vm.chunk.Functions[index]
+	if len(vm.frames) == 0 {
+		return 0, vm.runtimeError(instruction, "tail call without an active frame")
+	}
+	paramCount := len(function.ParamSlots)
+	if int(argc) != paramCount {
+		return 0, vm.runtimeError(instruction, "tail call arity mismatch: %s expects %d, got %d", function.Name, paramCount, argc)
+	}
+	n := len(vm.stack)
+	if int(argc) > n {
+		return 0, vm.fatalError(instruction, "stack underflow")
+	}
+	stackArgs := vm.stack[n-int(argc) : n]
+	if function.requiresParamValidation {
+		typeParams := function.typeParamSet
+		inherited := vm.pendingTypeBindings
+		specs := function.paramTypeSpecs
+		for i := 0; i < paramCount; i++ {
+			pt := function.ParamTypes[i]
+			if pt == "" {
+				continue
+			}
+			argKind := stackArgs[i].Kind
+			if len(inherited) == 0 && i < len(specs) && specs[i].kind == vmTypeInt && argKind == runtime.VMKindSmallInt {
+				continue
+			}
+			var spec vmTypeSpec
+			if i < len(specs) && specs[i].raw != "" {
+				spec = specs[i]
+			} else {
+				spec = vm.typeSpec(pt)
+			}
+			if !vm.matchVMValueToTypeSpecWith(typeParams, inherited, stackArgs[i], spec) {
+				return 0, vm.runtimeError(instruction, "%s: argument %d expected %s, got %s", function.Name, i+1, pt, stackArgs[i].ToValue().TypeName())
+			}
+		}
+	}
+	args := make([]runtime.VMValue, paramCount)
+	copy(args, stackArgs)
+	vm.stack = vm.stack[:n-int(argc)]
+	// Reuse the existing top frame: keep returnIP, returnOverride.
+	// Replace functionName / callLine for stack traces. Reset other
+	// fields to defaults for the new function.
+	frame := &vm.frames[len(vm.frames)-1]
+	frame.functionName = function.Name
+	// Keep frame.callLine at the original entry site; the tail-call site is the [xN] line.
+	frame.tailRepeat++
+	frame.tailCallLine = int(instruction.Line)
+	frame.negateReturn = false
+	frame.isErrorClass = false
+	frame.isImmutableClass = false
+	frame.immutableFieldsToLock = nil
+	frame.lockInstance = nil
+	frame.isDestructibleConstructor = false
+	frame.typeBindings = nil
+	frame.generator = nil
+	frame.generatorDone = nil
+	vm.pendingTypeBindings = nil
+	// Release the caller-function's own locals (the frame was reusing
+	// them; the eventual OpReturn will use frame.locals, which still
+	// points to the original caller's locals, to restore on pop). Then
+	// allocate a fresh slice for the callee. function.SharesParentFrame
+	frame.shared = false
+	vm.popLocalsStackFrame(frame)
+	vm.pushLocalsStackFrame(frame, int(function.LocalCount), function.SharesParentFrame)
+	bp := frame.basePointer
+	for i := 0; i < paramCount; i++ {
+		vm.localsStack[bp+int(function.ParamSlots[i])] = args[i]
+	}
+	frameDepth := len(vm.frames)
+	if frameDepth < cap(vm.defers) {
+		vm.defers = vm.defers[:frameDepth+1]
+		vm.defers[frameDepth] = vm.defers[frameDepth][:0]
+	}
+	return int(function.Entry) - 1, nil
+}
+
+func (vm *VM) call(instruction Instruction, ip int) (int, error) {
+	if len(instruction.Operands) != 2 {
+		return 0, vm.fatalError(instruction, "call instruction has invalid operands")
+	}
+	index := instruction.Operands[0]
+	argc := instruction.Operands[1]
+	if index < 0 || int(index) >= len(vm.chunk.Functions) {
+		return 0, vm.runtimeError(instruction, "function index out of range")
+	}
+	function := &vm.chunk.Functions[index]
+	if !vm.requiresCallSitePolymorphism {
+		n := len(vm.stack)
+		if int(argc) > n {
+			return 0, vm.fatalError(instruction, "stack underflow")
+		}
+		stackArgs := vm.stack[n-int(argc) : n]
+		vm.stack = vm.stack[:n-int(argc)]
+		return vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
+	}
+	decorated, hasDecorated := vm.decoratedFuncs[index]
+	if !hasDecorated || vm.rawFunctionCalls[index] {
+		if !function.Async || vm.syncMode {
+			if !function.IsGenerator || vm.generatorExecution {
+				n := len(vm.stack)
+				if int(argc) > n {
+					return 0, vm.fatalError(instruction, "stack underflow")
+				}
+				stackArgs := vm.stack[n-int(argc) : n]
+				vm.stack = vm.stack[:n-int(argc)]
+				return vm.startFunctionVMValue(instruction, ip, function, stackArgs, nil)
+			}
+		}
+	}
+	// Async / generator / callable branches let args escape into a
+	// worker goroutine or stored task, so they keep the raw make().
+	// The terminal startFunction path copies args into locals before
+	// returning, so it can ride the call-args pool.
+	asyncEscape := function.Async && !vm.syncMode
+	generatorEscape := function.IsGenerator && !vm.generatorExecution
+	callableEscape := hasDecorated && !vm.rawFunctionCalls[index]
+	canPool := !asyncEscape && !generatorEscape && !callableEscape
+	var args []runtime.Value
+	if canPool {
+		args = vm.takeCallArgsBuffer(int(argc))
+	} else {
+		args = make([]runtime.Value, argc)
+	}
+	for i := int(argc) - 1; i >= 0; i-- {
+		value, err := vm.pop()
+		if err != nil {
+			if canPool {
+				vm.releaseCallArgsBuffer(args)
+			}
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		args[i] = value
+	}
+	if hasDecorated && !vm.rawFunctionCalls[index] {
+		if function.Async && !vm.syncMode {
+			task := vm.startAsyncCallable(decorated, args)
+			vm.push(task)
+			return ip, nil
+		}
+		result, err := vm.callCallable(decorated, args)
+		if err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		vm.push(result)
+		return ip, nil
+	}
+	if function.Async && !vm.syncMode {
+		task := vm.startAsyncFunction(index, args)
+		vm.push(task)
+		return ip, nil
+	}
+	if function.IsGenerator && !vm.generatorExecution {
+		vm.push(vm.lazyGenerator(index, args))
+		return ip, nil
+	}
+	nextIP, err := vm.startFunction(instruction, ip, function, args, nil)
+	vm.releaseCallArgsBuffer(args)
+	return nextIP, err
+}
+
+func (vm *VM) startAsyncFunction(index int64, args []runtime.Value) *runtime.Task {
+	task := runtime.NewTask()
+	// Snapshot parent VM state into a private worker before spawning the
+	// goroutine; the worker touches no parent fields after this point.
+	worker := vm.spawnAsyncWorker()
+	runtime.AsyncEnter()
+	go func() {
+		defer runtime.AsyncLeave()
+		result, err := worker.CallFunction(index, args)
+		task.Complete(result, err)
+	}()
+	return task
+}
+
+// spawnAsyncWorker constructs a worker VM holding snapshots of the parent's
+// mutable state (globals, decorator maps, etc.). The caller must spawn its
+// goroutine AFTER this returns so the snapshot copies are happen-before
+// the worker's reads.
+func (parent *VM) spawnAsyncWorker() *VM {
+	worker := NewVMWithModuleLoader(parent.chunk, parent.stdout, parent.moduleLoader)
+	worker.restoreGlobalsVM(parent.globals)
+	worker.SetModuleName(parent.moduleName)
+	worker.SetModulePaths(parent.modulePaths)
+	if parent.statefulNative != nil {
+		worker.SetStatefulNativeCaller(parent.statefulNative)
+	}
+	worker.syncMode = true
+	worker.forwardThis = parent.forwardThis
+	worker.decoratedFuncs = copyRuntimeValueMap(parent.decoratedFuncs)
+	worker.decoratedClasses = copyRuntimeValueMap(parent.decoratedClasses)
+	worker.decoratorsApplied = true
+	worker.rawFunctionCalls = copyBoolMap(parent.rawFunctionCalls)
+	worker.methodReceiverFuncs = copyBoolMap(parent.methodReceiverFuncs)
+	return worker
+}
+
+func (vm *VM) lazyGenerator(index int64, args []runtime.Value) *runtime.Generator {
+	vm.noteEscape()
+	items := make(chan vmGeneratorItem)
+	doneCh := make(chan struct{})
+	stop := sync.Once{}
+	start := sync.Once{}
+	closed := false
+	var pendingErr error
+	return runtime.NewClosableGenerator(func() (runtime.Value, bool, error) {
+		start.Do(func() {
+			callVM := vm.spawnAsyncWorker()
+			callVM.generatorExecution = true
+			callVM.generatorYield = items
+			callVM.generatorDone = doneCh
+			go func() {
+				defer close(items)
+				if _, err := callVM.CallFunction(index, args); err != nil {
+					select {
+					case items <- vmGeneratorItem{err: err}:
+					case <-doneCh:
+					}
+				}
+			}()
+		})
+		if closed {
+			return nil, false, pendingErr
+		}
+		item, ok := <-items
+		if !ok {
+			closed = true
+			return nil, false, nil
+		}
+		if item.err != nil {
+			closed = true
+			pendingErr = item.err
+			return nil, false, item.err
+		}
+		return item.value, true, nil
+	}, func() {
+		stop.Do(func() {
+			close(doneCh)
+		})
+	})
+}
+
+func (vm *VM) lazyClosureGenerator(closure runtime.BytecodeClosure, args []runtime.Value) *runtime.Generator {
+	vm.noteEscape()
+	items := make(chan vmGeneratorItem)
+	doneCh := make(chan struct{})
+	stop := sync.Once{}
+	start := sync.Once{}
+	closed := false
+	var pendingErr error
+	return runtime.NewClosableGenerator(func() (runtime.Value, bool, error) {
+		start.Do(func() {
+			callVM := vm.spawnAsyncWorker()
+			callVM.generatorExecution = true
+			callVM.generatorYield = items
+			callVM.generatorDone = doneCh
+			go func() {
+				defer close(items)
+				if _, err := callVM.callCallable(closure, args); err != nil {
+					select {
+					case items <- vmGeneratorItem{err: err}:
+					case <-doneCh:
+					}
+				}
+			}()
+		})
+		if closed {
+			return nil, false, pendingErr
+		}
+		item, ok := <-items
+		if !ok {
+			closed = true
+			return nil, false, nil
+		}
+		if item.err != nil {
+			closed = true
+			pendingErr = item.err
+			return nil, false, item.err
+		}
+		return item.value, true, nil
+	}, func() {
+		stop.Do(func() {
+			close(doneCh)
+		})
+	})
+}
+
+func (vm *VM) startAsyncCallable(fn runtime.Value, args []runtime.Value) *runtime.Task {
+	return vm.startAsyncCallableWithForwardThis(fn, args, nil)
+}
+
+func (vm *VM) startAsyncCallableWithForwardThis(fn runtime.Value, args []runtime.Value, receiver *runtime.Instance) *runtime.Task {
+	task := runtime.NewTask()
+	// Snapshot parent state into a private worker; the goroutine touches
+	// only the worker, not the parent VM.
+	worker := vm.spawnAsyncWorker()
+	if receiver != nil {
+		worker.forwardThis = receiver
+	}
+	runtime.AsyncEnter()
+	go func() {
+		defer runtime.AsyncLeave()
+		result, err := worker.callCallable(fn, args)
+		task.Complete(result, err)
+	}()
+	return task
+}
+
+func (vm *VM) callCallableWithForwardThis(fn runtime.Value, args []runtime.Value, receiver *runtime.Instance) (runtime.Value, error) {
+	previous := vm.forwardThis
+	vm.forwardThis = receiver
+	defer func() {
+		vm.forwardThis = previous
+	}()
+	return vm.callCallable(fn, args)
+}
+
+func (vm *VM) startFunction(instruction Instruction, ip int, function *FunctionInfo, provided []runtime.Value, returnOverride runtime.Value) (int, error) {
+	return vm.startFunctionWithValidation(instruction, ip, function, provided, returnOverride, true)
+}
+
+// startFunctionWithBindings enters a function body with an inherited
+// type-binding map planted into the new call frame. Used by the
+// closure call path so that a lambda or named-generic-function value
+// can resolve type-parameter names from the call site of its
+// enclosing generic function.
+func (vm *VM) startFunctionWithBindings(instruction Instruction, ip int, function *FunctionInfo, provided []runtime.Value, returnOverride runtime.Value, inheritedBindings map[string]string) (int, error) {
+	prev := vm.pendingTypeBindings
+	vm.pendingTypeBindings = inheritedBindings
+	nextIP, err := vm.startFunctionWithValidation(instruction, ip, function, provided, returnOverride, true)
+	vm.pendingTypeBindings = prev
+	return nextIP, err
+}
+
+// startFunctionVMValue is the fast-path call entry that operates on
+// VMValue arguments directly. The caller passes a slice over the VM
+// stack and the number of args (argc); the slice is consumed but not
+// retained beyond this call. No []runtime.Value allocation or per-arg
+// ToValue conversion happens on this path.
+//
+// The fast path covers the common case: no variadic, no defaults
+// needed, no generics inference required, all arg types either `any`
+// or match the parameter spec inline. Anything else falls back to the
+// interface-form path by materialising args at the boundary, paying
+// the allocation cost only on the slow path.
+func (vm *VM) startFunctionVMValue(instruction Instruction, ip int, function *FunctionInfo, stackArgs []runtime.VMValue, returnOverride runtime.Value) (int, error) {
+	maxDepth := vm.maxCallDepth
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxCallDepth
+	}
+	if len(vm.frames) >= maxDepth {
+		return 0, vm.fatalError(instruction, "maximum call depth exceeded (%d)", maxDepth)
+	}
+	argc := len(stackArgs)
+	paramCount := len(function.ParamSlots)
+
+	// Fast path requirements: fixed arity, no variadic packing, no
+	// default-arg fill, returnOverride nil. The arity check itself runs
+	// inline so the fast path can stay branch-light.
+	fastPath := !function.Variadic && argc == paramCount && returnOverride == nil
+	if !fastPath {
+		// Materialise the args as []runtime.Value and let the legacy
+		// path handle defaults/variadic/etc. startFunctionWithValidation
+		// copies into locals before returning so the args slice is
+		// safe to recycle once it returns.
+		args := vm.takeCallArgsBuffer(argc)
+		for i, a := range stackArgs {
+			args[i] = a.ToValue()
+		}
+		nextIP, err := vm.startFunctionWithValidation(instruction, ip, function, args, returnOverride, true)
+		vm.releaseCallArgsBuffer(args)
+		return nextIP, err
+	}
+
+	// Type validation, inline against VMValues. Skips the spec lookup
+	// when a typed-int param meets a SmallInt arg (the dominant case).
+	if function.requiresParamValidation {
+		typeParams := function.typeParamSet
+		inherited := vm.pendingTypeBindings
+		if len(function.ParamNames) > 0 && function.ParamNames[0] == "this" && paramCount > 0 && stackArgs[0].Kind == runtime.VMKindBoxed && !compiledConstructorName(function.Name) {
+			if inst, ok := stackArgs[0].Boxed.(*runtime.Instance); ok {
+				inherited = mergedTypeBindings(inherited, inst.TypeBindings)
+			}
+		}
+		specs := function.paramTypeSpecs
+		for i := 0; i < paramCount; i++ {
+			pt := function.ParamTypes[i]
+			if pt == "" {
+				continue
+			}
+			argKind := stackArgs[i].Kind
+			// Fast path: typed-int param, SmallInt arg.
+			if len(inherited) == 0 && i < len(specs) && specs[i].kind == vmTypeInt && argKind == runtime.VMKindSmallInt {
+				continue
+			}
+			var spec vmTypeSpec
+			if i < len(specs) && specs[i].raw != "" {
+				spec = specs[i]
+			} else {
+				spec = vm.typeSpec(pt)
+			}
+			if !vm.matchVMValueToTypeSpecWith(typeParams, inherited, stackArgs[i], spec) {
+				// Fall back to the slow path so the existing error
+				// reporting (which formats runtime.Value descriptions)
+				// runs uniformly.
+				args := vm.takeCallArgsBuffer(argc)
+				for j, a := range stackArgs {
+					args[j] = a.ToValue()
+				}
+				nextIP, err := vm.startFunctionWithValidation(instruction, ip, function, args, returnOverride, true)
+				vm.releaseCallArgsBuffer(args)
+				return nextIP, err
+			}
+		}
+	}
+
+	// Push the frame in place.
+	if len(vm.frames) == cap(vm.frames) {
+		grown := make([]callFrame, len(vm.frames), cap(vm.frames)*2)
+		copy(grown, vm.frames)
+		vm.frames = grown
+	}
+	vm.frames = vm.frames[:len(vm.frames)+1]
+	frame := &vm.frames[len(vm.frames)-1]
+	frame.returnIP = ip
+	frame.returnOverride = nil
+	frame.functionName = function.Name
+	frame.callLine = int(instruction.Line)
+	frame.tailRepeat = 0
+	frame.tailCallLine = 0
+	frame.negateReturn = false
+	frame.isErrorClass = false
+	frame.isImmutableClass = false
+	frame.immutableFieldsToLock = nil
+	frame.lockInstance = nil
+	frame.isDestructibleConstructor = false
+	frame.shared = function.SharesParentFrame
+	if function.IsGenerator && vm.generatorExecution {
+		frame.generator = vm.generatorYield
+		frame.generatorDone = vm.generatorDone
+	} else {
+		frame.generator = nil
+		frame.generatorDone = nil
+	}
+	frame.typeBindings = nil
+	frameDepth := len(vm.frames)
+	if frameDepth < cap(vm.defers) {
+		vm.defers = vm.defers[:frameDepth+1]
+		vm.defers[frameDepth] = vm.defers[frameDepth][:0]
+	} else {
+		vm.defers = append(vm.defers, nil)
+	}
+	// Save parent's locals slice handle (no copy) and either reuse it
+	// (nested function statement) or allocate a fresh frame slice for
+	// the callee. Fresh slice avoids the per-call snapshot copy that
+	// previously dominated recursion overhead for small functions.
+	// Params occupying the leading slots get overwritten by the copy
+	// below, so skip zeroing them on frame reuse.
+	skipLeading := paramCount
+	for i := 0; i < paramCount; i++ {
+		if int(function.ParamSlots[i]) != i {
+			skipLeading = 0
+			break
+		}
+	}
+	vm.pushLocalsStackFrameSkip(frame, int(function.LocalCount), function.SharesParentFrame, skipLeading)
+	bp := frame.basePointer
+	for i := 0; i < paramCount; i++ {
+		vm.localsStack[bp+int(function.ParamSlots[i])] = stackArgs[i]
+	}
+	if len(function.TypeParameters) > 0 && len(function.ParamTypes) > 0 {
+		typeBindings := vm.inferTypeBindingsFromLocals(function)
+		if err := vm.checkTypeParamConstraints(instruction, function, typeBindings); err != nil {
+			return 0, err
+		}
+	}
+	if vm.forwardThis != nil {
+		vm.inheritInstanceTypeBindings(vm.forwardThis)
+	}
+	return int(function.Entry) - 1, nil
+}
+
+// compiledConstructorName reports the Class.Class constructor name form;
+// constructors validate at the construct site, not against the receiver.
+func compiledConstructorName(name string) bool {
+	dot := strings.IndexByte(name, '.')
+	if dot <= 0 || dot+1 >= len(name) {
+		return false
+	}
+	return name[:dot] == name[dot+1:]
+}
+
+// receiverTypeBindings returns the receiver's reified bindings when the
+// function's slot 0 is the implicit `this` param; nil otherwise.
+func receiverTypeBindings(function *FunctionInfo, first runtime.Value) map[string]string {
+	if len(function.ParamNames) == 0 || function.ParamNames[0] != "this" || first == nil {
+		return nil
+	}
+	if inst, ok := first.(*runtime.Instance); ok {
+		return inst.TypeBindings
+	}
+	return nil
+}
+
+// mergedTypeBindings overlays primary on secondary (primary wins).
+// Either map may be returned unmodified; callers must not mutate.
+func mergedTypeBindings(primary, secondary map[string]string) map[string]string {
+	if len(secondary) == 0 {
+		return primary
+	}
+	if len(primary) == 0 {
+		return secondary
+	}
+	merged := make(map[string]string, len(primary)+len(secondary))
+	for k, v := range secondary {
+		merged[k] = v
+	}
+	for k, v := range primary {
+		merged[k] = v
+	}
+	return merged
+}
+
+// matchVMValueToTypeSpecWith applies matchValueToTypeSpecWith's
+// bindings-before-own-type-param precedence to VMValues.
+func (vm *VM) matchVMValueToTypeSpecWith(typeParams map[string]bool, inherited map[string]string, value runtime.VMValue, spec vmTypeSpec) bool {
+	if len(inherited) > 0 {
+		if bound, ok := inherited[spec.base]; ok && bound != "" {
+			return vm.matchVMValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
+		}
+		if bound, ok := inherited[spec.baseLower]; ok && bound != "" {
+			return vm.matchVMValueToTypeSpec(typeParams, value, vm.typeSpec(bound))
+		}
+	}
+	return vm.matchVMValueToTypeSpec(typeParams, value, spec)
+}
+
+// matchVMValueToTypeSpec is the VMValue-aware variant of
+// matchValueToTypeSpec. It avoids the ToValue() round-trip for the
+// common primitive cases.
+func (vm *VM) matchVMValueToTypeSpec(typeParams map[string]bool, value runtime.VMValue, spec vmTypeSpec) bool {
+	if typeParams[spec.baseLower] {
+		return true
+	}
+	if spec.kind == vmTypeUnion || spec.kind == vmTypeIntersection {
+		return vm.matchValueToTypeSpec(typeParams, value.ToValue(), spec)
+	}
+	if value.Kind == runtime.VMKindUnset || value.Kind == runtime.VMKindNull {
+		return spec.nullable
+	}
+	switch spec.kind {
+	case vmTypeAny:
+		return true
+	case vmTypeInt:
+		if value.Kind == runtime.VMKindSmallInt {
+			return true
+		}
+		if value.Kind == runtime.VMKindBoxed {
+			if _, ok := value.Boxed.(runtime.Int); ok {
+				return true
+			}
+		}
+		return false
+	case vmTypeBool:
+		return value.Kind == runtime.VMKindBool
+	case vmTypeFloat:
+		return value.Kind == runtime.VMKindFloat
+	}
+	// Fall back to the interface-form check for less common types.
+	return vm.matchValueToTypeSpec(typeParams, value.ToValue(), spec)
+}
+
+// inferTypeBindingsFromLocals replicates the binding-inference loop in
+// startFunctionWithValidation but reads from vm.localsStack (already
+// set up by startFunctionVMValue via the new frame's basePointer)
+// rather than a []runtime.Value arg list. Returns the inferred
+// bindings so the caller can run constraint checks.
+func (vm *VM) inferTypeBindingsFromLocals(function *FunctionInfo) map[string]string {
+	typeParamSet := function.typeParamSet
+	typeBindings := map[string]string{}
+	// Seed with any explicit `<TypeArgs>` planted by OpPlantCallTypeBindings
+	// before the matching OpCall. Inference's "skip if already exists" checks
+	// below then leave these alone, giving explicit args strict priority
+	// over types inferred from argument values. The pending map is consumed
+	// here so a subsequent call without explicit args doesn't inherit them.
+	if len(vm.pendingTypeBindings) > 0 {
+		for k, v := range vm.pendingTypeBindings {
+			if typeParamSet[strings.ToLower(k)] {
+				typeBindings[k] = v
+			}
+		}
+		vm.pendingTypeBindings = nil
+	}
+	for i, paramType := range function.ParamTypes {
+		if i >= len(function.ParamSlots) {
+			break
+		}
+		var spec vmTypeSpec
+		if i < len(function.paramTypeSpecs) && function.paramTypeSpecs[i].raw != "" {
+			spec = function.paramTypeSpecs[i]
+		} else {
+			spec = vm.typeSpec(paramType)
+		}
+		if len(spec.args) > 0 {
+			slot := function.ParamSlots[i]
+			v, err := vm.getLocal(slot)
+			if err != nil || v == nil {
+				continue
+			}
+			vm.inferGenericBindingsFromSpec(spec, v, typeParamSet, typeBindings)
+			continue
+		}
+		if typeParamSet[strings.ToLower(paramType)] {
+			slot := function.ParamSlots[i]
+			if v, err := vm.getLocal(slot); err == nil && v != nil {
+				if _, exists := typeBindings[paramType]; !exists {
+					typeBindings[paramType] = v.TypeName()
+				}
+			}
+		}
+	}
+	if len(typeBindings) > 0 {
+		vm.frames[len(vm.frames)-1].typeBindings = typeBindings
+	}
+	return typeBindings
+}
+
+// inferGenericBindingsFromSpec walks a parameter's type-spec tree
+// against the concrete arg value to discover bindings for any leaf
+// type-parameter references. Recurses into nested container shapes so
+// `list<dict<K, V>>` populates both K and V from a single arg, not
+// just the immediate level. Direct type-param leaves (e.g. just `T`)
+// fall through to the caller's same-level path; this helper only
+// fires when the spec has args (a generic container shape). Caller
+// already null-checked v.
+func (vm *VM) inferGenericBindingsFromSpec(spec vmTypeSpec, v runtime.Value, typeParamSet map[string]bool, typeBindings map[string]string) {
+	if len(spec.args) == 0 {
+		return
+	}
+	switch spec.baseLower {
+	case "list":
+		list, ok := v.(*runtime.List)
+		if !ok || len(list.Elements) == 0 {
+			return
+		}
+		vm.bindOrRecurse(spec.args[0], list.Elements[0], typeParamSet, typeBindings)
+	case "set":
+		set, ok := v.(runtime.Set)
+		if !ok || len(set.Elements) == 0 {
+			return
+		}
+		for _, entry := range set.Elements {
+			vm.bindOrRecurse(spec.args[0], entry.Value, typeParamSet, typeBindings)
+			break
+		}
+	case "dict":
+		if len(spec.args) != 2 {
+			return
+		}
+		d, ok := v.(runtime.Dict)
+		if !ok || d.Len() == 0 {
+			return
+		}
+		d.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
+			vm.bindOrRecurse(spec.args[0], entry.Key, typeParamSet, typeBindings)
+			vm.bindOrRecurse(spec.args[1], entry.Value, typeParamSet, typeBindings)
+			return false
+		})
+	}
+}
+
+// bindOrRecurse is the leaf step of inferGenericBindingsFromSpec.
+// When `spec` is a bare type-param reference, record the binding from
+// the concrete value. Otherwise it is a nested container; recurse.
+func (vm *VM) bindOrRecurse(spec vmTypeSpec, v runtime.Value, typeParamSet map[string]bool, typeBindings map[string]string) {
+	if len(spec.args) == 0 {
+		if !typeParamSet[strings.ToLower(spec.base)] {
+			return
+		}
+		if v == nil {
+			return
+		}
+		if _, exists := typeBindings[spec.base]; exists {
+			return
+		}
+		typeBindings[spec.base] = v.TypeName()
+		return
+	}
+	vm.inferGenericBindingsFromSpec(spec, v, typeParamSet, typeBindings)
+}
+
+func (vm *VM) startPrevalidatedFunction(instruction Instruction, ip int, function *FunctionInfo, provided []runtime.Value, returnOverride runtime.Value) (int, error) {
+	return vm.startFunctionWithValidation(instruction, ip, function, provided, returnOverride, false)
+}
+
+func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, function *FunctionInfo, provided []runtime.Value, returnOverride runtime.Value, validateTypes bool) (int, error) {
+	maxDepth := vm.maxCallDepth
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxCallDepth
+	}
+	if len(vm.frames) >= maxDepth {
+		return 0, vm.fatalError(instruction, "maximum call depth exceeded (%d)", maxDepth)
+	}
+	argc := len(provided)
+	if function.Variadic && len(function.ParamSlots) > 0 {
+		variadicIndex := len(function.ParamSlots) - 1
+		if argc >= variadicIndex {
+			variadicElements := make([]runtime.Value, argc-variadicIndex)
+			copy(variadicElements, provided[variadicIndex:])
+			newProvided := make([]runtime.Value, variadicIndex+1)
+			copy(newProvided, provided[:variadicIndex])
+			newProvided[variadicIndex] = &runtime.List{Elements: variadicElements}
+			provided = newProvided
+			argc = len(provided)
+		}
+	} else if argc > len(function.ParamSlots) {
+		return 0, vm.runtimeError(instruction, "%s expects at most %d arguments, got %d", function.Name, len(function.ParamSlots), argc)
+	}
+	required := len(function.ParamSlots)
+	if function.Variadic && required > 0 {
+		required--
+	}
+	for required > 0 && required <= len(function.DefaultConstants) && function.DefaultConstants[required-1] >= 0 {
+		required--
+	}
+	if argc < required {
+		// Name the first unfilled parameter that has no default.
+		for i := argc; i < len(function.ParamNames); i++ {
+			if function.Variadic && i == len(function.ParamNames)-1 {
+				break
+			}
+			if i >= len(function.DefaultConstants) || function.DefaultConstants[i] < 0 {
+				return 0, vm.runtimeError(instruction, "%s missing argument %s", function.Name, function.ParamNames[i])
+			}
+		}
+		return 0, vm.runtimeError(instruction, "%s missing argument %d", function.Name, argc+1)
+	}
+	args := provided
+	if function.Variadic || argc != len(function.ParamSlots) {
+		args = make([]runtime.Value, len(function.ParamSlots))
+		copy(args, provided)
+		if function.Variadic && len(function.ParamSlots) > 0 {
+			variadicIndex := len(function.ParamSlots) - 1
+			if args[variadicIndex] == nil {
+				args[variadicIndex] = &runtime.List{Elements: nil}
+			}
+		}
+		for i := argc; i < len(args); i++ {
+			if args[i] != nil {
+				// Variadic slot already holds its bundled (or empty) list.
+				continue
+			}
+			if i >= len(function.DefaultConstants) || function.DefaultConstants[i] < 0 {
+				if i < len(function.ParamNames) {
+					return 0, vm.runtimeError(instruction, "%s missing argument %s", function.Name, function.ParamNames[i])
+				}
+				return 0, vm.runtimeError(instruction, "%s missing argument %d", function.Name, i+1)
+			}
+			defaultIndex := function.DefaultConstants[i]
+			if defaultIndex < 0 || int(defaultIndex) >= vm.constantsLen() {
+				return 0, vm.runtimeError(instruction, "default argument constant out of range")
+			}
+			args[i] = cloneContainerDefault(vm.constantValue(defaultIndex))
+		}
+	}
+	receiverBindings := map[string]string(nil)
+	if function.requiresParamValidation && len(args) > 0 && !compiledConstructorName(function.Name) {
+		receiverBindings = receiverTypeBindings(function, args[0])
+	}
+	if !validateTypes && len(receiverBindings) > 0 {
+		// Prevalidated dispatch never checked T-typed params; enforce just those.
+		typeParams := function.typeParamSet
+		for i, arg := range args {
+			if i == 0 || arg == nil || i >= len(function.ParamTypes) || function.ParamTypes[i] == "" {
+				continue
+			}
+			if function.Variadic && i == len(function.ParamSlots)-1 {
+				break
+			}
+			spec := vm.typeSpec(function.ParamTypes[i])
+			bound, ok := receiverBindings[spec.base]
+			if !ok || bound == "" {
+				continue
+			}
+			if !vm.matchValueToTypeSpec(typeParams, arg, vm.typeSpec(bound)) {
+				paramName := ""
+				if i < len(function.ParamNames) {
+					paramName = function.ParamNames[i]
+				}
+				suffix := vm.collectionMismatchSuffixStr(arg, function.ParamTypes[i])
+				gotName := vm.descriptiveRuntimeTypeName(arg)
+				if suffix != "" {
+					gotName = arg.TypeName()
+				}
+				msg := fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, function.ParamTypes[i], paramName, gotName, suffix)
+				return vm.throwTyped(instruction, ip, "RuntimeError", msg)
+			}
+		}
+	}
+	if validateTypes && function.requiresParamValidation {
+		// Enforce parameter type annotations (skip the bundled variadic slot).
+		typeParams := function.typeParamSet
+		inherited := mergedTypeBindings(vm.pendingTypeBindings, receiverBindings)
+		for i, arg := range args {
+			if function.Variadic && i == len(function.ParamSlots)-1 {
+				break
+			}
+			if arg == nil || i >= len(function.ParamTypes) || function.ParamTypes[i] == "" {
+				continue
+			}
+			matches := false
+			if i < len(function.paramTypeSpecs) && function.paramTypeSpecs[i].raw != "" {
+				matches = vm.matchValueToTypeSpecWith(typeParams, inherited, arg, function.paramTypeSpecs[i])
+			} else {
+				matches = vm.matchValueToTypeStrWith(typeParams, inherited, arg, function.ParamTypes[i])
+			}
+			if !matches {
+				paramName := ""
+				if i < len(function.ParamNames) {
+					paramName = function.ParamNames[i]
+				}
+				suffix := vm.collectionMismatchSuffixStr(arg, function.ParamTypes[i])
+				gotName := vm.descriptiveRuntimeTypeName(arg)
+				if suffix != "" {
+					gotName = arg.TypeName()
+				}
+				var msg string
+				if paramName != "" {
+					msg = fmt.Sprintf("%s expects %s for parameter '%s', got %s%s", function.Name, function.ParamTypes[i], paramName, gotName, suffix)
+				} else {
+					msg = fmt.Sprintf("%s expects %s, got %s%s", function.Name, function.ParamTypes[i], gotName, suffix)
+				}
+				return vm.throwTyped(instruction, ip, "RuntimeError", msg)
+			}
+		}
+	}
+	// Construct the frame in place rather than building a callFrame value and
+	// letting append copy the whole struct. For deep call stacks (fib's
+	// ~243k calls) this avoids a duffcopy per push. The pop path zeroes the
+	// fields that hold references when the frame is released, so we only
+	// need to assign the active fields here.
+	if len(vm.frames) == cap(vm.frames) {
+		grown := make([]callFrame, len(vm.frames), cap(vm.frames)*2)
+		copy(grown, vm.frames)
+		vm.frames = grown
+	}
+	vm.frames = vm.frames[:len(vm.frames)+1]
+	frame := &vm.frames[len(vm.frames)-1]
+	frame.returnIP = ip
+	frame.returnOverride = returnOverride
+	frame.functionName = function.Name
+	frame.callLine = int(instruction.Line)
+	frame.tailRepeat = 0
+	frame.tailCallLine = 0
+	frame.negateReturn = false
+	frame.isErrorClass = false
+	frame.isImmutableClass = false
+	frame.immutableFieldsToLock = nil
+	frame.lockInstance = nil
+	frame.isDestructibleConstructor = false
+	frame.shared = function.SharesParentFrame
+	if function.IsGenerator && vm.generatorExecution {
+		frame.generator = vm.generatorYield
+		frame.generatorDone = vm.generatorDone
+	} else {
+		frame.generator = nil
+		frame.generatorDone = nil
+	}
+	frame.typeBindings = nil
+	// Reuse the backing array slot for this frame's defers rather than
+	// allocating a new inner slice each call.
+	frameDepth := len(vm.frames)
+	if frameDepth < cap(vm.defers) {
+		vm.defers = vm.defers[:frameDepth+1]
+		vm.defers[frameDepth] = vm.defers[frameDepth][:0]
+	} else {
+		vm.defers = append(vm.defers, nil)
+	}
+	// Save the parent's locals slice handle (no copy) and either reuse
+	// it for a nested function statement or allocate a fresh frame
+	// slice for any other callee. This replaces the previous
+	// snapshotLocals() deep copy.
+	vm.pushLocalsStackFrame(frame, int(function.LocalCount), function.SharesParentFrame)
+	for i, slot := range function.ParamSlots {
+		if err := vm.setLocal(slot, args[i]); err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+	}
+	// Infer type parameter bindings from param types and the bound local values.
+	if len(function.TypeParameters) > 0 && len(function.ParamTypes) > 0 {
+		typeParamSet := function.typeParamSet
+		typeBindings := map[string]string{}
+		for i, paramType := range function.ParamTypes {
+			if i >= len(function.ParamSlots) {
+				break
+			}
+			var spec vmTypeSpec
+			if i < len(function.paramTypeSpecs) && function.paramTypeSpecs[i].raw != "" {
+				spec = function.paramTypeSpecs[i]
+			} else {
+				spec = vm.typeSpec(paramType)
+			}
+			if len(spec.args) > 0 {
+				slot := function.ParamSlots[i]
+				if v, err := vm.getLocal(slot); err == nil && v != nil {
+					vm.inferGenericBindingsFromSpec(spec, v, typeParamSet, typeBindings)
+				}
+				continue
+			}
+			// Direct T parameter.
+			if typeParamSet[strings.ToLower(paramType)] {
+				slot := function.ParamSlots[i]
+				if v, err := vm.getLocal(slot); err == nil && v != nil {
+					if _, exists := typeBindings[paramType]; !exists {
+						typeBindings[paramType] = v.TypeName()
+					}
+				}
+			}
+		}
+		if len(typeBindings) > 0 {
+			vm.frames[len(vm.frames)-1].typeBindings = typeBindings
+		}
+		if err := vm.checkTypeParamConstraints(instruction, function, typeBindings); err != nil {
+			return 0, err
+		}
+	}
+	// If called with a forwarded receiver (e.g. via a callable decorator), inherit
+	// its type bindings so that instanceof T checks work inside decorated methods.
+	if vm.forwardThis != nil {
+		vm.inheritInstanceTypeBindings(vm.forwardThis)
+	}
+	// If this call inherited type bindings from a closure value (lambda
+	// or generic-function-as-reference captured from an outer generic
+	// frame) OR from OpPlantCallTypeBindings staging explicit `<TypeArgs>`,
+	// merge them into the new frame so the body's instanceof T checks and
+	// inner OpMakeClosure captures see the correct bindings. Pending
+	// bindings are consumed here; the closure-inheritance path uses
+	// save/restore semantics around its caller so the restore still sees
+	// the original prev value regardless of this clear.
+	if len(vm.pendingTypeBindings) > 0 && len(vm.frames) > 0 {
+		frame := &vm.frames[len(vm.frames)-1]
+		if frame.typeBindings == nil {
+			frame.typeBindings = map[string]string{}
+		}
+		for k, v := range vm.pendingTypeBindings {
+			if _, exists := frame.typeBindings[k]; !exists {
+				frame.typeBindings[k] = v
+			}
+		}
+		vm.pendingTypeBindings = nil
+	}
+	return int(function.Entry) - 1, nil
+}
+
+func (vm *VM) startClosureFunction(instruction Instruction, ip int, closure runtime.BytecodeClosure, args []runtime.Value) (int, error) {
+	if int(closure.FunctionIndex) >= len(vm.chunk.Functions) {
+		return 0, vm.runtimeError(instruction, "closure function index out of range")
+	}
+	function := &vm.chunk.Functions[closure.FunctionIndex]
+	if function.IsGenerator && !vm.generatorExecution {
+		vm.push(vm.lazyClosureGenerator(closure, args))
+		return ip, nil
+	}
+	upvalueCount := int(function.UpvalueCount)
+	provided := make([]runtime.Value, upvalueCount+len(args))
+	copy(provided[:upvalueCount], closure.Upvalues)
+	copy(provided[upvalueCount:], args)
+	if len(closure.TypeBindings) > 0 {
+		return vm.startFunctionWithBindings(instruction, ip, function, provided, nil, closure.TypeBindings)
+	}
+	return vm.startFunction(instruction, ip, function, provided, nil)
+}
+
+func (vm *VM) nativeCall(instruction Instruction) error {
+	if len(instruction.Operands) != 2 {
+		return vm.fatalError(instruction, "native call instruction has invalid operands")
+	}
+	nameIndex := instruction.Operands[0]
+	argc := instruction.Operands[1]
+	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
+		return vm.runtimeError(instruction, "native call name out of range")
+	}
+	if int(nameIndex) < len(vm.nativeCache) {
+		if fn := vm.nativeCache[nameIndex]; fn != nil {
+			args := vm.takeCallArgsBuffer(int(argc))
+			for i := int(argc) - 1; i >= 0; i-- {
+				value, err := vm.pop()
+				if err != nil {
+					vm.releaseCallArgsBuffer(args)
+					return vm.runtimeError(instruction, "%s", err.Error())
+				}
+				args[i] = value
+			}
+			result, err := fn(args)
+			vm.releaseCallArgsBuffer(args)
+			if err != nil {
+				return recoverableNativeError{err: err}
+			}
+			vm.push(result)
+			return nil
+		}
+	}
+	name, ok := vm.constantValue(nameIndex).(runtime.String)
+	if !ok {
+		return vm.runtimeError(instruction, "native call name must be string")
+	}
+	args := make([]runtime.Value, argc)
+	for i := int(argc) - 1; i >= 0; i-- {
+		value, err := vm.pop()
+		if err != nil {
+			return vm.runtimeError(instruction, "%s", err.Error())
+		}
+		args[i] = value
+	}
+	// Pure builtins always terminate at the registry regardless of
+	// whether a stateful caller is wired, so they are cacheable per
+	// name-constant either way. The excluded modules have VM-inline or
+	// embedder-observable routing that must stay dynamic.
+	if name.Value != "errors.is" {
+		if module, function, ok := strings.Cut(name.Value, "."); ok &&
+			module != "collections" && module != "reflect" && module != "async" &&
+			!isStatefulNativeCall(module, function) {
+			if fn := vm.natives.LookupKey(name.Value); fn != nil && int(nameIndex) < len(vm.nativeCache) {
+				vm.nativeCache[nameIndex] = fn
+			}
+		}
+	}
+	result, err := vm.evalNativeCall(name.Value, args)
+	if err != nil {
+		return recoverableNativeError{err: err}
+	}
+	vm.push(result)
+	return nil
+}
+
+func (vm *VM) nativeCallSpread(instruction Instruction) error {
+	if len(instruction.Operands) != 2 {
+		return vm.fatalError(instruction, "native call-spread instruction has invalid operands")
+	}
+	nameIndex := instruction.Operands[0]
+	staticArgCount := int(instruction.Operands[1])
+	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
+		return vm.runtimeError(instruction, "native call name out of range")
+	}
+	name, ok := vm.constantValue(nameIndex).(runtime.String)
+	if !ok {
+		return vm.runtimeError(instruction, "native call name must be string")
+	}
+	spreadVal, err := vm.pop()
+	if err != nil {
+		return vm.runtimeError(instruction, "%s", err.Error())
+	}
+	spreadList, ok := spreadVal.(*runtime.List)
+	if !ok {
+		return vm.runtimeError(instruction, "spread argument must be a list")
+	}
+	staticArgs := make([]runtime.Value, staticArgCount)
+	for i := staticArgCount - 1; i >= 0; i-- {
+		value, err := vm.pop()
+		if err != nil {
+			return vm.runtimeError(instruction, "%s", err.Error())
+		}
+		staticArgs[i] = value
+	}
+	result, err := vm.evalNativeCall(name.Value, append(staticArgs, spreadList.Elements...))
+	if err != nil {
+		return recoverableNativeError{err: err}
+	}
+	vm.push(result)
+	return nil
+}
+
+func (vm *VM) nativeCallNamed(instruction Instruction) error {
+	if len(instruction.Operands) < 2 {
+		return vm.fatalError(instruction, "named native call instruction has invalid operands")
+	}
+	nameIndex := instruction.Operands[0]
+	argc := instruction.Operands[1]
+	if argc < 0 || len(instruction.Operands) != int(argc)+2 {
+		return vm.runtimeError(instruction, "named native call argument metadata mismatch")
+	}
+	if nameIndex < 0 || int(nameIndex) >= vm.constantsLen() {
+		return vm.runtimeError(instruction, "native call name out of range")
+	}
+	name, ok := vm.constantValue(nameIndex).(runtime.String)
+	if !ok {
+		return vm.runtimeError(instruction, "native call name must be string")
+	}
+	args := make([]runtime.Value, argc)
+	for i := int(argc) - 1; i >= 0; i-- {
+		value, err := vm.pop()
+		if err != nil {
+			return vm.runtimeError(instruction, "%s", err.Error())
+		}
+		args[i] = value
+	}
+	names := make([]string, argc)
+	for i := int64(0); i < argc; i++ {
+		argName, err := vm.constantStringAt(instruction, instruction.Operands[i+2], "argument name constant must be string")
+		if err != nil {
+			return err
+		}
+		names[i] = argName
+	}
+	result, err := vm.evalNativeCallWithNames(name.Value, args, names)
+	if err != nil {
+		return recoverableNativeError{err: err}
+	}
+	vm.push(result)
+	return nil
+}
+
+func vmBindingSignature(function FunctionInfo, paramOffset int) argbinding.Signature {
+	paramNames := function.ParamNames
+	if paramOffset <= len(paramNames) {
+		paramNames = paramNames[paramOffset:]
+	} else {
+		paramNames = nil
+	}
+	hasDefault := make([]bool, len(paramNames))
+	for i := range paramNames {
+		paramIndex := i + paramOffset
+		hasDefault[i] = paramIndex < len(function.DefaultConstants) && function.DefaultConstants[paramIndex] >= 0
+	}
+	return argbinding.Signature{
+		FuncName:   function.Name,
+		ParamNames: paramNames,
+		HasDefault: hasDefault,
+		Variadic:   function.Variadic,
+	}
+}
+
+func (vm *VM) orderRuntimeArguments(instruction Instruction, function FunctionInfo, args []runtime.Value, names []string, paramOffset int) ([]runtime.Value, error) {
+	if len(args) != len(names) {
+		return nil, vm.runtimeError(instruction, "argument metadata mismatch")
+	}
+	if len(function.ParamNames) < paramOffset {
+		return nil, vm.runtimeError(instruction, "function metadata for %s has invalid receiver offset", function.Name)
+	}
+	sig := vmBindingSignature(function, paramOffset)
+	bargs := make([]argbinding.Arg, len(args))
+	for i, name := range names {
+		bargs[i].Name = name
+	}
+	result, err := argbinding.Order(sig, bargs)
+	if err != nil {
+		return nil, vm.runtimeError(instruction, "%s", err.Error())
+	}
+	ordered := make([]runtime.Value, len(result.Slots))
+	assigned := make([]bool, len(result.Slots))
+	for i, slot := range result.Slots {
+		if slot != argbinding.DefaultSlot {
+			ordered[i] = args[slot]
+			assigned[i] = true
+		}
+	}
+	for _, argIndex := range result.TailArgs {
+		// Positional overflow into the variadic slot arrives unpacked;
+		// downstream packing consumes the trailing run.
+		ordered = append(ordered, args[argIndex])
+		assigned = append(assigned, true)
+	}
+	variadicIndex := -1
+	if function.Variadic && len(function.ParamNames) > paramOffset {
+		variadicIndex = len(function.ParamNames) - 1 - paramOffset
+	}
+	if variadicIndex >= 0 && variadicIndex == len(ordered)-1 && !assigned[variadicIndex] {
+		ordered = ordered[:variadicIndex]
+		assigned = assigned[:variadicIndex]
+	}
+	for i := range ordered {
+		if assigned[i] {
+			continue
+		}
+		paramIndex := i + paramOffset
+		defaultIndex := function.DefaultConstants[paramIndex]
+		if defaultIndex < 0 || int(defaultIndex) >= vm.constantsLen() {
+			return nil, vm.runtimeError(instruction, "default argument constant out of range")
+		}
+		ordered[i] = vm.constantValue(defaultIndex)
+		assigned[i] = true
+	}
+	// Normalise away trailing arguments that equal their declared
+	// default so overload selection and re-dispatch see one canonical
+	// shape; downstream default fill restores them.
+	for len(ordered) > 0 {
+		paramIndex := len(ordered) - 1 + paramOffset
+		if paramIndex >= len(function.DefaultConstants) || function.DefaultConstants[paramIndex] < 0 {
+			break
+		}
+		defaultIndex := function.DefaultConstants[paramIndex]
+		if assigned[len(ordered)-1] && defaultIndex >= 0 && int(defaultIndex) < vm.constantsLen() && valuesEqual(ordered[len(ordered)-1], vm.constantValue(defaultIndex)) {
+			ordered = ordered[:len(ordered)-1]
+			continue
+		}
+		break
+	}
+	return ordered, nil
+}
+
+func spreadDictNamedArguments(dict runtime.Dict, positional []runtime.Value, paramNames []string) ([]runtime.Value, []string, error) {
+	known := map[string]bool{}
+	for _, name := range paramNames {
+		known[strings.ToLower(name)] = true
+	}
+	type namedArg struct {
+		name  string
+		value runtime.Value
+	}
+	named := make([]namedArg, 0, dict.Len())
+	var keyErr error
+	dict.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
+		key, ok := entry.Key.(runtime.String)
+		if !ok {
+			keyErr = fmt.Errorf("spread dict argument keys must be strings")
+			return false
+		}
+		if len(known) > 0 && !known[strings.ToLower(key.Value)] {
+			return true
+		}
+		named = append(named, namedArg{name: key.Value, value: entry.Value})
+		return true
+	})
+	if keyErr != nil {
+		return nil, nil, keyErr
+	}
+	sort.Slice(named, func(i, j int) bool { return named[i].name < named[j].name })
+	args := make([]runtime.Value, 0, len(positional)+len(named))
+	names := make([]string, 0, len(positional)+len(named))
+	for _, value := range positional {
+		args = append(args, value)
+		names = append(names, "")
+	}
+	for _, arg := range named {
+		args = append(args, arg.value)
+		names = append(names, arg.name)
+	}
+	return args, names, nil
+}
+
+func (vm *VM) evalNativeCall(name string, args []runtime.Value) (runtime.Value, error) {
+	return vm.evalNativeCallWithNames(name, args, nil)
+}
+
+func (vm *VM) evalNativeCallWithNames(name string, args []runtime.Value, names []string) (runtime.Value, error) {
+	if strings.HasPrefix(name, "collections.") {
+		return vm.collectionsNativeCall(name[len("collections."):], args)
+	}
+	if strings.HasPrefix(name, "reflect.") {
+		return vm.reflectNativeCall(name[len("reflect."):], args)
+	}
+	if name == "async.run" {
+		return vm.asyncRun(args)
+	}
+	// async.{sleep,await,done,cancel,all,race,timeout} are self-contained on
+	// runtime.Task primitives. When a stateful native caller has been
+	// configured we still route through it so embedders can observe the calls
+	// (existing TestVMRunsAsyncModuleThroughStatefulNativeBridge expects this).
+	if vm.statefulNative == nil {
+		if name == "async.sleep" {
+			return vm.asyncSleepNative(args)
+		}
+		if name == "async.await" {
+			return vm.asyncAwaitNative(args)
+		}
+		if name == "async.done" {
+			return vm.asyncDoneNative(args)
+		}
+		if name == "async.cancel" {
+			return vm.asyncCancelNative(args)
+		}
+		if name == "async.all" {
+			return vm.asyncAllNative(args)
+		}
+		if name == "async.race" {
+			return vm.asyncRaceNative(args)
+		}
+		if name == "async.timeout" {
+			return vm.asyncTimeoutNative(args)
+		}
+	}
+	// errors.is must use the VM's own hierarchy walk so user-defined class
+	// hierarchies (stored in vm.chunk.Classes) are consulted correctly.
+	if name == "errors.is" {
+		return vm.errorsIs(args)
+	}
+	if module, function, ok := strings.Cut(name, "."); ok && isStatefulNativeCall(module, function) {
+		return vm.statefulNativeCall(module, function, args, names)
+	}
+	return vm.natives.CallKey(name, args)
+}
+
+func (vm *VM) asyncRun(args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("async.run expects one function argument")
+	}
+	switch fn := args[0].(type) {
+	case runtime.BytecodeFunction:
+		return vm.startAsyncCallable(fn, nil), nil
+	case runtime.BytecodeClosure:
+		return vm.startAsyncCallable(fn, nil), nil
+	default:
+		return nil, fmt.Errorf("async.run expects a function, got %s", args[0].TypeName())
+	}
+}
+
+func (vm *VM) asyncSleepNative(args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("async.sleep expects one argument (milliseconds)")
+	}
+	ms, ok := asInt64Ms(args[0])
+	if !ok {
+		return nil, fmt.Errorf("async.sleep expects a numeric millisecond value")
+	}
+	task := runtime.NewTask()
+	go func() {
+		if ms > 0 {
+			select {
+			case <-time.After(time.Duration(ms) * time.Millisecond):
+			case <-task.CancelChan():
+				return
+			}
+		}
+		task.Complete(runtime.Null{}, nil)
+	}()
+	return task, nil
+}
+
+func (vm *VM) asyncAwaitNative(args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("async.await expects one task")
+	}
+	if task, ok := args[0].(*runtime.Task); ok {
+		result := task.Await()
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		if result.Value == nil {
+			return runtime.Null{}, nil
+		}
+		return result.Value, nil
+	}
+	return args[0], nil
+}
+
+func (vm *VM) asyncDoneNative(args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("async.done expects one task")
+	}
+	task, ok := args[0].(*runtime.Task)
+	if !ok {
+		return nil, fmt.Errorf("async.done expects Task")
+	}
+	return runtime.Bool{Value: task.Done()}, nil
+}
+
+func (vm *VM) asyncCancelNative(args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("async.cancel expects one task")
+	}
+	task, ok := args[0].(*runtime.Task)
+	if !ok {
+		return nil, fmt.Errorf("async.cancel expects Task")
+	}
+	task.Cancel()
+	return runtime.Null{}, nil
+}
+
+func (vm *VM) asyncTimeoutNative(args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("async.timeout expects (task, milliseconds)")
+	}
+	inner, ok := args[0].(*runtime.Task)
+	if !ok {
+		return nil, fmt.Errorf("async.timeout expects a Task as the first argument")
+	}
+	ms, ok := asInt64Ms(args[1])
+	if !ok {
+		return nil, fmt.Errorf("async.timeout expects a numeric millisecond value")
+	}
+	out := runtime.NewTask()
+	go func() {
+		select {
+		case <-inner.DoneChan():
+			result := inner.Await()
+			out.Complete(result.Value, result.Err)
+		case <-time.After(time.Duration(ms) * time.Millisecond):
+			inner.Cancel()
+			out.Complete(runtime.Null{}, fmt.Errorf("async.timeout: task did not complete within %dms", ms))
+		}
+	}()
+	return out, nil
+}
+
+func (vm *VM) asyncAllNative(args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("async.all expects one list of tasks")
+	}
+	list, ok := args[0].(*runtime.List)
+	if !ok {
+		return nil, fmt.Errorf("async.all expects a list of tasks")
+	}
+	tasks := make([]*runtime.Task, 0, len(list.Elements))
+	for i, el := range list.Elements {
+		task, ok := el.(*runtime.Task)
+		if !ok {
+			return nil, fmt.Errorf("async.all: element %d is not a Task", i)
+		}
+		tasks = append(tasks, task)
+	}
+	out := runtime.NewTask()
+	go func() {
+		results := make([]runtime.Value, len(tasks))
+		for i, t := range tasks {
+			r := t.Await()
+			if r.Err != nil {
+				for j, sibling := range tasks {
+					if j != i {
+						sibling.Cancel()
+					}
+				}
+				out.Complete(runtime.Null{}, r.Err)
+				return
+			}
+			results[i] = r.Value
+		}
+		out.Complete(&runtime.List{Elements: results}, nil)
+	}()
+	return out, nil
+}
+
+func (vm *VM) asyncRaceNative(args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("async.race expects one list of tasks")
+	}
+	list, ok := args[0].(*runtime.List)
+	if !ok {
+		return nil, fmt.Errorf("async.race expects a list of tasks")
+	}
+	if len(list.Elements) == 0 {
+		return nil, fmt.Errorf("async.race requires at least one task")
+	}
+	tasks := make([]*runtime.Task, 0, len(list.Elements))
+	for i, el := range list.Elements {
+		task, ok := el.(*runtime.Task)
+		if !ok {
+			return nil, fmt.Errorf("async.race: element %d is not a Task", i)
+		}
+		tasks = append(tasks, task)
+	}
+	out := runtime.NewTask()
+	go func() {
+		winner := make(chan int, len(tasks))
+		for i, t := range tasks {
+			i, t := i, t
+			go func() {
+				<-t.DoneChan()
+				winner <- i
+			}()
+		}
+		first := <-winner
+		for j, sibling := range tasks {
+			if j != first {
+				sibling.Cancel()
+			}
+		}
+		r := tasks[first].Await()
+		out.Complete(r.Value, r.Err)
+	}()
+	return out, nil
+}
+
+// asInt64Ms extracts a millisecond count from a runtime.Value supporting
+// SmallInt, Int (big.Int that fits in int64), and Float.
+func asInt64Ms(v runtime.Value) (int64, bool) {
+	switch n := v.(type) {
+	case runtime.SmallInt:
+		return n.Value, true
+	case runtime.Int:
+		if n.Value.IsInt64() {
+			return n.Value.Int64(), true
+		}
+	case runtime.Float:
+		return int64(n.Value), true
+	}
+	return 0, false
+}
+
+func (vm *VM) statefulNativeCall(module, function string, args []runtime.Value, names []string) (runtime.Value, error) {
+	if vm.statefulNative == nil {
+		return nil, fmt.Errorf("stateful native module %s is not configured for VM execution", module)
+	}
+	return vm.statefulNative.CallBuiltin(module, function, vm.wrapStatefulNativeArgs(module, function, args), names)
+}
+
+func (vm *VM) shouldRouteDirectPrint() bool {
+	if vm.statefulNative == nil {
+		return false
+	}
+	router, ok := vm.statefulNative.(directPrintStatefulNative)
+	return ok && router.HandleDirectPrint()
+}
+
+func (vm *VM) wrapStatefulNativeArgs(module, function string, args []runtime.Value) []runtime.Value {
+	if len(args) == 0 {
+		return args
+	}
+	wrapped := make([]runtime.Value, len(args))
+	for i, arg := range args {
+		wrapped[i] = vm.wrapStatefulNativeValue(arg, serverHandlerArg(module, function, i))
+	}
+	return wrapped
+}
+
+// serverHandlerArg reports whether arg i of a stateful-native call is a direct
+// server-handler closure (http.serve/listen, net.serve) that runs per-request
+// isolated so concurrent requests do not share/race handler state. Other
+// callbacks (async tasks, synchronous transaction bodies) keep write-back.
+// Framework route handlers that cross module boundaries (web.router/gebweb) are
+// not covered here - that is a separate, scoped project
+// (docs/http-concurrency-evaluation.md).
+func serverHandlerArg(module, function string, argIndex int) bool {
+	switch module {
+	case "http":
+		return (function == "serve" || function == "listen") && argIndex == 1
+	case "net":
+		return function == "serve" && argIndex == 2
+	case "sys":
+		// Signal handlers fire on a signal goroutine while the host VM
+		// may still be running; they share state through `store` only.
+		return function == "onSignal" && argIndex == 1
+	}
+	return false
+}
+
+func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtime.Value {
+	switch callable := value.(type) {
+	case runtime.BytecodeFunction:
+		// The wrapped Native closure can be invoked later from another
+		// goroutine (timer fires, HTTP handler, etc.). From this point on,
+		// any concurrent write-back into vm.globals must serialise with
+		// the parent's setGlobalVM, so flip bridgeActive monotonically.
+		vm.bridgeActive.Store(true)
+		vm.noteEscape()
+		return runtime.Function{
+			Name:       callable.Name,
+			Parameters: bridgedParameters(callable.Parameters),
+			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+				if isolated {
+					return vm.callCallableIsolated(callable, args)
+				}
+				return vm.callCallableSlow(callable, args)
+			},
+		}
+	case runtime.BytecodeClosure:
+		vm.bridgeActive.Store(true)
+		vm.noteEscape()
+		return runtime.Function{
+			Name:       callable.Name,
+			Parameters: bridgedParameters(vm.closureParameters(callable)),
+			Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+				if isolated {
+					return vm.callCallableIsolated(callable, args)
+				}
+				return vm.callCallableSlow(callable, args)
+			},
+		}
+	case *runtime.List:
+		elements := make([]runtime.Value, len(callable.Elements))
+		for i, element := range callable.Elements {
+			elements[i] = vm.wrapStatefulNativeValue(element, false)
+		}
+		return &runtime.List{Elements: elements}
+	case runtime.Dict:
+		entries := make(map[string]runtime.DictEntry, callable.Len())
+		callable.ForEachEntry(func(key string, entry runtime.DictEntry) bool {
+			entries[key] = runtime.DictEntry{Key: entry.Key, Value: vm.wrapStatefulNativeValue(entry.Value, false)}
+			return true
+		})
+		return runtime.Dict{Entries: entries}
+	default:
+		return value
+	}
+}
+
+// closureParameters resolves a bridged closure's parameter metadata from
+// the function table so a callback's declared parameter types survive the
+// stateful-native boundary (e.g. an http.serve handler typed func(Request)).
+func (vm *VM) closureParameters(closure runtime.BytecodeClosure) []runtime.ParameterMetadata {
+	idx := int(closure.FunctionIndex)
+	if idx < 0 || idx >= len(vm.chunk.Functions) {
+		return nil
+	}
+	return parameterMetadataFromFunctionInfo(vm.chunk.Functions[idx], 0)
+}
+
+// bridgedParameters reconstructs ast.Parameter entries (with a type name)
+// from runtime parameter metadata so introspection that reads a Function's
+// declared parameter types keeps working across the bridge.
+func bridgedParameters(params []runtime.ParameterMetadata) []ast.Parameter {
+	if len(params) == 0 {
+		return nil
+	}
+	out := make([]ast.Parameter, len(params))
+	for i, p := range params {
+		out[i] = ast.Parameter{Name: &ast.Identifier{Value: p.Name}, Variadic: p.Variadic}
+		if p.Type != "" {
+			out[i].Type = &ast.TypeRef{Name: p.Type}
+		}
+	}
+	return out
+}
+
+func isStatefulNativeModule(module string) bool {
+	switch module {
+	case "io", "sys", "secrets", "process", "procnative", "sshnative",
+		"http", "websocket", "smtp", "web", "db", "ext", "ffinative", "net", "test", "log", "watch",
+		"csv", "schema", "serde", "metrics", "trace", "profile", "path", "async", "dotenv", "cli",
+		"dataframe":
+		return true
+	default:
+		return false
+	}
+}
+
+func isStatefulNativeCall(module, function string) bool {
+	if native.IsPureBuiltin(module, function) {
+		return false
+	}
+	if isStatefulNativeModule(module) {
+		return true
+	}
+	switch module {
+	case "json", "xml", "yaml":
+		return function == "reader" || function == "stream"
+	default:
+		return false
+	}
+}
+
+// reorderMethodNamedArgs reorders deferred-method-call arguments
+// against the method's actual ParamNames so the runtime dispatch sees
+// values in positional order. The receiver counts as paramOffset=1.
+func (vm *VM) reorderMethodNamedArgs(instruction Instruction, instance *runtime.Instance, methodName string, args []runtime.Value, names []string) ([]runtime.Value, error) {
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if !ok {
+		return args, nil
+	}
+	indices, ok := vm.lookupMethod(classInfo, methodName)
+	if !ok || len(indices) == 0 {
+		return args, nil
+	}
+	idx, err := vm.selectRuntimeFunction(instruction, methodName, indices, args, 1)
+	if err != nil {
+		return nil, err
+	}
+	function := vm.chunk.Functions[idx]
+	return vm.orderRuntimeArguments(instruction, function, args, names, 1)
+}
+
+// reorderCallableNamedArgs reorders deferred-callable-call arguments
+// using the callable's signature. BytecodeFunction / BytecodeClosure
+// expose a FunctionIndex pointing at ParamNames; other callable kinds
+// (native functions, Instance.__invoke) can't be reordered statically,
+// so the names list is rejected up front by the compiler in those
+// cases - here we fall back to the positional order if the callable
+// shape is unrecognised.
+func (vm *VM) reorderCallableNamedArgs(instruction Instruction, callee runtime.Value, args []runtime.Value, names []string) ([]runtime.Value, error) {
+	var funcIdx int64 = -1
+	switch v := callee.(type) {
+	case runtime.BytecodeFunction:
+		funcIdx = v.Index
+	case runtime.BytecodeClosure:
+		funcIdx = v.FunctionIndex
+	default:
+		return args, nil
+	}
+	if funcIdx < 0 || int(funcIdx) >= len(vm.chunk.Functions) {
+		return args, nil
+	}
+	function := vm.chunk.Functions[funcIdx]
+	offset := 0
+	if closure, ok := callee.(runtime.BytecodeClosure); ok {
+		offset = len(closure.Upvalues)
+	}
+	return vm.orderRuntimeArguments(instruction, function, args, names, offset)
+}
+
+// readArgNames decodes the trailing name-index operands carried by
+// OpDefer*CallNamed. Each entry is a constant-pool index pointing to
+// a String holding the argument name, or -1 for a positional arg.
+func (vm *VM) readArgNames(instruction Instruction, nameOperands []int64) ([]string, error) {
+	names := make([]string, len(nameOperands))
+	for i, idx := range nameOperands {
+		if idx < 0 {
+			continue
+		}
+		name, err := vm.constantStringAt(instruction, idx, "argument name constant must be string")
+		if err != nil {
+			return nil, err
+		}
+		names[i] = name
+	}
+	return names, nil
+}
+
+// callBytecodeInline invokes a bytecode function on the current VM without
+// rebuilding the chunk. Used as the fast path for callCallable when the
+// target is a BytecodeFunction or no-upvalue BytecodeClosure in the same
+// module. Returns the function's return value and pops it off the stack.
+func (vm *VM) callBytecodeInline(funcIndex int64, args []runtime.Value) (runtime.Value, error) {
+	if funcIndex < 0 || int(funcIndex) >= len(vm.chunk.Functions) {
+		return nil, fmt.Errorf("function index out of range")
+	}
+	function := &vm.chunk.Functions[funcIndex]
+	if function.IsGenerator || function.Async {
+		return nil, fmt.Errorf("inline call does not support generator/async functions")
+	}
+	baseline := len(vm.frames)
+	stackArgs := make([]runtime.VMValue, len(args))
+	for i, a := range args {
+		stackArgs[i] = runtime.VMValueFromValue(a)
+	}
+	// runDefers shrinks vm.defers before iterating its actions, so
+	// when an action lands here the slice is one slot short of the
+	// frame-stack invariant startFunctionVMValue relies on. Restore
+	// it for the inline call and snap back to the caller's expected
+	// length when Run() returns so the parent runDefers iteration
+	// can't read stale slots.
+	savedDefersLen := len(vm.defers)
+	oldEntryIP := vm.runEntryIP
+	oldExitDepth := vm.runInlineExitDepth
+	oldSuppress := vm.runSuppressCleanup
+	defer func() {
+		if len(vm.defers) > savedDefersLen {
+			for i := savedDefersLen; i < len(vm.defers); i++ {
+				vm.defers[i] = vm.defers[i][:0]
+			}
+			vm.defers = vm.defers[:savedDefersLen]
+		}
+		vm.runEntryIP = oldEntryIP
+		vm.runInlineExitDepth = oldExitDepth
+		vm.runSuppressCleanup = oldSuppress
+	}()
+	nextIP, err := vm.startFunctionVMValue(Instruction{}, 0, function, stackArgs, nil)
+	if err != nil {
+		return nil, err
+	}
+	// startFunctionVMValue returns Entry-1 to compensate for the dispatch
+	// loop's ip++ after the calling instruction. We're entering the loop
+	// fresh, so increment to the actual function entry.
+	vm.runEntryIP = nextIP + 1
+	vm.runInlineExitDepth = baseline
+	vm.runSuppressCleanup = true
+	if err := vm.Run(); err != nil {
+		return nil, err
+	}
+	result, err := vm.popVM()
+	if err != nil {
+		return nil, err
+	}
+	return result.ToValue(), nil
+}
+
+// callCallableSlow mirrors callCallable but disables the
+// callBytecodeInline fast path. Used by stateful native bridges where
+// the callback can fire on a different goroutine than the VM dispatch
+// loop and inline state mutations would race.
+func (vm *VM) callCallableSlow(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	old := vm.inDispatchLoop
+	vm.inDispatchLoop = false
+	defer func() { vm.inDispatchLoop = old }()
+	return vm.callCallable(fn, args)
+}
+
+// callCallableIsolated runs a per-request server-handler callback on a fresh
+// callVM that snapshots host globals but does NOT write them back, so handler
+// state is per-request and concurrent request goroutines do not race the shared
+// host globals. It never touches shared host-vm fields (no inDispatchLoop
+// dance), since it is invoked from external net/http goroutines, not
+// re-entrantly. Native handlers run directly; cross-module callables fall back.
+func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	switch f := fn.(type) {
+	case runtime.Function:
+		if f.Native == nil {
+			return nil, fmt.Errorf("runtime function is not callable by VM")
+		}
+		return f.Native(nil, args)
+	case runtime.BytecodeFunction:
+		if f.Module != vm.moduleName || f.Raw {
+			return vm.callCallableSlow(fn, args)
+		}
+		if err := vm.ensureCallableDecorators(); err != nil {
+			return nil, err
+		}
+		wrapper := make([]Instruction, 0, len(args)+2)
+		for i := range args {
+			wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i)}})
+		}
+		wrapper = append(wrapper, Instruction{Op: OpCall, Operands: []int64{f.Index, int64(len(args))}})
+		wrapper = append(wrapper, Instruction{Op: OpReturn})
+		return vm.runWrapperWithRawCall(args, wrapper, -1, true)
+	case runtime.BytecodeClosure:
+		if f.Module != vm.moduleName {
+			return vm.callCallableSlow(fn, args)
+		}
+		constants := make([]runtime.Value, 0, len(args)+2)
+		constants = append(constants, f)
+		constants = append(constants, args...)
+		methodNameIndex := int64(len(constants))
+		constants = append(constants, runtime.String{Value: "__invoke"})
+		wrapper := make([]Instruction, 0, len(args)+3)
+		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{0}})
+		for i := range args {
+			wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i + 1)}})
+		}
+		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
+		wrapper = append(wrapper, Instruction{Op: OpReturn})
+		return vm.runWrapperWithRawCall(constants, wrapper, -1, true)
+	default:
+		return vm.callCallableSlow(fn, args)
+	}
+}
+
+func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	switch f := fn.(type) {
+	case runtime.Function:
+		if f.Native == nil {
+			return nil, fmt.Errorf("runtime function is not callable by VM")
+		}
+		return f.Native(nil, args)
+	case runtime.OverloadedFunction:
+		for _, overload := range f.Overloads {
+			if len(overload.Parameters) == len(args) {
+				return vm.callCallable(overload, args)
+			}
+		}
+		return nil, fmt.Errorf("no matching overload for %s with %d arguments", f.Name, len(args))
+	case runtime.BytecodeFunction:
+		if f.Module != vm.moduleName {
+			// Cross-chunk function reference - the Index resolves
+			// against the defining chunk's function table, not ours.
+			// Includes entry-script values (Module=="") that crossed
+			// into a stdlib sub-VM.
+			if vm.moduleLoader == nil {
+				return nil, fmt.Errorf("bytecode module loader is not configured")
+			}
+			return vm.moduleLoader.CallModuleFunction(f, vm.wrapStatefulNativeArgs("", "", args))
+		}
+		if f.Raw {
+			if vm.methodReceiverFuncs[f.Index] {
+				if vm.forwardThis == nil {
+					return nil, fmt.Errorf("method receiver is not available")
+				}
+				args = append([]runtime.Value{vm.forwardThis}, args...)
+			}
+			return vm.CallFunctionRaw(f.Index, args)
+		}
+		if vm.inDispatchLoop && !vm.requiresCallSitePolymorphism {
+			return vm.callBytecodeInline(f.Index, args)
+		}
+		return vm.CallFunction(f.Index, args)
+	case runtime.BytecodeClosure:
+		if f.Module != vm.moduleName {
+			// The closure was created in a different chunk - its
+			// FunctionIndex resolves against that chunk's function
+			// table, not ours. Route through the module loader so
+			// the call dispatches in the right VM context. Includes
+			// closures from the entry script (Module=="") that
+			// crossed into a stdlib module-defined class method.
+			if vm.moduleLoader == nil {
+				return nil, fmt.Errorf("bytecode module loader is not configured")
+			}
+			return vm.moduleLoader.CallModuleClosure(f, vm.wrapStatefulNativeArgs("", "", args))
+		}
+		if vm.inDispatchLoop && len(f.Upvalues) == 0 && f.TypeBindings == nil && !vm.requiresCallSitePolymorphism {
+			return vm.callBytecodeInline(f.FunctionIndex, args)
+		}
+		constants := make([]runtime.Value, 0, len(args)+2)
+		constants = append(constants, f)
+		constants = append(constants, args...)
+		methodNameIndex := int64(len(constants))
+		constants = append(constants, runtime.String{Value: "__invoke"})
+		wrapper := make([]Instruction, 0, len(args)+3)
+		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{0}})
+		for i := range args {
+			wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i + 1)}})
+		}
+		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
+		wrapper = append(wrapper, Instruction{Op: OpReturn})
+		return vm.runWrapper(constants, wrapper)
+	case *runtime.Instance:
+		constants := make([]runtime.Value, 0, len(args)+2)
+		constants = append(constants, f)
+		constants = append(constants, args...)
+		methodNameIndex := int64(len(constants))
+		constants = append(constants, runtime.String{Value: "__invoke"})
+		wrapper := make([]Instruction, 0, len(args)+3)
+		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{0}})
+		for i := range args {
+			wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i + 1)}})
+		}
+		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
+		wrapper = append(wrapper, Instruction{Op: OpReturn})
+		return vm.runWrapper(constants, wrapper)
+	default:
+		return nil, fmt.Errorf("value is not callable")
+	}
+}
+
+func (vm *VM) CallFunction(index int64, args []runtime.Value) (runtime.Value, error) {
+	if index < 0 || int(index) >= len(vm.chunk.Functions) {
+		return nil, fmt.Errorf("function index out of range")
+	}
+	if err := vm.ensureCallableDecorators(); err != nil {
+		return nil, err
+	}
+	wrapper := make([]Instruction, 0, len(args)+2)
+	for i := range args {
+		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i)}})
+	}
+	wrapper = append(wrapper, Instruction{Op: OpCall, Operands: []int64{index, int64(len(args))}})
+	wrapper = append(wrapper, Instruction{Op: OpReturn})
+	return vm.runWrapper(args, wrapper)
+}
+
+func (vm *VM) CallFunctionRaw(index int64, args []runtime.Value) (runtime.Value, error) {
+	if index < 0 || int(index) >= len(vm.chunk.Functions) {
+		return nil, fmt.Errorf("function index out of range")
+	}
+	wrapper := make([]Instruction, 0, len(args)+2)
+	for i := range args {
+		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i)}})
+	}
+	wrapper = append(wrapper, Instruction{Op: OpCall, Operands: []int64{index, int64(len(args))}})
+	wrapper = append(wrapper, Instruction{Op: OpReturn})
+	return vm.runWrapperWithRawCall(args, wrapper, index, false)
+}
+
+func (vm *VM) CallClosure(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
+	return vm.callCallable(closure, args)
+}
+
+func (vm *VM) ReflectConstructorsForChunkClass(class runtime.BytecodeClass) (runtime.Value, error) {
+	return vm.reflectConstructors(class)
+}
+
+func (vm *VM) ReflectFieldsForChunkClass(class runtime.BytecodeClass) (runtime.Value, error) {
+	return vm.reflectFieldsResult(class, runtime.ClassMetadata{}), nil
+}
+
+func (vm *VM) collectChunkClasses(chunk Chunk) []runtime.Value {
+	out := make([]runtime.Value, 0, len(chunk.Classes))
+	for i, classInfo := range chunk.Classes {
+		out = append(out, vm.bytecodeClassFromInfo(classInfo, int64(i)))
+	}
+	return out
+}
+
+func dedupeClassValues(values []runtime.Value) []runtime.Value {
+	seen := map[string]bool{}
+	out := make([]runtime.Value, 0, len(values))
+	for _, v := range values {
+		if bc, ok := v.(runtime.BytecodeClass); ok {
+			key := bc.Module + "." + bc.Name
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// DeserializeIntoChunkClass is the public entry the moduleLoader uses
+// to deserialize a class declared in this VM's chunk. It bypasses the
+// cross-module dispatch in deserializeIntoClass (we are already on the
+// right VM) and goes straight to the local logic.
+func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, error) {
+	if class.Index < 0 || int(class.Index) >= len(vm.chunk.Classes) {
+		return nil, fmt.Errorf("deserialize %s: class index out of range", class.Name)
+	}
+	classInfo := vm.chunk.Classes[class.Index]
+	if indices, name, ok := vm.lookupStaticDunder(classInfo, "__deserialize", "__deserialize__"); ok && len(indices) > 0 {
+		args := []runtime.Value{value}
+		functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 0)
+		if err != nil {
+			return nil, fmt.Errorf("deserialize %s: %w", class.Name, err)
+		}
+		return vm.CallFunctionRaw(functionIndex, args)
+	}
+	dict, ok := value.(runtime.Dict)
+	if !ok {
+		return nil, fmt.Errorf("deserialize %s: expected dict, got %s", class.Name, value.TypeName())
+	}
+	if len(classInfo.ConstructorIndices) == 0 {
+		v, err := vm.ConstructClass(class.Index, nil)
+		if err != nil {
+			return nil, err
+		}
+		instance, ok := v.(*runtime.Instance)
+		if !ok {
+			return v, nil
+		}
+		for _, fieldName := range classInfo.FieldNames {
+			key := runtime.String{Value: fieldName}
+			entry, hit := dict.GetEntry(native.DictKey(key))
+			if hit {
+				instance.Fields[fieldName] = entry.Value
+			}
+		}
+		return instance, nil
+	}
+	ctorIndex := classInfo.ConstructorIndices[0]
+	if ctorIndex < 0 || int(ctorIndex) >= len(vm.chunk.Functions) {
+		return nil, fmt.Errorf("deserialize %s: constructor index out of range", class.Name)
+	}
+	ctor := vm.chunk.Functions[ctorIndex]
+	args := make([]runtime.Value, 0, len(ctor.ParamNames))
+	for _, paramName := range ctor.ParamNames {
+		key := runtime.String{Value: paramName}
+		entry, hit := dict.GetEntry(native.DictKey(key))
+		if !hit {
+			return nil, fmt.Errorf("deserialize %s: missing field %q", class.Name, paramName)
+		}
+		args = append(args, entry.Value)
+	}
+	return vm.ConstructClass(class.Index, args)
+}
+
+// stageTypeArgsAsBindings zips positional explicit `<TypeArgs>` against
+// the class's declared type parameters and stages the result in
+// vm.pendingTypeBindings for the construction path to consume.
+func (vm *VM) stageTypeArgsAsBindings(classIndex int64, typeArgs []string) {
+	if len(typeArgs) == 0 || classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+		return
+	}
+	params := vm.chunk.Classes[classIndex].TypeParameters
+	if len(params) == 0 {
+		return
+	}
+	bindings := map[string]string{}
+	for i, name := range params {
+		if i >= len(typeArgs) {
+			break
+		}
+		if typeArgs[i] != "" {
+			bindings[name] = typeArgs[i]
+		}
+	}
+	if len(bindings) > 0 {
+		vm.pendingTypeBindings = bindings
+	}
+}
+
+// ConstructClassWithTypeArgs embeds the bindings in the wrapper itself:
+// runWrapper executes on a pooled callVM, so staging this VM's
+// pendingTypeBindings would never reach the executing VM.
+func (vm *VM) ConstructClassWithTypeArgs(index int64, args []runtime.Value, typeArgs []string) (runtime.Value, error) {
+	if index < 0 || int(index) >= len(vm.chunk.Classes) {
+		return nil, fmt.Errorf("class index out of range")
+	}
+	params := vm.chunk.Classes[index].TypeParameters
+	if len(typeArgs) == 0 || len(params) == 0 {
+		return vm.ConstructClass(index, args)
+	}
+	extended := make([]runtime.Value, 0, len(args)+len(params)*2)
+	extended = append(extended, args...)
+	plant := []int64{0}
+	count := int64(0)
+	for i, name := range params {
+		if i >= len(typeArgs) {
+			break
+		}
+		if typeArgs[i] == "" {
+			continue
+		}
+		plant = append(plant, int64(len(extended)))
+		extended = append(extended, runtime.String{Value: name})
+		plant = append(plant, int64(len(extended)))
+		extended = append(extended, runtime.String{Value: typeArgs[i]})
+		count++
+	}
+	if count == 0 {
+		return vm.ConstructClass(index, args)
+	}
+	plant[0] = count
+	wrapper := make([]Instruction, 0, len(args)+3)
+	for i := range args {
+		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i)}})
+	}
+	wrapper = append(wrapper, Instruction{Op: OpPlantCallTypeBindings, Operands: plant})
+	wrapper = append(wrapper, Instruction{Op: OpConstructClass, Operands: []int64{index, int64(len(args))}})
+	wrapper = append(wrapper, Instruction{Op: OpReturn})
+	return vm.runWrapper(extended, wrapper)
+}
+
+func (vm *VM) ConstructClass(index int64, args []runtime.Value) (runtime.Value, error) {
+	if index < 0 || int(index) >= len(vm.chunk.Classes) {
+		return nil, fmt.Errorf("class index out of range")
+	}
+	wrapper := make([]Instruction, 0, len(args)+2)
+	for i := range args {
+		wrapper = append(wrapper, Instruction{Op: OpConstant, Operands: []int64{int64(i)}})
+	}
+	wrapper = append(wrapper, Instruction{Op: OpConstructClass, Operands: []int64{index, int64(len(args))}})
+	wrapper = append(wrapper, Instruction{Op: OpReturn})
+	return vm.runWrapper(args, wrapper)
+}
+
+// CallMethodAs invokes `name` on `instance` using the supplied
+// className to locate the method definition. Used by cross-module
+// parent dispatch where the subclass instance is declared in
+// another chunk: `instance.Class.Name` would point at the subclass,
+// which doesn't exist in the parent module's chunk.
+func (vm *VM) CallMethodAs(className string, instance *runtime.Instance, name string, args []runtime.Value) (runtime.Value, error) {
+	classInfo, ok := vm.classInfo(className)
+	if !ok {
+		return nil, fmt.Errorf("unknown class %s", className)
+	}
+	indices, ok := vm.lookupMethod(classInfo, name)
+	if !ok {
+		if strings.EqualFold(name, className) {
+			indices = append([]int64(nil), classInfo.ConstructorIndices...)
+			if len(indices) == 0 {
+				return runtime.Null{}, nil
+			}
+		} else {
+			if module, parentClass, mok := vm.crossModuleBoundary(classInfo); mok && vm.moduleLoader != nil {
+				if _, lerr := vm.moduleLoader.LoadModule(module, module); lerr == nil {
+					return vm.moduleLoader.CallParentInModule(module, parentClass, name, instance, args)
+				}
+			}
+			return nil, &runtime.MethodNotFoundError{Class: className, Method: name}
+		}
+	}
+	functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 1)
+	if err != nil {
+		return nil, err
+	}
+	if err := vm.ensureCallableDecorators(); err != nil {
+		return nil, err
+	}
+	if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
+		if vm.chunk.Functions[functionIndex].Async && !vm.syncMode {
+			return vm.startAsyncCallableWithForwardThis(decorated, args, instance), nil
+		}
+		return vm.callCallableWithForwardThis(decorated, args, instance)
+	}
+	callArgs := append([]runtime.Value{instance}, args...)
+	return vm.CallFunction(functionIndex, callArgs)
+}
+
+func (vm *VM) CallMethod(instance *runtime.Instance, name string, args []runtime.Value) (runtime.Value, error) {
+	if nativeMethods := instance.Class.Methods[strings.ToLower(name)]; len(nativeMethods) > 0 && nativeMethods[0].Native != nil {
+		return nativeMethods[0].Native(instance, args)
+	}
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if !ok {
+		return nil, fmt.Errorf("unknown class %s", instance.Class.Name)
+	}
+	indices, ok := vm.lookupMethod(classInfo, name)
+	if !ok {
+		if module, parentClass, mok := vm.crossModuleBoundary(classInfo); mok && vm.moduleLoader != nil {
+			if _, lerr := vm.moduleLoader.LoadModule(module, module); lerr == nil {
+				return vm.moduleLoader.CallParentInModule(module, parentClass, name, instance, args)
+			}
+		}
+		if result, handled, derr := vm.callInterfaceDefaultValue(instance, strings.ToLower(name), args); handled {
+			return result, derr
+		}
+		return nil, &runtime.MethodNotFoundError{Class: instance.Class.Name, Method: name}
+	}
+	functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 1)
+	if err != nil {
+		return nil, err
+	}
+	if err := vm.ensureCallableDecorators(); err != nil {
+		return nil, err
+	}
+	if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
+		if vm.chunk.Functions[functionIndex].Async && !vm.syncMode {
+			return vm.startAsyncCallableWithForwardThis(decorated, args, instance), nil
+		}
+		return vm.callCallableWithForwardThis(decorated, args, instance)
+	}
+	callArgs := append([]runtime.Value{instance}, args...)
+	return vm.CallFunction(functionIndex, callArgs)
+}
+
+func (vm *VM) CallStaticMethod(classIndex int64, name string, args []runtime.Value) (runtime.Value, error) {
+	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+		return nil, fmt.Errorf("class index out of range")
+	}
+	indices, ok := vm.lookupStaticMethod(vm.chunk.Classes[classIndex], name)
+	if !ok {
+		return nil, fmt.Errorf("unknown static method %s.%s", vm.chunk.Classes[classIndex].Name, name)
+	}
+	functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 0)
+	if err != nil {
+		return nil, err
+	}
+	if err := vm.ensureCallableDecorators(); err != nil {
+		return nil, err
+	}
+	if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
+		if vm.chunk.Functions[functionIndex].Async && !vm.syncMode {
+			return vm.startAsyncCallable(decorated, args), nil
+		}
+		return vm.callCallable(decorated, args)
+	}
+	return vm.CallFunction(functionIndex, args)
+}
+
+func (vm *VM) runWrapper(args []runtime.Value, wrapper []Instruction) (runtime.Value, error) {
+	return vm.runWrapperWithRawCall(args, wrapper, -1, false)
+}
+
+func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction, rawIndex int64, isolated bool) (runtime.Value, error) {
+	chunk := vm.chunk
+	meta := vm.chunk.sharedMeta
+	var callVM *VM
+	var wrapperPool *sync.Pool
+	if meta != nil {
+		// Shared layout: the callVM reuses the parent's constants,
+		// functions, classes, and meta untouched. Call arguments live in
+		// the constantsExtra tail (indices >= len(Constants)) and the
+		// wrapper runs appended after the parent code, so nothing is
+		// shifted or copied per call.
+		base := vm.chunk.Instructions
+		translated := make([]Instruction, len(wrapper))
+		for i, instruction := range wrapper {
+			copied := instruction
+			copied.Operands = append([]int64(nil), instruction.Operands...)
+			shiftInstructionOperands(&copied, 0, len(vm.chunk.Constants))
+			translated[i] = copied
+		}
+		pool := meta.poolFor(wrapperShape{baseLen: len(base), wrapperLen: len(translated)})
+		wrapperPool = pool
+		if pooled, _ := pool.Get().(*VM); pooled != nil {
+			pooled.resetForReuse()
+			if sameInstructionBase(pooled.wrapperBase, base) {
+				copy(pooled.chunk.Instructions[len(base):], translated)
+			} else {
+				pooled.chunk.Instructions = appendWrapper(base, translated)
+				pooled.wrapperBase = base
+			}
+			pooled.stdout = vm.stdout
+			pooled.moduleLoader = vm.moduleLoader
+			callVM = pooled
+		} else {
+			chunk.Instructions = appendWrapper(base, translated)
+			callVM = NewVMWithModuleLoader(chunk, vm.stdout, vm.moduleLoader)
+			callVM.wrapperBase = base
+		}
+		callVM.constantsExtra = args
+		// Wrapper-call static writes stay call-local (matching the
+		// per-call constants copy this path used to take).
+		callVM.staticsLocalOnly = true
+		callVM.runEntryIP = len(base)
+	} else {
+		shift := len(wrapper)
+		chunk.Constants = append(append(make([]runtime.Value, 0, len(args)+len(vm.chunk.Constants)), args...), vm.chunk.Constants...)
+		chunk.Instructions = append([]Instruction(nil), wrapper...)
+		chunk.Functions = append([]FunctionInfo(nil), vm.chunk.Functions...)
+		for i := range chunk.Functions {
+			chunk.Functions[i].Entry += int64(shift)
+			chunk.Functions[i].DefaultConstants = append([]int64(nil), chunk.Functions[i].DefaultConstants...)
+			for j, defaultIndex := range chunk.Functions[i].DefaultConstants {
+				if defaultIndex >= 0 {
+					chunk.Functions[i].DefaultConstants[j] = defaultIndex + int64(len(args))
+				}
+			}
+		}
+		chunk.Classes = copyClasses(vm.chunk.Classes)
+		for i := range chunk.Classes {
+			for j, defaultIndex := range chunk.Classes[i].FieldDefaults {
+				if defaultIndex >= 0 {
+					chunk.Classes[i].FieldDefaults[j] = defaultIndex + int64(len(args))
+				}
+			}
+			for name, constantIndex := range chunk.Classes[i].StaticValues {
+				if constantIndex >= 0 {
+					chunk.Classes[i].StaticValues[name] = constantIndex + int64(len(args))
+				}
+			}
+		}
+		for _, instruction := range vm.chunk.Instructions {
+			copied := instruction
+			copied.Operands = append([]int64(nil), instruction.Operands...)
+			shiftInstructionOperands(&copied, shift, len(args))
+			chunk.Instructions = append(chunk.Instructions, copied)
+		}
+	}
+	if callVM == nil {
+		callVM = NewVMWithModuleLoader(chunk, vm.stdout, vm.moduleLoader)
+	}
+	// The callVM is a wrap-bridge worker: its setGlobalVM writes feed the
+	// write-back loop below, so it must take the locked + dirty-tracking
+	// path even if no further wrap fires inside it.
+	callVM.bridgeActive.Store(true)
+	// Mark this parent VM as bridging so its subsequent setGlobalVM
+	// writes serialise with the snapshot-in / write-back done by the
+	// callVM on whichever goroutine eventually invokes the wrapped
+	// callable. The store happens on the parent's goroutine before any
+	// possibility of cross-goroutine read.
+	vm.bridgeActive.Store(true)
+	// Snapshot parent globals under the mutex so a wrap-bridge callback
+	// invoked from a worker goroutine doesn't race with the parent's
+	// setGlobal writes.
+	if isolated {
+		// Per-request isolation: deep-clone the globals so reference values
+		// (instances, lists, dicts) are copied, not shared. Shallow-copy the
+		// slice under the lock, then clone outside it (the host is parked in
+		// the accept loop and other request goroutines only read, so the clone
+		// races nothing).
+		vm.globalsMu.Lock()
+		snapshot := append([]runtime.VMValue(nil), vm.globals...)
+		vm.globalsMu.Unlock()
+		callVM.restoreGlobalsVM(runtime.CloneVMValues(snapshot))
+	} else {
+		vm.globalsMu.Lock()
+		callVM.restoreGlobalsVM(vm.globals)
+		vm.globalsMu.Unlock()
+	}
+	callVM.SetModuleName(vm.moduleName)
+	if vm.statefulNative != nil {
+		callVM.SetStatefulNativeCaller(vm.statefulNative)
+	}
+	callVM.syncMode = true
+	callVM.forwardThis = vm.forwardThis
+	callVM.decoratedFuncs = copyRuntimeValueMap(vm.decoratedFuncs)
+	callVM.decoratedClasses = copyRuntimeValueMap(vm.decoratedClasses)
+	callVM.decoratorsApplied = true
+	// Carry cross-module interface defaults so a function body run on this
+	// wrapper VM still dispatches them (built binaries hit this path).
+	callVM.RestoreInterfaceFallbackState(vm.InterfaceFallbackState())
+	callVM.rawFunctionCalls = copyBoolMap(vm.rawFunctionCalls)
+	callVM.methodReceiverFuncs = vm.methodReceiverFuncs
+	callVM.generatorExecution = vm.generatorExecution
+	callVM.generatorYield = vm.generatorYield
+	callVM.generatorDone = vm.generatorDone
+	if rawIndex >= 0 {
+		callVM.rawFunctionCalls[rawIndex] = true
+	}
+	if err := callVM.Run(); err != nil {
+		// Errors leave throw/handler state behind; be conservative and
+		// let this VM go to the collector instead of the pool.
+		return nil, err
+	}
+	// Propagate any global-state mutations the callVM produced back to the
+	// caller. Without this, deferred function calls and any other paths that
+	// invoke CallFunction from inside a running VM silently discard global
+	// writes the callee performed (defer-fired closures over module-level
+	// state were the symptom). Write only the slots the callee touched -
+	// a slicecopy of the entire backing array would race the parent's
+	// lock-free OpGetGlobal on unrelated slots when the bridge fires on a
+	// goroutine. Isolated calls (per-request server handlers) skip write-back:
+	// their state stays per-request, which is what keeps concurrent handlers
+	// from racing the shared host globals.
+	if !isolated {
+		vm.globalsMu.Lock()
+		for i, dirty := range callVM.dirtyGlobals {
+			if !dirty {
+				continue
+			}
+			if i >= len(callVM.globals) || i >= len(vm.globals) {
+				continue
+			}
+			vm.globals[i] = callVM.globals[i]
+			if i < len(vm.dirtyGlobals) {
+				vm.dirtyGlobals[i] = true
+			}
+		}
+		vm.globalsMu.Unlock()
+	}
+	var result runtime.Value = runtime.Null{}
+	var popErr error
+	if len(callVM.stack) > 0 {
+		result, popErr = callVM.pop()
+	}
+	if wrapperPool != nil && popErr == nil && callVM.escapedRefs.Load() == 0 {
+		wrapperPool.Put(callVM)
+	}
+	return result, popErr
+}
+
+func copyRuntimeValueMap(values map[int64]runtime.Value) map[int64]runtime.Value {
+	copied := make(map[int64]runtime.Value, len(values))
+	for key, value := range values {
+		copied[key] = value
+	}
+	return copied
+}
+
+func copyBoolMap(values map[int64]bool) map[int64]bool {
+	copied := make(map[int64]bool, len(values))
+	for key, value := range values {
+		copied[key] = value
+	}
+	return copied
+}
+
+func copyClasses(classes []ClassInfo) []ClassInfo {
+	copied := append([]ClassInfo(nil), classes...)
+	for i := range copied {
+		copied[i].FieldNames = append([]string(nil), classes[i].FieldNames...)
+		copied[i].FieldDefaults = append([]int64(nil), classes[i].FieldDefaults...)
+		copied[i].Methods = copyStringInt64SliceMap(classes[i].Methods)
+		copied[i].StaticValues = copyStringInt64Map(classes[i].StaticValues)
+		copied[i].StaticMethods = copyStringInt64SliceMap(classes[i].StaticMethods)
+		copied[i].Implements = append([]string(nil), classes[i].Implements...)
+		copied[i].Decorators = copyDecoratorMetadata(classes[i].Decorators)
+		copied[i].MethodDecorators = copyDecoratorMetadataMap(classes[i].MethodDecorators)
+		copied[i].StaticDecorators = copyDecoratorMetadataMap(classes[i].StaticDecorators)
+	}
+	return copied
+}
+
+func copyDecoratorMetadata(values []runtime.DecoratorMetadata) []runtime.DecoratorMetadata {
+	if values == nil {
+		return nil
+	}
+	copied := make([]runtime.DecoratorMetadata, len(values))
+	for i, value := range values {
+		copied[i] = value
+		copied[i].Args = append([]runtime.Value(nil), value.Args...)
+		if value.NamedArgs != nil {
+			copied[i].NamedArgs = make(map[string]runtime.Value, len(value.NamedArgs))
+			for key, arg := range value.NamedArgs {
+				copied[i].NamedArgs[key] = arg
+			}
+		}
+	}
+	return copied
+}
+
+func copyDecoratorMetadataMap(values map[string][]runtime.DecoratorMetadata) map[string][]runtime.DecoratorMetadata {
+	if values == nil {
+		return nil
+	}
+	copied := make(map[string][]runtime.DecoratorMetadata, len(values))
+	for key, value := range values {
+		copied[key] = copyDecoratorMetadata(value)
+	}
+	return copied
+}
+
+func copyStringInt64Map(values map[string]int64) map[string]int64 {
+	if values == nil {
+		return nil
+	}
+	copied := make(map[string]int64, len(values))
+	for key, value := range values {
+		copied[key] = value
+	}
+	return copied
+}
+
+func copyStringInt64SliceMap(values map[string][]int64) map[string][]int64 {
+	if values == nil {
+		return nil
+	}
+	copied := make(map[string][]int64, len(values))
+	for key, value := range values {
+		copied[key] = append([]int64(nil), value...)
+	}
+	return copied
+}
+
+func shiftInstructionOperands(instruction *Instruction, instructionShift int, constantShift int) {
+	switch instruction.Op {
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallNamed, OpNativeCallSpread, OpGetField, OpSetField, OpCallParentMethod, OpGetStaticValue, OpSetStaticValue, OpCallStaticMethod, OpCallStaticMethodSpread, OpMethodCall, OpMethodCallSpread, OpMethodCallNamed, OpMakeError, OpImportModule, OpLoadModuleValue, OpCatch, OpDeferNativeCall, OpDeferNativeCallNamed, OpDeferMethodCall, OpDeferMethodCallNamed, OpDeferCallableCallNamed, OpTypeAssert, OpAddStringConst, OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
+		for i := range instruction.Operands {
+			if isConstantOperand(instruction.Op, i) && instruction.Operands[i] >= 0 {
+				instruction.Operands[i] += int64(constantShift)
+			}
+		}
+	case OpSetTypeBindings, OpPlantCallTypeBindings, OpPlantCallTypeArgs:
+		// Operands: count followed by constant indices (paired for the
+		// bindings ops, single for the positional type-args op).
+		for i := 1; i < len(instruction.Operands); i++ {
+			if instruction.Operands[i] >= 0 {
+				instruction.Operands[i] += int64(constantShift)
+			}
+		}
+	}
+	switch instruction.Op {
+	case OpJump, OpJumpIfFalse, OpIterNext, OpPushExceptionHandler,
+		OpJumpIfNotLessInt, OpJumpIfNotLessEqualInt, OpJumpIfNotGreaterInt,
+		OpJumpIfNotGreaterEqualInt, OpJumpIfNotEqualInt, OpJumpIfEqualInt,
+		OpNullCoalesce, OpOptionalChain:
+		if len(instruction.Operands) > 0 && instruction.Operands[0] >= 0 {
+			instruction.Operands[0] += int64(instructionShift)
+		}
+	case OpCatch:
+		if len(instruction.Operands) > 0 && instruction.Operands[0] >= 0 {
+			instruction.Operands[0] += int64(instructionShift)
+		}
+	}
+}
+
+func isConstantOperand(op Op, index int) bool {
+	switch op {
+	case OpConstant, OpRuntimeError, OpMatchError, OpNativeCall, OpNativeCallSpread, OpGetField, OpSetField, OpMethodCall, OpMethodCallSpread, OpMakeError, OpDeferNativeCall, OpDeferMethodCall, OpTypeAssert, OpAddStringConst, OpLoadModuleValue:
+		return index == 0
+	case OpAppendStringConst, OpAppendGlobalStringConst, OpAppendStringConstStmt, OpAppendGlobalStringConstStmt:
+		return index == 1
+	case OpNativeCallNamed:
+		return index == 0 || index >= 2
+	case OpDeferNativeCallNamed:
+		return index == 0 || index >= 2
+	case OpDeferMethodCallNamed:
+		return index == 0 || index >= 2
+	case OpDeferCallableCallNamed:
+		return index >= 1
+	case OpCallParentMethod:
+		return index == 1
+	case OpGetStaticValue, OpSetStaticValue:
+		return index == 1
+	case OpCallStaticMethod, OpCallStaticMethodSpread:
+		return index == 1
+	case OpMethodCallNamed:
+		return index == 0 || index >= 2
+	case OpImportModule:
+		return index == 0 || index == 1
+	case OpCatch:
+		return index == 1
+	default:
+		return false
+	}
+}

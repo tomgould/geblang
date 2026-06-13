@@ -82,3 +82,57 @@ io.println(sneakIndex(dogs));
 io.println(typeof(dogs[0]));
 `, "cannot push Cat to list<Dog>\ncannot assign Cat to list<Dog>\nDog\n")
 }
+
+func TestParityNullableElementTagAcceptsNull(t *testing.T) {
+	// A ?T element tag accepts null on every write surface, while a
+	// non-nullable tag still rejects it; instanceof and reflect read
+	// the base type unchanged.
+	runParity(t, `import io;
+import reflect;
+list<?int> xs = [1, null];
+xs.push(5);
+xs.push(null);
+xs[0] = null;
+io.println(xs.length());
+dict<string, ?int> d = {"a": 1};
+d["b"] = null;
+io.println(d.length());
+set<?int> s = {1};
+s.add(null);
+io.println(s.length());
+io.println("${xs instanceof list<int>}");
+io.println("${reflect.typeBindings(xs)}");
+any n = null;
+list<int> strict = [1];
+try {
+    strict.push(n);
+    io.println("accepted");
+} catch (TypeError e) {
+    io.println("caught: " + e.message);
+}
+`, "4\n2\n2\ntrue\n{\"T\": \"int\"}\ncaught: cannot push null to list<int>\n")
+}
+
+func TestParityNestedElementTagShallow(t *testing.T) {
+	// Element tags enforce only the outer kind at write boundaries: a
+	// list<list<int>> accepts an inner list of the wrong element type
+	// (declaration-time checking is deeper; writes are shallow).
+	runParity(t, `import io;
+list<list<int>> nested = [[1, 2]];
+any wrong = ["x", "y"];
+nested.push(wrong);
+io.println(nested.length());
+`, "2\n")
+}
+
+func TestParityUnaryMinusNonNumericMessage(t *testing.T) {
+	runParity(t, `import io;
+any v = "x";
+try {
+    let y = -v;
+    io.println("no throw");
+} catch (RuntimeError e) {
+    io.println(e.message);
+}
+`, "- expects numeric value, got string\n")
+}

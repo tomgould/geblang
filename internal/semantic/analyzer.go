@@ -74,6 +74,10 @@ type Analyzer struct {
 	// every name bound by any declaration in the file; backs the
 	// unknown-bare-callee check without lexical-scope false positives.
 	declaredNames map[string]struct{}
+	// exprTypes, when non-nil, turns on best-effort expression-type
+	// recording (the transpiler's type source). Nil in every normal
+	// path, so analysis behaviour and cost are unchanged.
+	exprTypes map[ast.Expression]ExprType
 }
 
 // SetClassSurfaceResolver installs the cross-module class member
@@ -767,6 +771,10 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		consequenceNarrowing, _ := a.narrowingsForCondition(stmt.Condition)
 		a.analyzeBlockWithNarrowing(stmt.Body, fn, consequenceNarrowing)
 	case *ast.ForStatement:
+		if a.exprTypes != nil {
+			a.recordForBody(stmt, fn)
+			break
+		}
 		if stmt.Init != nil {
 			a.analyzeStatement(stmt.Init, fn)
 		}
@@ -1784,6 +1792,10 @@ func (a *Analyzer) returnTypeCompatible(expected, actual typeInfo) bool {
 }
 
 func (a *Analyzer) analyzeExpression(expr ast.Expression) {
+	if a.exprTypes != nil && expr != nil {
+		a.recordExprType(expr)
+		a.recordSkippedExpression(expr)
+	}
 	switch expr := expr.(type) {
 	case *ast.Identifier:
 		a.checkBindingNotDestroyed(expr)
@@ -2112,6 +2124,11 @@ func isNumericLiteralWidening(target string, expr ast.Expression) bool {
 func (a *Analyzer) narrowingsForCondition(expr ast.Expression) (map[string]typeInfo, map[string]typeInfo) {
 	if expr == nil {
 		return nil, nil
+	}
+	// Conditions reach recording mode only through here (if/elseif/while);
+	// record them so binder uses inside conditions get typed.
+	if a.exprTypes != nil {
+		a.analyzeExpression(expr)
 	}
 	infix, ok := expr.(*ast.InfixExpression)
 	if !ok {

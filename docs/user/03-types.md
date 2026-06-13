@@ -825,7 +825,14 @@ sneak(dogs);
 
 Writes that *honestly* satisfy the tag pass by hierarchy: a `Dog` or
 anything implementing a tagged interface goes into a `list<Animal>` or
-`list<Scored>` like you would expect.
+`list<Scored>` like you would expect. A nullable element type accepts
+null: `null` may be written into a `list<?int>` or a `dict<string, ?int>`,
+while a non-nullable `list<int>` rejects it.
+
+The write barrier checks the *outer* element type only. Writing into a
+`list<list<int>>` verifies the value is a list, not that its elements are
+ints (declaration-time element checking goes deeper; per-write checking
+is shallow to keep mutation cheap).
 
 Covariance is convenient but, combined with mutation, is not fully
 sound: a function that takes `list<Animal>` could insert a `Cat` into a
