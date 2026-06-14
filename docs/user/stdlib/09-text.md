@@ -167,6 +167,14 @@ io.println(msg);  # Hello, Ada! You have 3 messages.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `toString()` | `string` | Returns the string itself (identity) |
+| `isInt()` | `bool` | `true` exactly when `toInt()` would succeed (same parse: signs, `0b`/`0o`/`0x` bases, `_` separators) |
+| `isDecimal()` | `bool` | `true` exactly when `toDecimal()` would succeed |
+| `isNumeric()` | `bool` | `true` when the string parses as an int or a decimal |
+
+These predicates never throw, so you can test a string before converting
+instead of wrapping the cast in try/catch. They reuse the exact `toInt` /
+`toDecimal` parse, so `s.isInt()` is `true` if and only if `s.toInt()`
+does not raise.
 
 Cast with `as int`, `as decimal`, `as float`, `as bool` where needed. Also new in 1.0.2: `as bytes` encodes the string as UTF-8, and a `bytes` value cast back `as string` decodes UTF-8 (the cast raises a catchable `RuntimeError` if the byte sequence is not valid UTF-8).
 

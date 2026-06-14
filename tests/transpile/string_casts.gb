@@ -1,0 +1,10 @@
+import io;
+
+/* Direct `as` casts from a concrete string (and non-bool->bool) reuse the
+   same conversion the .toInt()/any-cast paths use, byte-identical to the VM. */
+io.println("42" as int);
+io.println(("100" as int) + 5);
+io.println("3.5" as float);
+io.println(5 as bool);
+io.println(0 as bool);
+io.println("true" as bool);

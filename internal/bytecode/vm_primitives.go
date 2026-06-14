@@ -451,6 +451,24 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			return nil, fmt.Errorf("%s has no method isBlank", receiver.TypeName())
 		}
 		return runtime.Bool{Value: native.StringIsBlank(value.Value)}, nil
+	case "isdecimal":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("string.isDecimal expects no arguments")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method isDecimal", receiver.TypeName())
+		}
+		return runtime.Bool{Value: native.StringIsDecimal(value.Value)}, nil
+	case "isnumeric":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("string.isNumeric expects no arguments")
+		}
+		value, ok := receiver.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method isNumeric", receiver.TypeName())
+		}
+		return runtime.Bool{Value: native.StringIsInt(value.Value) || native.StringIsDecimal(value.Value)}, nil
 	case "lines":
 		if len(args) != 0 {
 			return nil, fmt.Errorf("string.lines expects no arguments")
@@ -1359,6 +1377,19 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 			return nil, fmt.Errorf("%s has no method isInf", receiver.TypeName())
 		}
 		return runtime.Bool{Value: math.IsInf(value.Value, 0)}, nil
+	case "isint":
+		if len(args) != 0 {
+			return nil, fmt.Errorf("%s.isInt expects no arguments", receiver.TypeName())
+		}
+		switch v := receiver.(type) {
+		case runtime.String:
+			return runtime.Bool{Value: native.StringIsInt(v.Value)}, nil
+		case runtime.Float:
+			return runtime.Bool{Value: native.FloatIsInt(v.Value)}, nil
+		case runtime.Decimal:
+			return runtime.Bool{Value: v.Value.IsInt()}, nil
+		}
+		return nil, native.UnknownMethodError(receiver.TypeName(), name)
 	case "round":
 		return native.NumericRoundMethod(receiver, args, native.RoundHalfAwayZero, receiver.TypeName()+".round")
 	case "floor":

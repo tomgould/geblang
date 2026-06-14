@@ -1128,10 +1128,11 @@ func (l *Lowerer) lowerCast(e *ast.CastExpression) {
 			return
 		}
 		if source != nil && source.Kind == types.KindString {
-			l.errAt(e.Token.Line, e.Token.Column,
-				"string → int casts are not supported in Phase 1",
-				"use strconv.ParseInt via a future runtime helper")
-			l.w.WriteString("0")
+			helper := "AsIntFast"
+			if l.Module.IntMode == types.IntModeBigInt {
+				helper = "AsInt"
+			}
+			l.emitAsHelper(helper, e.Value)
 			return
 		}
 		if source != nil && (source.Kind == types.KindFloat || source.Kind == types.KindDecimal) {
@@ -1150,10 +1151,7 @@ func (l *Lowerer) lowerCast(e *ast.CastExpression) {
 			return
 		}
 		if source != nil && source.Kind == types.KindString {
-			l.errAt(e.Token.Line, e.Token.Column,
-				"string → float casts are not supported in Phase 1",
-				"use strconv.ParseFloat via a future runtime helper")
-			l.w.WriteString("0.0")
+			l.emitAsHelper("AsFloat", e.Value)
 			return
 		}
 		l.emitAsFloat(e.Value)
@@ -1163,10 +1161,7 @@ func (l *Lowerer) lowerCast(e *ast.CastExpression) {
 			return
 		}
 		if source != nil && source.Kind != types.KindBool && source.Kind != types.KindUnknown {
-			l.errAt(e.Token.Line, e.Token.Column,
-				"non-bool → bool casts are not supported",
-				"use an explicit comparison such as (x != 0) instead")
-			l.w.WriteString("false")
+			l.emitAsHelper("AsBool", e.Value)
 			return
 		}
 		l.lowerExpression(e.Value)

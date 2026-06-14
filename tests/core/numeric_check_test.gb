@@ -1,0 +1,84 @@
+/**
+ * @title Numeric-check predicates
+ * @summary Non-throwing predicates that report whether a value would
+ * convert: string.isInt/isDecimal/isNumeric mirror toInt/toDecimal
+ * exactly (same parse), float.isInt/decimal.isInt report whole numbers.
+ */
+import test;
+import math;
+
+class NumericCheckTest extends test.Test {
+    @test
+    func stringIsInt(): void {
+        this.assertTrue("42".isInt());
+        this.assertTrue("-7".isInt());
+        this.assertTrue("0xFF".isInt());
+        this.assertTrue("1_000".isInt());
+        this.assertFalse("3.5".isInt());
+        this.assertFalse("abc".isInt());
+        this.assertFalse("".isInt());
+    }
+
+    @test
+    func stringIsDecimal(): void {
+        this.assertTrue("3.5".isDecimal());
+        this.assertTrue("42".isDecimal());
+        this.assertTrue("-0.25".isDecimal());
+        this.assertFalse("abc".isDecimal());
+        this.assertFalse("".isDecimal());
+    }
+
+    @test
+    func stringIsNumeric(): void {
+        this.assertTrue("42".isNumeric());
+        this.assertTrue("3.5".isNumeric());
+        this.assertFalse("abc".isNumeric());
+    }
+
+    /* The predicate must agree with the cast for every input: true iff
+     * the corresponding toInt/toDecimal call does not throw. */
+    @test
+    func isIntMatchesToInt(): void {
+        let samples = ["42", "-7", "0xFF", "1_000", "3.5", "abc", "", "  9 "];
+        for (s in samples) {
+            let parses = true;
+            try {
+                let _ = s.toInt();
+            } catch (Error e) {
+                parses = false;
+            }
+            this.assertEquals(parses, s.isInt());
+        }
+    }
+
+    @test
+    func isDecimalMatchesToDecimal(): void {
+        let samples = ["42", "3.5", "-0.25", "abc", "", "1/2"];
+        for (s in samples) {
+            let parses = true;
+            try {
+                let _ = s.toDecimal();
+            } catch (Error e) {
+                parses = false;
+            }
+            this.assertEquals(parses, s.isDecimal());
+        }
+    }
+
+    @test
+    func floatIsInt(): void {
+        this.assertTrue((3.0f).isInt());
+        this.assertTrue((-8.0f).isInt());
+        this.assertFalse((3.5f).isInt());
+        this.assertFalse(math.nan().isInt());
+        this.assertFalse(math.inf().isInt());
+    }
+
+    @test
+    func decimalIsInt(): void {
+        this.assertTrue((7.0).isInt());
+        this.assertTrue((-4.0).isInt());
+        this.assertFalse((7.5).isInt());
+        this.assertFalse((0.1).isInt());
+    }
+}

@@ -70,6 +70,25 @@ func StringParseBase(text string, base int, label string) (runtime.Value, error)
 	return runtime.Int{Value: bi}, nil
 }
 
+// FloatIsInt reports whether f is a finite whole number (equal to its truncation).
+func FloatIsInt(f float64) bool {
+	return !math.IsNaN(f) && !math.IsInf(f, 0) && f == math.Trunc(f)
+}
+
+// StringIsInt reports whether text would parse via string.toInt() (no base),
+// reusing the exact toInt parse so the predicate cannot drift from the cast.
+func StringIsInt(text string) bool {
+	_, err := runtime.NewIntLiteral(text)
+	return err == nil
+}
+
+// StringIsDecimal reports whether text would parse via string.toDecimal(),
+// reusing the exact toDecimal parse so the predicate cannot drift from the cast.
+func StringIsDecimal(text string) bool {
+	_, err := runtime.NewDecimalLiteral(text)
+	return err == nil
+}
+
 // IntToDecimal converts a runtime.Int to runtime.Decimal for mixed-type arithmetic.
 func IntToDecimal(value runtime.Int) runtime.Decimal {
 	return runtime.Decimal{Value: new(big.Rat).SetInt(value.Value)}

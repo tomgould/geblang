@@ -1,0 +1,24 @@
+import io;
+
+/* Numeric-check predicates lowered via the transpilert convert helpers,
+   reusing the same parse as toInt/toDecimal so eval == VM == native.
+   Float division by zero yields NaN/Inf (no throw), unlike decimal. */
+io.println("42".isInt());
+io.println("0xFF".isInt());
+io.println("1_000".isInt());
+io.println("3.5".isInt());
+io.println("abc".isInt());
+io.println("3.5".isDecimal());
+io.println("42".isDecimal());
+io.println("abc".isDecimal());
+io.println("42".isNumeric());
+io.println("3.5".isNumeric());
+io.println("abc".isNumeric());
+io.println((3.0f).isInt());
+io.println((3.5f).isInt());
+float zero = 0.0f;
+float one = 1.0f;
+io.println((zero / zero).isInt());
+io.println((one / zero).isInt());
+io.println((7.0).isInt());
+io.println((7.5).isInt());

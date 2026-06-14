@@ -1,6 +1,7 @@
 package transpilert
 
 import (
+	"math"
 	"math/big"
 	"testing"
 )
@@ -57,6 +58,47 @@ func TestStringToDecimal(t *testing.T) {
 	if d.Cmp(big.NewRat(25, 2)) != 0 {
 		t.Errorf("StringToDecimal = %v", d)
 	}
+}
+
+func TestNumericCheckPredicates(t *testing.T) {
+	intCases := map[string]bool{"42": true, "-7": true, "0xFF": true, "1_000": true, "3.5": false, "abc": false, "": false}
+	for in, want := range intCases {
+		if StringIsInt(in) != want {
+			t.Errorf("StringIsInt(%q) = %v, want %v", in, StringIsInt(in), want)
+		}
+		// Invariant: isInt true iff StringToInt does not panic.
+		if didNotPanic(func() { StringToInt(in) }) != StringIsInt(in) {
+			t.Errorf("StringIsInt(%q) disagrees with StringToInt", in)
+		}
+	}
+	decCases := map[string]bool{"3.5": true, "42": true, "-0.25": true, "abc": false, "": false}
+	for in, want := range decCases {
+		if StringIsDecimal(in) != want {
+			t.Errorf("StringIsDecimal(%q) = %v, want %v", in, StringIsDecimal(in), want)
+		}
+		if didNotPanic(func() { StringToDecimal(in) }) != StringIsDecimal(in) {
+			t.Errorf("StringIsDecimal(%q) disagrees with StringToDecimal", in)
+		}
+	}
+	if !StringIsNumeric("42") || !StringIsNumeric("3.5") || StringIsNumeric("abc") {
+		t.Error("StringIsNumeric")
+	}
+	if !FloatIsInt(3.0) || FloatIsInt(3.5) || FloatIsInt(math.NaN()) || FloatIsInt(math.Inf(1)) {
+		t.Error("FloatIsInt")
+	}
+	if !DecimalIsInt(big.NewRat(7, 1)) || DecimalIsInt(big.NewRat(7, 2)) {
+		t.Error("DecimalIsInt")
+	}
+}
+
+func didNotPanic(f func()) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	f()
+	return true
 }
 
 func TestStringToBool(t *testing.T) {

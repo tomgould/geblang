@@ -100,6 +100,12 @@ additionally has `format(scale)` and `toString(scale = 10)` for
 fixed-scale rendering (a `decimal` is an exact value with no stored
 scale, so the default display is 10 places; pass a scale for more).
 
+Both `float` and `decimal` have `isInt()`, which reports whether the
+value is a whole number. `float.isInt()` is true only for a finite
+value equal to its truncation (`3.0f.isInt()` is `true`, `3.5f`, `NaN`,
+and infinities are `false`); `decimal.isInt()` is true when the exact
+value has denominator 1.
+
 A numeric literal like `2.9` is a `decimal`; floats are written with an
 `f` suffix (`2.9f`). Decimals display at 10 places by default (they
 store an exact value, not a scale), so use `toString(scale)` or a format
@@ -284,6 +290,15 @@ the same thing but chain cleanly and, in two cases, offer finer control:
   `decimal` (`math.pi().toDecimal(4)` -> `3.1416`). With no argument it
   is a plain cast.
 - `toInt(base)` on a string parses in the given base.
+
+To test before converting (instead of catching a thrown error), a
+string carries three non-throwing predicates:
+
+- `isInt()` is `true` exactly when `toInt()` would succeed (same parse:
+  signs, `0b`/`0o`/`0x` bases, and `_` separators).
+- `isDecimal()` is `true` exactly when `toDecimal()` would succeed.
+- `isNumeric()` is `true` when the string parses as an int or a decimal
+  (`isInt() || isDecimal()`).
 
 The value-keeping rounding methods (`round`, `floor`, `ceil`,
 `truncate`) and the `sign` / `clamp` helpers also live on the numeric

@@ -1152,3 +1152,64 @@ export func main(): int {
 		t.Fatalf("native output != bundle\n--- want ---\n%q\n--- got ---\n%q", wantOut, gotOut)
 	}
 }
+
+// TestBuildNativeNumericChecks transpiles an exported main using the
+// numeric-check predicates (string isInt/isDecimal/isNumeric, float.isInt,
+// decimal.isInt), builds it offline with --native, and asserts byte-identical
+// stdout against the bundled VM build.
+func TestBuildNativeNumericChecks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping native build e2e in -short mode")
+	}
+	bin := buildNativeTestGeblang(t)
+
+	dir := t.TempDir()
+	src := `import io;
+
+export func main(): int {
+    io.println("0xFF".isInt());
+    io.println("3.5".isInt());
+    io.println("3.5".isDecimal());
+    io.println("abc".isDecimal());
+    io.println("42".isNumeric());
+    io.println((3.0f).isInt());
+    float zero = 0.0f;
+    io.println((zero / zero).isInt());
+    io.println((7.0).isInt());
+    io.println((7.5).isInt());
+    return 0;
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.gb"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bundleOut := filepath.Join(dir, "bundle")
+	bundleBuild := exec.Command(bin, "build", "--entry", "main", "--out", bundleOut, ".")
+	bundleBuild.Dir = dir
+	if combined, err := bundleBuild.CombinedOutput(); err != nil {
+		t.Fatalf("bundle build failed: %v\n%s", err, combined)
+	}
+	wantOut, err := exec.Command(bundleOut).Output()
+	if err != nil {
+		t.Fatalf("run bundle binary: %v", err)
+	}
+
+	out := filepath.Join(dir, "app")
+	build := exec.Command(bin, "build", "--native", "--entry", "main", "--out", out, ".")
+	build.Dir = dir
+	build.Env = nativeBuildEnv()
+	if combined, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("native build failed: %v\n%s", err, combined)
+	}
+
+	run := exec.Command(out)
+	run.Dir = t.TempDir()
+	gotOut, err := run.Output()
+	if err != nil {
+		t.Fatalf("run native binary: %v", err)
+	}
+	if string(gotOut) != string(wantOut) {
+		t.Fatalf("native output != bundle\n--- want ---\n%q\n--- got ---\n%q", wantOut, gotOut)
+	}
+}

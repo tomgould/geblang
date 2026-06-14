@@ -2011,6 +2011,21 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, fmt.Errorf("string.isBlank expects no arguments")
 			}
 			return runtime.Bool{Value: native.StringIsBlank(value.Value)}, nil
+		case "isInt":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("string.isInt expects no arguments")
+			}
+			return runtime.Bool{Value: native.StringIsInt(value.Value)}, nil
+		case "isDecimal":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("string.isDecimal expects no arguments")
+			}
+			return runtime.Bool{Value: native.StringIsDecimal(value.Value)}, nil
+		case "isNumeric":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("string.isNumeric expects no arguments")
+			}
+			return runtime.Bool{Value: native.StringIsInt(value.Value) || native.StringIsDecimal(value.Value)}, nil
 		case "lines":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("string.lines expects no arguments")
@@ -2396,6 +2411,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, fmt.Errorf("decimal.isNegative expects no arguments")
 			}
 			return runtime.Bool{Value: value.Value.Sign() < 0}, nil
+		case "isInt":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("decimal.isInt expects no arguments")
+			}
+			return runtime.Bool{Value: value.Value.IsInt()}, nil
 		case "toString":
 			if len(args) > 1 {
 				return nil, fmt.Errorf("decimal.toString expects optional scale")
@@ -2538,6 +2558,11 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, fmt.Errorf("float.isInf expects no arguments")
 			}
 			return runtime.Bool{Value: math.IsInf(value.Value, 0)}, nil
+		case "isInt":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("float.isInt expects no arguments")
+			}
+			return runtime.Bool{Value: native.FloatIsInt(value.Value)}, nil
 		case "toString":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("float.toString expects no arguments")

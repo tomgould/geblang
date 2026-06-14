@@ -1,5 +1,25 @@
 # Release Notes
 
+## 1.22.0
+
+### Language
+
+- Numeric-check predicates let a value be tested before converting, instead of
+  catching a failed cast. On strings: `isInt()`, `isDecimal()`, and
+  `isNumeric()` report whether the string parses as an integer, a decimal, or
+  either, using the same rules as `toInt()` / `toDecimal()` (so `s.isInt()` is
+  true exactly when `s.toInt()` would succeed, bases and underscore separators
+  included). On numbers: `float.isInt()` and `decimal.isInt()` report whether
+  the value is a whole number (`NaN` and infinity are not). Identical on both
+  backends.
+
+### Native compilation (experimental)
+
+- `geblang build --native` now lowers direct `as` casts from a string to `int`
+  or `float`, and from a non-bool to `bool`, matching the interpreter (these
+  previously reported as unsupported). The new numeric-check predicates compile
+  natively as well.
+
 ## 1.21.0
 
 ### Language

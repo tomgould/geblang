@@ -821,12 +821,15 @@ func TestLowererIntToFloatCast(t *testing.T) {
 	}
 }
 
-func TestLowererStringToIntCastIsRejected(t *testing.T) {
+func TestLowererStringToIntCastLowersToHelper(t *testing.T) {
 	src := `let s = "5" as int;` + "\n"
 	mod, l := runLowerer(t, src)
-	_ = mod
-	if len(l.Errors()) == 0 {
-		t.Errorf("expected string→int cast to be rejected in Phase 1")
+	if len(l.Errors()) != 0 {
+		t.Fatalf("unexpected diagnostics for string→int cast: %v", l.Errors())
+	}
+	body := mod.MainBody().String()
+	if !strings.Contains(body, "transpilert.AsIntFast(") {
+		t.Errorf("expected string→int cast to lower to transpilert.AsIntFast, got:\n%s", body)
 	}
 }
 

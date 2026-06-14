@@ -158,7 +158,28 @@ func buildBuiltinMethodTable() map[builtinMethodKey]builtinMethodFn {
 	}
 	registerBytesMethods(t)
 	registerConversionMethods(t)
+	t[builtinMethodKey{types.KindFloat, "isInt"}] = lowerNumericIsInt
+	t[builtinMethodKey{types.KindDecimal, "isInt"}] = lowerNumericIsInt
 	return t
+}
+
+// lowerNumericIsInt routes float.isInt/decimal.isInt to the transpilert
+// whole-number predicates.
+func lowerNumericIsInt(l *Lowerer, sel *ast.SelectorExpression, recv *types.Type, args []ast.CallArgument) bool {
+	if len(args) != 0 {
+		return false
+	}
+	helper := "FloatIsInt"
+	if recv != nil && recv.Kind == types.KindDecimal {
+		helper = "DecimalIsInt"
+	}
+	l.Module.AddImport(types.OrderedDictImport)
+	l.w.WriteString("transpilert.")
+	l.w.WriteString(helper)
+	l.w.WriteString("(")
+	l.lowerExpression(sel.Object)
+	l.w.WriteString(")")
+	return true
 }
 
 // registerBytesMethods wires the bytes-value primitive methods to transpilert
@@ -736,6 +757,9 @@ func registerStringErgoMethods(t map[builtinMethodKey]builtinMethodFn) {
 	t[builtinMethodKey{types.KindString, "capitalize"}] = noArg("StringCapitalize")
 	t[builtinMethodKey{types.KindString, "title"}] = noArg("StringTitle")
 	t[builtinMethodKey{types.KindString, "isBlank"}] = noArg("StringIsBlank")
+	t[builtinMethodKey{types.KindString, "isInt"}] = noArg("StringIsInt")
+	t[builtinMethodKey{types.KindString, "isDecimal"}] = noArg("StringIsDecimal")
+	t[builtinMethodKey{types.KindString, "isNumeric"}] = noArg("StringIsNumeric")
 	t[builtinMethodKey{types.KindString, "lines"}] = noArg("StringLines")
 	t[builtinMethodKey{types.KindString, "removePrefix"}] = oneStr("StringRemovePrefix")
 	t[builtinMethodKey{types.KindString, "removeSuffix"}] = oneStr("StringRemoveSuffix")
@@ -1162,7 +1186,8 @@ func builtinMethodReturnType(method string, recv *types.Type) *types.Type {
 		switch method {
 		case "length", "indexOf", "lastIndexOf", "count":
 			return &types.Type{Kind: types.KindInt}
-		case "isEmpty", "contains", "startsWith", "endsWith", "isBlank", "equalsIgnoreCase", "containsIgnoreCase", "matchesRegex":
+		case "isEmpty", "contains", "startsWith", "endsWith", "isBlank", "equalsIgnoreCase", "containsIgnoreCase", "matchesRegex",
+			"isInt", "isDecimal", "isNumeric":
 			return &types.Type{Kind: types.KindBool}
 		case "lower", "upper", "trim", "trimStart", "trimEnd", "repeat", "replace",
 			"reverse", "slice", "substring", "padStart", "padEnd",
@@ -1172,6 +1197,10 @@ func builtinMethodReturnType(method string, recv *types.Type) *types.Type {
 			return &types.Type{Kind: types.KindList, Elem: &types.Type{Kind: types.KindString}}
 		case "codePoints":
 			return &types.Type{Kind: types.KindList, Elem: &types.Type{Kind: types.KindInt}}
+		}
+	case types.KindFloat, types.KindDecimal:
+		if method == "isInt" {
+			return &types.Type{Kind: types.KindBool}
 		}
 	case types.KindList:
 		switch method {

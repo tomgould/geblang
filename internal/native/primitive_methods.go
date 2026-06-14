@@ -22,7 +22,7 @@ var PrimitiveMethods = map[string][]string{
 		"toDecimal", "toFloat", "toInt", "toString", "trim", "trimEnd",
 		"trimStart", "upper",
 		"capitalize", "title", "isBlank", "lines", "removePrefix", "removeSuffix",
-		"equalsIgnoreCase", "containsIgnoreCase",
+		"equalsIgnoreCase", "containsIgnoreCase", "isInt", "isDecimal", "isNumeric",
 	},
 	"list": {
 		"all", "any", "append", "averageBy", "binarySearch", "binarySearchBy", "bottomK", "chunk",
@@ -56,11 +56,11 @@ var PrimitiveMethods = map[string][]string{
 		"sign", "toString",
 	},
 	"decimal": {
-		"abs", "ceil", "clamp", "floor", "format", "isNegative", "isPositive",
+		"abs", "ceil", "clamp", "floor", "format", "isInt", "isNegative", "isPositive",
 		"isZero", "round", "sign", "toString", "truncate",
 	},
 	"float": {
-		"abs", "ceil", "clamp", "floor", "isInf", "isNaN", "isNegative",
+		"abs", "ceil", "clamp", "floor", "isInf", "isInt", "isNaN", "isNegative",
 		"isPositive", "isZero", "round", "sign", "toString", "truncate",
 	},
 	"bool": {"not", "toString"},

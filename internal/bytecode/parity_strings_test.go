@@ -334,6 +334,34 @@ io.println("Hello World".containsIgnoreCase("xyz"));
 `, "Hello\nHello World\ntrue\nfalse\n[\"a\", \"b\", \"c\"]\n[]\n[\"\"]\nbar\nfoobar\nfoo\ntrue\ntrue\nfalse\n")
 }
 
+// Numeric-check predicates (string isInt/isDecimal/isNumeric, float.isInt,
+// decimal.isInt) agree on both backends and reuse the toInt/toDecimal parse.
+// A bare 3.0 literal is a decimal; 3.0f is a float.
+func TestParityNumericCheckMethods(t *testing.T) {
+	runParity(t, `import io;
+import math;
+io.println("42".isInt());
+io.println("-7".isInt());
+io.println("0xFF".isInt());
+io.println("1_000".isInt());
+io.println("3.5".isInt());
+io.println("abc".isInt());
+io.println("".isInt());
+io.println("3.5".isDecimal());
+io.println("42".isDecimal());
+io.println("abc".isDecimal());
+io.println("3.5".isNumeric());
+io.println("42".isNumeric());
+io.println("abc".isNumeric());
+io.println((3.0f).isInt());
+io.println((3.5f).isInt());
+io.println(math.nan().isInt());
+io.println(math.inf().isInt());
+io.println((7.0).isInt());
+io.println((7.5).isInt());
+`, "true\ntrue\ntrue\ntrue\nfalse\nfalse\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\nfalse\ntrue\nfalse\nfalse\nfalse\ntrue\nfalse\n")
+}
+
 // Escape sequences (\n, \t, \u{...}) are decoded inside interpolated
 // strings, identically on both backends.
 func TestParityInterpolatedStringEscapes(t *testing.T) {

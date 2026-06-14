@@ -56,17 +56,43 @@ func StringToFloat(s string) float64 {
 	return f
 }
 
-func StringToDecimal(s string) *big.Rat {
+func parseDecimalDigits(s string) (*big.Rat, bool) {
 	digits := s
 	if strings.ContainsRune(digits, '_') {
 		digits = strings.ReplaceAll(digits, "_", "")
 	}
-	v, ok := new(big.Rat).SetString(digits)
+	return new(big.Rat).SetString(digits)
+}
+
+func StringToDecimal(s string) *big.Rat {
+	v, ok := parseDecimalDigits(s)
 	if !ok {
 		panic(NewError("RuntimeError", fmt.Sprintf("invalid decimal literal %q", s)))
 	}
 	return v
 }
+
+// StringIsInt/StringIsDecimal reuse the toInt/toDecimal parse so the predicate
+// cannot drift from the cast. FloatIsInt/DecimalIsInt report whole numbers.
+func StringIsInt(s string) bool {
+	_, ok := parseIntDigits(s)
+	return ok
+}
+
+func StringIsDecimal(s string) bool {
+	_, ok := parseDecimalDigits(s)
+	return ok
+}
+
+func StringIsNumeric(s string) bool {
+	return StringIsInt(s) || StringIsDecimal(s)
+}
+
+func FloatIsInt(f float64) bool {
+	return !math.IsNaN(f) && !math.IsInf(f, 0) && f == math.Trunc(f)
+}
+
+func DecimalIsInt(v *big.Rat) bool { return v.IsInt() }
 
 // StringToBool accepts only "true"/"false", matching the interpreter; anything
 // else is an uncaught cast error.
