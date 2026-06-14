@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"geblang/internal/ast"
 	"geblang/internal/bundle"
 	"geblang/internal/bytecode"
 	"geblang/internal/check"
@@ -100,6 +101,23 @@ func runBuild(args []string) {
 		os.Exit(1)
 	}
 
+	entrySrc, err := os.ReadFile(entryPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "geblang build: read entry %s: %v\n", entryPath, err)
+		os.Exit(1)
+	}
+	entryParser := parser.New(lexer.New(string(entrySrc)))
+	entryProg := entryParser.ParseProgram()
+	if errs := entryParser.Errors(); len(errs) != 0 {
+		fmt.Fprintf(os.Stderr, "geblang build: parse entry %s: %s\n", entryPath, strings.Join(errs, "; "))
+		os.Exit(1)
+	}
+	entrySig, err := validateEntryMain(entryProg, entry)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "geblang build: %v\n", err)
+		os.Exit(1)
+	}
+
 	allModules, err := bundle.WalkImports(entry, entryPath, resolver, check.IsNativeImport)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "geblang build: %v\n", err)
@@ -185,11 +203,12 @@ func runBuild(args []string) {
 	}
 
 	manifest := bundle.Manifest{
-		Version:    version,
-		Entry:      entry,
-		Name:       appName,
-		AppVersion: appVersion,
-		Modules:    records,
+		Version:       version,
+		Entry:         entry,
+		Name:          appName,
+		AppVersion:    appVersion,
+		EntryMainArgs: entrySig.WantsArgs,
+		Modules:       records,
 	}
 
 	exe, err := os.Executable()
@@ -256,6 +275,69 @@ func runBuild(args []string) {
 			os.Exit(1)
 		}
 	}
+}
+
+// entryMainSig describes the validated entry `main`: WantsArgs reports whether
+// it takes the list<string> argument; ReturnsInt whether its : int return is
+// used as the process exit code.
+type entryMainSig struct {
+	WantsArgs  bool
+	ReturnsInt bool
+}
+
+const entryMainExpected = "expected `export func main()` or `export func main(list<string> args)`, optionally returning : int"
+
+// validateEntryMain enforces the shared entry convention on both build paths so
+// the rule and error message are identical; a failure means no binary.
+func validateEntryMain(prog *ast.Program, entry string) (entryMainSig, error) {
+	for _, stmt := range prog.Statements {
+		exp, ok := stmt.(*ast.ExportStatement)
+		if !ok {
+			continue
+		}
+		fn, ok := exp.Statement.(*ast.FunctionStatement)
+		if !ok || fn.Name == nil || fn.Name.Value != "main" {
+			continue
+		}
+		if fn.Async || len(fn.Generics) > 0 {
+			return entryMainSig{}, fmt.Errorf("entry module %q exports an incompatible main; %s", entry, entryMainExpected)
+		}
+		sig := entryMainSig{ReturnsInt: isIntTypeRef(fn.ReturnType)}
+		switch len(fn.Parameters) {
+		case 0:
+		case 1:
+			p := fn.Parameters[0]
+			if p.Variadic || !isStringListTypeRef(p.Type) {
+				return entryMainSig{}, fmt.Errorf("entry module %q main has an unsupported parameter; %s", entry, entryMainExpected)
+			}
+			sig.WantsArgs = true
+		default:
+			return entryMainSig{}, fmt.Errorf("entry module %q main takes too many parameters; %s", entry, entryMainExpected)
+		}
+		if fn.ReturnType != nil && !sig.ReturnsInt && !isVoidTypeRef(fn.ReturnType) {
+			return entryMainSig{}, fmt.Errorf("entry module %q main has an unsupported return type; %s", entry, entryMainExpected)
+		}
+		return sig, nil
+	}
+	return entryMainSig{}, fmt.Errorf("entry module %q does not export a main function; %s", entry, entryMainExpected)
+}
+
+func isStringListTypeRef(t *ast.TypeRef) bool {
+	if t == nil || t.Nullable || t.Operator != "" {
+		return false
+	}
+	if t.ListAlias && t.Name == "string" && len(t.Arguments) == 0 {
+		return true
+	}
+	return t.Name == "list" && len(t.Arguments) == 1 && t.Arguments[0] != nil && t.Arguments[0].Name == "string"
+}
+
+func isIntTypeRef(t *ast.TypeRef) bool {
+	return t != nil && !t.Nullable && t.Operator == "" && t.Name == "int" && !t.ListAlias && len(t.Arguments) == 0
+}
+
+func isVoidTypeRef(t *ast.TypeRef) bool {
+	return t != nil && t.Operator == "" && t.Name == "void" && !t.ListAlias && len(t.Arguments) == 0
 }
 
 // writeBuildDockerfile emits a Dockerfile beside the built binary: the
@@ -365,18 +447,22 @@ func runBundledWithArgs(b *bundle.Bundle, args []string) int {
 		return 1
 	}
 
-	return runBundledEntry(b.Manifest.Entry, args, filepath.Join(tempDir, "src"))
+	return runBundledEntry(b.Manifest.Entry, b.Manifest.EntryMainArgs, args, filepath.Join(tempDir, "src"))
 }
 
-func runBundledEntry(entry string, args []string, srcDir string) int {
+func runBundledEntry(entry string, wantsArgs bool, args []string, srcDir string) int {
+	mainCall := "__geb_module.main()"
+	if wantsArgs {
+		mainCall = "__geb_module.main(sys.args())"
+	}
 	source := []byte(fmt.Sprintf(`import sys;
 import %s as __geb_module;
 
-let __geb_result = __geb_module.main(sys.args());
+let __geb_result = %s;
 if (__geb_result != null) {
     sys.exit(__geb_result as int);
 }
-`, entry))
+`, entry, mainCall))
 
 	sourcePath := filepath.Join(srcDir, "__geblang_bundle__.gb")
 	program, err := parseAndAnalyze(sourcePath, string(source))

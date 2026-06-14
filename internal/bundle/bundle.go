@@ -32,11 +32,14 @@ type ModuleRecord struct {
 
 // Manifest is stored as BUNDLE.json inside the zip.
 type Manifest struct {
-	Version    string         `json:"version"`
-	Entry      string         `json:"entry"`
-	Name       string         `json:"name,omitempty"`
-	AppVersion string         `json:"appVersion,omitempty"`
-	Modules    []ModuleRecord `json:"modules"`
+	Version    string `json:"version"`
+	Entry      string `json:"entry"`
+	Name       string `json:"name,omitempty"`
+	AppVersion string `json:"appVersion,omitempty"`
+	// EntryMainArgs records that the entry's main takes the list<string> args,
+	// so the launcher calls main(sys.args()) rather than main().
+	EntryMainArgs bool           `json:"entryMainArgs,omitempty"`
+	Modules       []ModuleRecord `json:"modules"`
 }
 
 // Bundle holds the decoded bundle data and its raw zip bytes.
@@ -195,7 +198,7 @@ func (b *Bundle) ExtractTo(dir string, version string, cacheDir string) error {
 	// Collect source bytes and bytecode bytes during extraction so we can
 	// compute the exact bytecode cache key (which requires the source bytes,
 	// not just their hash).
-	sourceBytesMap := map[string][]byte{} // zip path -> source bytes
+	sourceBytesMap := map[string][]byte{}   // zip path -> source bytes
 	bytecodeBytesMap := map[string][]byte{} // zip path -> bytecode bytes
 
 	for _, f := range zr.File {
