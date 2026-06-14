@@ -1,0 +1,37 @@
+import io;
+
+let xs = [3, 1, 2];
+
+io.println(xs.map(func(int x): int { return x * 2; }));
+io.println(xs.filter(func(int x): bool { return x > 1; }));
+io.println(xs.reduce(func(int acc, int x): int { return acc + x; }, 0));
+io.println(xs.find(func(int x): bool { return x > 1; }));
+io.println(xs.find(func(int x): bool { return x > 100; }));
+io.println(xs.findLast(func(int x): bool { return x > 1; }));
+io.println(xs.any(func(int x): bool { return x > 2; }));
+io.println(xs.all(func(int x): bool { return x > 0; }));
+io.println(xs.count(func(int x): bool { return x > 1; }));
+
+let nested = [[1, 2], [3]];
+io.println(nested.flatMap(func(list<int> p): list<int> { return p; }));
+
+io.println(xs.sorted());
+io.println(xs.reversed());
+
+/* sort with a less-than comparator (bool) */
+let a = [3, 1, 2];
+io.println(a.sort(func(int x, int y): bool { return x > y; }));
+
+/* sort with a three-way comparator (int) */
+let b = [3, 1, 2];
+io.println(b.sort(func(int x, int y): int { return x - y; }));
+
+/* sortBy a selector key, ascending then descending */
+let c = [3, 1, 2];
+io.println(c.sortBy(func(int x): int { return x; }));
+let d = [3, 1, 2];
+io.println(d.sortBy(func(int x): int { return x; }, true));
+
+/* sortBy is stable: equal keys keep input order */
+let pairs = [["b", "z"], ["a", "x"], ["a", "y"]];
+io.println(pairs.sortBy(func(list<string> p): string { return p[0]; }));

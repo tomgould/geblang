@@ -1,0 +1,108 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+	"os"
+)
+
+func gbUncaught() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	if e, ok := r.(*transpilert.Error); ok {
+		fmt.Fprintln(os.Stderr, e.Render())
+		os.Exit(1)
+	}
+	panic(r)
+}
+
+func NewMyError(m string) *transpilert.Error {
+	return &transpilert.Error{Class: "MyError", Message: m, Parents: []string{"Error"}}
+}
+
+func NewOtherError(m string) *transpilert.Error {
+	return &transpilert.Error{Class: "OtherError", Message: m, Parents: []string{"Error"}}
+}
+
+func main() {
+	defer gbUncaught()
+	{
+		var __exc1 any
+		__unh1 := false
+		var __sig1 int
+		__sig1 = func() int {
+			defer func() { __exc1 = recover() }()
+			panic(NewMyError("oops"))
+			return 0
+		}()
+		if __exc1 != nil {
+			__exc1_e, __exc1_e_ok := __exc1.(*transpilert.Error)
+			_, _ = __exc1_e, __exc1_e_ok
+			__unh1 = true
+			if __exc1_e_ok && __exc1_e.IsClass("OtherError") {
+				__unh1 = false
+				__sig1 = func() int {
+					e := __exc1_e
+					_ = e
+					fmt.Println(transpilert.Show(("other: " + e.Message)))
+					return 0
+				}()
+			} else if __exc1_e_ok && __exc1_e.IsClass("MyError") {
+				__unh1 = false
+				__sig1 = func() int {
+					e := __exc1_e
+					_ = e
+					fmt.Println(transpilert.Show(("my: " + e.Message)))
+					return 0
+				}()
+			}
+		}
+		var __fsig1 int
+		__fsig1 = func() int {
+			fmt.Println(transpilert.Show("cleanup"))
+			return 0
+		}()
+		if __fsig1 != 0 {
+			__sig1 = __fsig1
+			__unh1 = false
+		}
+		if __unh1 {
+			panic(__exc1)
+		}
+		if __sig1 == 1 {
+			return
+		}
+	}
+	{
+		var __exc1 any
+		__unh1 := false
+		var __sig1 int
+		__sig1 = func() int {
+			defer func() { __exc1 = recover() }()
+			panic(NewOtherError("rare"))
+			return 0
+		}()
+		if __exc1 != nil {
+			__exc1_e, __exc1_e_ok := __exc1.(*transpilert.Error)
+			_, _ = __exc1_e, __exc1_e_ok
+			__unh1 = true
+			if true {
+				__unh1 = false
+				__sig1 = func() int {
+					fmt.Println(transpilert.Show("caught any"))
+					return 0
+				}()
+			}
+		}
+		if __unh1 {
+			panic(__exc1)
+		}
+		if __sig1 == 1 {
+			return
+		}
+	}
+	fmt.Println(transpilert.Show("after"))
+}

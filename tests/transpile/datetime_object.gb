@@ -1,0 +1,62 @@
+import io;
+import datetime;
+
+/* datetime OO surface: opaque Instant/Duration/Zone handles over Go's time
+   package (stdlib). Fixed instants + UTC keep output stable across runs and
+   backends (VM == evaluator == native). Methods return different handle types,
+   so chaining routes the receiver type of each pinned return. */
+
+let a = datetime.Instant(1700000000);
+io.println(a.toString());
+io.println(a.formatRFC3339());
+io.println(a.year());
+io.println(a.month());
+io.println(a.day());
+io.println(a.hour());
+io.println(a.minute());
+io.println(a.second());
+io.println(a.weekday());
+io.println(a.dayOfYear());
+io.println(a.isWeekend());
+
+/* format with a strftime layout */
+io.println(a.format("%Y-%m-%d %H:%M:%S"));
+
+/* chained add* return Instant handles */
+let b = a.addDays(10).addSeconds(3600);
+io.println(b.toString());
+io.println(b.toUnix());
+
+/* diff returns a Duration handle; chain a Duration method */
+let c = datetime.Instant(1700086400);
+let span = c.diff(a);
+io.println(span.toString());
+io.println(span.inSeconds());
+io.println(span.toDict());
+
+/* comparisons return bool */
+io.println(a.isBefore(c));
+io.println(a.isAfter(c));
+io.println(a.equals(a));
+
+/* parts dict (sorted keys, no zone) */
+io.println(a.parts());
+
+/* inZone dict (sorted keys, includes zone) at UTC */
+io.println(a.inZone("UTC"));
+
+/* Duration handle arithmetic */
+let d = datetime.Duration(90061);
+io.println(d.toDict());
+io.println(d.inMillis());
+io.println(d.add(datetime.Duration(39)).inSeconds());
+io.println(d.negate().toString());
+
+/* Zone handle */
+let z = datetime.Zone("UTC");
+io.println(z.name());
+io.println(z.offset());
+io.println(z.offsetAt(a));
+
+/* toLocal at a fixed-offset zone via Instant.inZone string form */
+io.println(a.toLocal("UTC"));

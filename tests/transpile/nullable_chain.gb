@@ -1,0 +1,39 @@
+import io;
+
+/* Nullables composed with ?. and ?? across class fields and function results. */
+
+class Node {
+    int value;
+    ?Node next;
+
+    func Node(int value) {
+        this.value = value;
+        this.next = null;
+    }
+}
+
+func lookup(dict<string, int> d, string k): ?int {
+    for (string key in d.keys()) {
+        if (key == k) {
+            return d[k];
+        }
+    }
+    return null;
+}
+
+let a = Node(1);
+let b = Node(2);
+a.next = b;
+
+io.println(a.value);
+io.println(a.next?.value ?? -1);
+io.println(b.next?.value ?? -1);
+
+let scores = {"alice": 90, "bob": 75};
+io.println(lookup(scores, "alice") ?? 0);
+io.println(lookup(scores, "carol") ?? 0);
+
+?string maybe = null;
+io.println(maybe ?? "default");
+maybe = "present";
+io.println(maybe ?? "default");

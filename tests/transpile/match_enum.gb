@@ -1,0 +1,39 @@
+import io;
+
+/* Enums used as typed values + match on literal patterns (enum-variant patterns
+   in match are a deferred phase; dispatch on enums uses equality here). */
+
+enum Op {
+    Add,
+    Sub,
+    Mul
+}
+
+func apply(Op op, int a, int b): int {
+    if (op == Op.Add) {
+        return a + b;
+    }
+    if (op == Op.Sub) {
+        return a - b;
+    }
+    return a * b;
+}
+
+let ops = [Op.Add, Op.Mul, Op.Sub];
+let results = ops.map(func(Op o): int { return apply(o, 6, 2); });
+io.println(results);
+
+func classify(int n): string {
+    return match (n) {
+        case 0 => "zero";
+        case 1 => "one";
+        default => "many";
+    };
+}
+
+for (int n in [0, 1, 2, 5]) {
+    io.println(classify(n));
+}
+
+io.println(Op.Add);
+io.println(Op.Mul);

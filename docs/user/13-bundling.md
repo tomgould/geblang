@@ -460,6 +460,74 @@ unzip ./dist/myapp -d ./bundle-contents
 the bundle was built with, and the canonical name, zip path, and source hash
 for every bundled module.
 
+## Native Compilation (Experimental)
+
+> **Experimental and unstable.** `geblang build --native` is a preview of an
+> ahead-of-time path that compiles a Geblang program to a standalone native
+> binary by transpiling it to Go. The set of supported language features and
+> stdlib modules below WILL change between releases, and the flag, its output,
+> and its diagnostics are not yet covered by any stability guarantee. For
+> production builds use plain `geblang build` (the bundled-interpreter binary),
+> which supports the whole language.
+
+Instead of bundling the interpreter, `geblang build --native` lowers the entry
+program (and the stdlib modules it uses) to self-contained Go source and
+compiles it with the local Go toolchain. For dispatch-bound code (tight loops,
+recursion, virtual method dispatch) the result runs several times faster than
+the bundled VM; gains shrink for allocation- or string-heavy code.
+
+```sh
+geblang build --native --entry <module> --out <path> [<package-dir>]
+```
+
+It requires a local Go toolchain at least as new as the one that built your
+`geblang`, and builds offline (no module downloads). The entry convention is the
+same as plain `geblang build`: the entry module must `export func main()` (or
+`export func main(list<string> args)`, optionally returning `: int`); a missing
+main is a build error.
+
+### Safety: it fails at build time, never silently
+
+The native compiler is a growing subset of the language. When it meets a feature
+or stdlib function it does not yet support, it **fails the build with a clear
+diagnostic** naming the file, line, and reason, and writes no binary. It never
+emits a binary that behaves differently from the interpreter: supported programs
+are byte-for-byte identical to `geblang run` / `geblang test`, and unsupported
+ones do not build. So it is safe to try `--native` on any program and fall back
+to `geblang build` if it reports something unsupported.
+
+### What is supported
+
+- The core language: functions, classes (inheritance and virtual dispatch),
+  interfaces, generics, enums (data variants), `match` (type / list / enum /
+  guard patterns), exceptions, generators, async/await, comprehensions,
+  destructuring, closures, optional chaining, spread, named/optional/variadic
+  arguments, `with`, string interpolation, slicing, and dynamic navigation of
+  `any`-typed values (indexing and `as` casts, e.g. over a `json.parse` result).
+- Standard-library modules backed by the Go standard library: `io`, `sys`,
+  `collections`, `math`, `json`, `strings` (including the regex methods),
+  `encoding`, `crypt` (the hash functions), `time`, `random`, `re` (including
+  compiled patterns), `bytes`, `url` (including the `URL` object), `csv`, `xml`,
+  `datetime` (functional and object surfaces), `template`, `reflect`.
+
+### What is not supported yet (these diagnose, use `geblang build`)
+
+- Modules backed by third-party libraries: `yaml`, `toml`, `uuid`, `markdown`,
+  `pcre`, and `unicode` normalization.
+- Stateful / I/O modules: `db`, `http`, `net`, `sockets`, `log`, messaging, and
+  similar.
+- Enum methods and enum interface implementation; calling a method on an
+  `any`-typed value (cast it to a concrete type first); assigning into an
+  `any`-typed index.
+- Arbitrary-precision integers: native arithmetic uses a fast machine-width path
+  that wraps on overflow rather than promoting to big integers.
+
+### Performance note
+
+Repeated string concatenation in a loop (`acc = acc + part`) is O(n^2) in the
+generated Go because Go strings are immutable, so a tight concat loop can be
+slower than the VM. Build large strings with a list and `join`.
+
 ## Limitations
 
 - **OS and architecture**: A bundle built on Linux/amd64 runs only on

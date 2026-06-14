@@ -1,0 +1,41 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func main() {
+	var total int64 = 0
+	for i := int64(0); i < 4; i++ {
+		total = (total + i)
+	}
+	fmt.Println(transpilert.Show(total))
+	total = 0
+	for i := int64(1); i <= int64(5); i += int64(2) {
+		total = (total + i)
+	}
+	fmt.Println(transpilert.Show(total))
+	nums := []int64{2, 4, 6}
+	total = 0
+	for _, n := range nums {
+		total = (total + n)
+	}
+	fmt.Println(transpilert.Show(total))
+	for i := int64(0); i < int64(len(nums)); i++ {
+		fmt.Println(transpilert.Show(fmt.Sprintf("%v: %v", transpilert.Show(i), transpilert.Show(nums[int(i)]))))
+	}
+	data := func() *transpilert.OrderedDict[string, int64] {
+		__d := transpilert.NewOrderedDict[string, int64]()
+		__d.Set("a", 2)
+		__d.Set("b", 3)
+		return __d
+	}()
+	total = 0
+	for _, __k := range data.Keys() {
+		value, _ := data.Get(__k)
+		total = (total + value)
+	}
+	fmt.Println(transpilert.Show(total))
+}

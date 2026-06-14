@@ -3626,3 +3626,21 @@ io.println("hits=${s.get("hits")}");
 sys.clearSignal("SIGUSR1");
 `, "hits=1\n")
 }
+
+func TestParityAsAnyWidening(t *testing.T) {
+	runParity(t, `import io;
+class Animal { func Animal() {} }
+class Dog extends Animal { func Dog() { parent(); } }
+let d = Dog();
+io.println(typeof("x" as any));
+io.println(typeof(5 as any));
+io.println(typeof(d as any));
+io.println(typeof(("y" as any) as string));
+io.println(typeof(5 as ?any));
+`, `string
+int
+Dog
+string
+int
+`)
+}

@@ -1,0 +1,67 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+	"slices"
+)
+
+func main() {
+	xs := []int64{3, 1, 2}
+	fmt.Println(transpilert.Show(transpilert.Map(xs, func(x int64) int64 {
+		return (x * 2)
+	})))
+	fmt.Println(transpilert.Show(transpilert.Filter(xs, func(x int64) bool {
+		return (x > 1)
+	})))
+	fmt.Println(transpilert.Show(transpilert.Reduce(xs, func(acc int64, x int64) int64 {
+		return (acc + x)
+	}, 0)))
+	fmt.Println(transpilert.Show(transpilert.Find(xs, func(x int64) bool {
+		return (x > 1)
+	})))
+	fmt.Println(transpilert.Show(transpilert.Find(xs, func(x int64) bool {
+		return (x > 100)
+	})))
+	fmt.Println(transpilert.Show(transpilert.FindLast(xs, func(x int64) bool {
+		return (x > 1)
+	})))
+	fmt.Println(transpilert.Show(transpilert.AnyMatch(xs, func(x int64) bool {
+		return (x > 2)
+	})))
+	fmt.Println(transpilert.Show(transpilert.AllMatch(xs, func(x int64) bool {
+		return (x > 0)
+	})))
+	fmt.Println(transpilert.Show(transpilert.Count(xs, func(x int64) bool {
+		return (x > 1)
+	})))
+	nested := [][]int64{[]int64{1, 2}, []int64{3}}
+	fmt.Println(transpilert.Show(transpilert.FlatMap(nested, func(p []int64) []int64 {
+		return p
+	})))
+	fmt.Println(transpilert.Show(func() []int64 { __c := slices.Clone(xs); slices.Sort(__c); return __c }()))
+	fmt.Println(transpilert.Show(func() []int64 { __c := slices.Clone(xs); slices.Reverse(__c); return __c }()))
+	a := []int64{3, 1, 2}
+	fmt.Println(transpilert.Show(transpilert.SortInPlaceCmp(&a, func(x int64, y int64) bool {
+		return (x > y)
+	})))
+	b := []int64{3, 1, 2}
+	fmt.Println(transpilert.Show(transpilert.SortInPlaceCmp(&b, func(__a, __b int64) bool {
+		return (func(x int64, y int64) int64 {
+			return (x - y)
+		})(__a, __b) < 0
+	})))
+	c := []int64{3, 1, 2}
+	fmt.Println(transpilert.Show(transpilert.SortInPlaceBy(&c, func(x int64) int64 {
+		return x
+	}, func(__a, __b int64) bool { return __a < __b }, false)))
+	d := []int64{3, 1, 2}
+	fmt.Println(transpilert.Show(transpilert.SortInPlaceBy(&d, func(x int64) int64 {
+		return x
+	}, func(__a, __b int64) bool { return __a < __b }, true)))
+	pairs := [][]string{[]string{"b", "z"}, []string{"a", "x"}, []string{"a", "y"}}
+	fmt.Println(transpilert.Show(transpilert.SortInPlaceBy(&pairs, func(p []string) string {
+		return p[0]
+	}, func(__a, __b string) bool { return __a < __b }, false)))
+}

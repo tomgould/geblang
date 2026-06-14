@@ -1,0 +1,58 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type Point struct {
+	x int64
+	y int64
+}
+
+func NewPoint(x int64, y int64) *Point {
+	this := &Point{}
+	this.x = x
+	this.y = y
+	return this
+}
+
+var __decorators_Point = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Point = []string{}
+
+var __fields_Point = []string{"x", "y"}
+
+type Named struct {
+	n string
+}
+
+func NewNamed(n string) *Named {
+	this := &Named{}
+	this.n = n
+	return this
+}
+
+func (this *Named) __string() string {
+	return (("Named(" + this.n) + ")")
+}
+
+func (this *Named) GbString() string {
+	return this.__string()
+}
+
+var __decorators_Named = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Named = []string{"__string"}
+
+var __fields_Named = []string{"n"}
+
+func main() {
+	p := NewPoint(1, 2)
+	fmt.Println(transpilert.Show(p))
+	fmt.Println(transpilert.Show([]*Point{p}))
+	nm := NewNamed("bob")
+	fmt.Println(transpilert.Show(nm))
+	fmt.Println(transpilert.Show([]*Named{nm}))
+}

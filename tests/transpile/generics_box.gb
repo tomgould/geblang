@@ -1,0 +1,28 @@
+import io;
+
+/* Generic functions composed with collections. Closures are passed inline to
+   built-in HOFs (broad func-typed parameters are not transpile-safe yet). */
+
+func firstOr<T>(list<T> xs, T fallback): T {
+    if (xs.length() == 0) {
+        return fallback;
+    }
+    return xs[0];
+}
+
+func pairUp<A, B>(A a, B b): list<string> {
+    return [a as string, b as string];
+}
+
+func lastOf<T>(list<T> xs): T {
+    return xs[xs.length() - 1];
+}
+
+io.println(firstOr<int>([3, 4, 5], 0));
+io.println(firstOr<string>(["a", "b"], "z"));
+io.println(pairUp<int, string>(7, "hi"));
+io.println(lastOf<int>([10, 20, 30]));
+
+let lens = ["one", "three", "ab"].map(func(string s): int { return s.length(); });
+io.println(lens);
+io.println(lens.reduce(func(int a, int b): int { return a + b; }, 0));

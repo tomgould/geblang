@@ -1,0 +1,49 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type Printable interface {
+	print_() string
+}
+
+type Labelled interface {
+	Printable
+	label() string
+}
+
+type Report struct {
+	name string
+}
+
+func NewReport(name string) *Report {
+	this := &Report{}
+	this.name = name
+	return this
+}
+
+func (this *Report) print_() string {
+	return ("report:" + this.name)
+}
+
+func (this *Report) label() string {
+	return this.name
+}
+
+var __decorators_Report = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Report = []string{"print", "label"}
+
+var __fields_Report = []string{"name"}
+
+func main() {
+	var r *Report = NewReport("Q1")
+	fmt.Println(transpilert.Show(r.print_()))
+	fmt.Println(transpilert.Show(r.label()))
+	var l Labelled = r
+	fmt.Println(transpilert.Show(l.print_()))
+	fmt.Println(transpilert.Show(l.label()))
+}

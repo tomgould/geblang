@@ -1,0 +1,31 @@
+import io;
+
+class MyError extends Error {
+    func MyError(string m) {
+        parent(m);
+    }
+}
+
+class OtherError extends Error {
+    func OtherError(string m) {
+        parent(m);
+    }
+}
+
+try {
+    throw MyError("oops");
+} catch (OtherError e) {
+    io.println("other: " + e.message);
+} catch (MyError e) {
+    io.println("my: " + e.message);
+} finally {
+    io.println("cleanup");
+}
+
+try {
+    throw OtherError("rare");
+} catch {
+    io.println("caught any");
+}
+
+io.println("after");

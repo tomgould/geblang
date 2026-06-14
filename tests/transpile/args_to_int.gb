@@ -1,0 +1,23 @@
+import io;
+import sys;
+
+/* The benchmark-fixture shape: read an optional count from args, defaulting
+ * when none is given. Run with a sidecar arg so toInt actually fires. */
+let args = sys.args();
+int n = args.length() > 0 ? args[0].toInt() : 7;
+int total = 0;
+for (int i = 0; i < n; i++) {
+    total = total + i;
+}
+io.println(total);
+
+/* Exercise the other conversions and toString round-trips. */
+string s = "42";
+io.println(s.toInt() + 8);
+io.println("3.5".toFloat() * 2.0f);
+io.println("12.5".toDecimal());
+io.println("true".toBool());
+io.println((100).toString() + "!");
+io.println((2.5f).toString());
+io.println((9.75).toString());
+io.println(false.toString());

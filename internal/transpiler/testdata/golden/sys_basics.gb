@@ -1,0 +1,19 @@
+import io;
+import sys;
+
+/* setenv then getenv round trip; getenv of a missing var is null */
+sys.setenv("GB_TRANSPILE_TEST", "hello");
+io.println(sys.getenv("GB_TRANSPILE_TEST"));
+io.println(sys.getenv("GB_TRANSPILE_DEFINITELY_MISSING"));
+
+/* platform/arch are stable strings; report only that they are non-empty so
+   the fixture stays host-independent */
+io.println(sys.platform().length() > 0);
+io.println(sys.arch().length() > 0);
+io.println(sys.cwd().length() > 0);
+io.println(sys.hostname().length() > 0);
+
+/* environ contains the variable we just set */
+let env = sys.environ();
+io.println(env.hasKey("GB_TRANSPILE_TEST"));
+io.println(env.get("GB_TRANSPILE_TEST"));

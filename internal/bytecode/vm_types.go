@@ -1131,6 +1131,10 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 		return castValue(value, target[1:])
 	}
 	switch target {
+	case "any":
+		// Widening to the top type is a no-op; the value keeps its dynamic
+		// type. The evaluator's valueMatchesType allows this at the top of cast.
+		return value, nil
 	case "string":
 		/* `bytes as string` decodes UTF-8 (errors on invalid bytes)
 		 * rather than producing the hex form `value.Inspect()` returns

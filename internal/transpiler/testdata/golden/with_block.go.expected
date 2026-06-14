@@ -1,0 +1,72 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type Res struct {
+	name string
+}
+
+func NewRes(name string) *Res {
+	this := &Res{}
+	this.name = name
+	return this
+}
+
+func (this *Res) __enter() *Res {
+	fmt.Println(transpilert.Show(("enter " + this.name)))
+	return this
+}
+
+func (this *Res) __exit() {
+	fmt.Println(transpilert.Show(("exit " + this.name)))
+}
+
+func (this *Res) use() {
+	fmt.Println(transpilert.Show(("using " + this.name)))
+}
+
+var __decorators_Res = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Res = []string{"__enter", "__exit", "use"}
+
+var __fields_Res = []string{"name"}
+
+type Plain struct {
+}
+
+func NewPlain() *Plain {
+	this := &Plain{}
+	return this
+}
+
+func (this *Plain) __exit() {
+	fmt.Println(transpilert.Show("cleanup"))
+}
+
+var __decorators_Plain = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Plain = []string{"__exit"}
+
+var __fields_Plain = []string{}
+
+func main() {
+	func() {
+		__dt1 := NewRes("a")
+		_ = __dt1
+		defer __dt1.__exit()
+		r := __dt1.__enter()
+		_ = r
+		r.use()
+	}()
+	fmt.Println(transpilert.Show("after"))
+	func() {
+		__dt2 := NewPlain()
+		_ = __dt2
+		defer __dt2.__exit()
+		fmt.Println(transpilert.Show("in plain"))
+	}()
+}

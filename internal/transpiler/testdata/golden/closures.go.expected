@@ -1,0 +1,25 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func defererly() {
+	defer fmt.Println(transpilert.Show("end"))
+	fmt.Println(transpilert.Show("start"))
+}
+
+func main() {
+	double := func(n int64) int64 {
+		return (n * 2)
+	}
+	fmt.Println(transpilert.Show(double(7)))
+	var outer int64 = 10
+	addOuter := func(n int64) int64 {
+		return (n + outer)
+	}
+	fmt.Println(transpilert.Show(addOuter(5)))
+	defererly()
+}

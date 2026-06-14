@@ -1,0 +1,69 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func service(cls any, name string) any {
+	return cls
+}
+
+func logged(fn any) any {
+	return fn
+}
+
+func helper() string {
+	return "ok"
+}
+
+var __decorators_helper = []*transpilert.OrderedDict[string, any]{func() *transpilert.OrderedDict[string, any] {
+	__d := transpilert.NewOrderedDict[string, any]()
+	__d.Set("name", "logged")
+	__d.Set("args", []any{})
+	return __d
+}()}
+
+type Greeter struct {
+	name   string
+	visits int64
+}
+
+func NewGreeter(name string) *Greeter {
+	this := &Greeter{}
+	this.name = name
+	this.visits = 0
+	return this
+}
+
+func (this *Greeter) hello() string {
+	return (("Hello, " + this.name) + "!")
+}
+
+func (this *Greeter) bye() string {
+	return ("Bye, " + this.name)
+}
+
+var __decorators_Greeter = []*transpilert.OrderedDict[string, any]{func() *transpilert.OrderedDict[string, any] {
+	__d := transpilert.NewOrderedDict[string, any]()
+	__d.Set("name", "service")
+	__d.Set("args", []any{"greeter"})
+	return __d
+}()}
+
+var __methods_Greeter = []string{"hello", "bye"}
+
+var __fields_Greeter = []string{"name", "visits"}
+
+func main() {
+	fmt.Println(transpilert.Show("Greeter"))
+	fmt.Println(transpilert.Show(int64(len(__methods_Greeter))))
+	fmt.Println(transpilert.Show(int64(len(__fields_Greeter))))
+	fmt.Println(transpilert.Show(int64(len(__decorators_Greeter))))
+	deco := __decorators_Greeter[0]
+	fmt.Println(transpilert.Show(func() any { __v, _ := deco.Get("name"); return __v }()))
+	fnDecos := __decorators_helper
+	fmt.Println(transpilert.Show(int64(len(fnDecos))))
+	fmt.Println(transpilert.Show(func() any { __v, _ := fnDecos[0].Get("name"); return __v }()))
+}

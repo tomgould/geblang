@@ -1,0 +1,30 @@
+import io;
+
+/* newly-wired string ergonomics + slicing primitives: reverse, chars,
+   codePoints, slice/substring, padStart/padEnd, capitalize, title, lines,
+   removePrefix/Suffix, equalsIgnoreCase/containsIgnoreCase, count,
+   lastIndexOf, and unicode-correct trimStart/trimEnd. */
+
+let s = "Hello, Geblang World";
+io.println(s.reverse());
+io.println(s.chars());
+io.println(s.codePoints());
+io.println(s.slice(7));
+io.println(s.slice(7, 14));
+io.println(s.substring(0, 5));
+io.println("[${"42".padStart(5, "0")}]");
+io.println("[${"42".padEnd(5, "*")}]");
+io.println("[${"42".padStart(5)}]");
+io.println("hello world".capitalize());
+io.println("hello world foo".title());
+io.println("line one\nline two\nline three".lines());
+io.println("prefix-body".removePrefix("prefix-"));
+io.println("body-suffix".removeSuffix("-suffix"));
+io.println("eq=${"HeLLo".equalsIgnoreCase("hello")}");
+io.println("has=${"Hello World".containsIgnoreCase("WORLD")}");
+io.println("count=${"banana".count("a")}");
+io.println("last=${"banana".lastIndexOf("a")}");
+io.println("blank=${"   ".isBlank()}");
+io.println("[${"  trim me  ".trimStart()}]");
+io.println("[${"  trim me  ".trimEnd()}]");
+io.println("chained=${s.trim().upper().reverse().capitalize()}");

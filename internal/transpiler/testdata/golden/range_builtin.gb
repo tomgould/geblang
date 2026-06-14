@@ -1,0 +1,17 @@
+import io;
+
+for (x in range(0, 3)) {
+    io.println(x);
+}
+
+for (y in range(2, 6)) {
+    io.println(y);
+}
+
+for (z in range(10, 0, -3)) {
+    io.println(z);
+}
+
+for (w in range(5, 1)) {
+    io.println(w);
+}

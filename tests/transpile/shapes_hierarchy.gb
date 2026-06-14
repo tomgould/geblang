@@ -1,0 +1,64 @@
+import io;
+
+/* Virtual dispatch + inheritance + fields + a template method. Dispatch is
+   exercised via base-typed parameters and direct calls (a heterogeneous
+   list<Base> of subclass instances is a separate, deferred transpiler gap). */
+
+class Shape {
+    string label;
+
+    func Shape(string label) {
+        this.label = label;
+    }
+
+    func area(): int {
+        return 0;
+    }
+
+    func describe(): string {
+        return this.label + " area=" + (this.area() as string);
+    }
+}
+
+class Square extends Shape {
+    int side;
+
+    func Square(int side) {
+        parent("square");
+        this.side = side;
+    }
+
+    func area(): int {
+        return this.side * this.side;
+    }
+}
+
+class Rect extends Shape {
+    int w;
+    int h;
+
+    func Rect(int w, int h) {
+        parent("rect");
+        this.w = w;
+        this.h = h;
+    }
+
+    func area(): int {
+        return this.w * this.h;
+    }
+}
+
+/* upcast through a base-typed parameter: the override late-binds */
+func report(Shape s): string {
+    return s.describe();
+}
+
+let sq = Square(3);
+let rc = Rect(2, 5);
+let sq2 = Square(4);
+
+io.println(report(sq));
+io.println(report(rc));
+io.println(report(sq2));
+
+io.println(sq.area() + rc.area() + sq2.area());

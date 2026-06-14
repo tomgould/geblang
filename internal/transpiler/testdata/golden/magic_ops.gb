@@ -1,0 +1,37 @@
+import io;
+
+class Money {
+    int cents;
+
+    func Money(int cents) {
+        this.cents = cents;
+    }
+
+    func __add(Money other): Money {
+        return Money(this.cents + other.cents);
+    }
+
+    func __sub(Money other): Money {
+        return Money(this.cents - other.cents);
+    }
+
+    func __lt(Money other): bool {
+        return this.cents < other.cents;
+    }
+
+    func __eq(Money other): bool {
+        return this.cents == other.cents;
+    }
+}
+
+Money a = Money(125);
+Money b = Money(75);
+Money c = a + b;
+Money d = a - b;
+
+io.println(c.cents);
+io.println(d.cents);
+io.println(b < a);
+io.println(a < b);
+io.println(a == Money(125));
+io.println(a == b);

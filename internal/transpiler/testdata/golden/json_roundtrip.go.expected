@@ -1,0 +1,37 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func main() {
+	fmt.Println(transpilert.Show(transpilert.JSONStringify(func() *transpilert.OrderedDict[string, any] {
+		__d := transpilert.NewOrderedDict[string, any]()
+		__d.Set("name", "Bob")
+		__d.Set("age", 30)
+		__d.Set("active", true)
+		return __d
+	}())))
+	fmt.Println(transpilert.Show(transpilert.JSONStringify([]int64{1, 2, 3})))
+	fmt.Println(transpilert.Show(transpilert.JSONStringify(func() *transpilert.OrderedDict[string, int64] {
+		__d := transpilert.NewOrderedDict[string, int64]()
+		__d.Set("b", 2)
+		__d.Set("a", 1)
+		__d.Set("c", 3)
+		return __d
+	}())))
+	fmt.Println(transpilert.Show(transpilert.JSONStringify("hi \"there\"\n")))
+	fmt.Println(transpilert.Show(transpilert.JSONStringify(42)))
+	fmt.Println(transpilert.Show(transpilert.JSONStringify(true)))
+	names := []string{"x", "y"}
+	fmt.Println(transpilert.Show(transpilert.JSONStringify(names)))
+	fmt.Println(transpilert.Show(transpilert.JSONValidate("{\"a\":1}")))
+	fmt.Println(transpilert.Show(transpilert.JSONValidate("{bad")))
+	fmt.Println(transpilert.Show(transpilert.JSONParse("{\"a\": 1, \"b\": [2, 3.5], \"c\": \"x\", \"d\": true, \"e\": null}")))
+	fmt.Println(transpilert.Show(transpilert.JSONParse("[1, 2, 3]")))
+	fmt.Println(transpilert.Show(transpilert.JSONParse("42")))
+	fmt.Println(transpilert.Show(transpilert.JSONParse("3.5")))
+	fmt.Println(transpilert.Show(transpilert.JSONStringify(transpilert.JSONParse("{\"z\": 1, \"a\": 2}"))))
+}

@@ -1,0 +1,56 @@
+import io;
+import json;
+
+/* Call methods on values whose static type is any (navigated json results).
+   The runtime dispatcher routes each method to the same per-type helper the
+   concrete-typed lowering uses, so results are byte-identical to VM/eval. The
+   result is any, so chaining (keys()[0], upper().length()) composes. Pinned
+   output across VM == evaluator == native. */
+
+let data = json.parse("{\"name\":\"widget\",\"qty\":12,\"price\":3.5,\"active\":true,\"tags\":[\"a\",\"b\",\"c\"],\"meta\":{\"owner\":\"acme\"}}");
+
+/* dict methods on an any receiver */
+io.println(data.length());
+io.println(data.keys());
+io.println(data.values());
+io.println(data.hasKey("qty"));
+io.println(data.hasKey("missing"));
+io.println(data.get("name"));
+io.println(data.get("missing"));
+
+/* list-result methods */
+io.println(data["tags"].length());
+io.println(data["tags"].isEmpty());
+io.println(data["tags"].contains("b"));
+io.println(data["tags"].contains("z"));
+io.println(data["tags"].indexOf("c"));
+io.println(data["tags"].join("-"));
+io.println(data["tags"].first());
+io.println(data["tags"].last());
+io.println(data["tags"].reversed());
+io.println(data["tags"].slice(1));
+
+/* string-result methods */
+io.println(data["name"].upper());
+io.println(data["name"].length());
+io.println(data["name"].contains("idg"));
+io.println(data["name"].startsWith("wid"));
+io.println(data["name"].split("g"));
+
+/* numeric/bool-result methods */
+io.println(data["qty"].isEven());
+io.println(data["qty"].abs());
+io.println(data["price"].toInt());
+io.println(data["active"].not());
+
+/* chained any-method navigation */
+io.println(data.keys()[0]);
+io.println(data["name"].upper().length());
+io.println(data["meta"].keys());
+
+/* unknown method on an any value errors identically across all backends */
+try {
+    io.println(data["name"].nope());
+} catch (RuntimeError e) {
+    io.println("caught: ${e.message}");
+}

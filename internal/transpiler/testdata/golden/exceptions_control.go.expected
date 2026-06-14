@@ -1,0 +1,327 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+	"os"
+)
+
+func gbUncaught() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	if e, ok := r.(*transpilert.Error); ok {
+		fmt.Fprintln(os.Stderr, e.Render())
+		os.Exit(1)
+	}
+	panic(r)
+}
+
+func NewAppError(m string) *transpilert.Error {
+	return &transpilert.Error{Class: "AppError", Message: m, Parents: []string{"Error"}}
+}
+
+func NewSubError(m string) *transpilert.Error {
+	return &transpilert.Error{Class: "SubError", Message: m, Parents: []string{"AppError", "Error"}}
+}
+
+func returnInTry() int64 {
+	{
+		var __exc1 any
+		__unh1 := false
+		var __sig1 int
+		var __ret1 int64
+		__sig1, __ret1 = func() (int, int64) {
+			defer func() { __exc1 = recover() }()
+			return 1, 7
+			return 0, 0
+		}()
+		if __exc1 != nil {
+			__exc1_e, __exc1_e_ok := __exc1.(*transpilert.Error)
+			_, _ = __exc1_e, __exc1_e_ok
+			__unh1 = true
+		}
+		var __fsig1 int
+		var __fret1 int64
+		__fsig1, __fret1 = func() (int, int64) {
+			fmt.Println(transpilert.Show("finally-return"))
+			return 0, 0
+		}()
+		if __fsig1 != 0 {
+			__sig1, __ret1 = __fsig1, __fret1
+			__unh1 = false
+		}
+		if __unh1 {
+			panic(__exc1)
+		}
+		if __sig1 == 1 {
+			return __ret1
+		}
+	}
+	return 0
+}
+
+func returnInCatch() string {
+	{
+		var __exc1 any
+		__unh1 := false
+		var __sig1 int
+		var __ret1 string
+		__sig1, __ret1 = func() (int, string) {
+			defer func() { __exc1 = recover() }()
+			panic(NewAppError("boom"))
+			return 0, ""
+		}()
+		if __exc1 != nil {
+			__exc1_e, __exc1_e_ok := __exc1.(*transpilert.Error)
+			_, _ = __exc1_e, __exc1_e_ok
+			__unh1 = true
+			if __exc1_e_ok && __exc1_e.IsClass("AppError") {
+				__unh1 = false
+				__sig1, __ret1 = func() (int, string) {
+					e := __exc1_e
+					_ = e
+					return 1, ("caught:" + e.Message)
+					return 0, ""
+				}()
+			}
+		}
+		var __fsig1 int
+		var __fret1 string
+		__fsig1, __fret1 = func() (int, string) {
+			fmt.Println(transpilert.Show("finally-catch"))
+			return 0, ""
+		}()
+		if __fsig1 != 0 {
+			__sig1, __ret1 = __fsig1, __fret1
+			__unh1 = false
+		}
+		if __unh1 {
+			panic(__exc1)
+		}
+		if __sig1 == 1 {
+			return __ret1
+		}
+	}
+	return ""
+}
+
+func breakInLoop() int64 {
+	var total int64 = 0
+	for i := int64(0); i < 5; i = (i + 1) {
+		{
+			var __exc1 any
+			__unh1 := false
+			var __sig1 int
+			var __ret1 int64
+			__sig1, __ret1 = func() (int, int64) {
+				defer func() { __exc1 = recover() }()
+				if i == 3 {
+					return 2, 0
+				}
+				total = (total + i)
+				return 0, 0
+			}()
+			if __exc1 != nil {
+				__exc1_e, __exc1_e_ok := __exc1.(*transpilert.Error)
+				_, _ = __exc1_e, __exc1_e_ok
+				__unh1 = true
+			}
+			var __fsig1 int
+			var __fret1 int64
+			__fsig1, __fret1 = func() (int, int64) {
+				fmt.Println(transpilert.Show(("fin " + fmt.Sprintf("%v", i))))
+				return 0, 0
+			}()
+			if __fsig1 != 0 {
+				__sig1, __ret1 = __fsig1, __fret1
+				__unh1 = false
+			}
+			if __unh1 {
+				panic(__exc1)
+			}
+			if __sig1 == 1 {
+				return __ret1
+			}
+			if __sig1 == 2 {
+				break
+			}
+			if __sig1 == 3 {
+				continue
+			}
+		}
+	}
+	return total
+}
+
+func continueInLoop() int64 {
+	var total int64 = 0
+	for i := int64(0); i < 4; i = (i + 1) {
+		{
+			var __exc1 any
+			__unh1 := false
+			var __sig1 int
+			var __ret1 int64
+			__sig1, __ret1 = func() (int, int64) {
+				defer func() { __exc1 = recover() }()
+				if i == 1 {
+					return 3, 0
+				}
+				total = (total + i)
+				return 0, 0
+			}()
+			if __exc1 != nil {
+				__exc1_e, __exc1_e_ok := __exc1.(*transpilert.Error)
+				_, _ = __exc1_e, __exc1_e_ok
+				__unh1 = true
+			}
+			var __fsig1 int
+			var __fret1 int64
+			__fsig1, __fret1 = func() (int, int64) {
+				fmt.Println(transpilert.Show(("c-fin " + fmt.Sprintf("%v", i))))
+				return 0, 0
+			}()
+			if __fsig1 != 0 {
+				__sig1, __ret1 = __fsig1, __fret1
+				__unh1 = false
+			}
+			if __unh1 {
+				panic(__exc1)
+			}
+			if __sig1 == 1 {
+				return __ret1
+			}
+			if __sig1 == 2 {
+				break
+			}
+			if __sig1 == 3 {
+				continue
+			}
+		}
+	}
+	return total
+}
+
+func nestedAndSubclass() string {
+	{
+		var __exc1 any
+		__unh1 := false
+		var __sig1 int
+		var __ret1 string
+		__sig1, __ret1 = func() (int, string) {
+			defer func() { __exc1 = recover() }()
+			{
+				var __exc2 any
+				__unh2 := false
+				var __sig2 int
+				var __ret2 string
+				__sig2, __ret2 = func() (int, string) {
+					defer func() { __exc2 = recover() }()
+					panic(NewSubError("inner"))
+					return 0, ""
+				}()
+				if __exc2 != nil {
+					__exc2_e, __exc2_e_ok := __exc2.(*transpilert.Error)
+					_, _ = __exc2_e, __exc2_e_ok
+					__unh2 = true
+				}
+				var __fsig2 int
+				var __fret2 string
+				__fsig2, __fret2 = func() (int, string) {
+					fmt.Println(transpilert.Show("inner-finally"))
+					return 0, ""
+				}()
+				if __fsig2 != 0 {
+					__sig2, __ret2 = __fsig2, __fret2
+					__unh2 = false
+				}
+				if __unh2 {
+					panic(__exc2)
+				}
+				if __sig2 == 1 {
+					return 1, __ret2
+				}
+				if __sig2 == 2 {
+					return 2, ""
+				}
+				if __sig2 == 3 {
+					return 3, ""
+				}
+			}
+			return 0, ""
+		}()
+		if __exc1 != nil {
+			__exc1_e, __exc1_e_ok := __exc1.(*transpilert.Error)
+			_, _ = __exc1_e, __exc1_e_ok
+			__unh1 = true
+			if __exc1_e_ok && __exc1_e.IsClass("AppError") {
+				__unh1 = false
+				__sig1, __ret1 = func() (int, string) {
+					e := __exc1_e
+					_ = e
+					return 1, ("outer:" + e.Message)
+					return 0, ""
+				}()
+			}
+		}
+		var __fsig1 int
+		var __fret1 string
+		__fsig1, __fret1 = func() (int, string) {
+			fmt.Println(transpilert.Show("outer-finally"))
+			return 0, ""
+		}()
+		if __fsig1 != 0 {
+			__sig1, __ret1 = __fsig1, __fret1
+			__unh1 = false
+		}
+		if __unh1 {
+			panic(__exc1)
+		}
+		if __sig1 == 1 {
+			return __ret1
+		}
+	}
+	return ""
+}
+
+func main() {
+	defer gbUncaught()
+	fmt.Println(transpilert.Show(fmt.Sprintf("%v", returnInTry())))
+	fmt.Println(transpilert.Show(returnInCatch()))
+	fmt.Println(transpilert.Show(fmt.Sprintf("%v", breakInLoop())))
+	fmt.Println(transpilert.Show(fmt.Sprintf("%v", continueInLoop())))
+	fmt.Println(transpilert.Show(nestedAndSubclass()))
+	{
+		var __exc1 any
+		__unh1 := false
+		var __sig1 int
+		__sig1 = func() int {
+			defer func() { __exc1 = recover() }()
+			panic(NewAppError("top"))
+			return 0
+		}()
+		if __exc1 != nil {
+			__exc1_e, __exc1_e_ok := __exc1.(*transpilert.Error)
+			_, _ = __exc1_e, __exc1_e_ok
+			__unh1 = true
+			if __exc1_e_ok && __exc1_e.IsClass("Error") {
+				__unh1 = false
+				__sig1 = func() int {
+					e := __exc1_e
+					_ = e
+					fmt.Println(transpilert.Show(("top caught: " + e.Message)))
+					return 0
+				}()
+			}
+		}
+		if __unh1 {
+			panic(__exc1)
+		}
+		if __sig1 == 1 {
+			return
+		}
+	}
+	fmt.Println(transpilert.Show("done"))
+}

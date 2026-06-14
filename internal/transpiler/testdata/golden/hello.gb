@@ -1,0 +1,16 @@
+/**
+ * @title Hello
+ * @summary Demonstrates hello in a runnable Geblang example.
+ * @category General
+ */
+# This is a single-line Geblang comment.
+/* This is a multi-line
+   Geblang comment. */
+import io;
+import sys;
+
+io.print("Hello world\n"); # In double quotes, escape sequences like \n are evaluated.
+io.println("Hello world");
+io.print('Hello world\n'); # In single quotes, \n is literal, not a newline.
+
+sys.exit(0); # Exit with a code. Scripts default to exit code 0 when they finish normally.

@@ -1,0 +1,77 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type Square interface {
+	area() int64
+	describe() string
+	GbGet_side() int64
+	GbSet_side(int64)
+}
+
+type Square_impl struct {
+	*Shape_impl
+	self Square
+	side int64
+}
+
+func (this *Square_impl) GbGet_side() int64  { return this.side }
+func (this *Square_impl) GbSet_side(v int64) { this.side = v }
+
+func NewSquare(side int64) Square {
+	this := &Square_impl{}
+	this.self = this
+	this.Shape_impl = NewShape().(*Shape_impl)
+	this.side = side
+	this.Shape_impl.self = this
+	return this
+}
+
+func (this *Square_impl) area() int64 {
+	return (this.side * this.side)
+}
+
+var __decorators_Square = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Square = []string{"area"}
+
+var __fields_Square = []string{"side"}
+
+type Shape interface {
+	area() int64
+	describe() string
+}
+
+type Shape_impl struct {
+	self Shape
+}
+
+func NewShape() Shape {
+	this := &Shape_impl{}
+	this.self = this
+	return this
+}
+
+func (this *Shape_impl) area() int64 {
+	return 0
+}
+
+func (this *Shape_impl) describe() string {
+	return ("shape area=" + fmt.Sprintf("%v", this.self.area()))
+}
+
+var __decorators_Shape = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Shape = []string{"area", "describe"}
+
+var __fields_Shape = []string{}
+
+func main() {
+	var sq Square = NewSquare(4)
+	fmt.Println(transpilert.Show(sq.describe()))
+	fmt.Println(transpilert.Show(fmt.Sprintf("%v", sq.area())))
+}

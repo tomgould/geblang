@@ -1,0 +1,35 @@
+import io;
+
+/* Destructuring + pipe + default params composed. */
+
+func minMax(list<int> xs): list<int> {
+    int lo = xs[0];
+    int hi = xs[0];
+    for (int x in xs) {
+        if (x < lo) { lo = x; }
+        if (x > hi) { hi = x; }
+    }
+    return [lo, hi];
+}
+
+let [lo, hi] = minMax([4, 1, 8, 3, 9, 2]);
+io.println(lo);
+io.println(hi);
+io.println(hi - lo);
+
+func scale(int x, int factor = 2): int {
+    return x * factor;
+}
+
+io.println(scale(5));
+io.println(scale(5, 3));
+
+/* pipe a value through a chain of unary functions */
+func inc(int x): int { return x + 1; }
+func dbl(int x): int { return x * 2; }
+
+io.println(10 |> inc |> dbl);
+
+let coords = [11, 22, 33];
+let [first, second, third] = coords;
+io.println(first + second + third);

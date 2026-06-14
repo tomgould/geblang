@@ -1,0 +1,18 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func bump(n int64) int64 {
+	return (n + 1)
+}
+
+func main() {
+	var total int64 = 41
+	fmt.Println(transpilert.Show(bump(total)))
+	var names []string = []string{"a", "b"}
+	fmt.Println(transpilert.Show(int64(len(names))))
+}

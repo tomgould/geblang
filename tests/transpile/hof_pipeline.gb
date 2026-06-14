@@ -1,0 +1,36 @@
+import io;
+
+/* Composed HOF: map -> filter -> reduce, and sortBy then index, with the
+   intermediate results bound to variables so the receiver-type inference for
+   each next stage is exercised. */
+
+let nums = [5, 2, 8, 1, 9, 3, 7, 4, 6];
+
+let doubled = nums.map(func(int x): int { return x * 2; });
+let big = doubled.filter(func(int x): bool { return x > 8; });
+let total = big.reduce(func(int a, int b): int { return a + b; }, 0);
+io.println(total);
+
+/* inline chain */
+io.println(
+  nums.map(func(int x): int { return x + 1; })
+      .filter(func(int x): bool { return x % 2 == 0; })
+      .reduce(func(int a, int b): int { return a + b; }, 0)
+);
+
+/* sortBy descending, then index + slice-ish access */
+let sorted = nums.sortBy(func(int x): int { return 0 - x; });
+io.println(sorted[0]);
+io.println(sorted[sorted.length() - 1]);
+
+/* any/all/count/find composed over a filtered list */
+let evens = nums.filter(func(int x): bool { return x % 2 == 0; });
+io.println(evens.any(func(int x): bool { return x > 5; }));
+io.println(evens.all(func(int x): bool { return x > 0; }));
+io.println(evens.count(func(int x): bool { return x < 6; }));
+io.println(evens.find(func(int x): bool { return x > 100; }));
+
+/* flatMap then sorted */
+let nested = [[3, 1], [2], [5, 4]];
+let flat = nested.flatMap(func(list<int> p): list<int> { return p; });
+io.println(flat.sorted());

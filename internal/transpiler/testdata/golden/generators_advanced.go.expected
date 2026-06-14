@@ -1,0 +1,44 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+	"iter"
+)
+
+func take(src iter.Seq[int64], n int64) iter.Seq[int64] {
+	return func(yield func(int64) bool) {
+		var taken int64 = 0
+		for v := range src {
+			if taken >= n {
+				break
+			}
+			if !yield(v) {
+				return
+			}
+			taken = (taken + 1)
+		}
+	}
+}
+
+func nats() iter.Seq[int64] {
+	return func(yield func(int64) bool) {
+		var n int64 = 1
+		for true {
+			if !yield(n) {
+				return
+			}
+			n = (n + 1)
+		}
+	}
+}
+
+func main() {
+	var total int64 = 0
+	for x := range take(nats(), 5) {
+		total = (total + x)
+		fmt.Println(transpilert.Show(x))
+	}
+	fmt.Println(transpilert.Show(total))
+}

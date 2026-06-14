@@ -1,0 +1,18 @@
+import io;
+
+func identity<T>(T x): T {
+    return x;
+}
+
+func first<T>(list<T> xs): T {
+    return xs[0];
+}
+
+func pair<A, B>(A a, B b): list<any> {
+    return [a, b];
+}
+
+io.println(identity<int>(42));
+io.println(identity<string>("hi"));
+io.println(first<int>([1, 2, 3]));
+io.println(first<string>(["a", "b", "c"]));

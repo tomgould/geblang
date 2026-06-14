@@ -1,0 +1,21 @@
+import io;
+
+let day = 3;
+let label = match (day) {
+    case 1 => "Monday";
+    case 2 => "Tuesday";
+    case 3 => "Wednesday";
+    case 4 if (day > 0) => "Thursday";
+    default => "weekend";
+};
+io.println(label);
+
+int n = 7;
+match (n) {
+    case 1:
+        io.println("one");
+    case 7:
+        io.println("seven");
+    default:
+        io.println("other");
+}

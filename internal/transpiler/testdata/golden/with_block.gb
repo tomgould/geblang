@@ -1,0 +1,27 @@
+import io;
+
+class Res {
+    string name;
+    func Res(string name) { this.name = name; }
+    func __enter(): Res {
+        io.println("enter " + this.name);
+        return this;
+    }
+    func __exit() {
+        io.println("exit " + this.name);
+    }
+    func use() { io.println("using " + this.name); }
+}
+
+with (r = Res("a")) {
+    r.use();
+}
+io.println("after");
+
+class Plain {
+    func Plain() {}
+    func __exit() { io.println("cleanup"); }
+}
+with (Plain()) {
+    io.println("in plain");
+}

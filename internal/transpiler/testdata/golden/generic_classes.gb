@@ -1,0 +1,20 @@
+import io;
+
+class Box<T> {
+    T value;
+
+    func Box(T v) {
+        this.value = v;
+    }
+
+    func get(): T {
+        return this.value;
+    }
+}
+
+Box<int> bi = Box<int>(42);
+Box<string> bs = Box<string>("hi");
+
+io.println(bi.get());
+io.println(bs.get());
+io.println(bi.value);

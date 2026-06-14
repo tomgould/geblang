@@ -1,0 +1,126 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type Base interface {
+	describe() string
+	name() string
+	GbGet_tag() string
+	GbSet_tag(string)
+}
+
+type Base_impl struct {
+	self Base
+	tag  string
+}
+
+func (this *Base_impl) GbGet_tag() string  { return this.tag }
+func (this *Base_impl) GbSet_tag(v string) { this.tag = v }
+
+func NewBase(tag string) Base {
+	this := &Base_impl{}
+	this.self = this
+	this.tag = tag
+	return this
+}
+
+func (this *Base_impl) describe() string {
+	return (((("I am " + this.self.name()) + " [") + this.tag) + "]")
+}
+
+func (this *Base_impl) name() string {
+	return "base"
+}
+
+var __decorators_Base = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Base = []string{"describe", "name"}
+
+var __fields_Base = []string{"tag"}
+
+type Derived interface {
+	name() string
+	describe() string
+	GbGet_tag() string
+	GbSet_tag(string)
+}
+
+type Derived_impl struct {
+	*Base_impl
+	self Derived
+}
+
+func NewDerived() Derived {
+	this := &Derived_impl{}
+	this.self = this
+	this.Base_impl = NewBase("d").(*Base_impl)
+	this.Base_impl.self = this
+	return this
+}
+
+func (this *Derived_impl) name() string {
+	return "derived"
+}
+
+var __decorators_Derived = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Derived = []string{"name"}
+
+var __fields_Derived = []string{}
+
+type Deeper interface {
+	name() string
+	describeViaParent() string
+	describe() string
+	GbGet_tag() string
+	GbSet_tag(string)
+}
+
+type Deeper_impl struct {
+	*Derived_impl
+	self Deeper
+}
+
+func NewDeeper() Deeper {
+	this := &Deeper_impl{}
+	this.self = this
+	this.Derived_impl = NewDerived().(*Derived_impl)
+	this.Derived_impl.self = this
+	this.Derived_impl.Base_impl.self = this
+	return this
+}
+
+func (this *Deeper_impl) name() string {
+	return "deeper"
+}
+
+func (this *Deeper_impl) describeViaParent() string {
+	return this.Derived_impl.describe()
+}
+
+var __decorators_Deeper = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Deeper = []string{"name", "describeViaParent"}
+
+var __fields_Deeper = []string{}
+
+func render(item Base) string {
+	return item.describe()
+}
+
+func main() {
+	var b Base = NewBase("b")
+	var d Derived = NewDerived()
+	var x Deeper = NewDeeper()
+	fmt.Println(transpilert.Show(b.describe()))
+	fmt.Println(transpilert.Show(d.describe()))
+	fmt.Println(transpilert.Show(x.describe()))
+	fmt.Println(transpilert.Show(x.describeViaParent()))
+	fmt.Println(transpilert.Show(render(d)))
+	fmt.Println(transpilert.Show(render(x)))
+	fmt.Println(transpilert.Show(x.GbGet_tag()))
+}

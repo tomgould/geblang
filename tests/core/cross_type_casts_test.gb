@@ -176,3 +176,31 @@ class StringModuleTest extends test.Test {
         this.assertEquals("€", string.fromCodePoint(n));
     }
 }
+
+class AnimalForCast { func AnimalForCast() {} }
+class DogForCast extends AnimalForCast { func DogForCast() { parent(); } }
+
+class AsAnyCastTest extends test.Test {
+    @test
+    func widenPrimitiveToAny(): void {
+        this.assertTrue(typeof("x" as any) == "string");
+        this.assertTrue(typeof(5 as any) == "int");
+    }
+
+    @test
+    func widenInstanceToAnyKeepsDynamicType(): void {
+        let d = DogForCast();
+        this.assertTrue(typeof(d as any) == "DogForCast");
+    }
+
+    @test
+    func roundTripThroughAny(): void {
+        let v = "hello" as any;
+        this.assertEquals("hello", v as string);
+    }
+
+    @test
+    func nullableAnyWidens(): void {
+        this.assertTrue(typeof(5 as ?any) == "int");
+    }
+}

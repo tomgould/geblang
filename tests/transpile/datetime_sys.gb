@@ -1,0 +1,17 @@
+import io;
+import datetime;
+
+/* datetime functional surface composed with deterministic arithmetic. Uses a
+   fixed instant so output is stable across runs and backends. */
+
+let t = datetime.parse("2024-01-15T10:30:00Z");
+io.println(datetime.unix(t));
+io.println(datetime.formatDate(t));
+io.println(datetime.format(t, "%Y-%m-%d %H:%M:%S"));
+
+let d5 = datetime.addDays(t, 5);
+io.println(datetime.formatDate(d5));
+io.println(datetime.diff(d5, t));
+io.println(datetime.addSeconds(t, 3600) - t);
+io.println(datetime.weekdayName(1));
+io.println(datetime.monthName(1));

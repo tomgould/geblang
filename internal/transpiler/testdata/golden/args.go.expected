@@ -1,0 +1,16 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+	"os"
+)
+
+func main() {
+	args := os.Args[1:]
+	fmt.Println(transpilert.Show(int64(len(args))))
+	if int64(len(args)) > 0 {
+		fmt.Println(transpilert.Show(args[0]))
+	}
+}

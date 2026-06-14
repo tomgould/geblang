@@ -1,0 +1,156 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+	"os"
+)
+
+func gbUncaught() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	if e, ok := r.(*transpilert.Error); ok {
+		fmt.Fprintln(os.Stderr, e.Render())
+		os.Exit(1)
+	}
+	panic(r)
+}
+
+type Timer struct {
+	_start     int64
+	_elapsedNs int64
+}
+
+func NewTimer() *Timer {
+	this := &Timer{}
+	this._start = 0
+	this._elapsedNs = 0
+	return this
+}
+
+func (this *Timer) __enter() *Timer {
+	this._start = transpilert.TimeMonotonicNs()
+	return this
+}
+
+func (this *Timer) __exit() {
+	this._elapsedNs = (transpilert.TimeMonotonicNs() - this._start)
+}
+
+func (this *Timer) elapsedNs() int64 {
+	return this._elapsedNs
+}
+
+func (this *Timer) elapsedMs() float64 {
+	return (float64(this._elapsedNs) / 1000000.0)
+}
+
+var __decorators_Timer = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Timer = []string{"__enter", "__exit", "elapsedNs", "elapsedMs"}
+
+var __fields_Timer = []string{"_start", "_elapsedNs"}
+
+func profiler_timer() *Timer {
+	return NewTimer()
+}
+
+type Profile struct {
+	_snap  any
+	_delta *transpilert.OrderedDict[string, any]
+}
+
+func NewProfile() *Profile {
+	this := &Profile{}
+	this._snap = nil
+	this._delta = transpilert.NewOrderedDict[string, any]()
+	return this
+}
+
+func (this *Profile) __enter() *Profile {
+	this._snap = transpilert.ProfilerSnapshot()
+	return this
+}
+
+func (this *Profile) __exit() {
+	this._delta = transpilert.ProfilerDelta(this._snap)
+}
+
+func (this *Profile) elapsedMs() float64 {
+	v := func() any { __v, _ := this._delta.Get("elapsed_ms"); return __v }()
+	return func() float64 {
+		if v != nil {
+			return transpilert.AsFloat(v)
+		}
+		return 0.0
+	}()
+}
+
+func (this *Profile) cpuMs() float64 {
+	v := func() any { __v, _ := this._delta.Get("cpu_ms"); return __v }()
+	return func() float64 {
+		if v != nil {
+			return transpilert.AsFloat(v)
+		}
+		return 0.0
+	}()
+}
+
+func (this *Profile) heapBytes() int64 {
+	v := func() any { __v, _ := this._delta.Get("heap_alloc"); return __v }()
+	return func() int64 {
+		if v != nil {
+			return transpilert.AsIntFast(v)
+		}
+		return 0
+	}()
+}
+
+func (this *Profile) allocs() int64 {
+	v := func() any { __v, _ := this._delta.Get("allocs"); return __v }()
+	return func() int64 {
+		if v != nil {
+			return transpilert.AsIntFast(v)
+		}
+		return 0
+	}()
+}
+
+func (this *Profile) gcCount() int64 {
+	v := func() any { __v, _ := this._delta.Get("gc_count"); return __v }()
+	return func() int64 {
+		if v != nil {
+			return transpilert.AsIntFast(v)
+		}
+		return 0
+	}()
+}
+
+func (this *Profile) report() *transpilert.OrderedDict[string, any] {
+	return this._delta
+}
+
+var __decorators_Profile = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Profile = []string{"__enter", "__exit", "elapsedMs", "cpuMs", "heapBytes", "allocs", "gcCount", "report"}
+
+var __fields_Profile = []string{"_snap", "_delta"}
+
+func profiler_profile() *Profile {
+	return NewProfile()
+}
+
+func main() {
+	defer gbUncaught()
+	var total int64 = 0
+	t := profiler_timer()
+	for i := int64(0); i < 1000; i = (i + 1) {
+		total = (total + i)
+	}
+	fmt.Println(transpilert.Show(fmt.Sprintf("total=%v", transpilert.Show(total))))
+	fmt.Println(transpilert.Show(fmt.Sprintf("elapsed-nonneg=%v", transpilert.Show((t.elapsedMs() >= 0.0)))))
+	fmt.Println(transpilert.Show(fmt.Sprintf("elapsed-ns-nonneg=%v", transpilert.Show((t.elapsedNs() >= 0)))))
+}

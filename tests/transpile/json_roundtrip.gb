@@ -1,0 +1,26 @@
+import io;
+import json;
+
+/* JSON stringify + validate composed with dict and list building. Indexing a
+   parsed value is dynamic dispatch on any and is deferred, so this exercises
+   the encode + validate surface. */
+
+let record = {
+    "name": "widget",
+    "qty": 12,
+    "tags": ["a", "b", "c"],
+    "active": true
+};
+
+let encoded = json.stringify(record);
+io.println(encoded);
+io.println(json.validate(encoded));
+io.println(json.validate("{not valid"));
+
+/* round-trip a list of dicts through stringify */
+let rows = [{"id": 1, "v": 10}, {"id": 2, "v": 20}];
+io.println(json.stringify(rows));
+
+/* nested structure stringified */
+let nested = {"outer": {"inner": [1, 2, 3]}, "flag": false};
+io.println(json.stringify(nested));

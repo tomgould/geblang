@@ -1,0 +1,27 @@
+import io;
+
+func take(iterable<int> src, int n): generator<int> {
+    int taken = 0;
+    for (v in src) {
+        if (taken >= n) {
+            break;
+        }
+        yield v;
+        taken = taken + 1;
+    }
+}
+
+func nats(): generator<int> {
+    int n = 1;
+    while (true) {
+        yield n;
+        n = n + 1;
+    }
+}
+
+let total = 0;
+for (x in take(nats(), 5)) {
+    total = total + x;
+    io.println(x);
+}
+io.println(total);

@@ -1,0 +1,52 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type Direction int
+
+const (
+	DirectionNorth Direction = iota
+	DirectionSouth
+	DirectionEast
+	DirectionWest
+)
+
+func (__v Direction) String() string {
+	switch __v {
+	case DirectionNorth:
+		return "Direction.North"
+	case DirectionSouth:
+		return "Direction.South"
+	case DirectionEast:
+		return "Direction.East"
+	case DirectionWest:
+		return "Direction.West"
+	}
+	return "Direction.?"
+}
+
+func opposite(d Direction) Direction {
+	if d == DirectionNorth {
+		return DirectionSouth
+	}
+	if d == DirectionSouth {
+		return DirectionNorth
+	}
+	if d == DirectionEast {
+		return DirectionWest
+	}
+	return DirectionEast
+}
+
+func main() {
+	var heading Direction = DirectionNorth
+	fmt.Println(transpilert.Show(heading))
+	fmt.Println(transpilert.Show((heading == DirectionNorth)))
+	fmt.Println(transpilert.Show((heading == DirectionSouth)))
+	fmt.Println(transpilert.Show(opposite(DirectionNorth)))
+	fmt.Println(transpilert.Show(opposite(DirectionEast)))
+}

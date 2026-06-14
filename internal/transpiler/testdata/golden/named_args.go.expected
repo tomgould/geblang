@@ -1,0 +1,40 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func describe(name string, age int64) string {
+	return ((name + " is ") + fmt.Sprintf("%v", age))
+}
+
+type Point struct {
+	x int64
+	y int64
+}
+
+func NewPoint(x int64, y int64) *Point {
+	this := &Point{}
+	this.x = x
+	this.y = y
+	return this
+}
+
+func (this *Point) show() string {
+	return (((("(" + fmt.Sprintf("%v", this.x)) + ", ") + fmt.Sprintf("%v", this.y)) + ")")
+}
+
+var __decorators_Point = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Point = []string{"show"}
+
+var __fields_Point = []string{"x", "y"}
+
+func main() {
+	fmt.Println(transpilert.Show(describe("Ada", 30)))
+	fmt.Println(transpilert.Show(describe("Bob", 25)))
+	var p *Point = NewPoint(3, 4)
+	fmt.Println(transpilert.Show(p.show()))
+}

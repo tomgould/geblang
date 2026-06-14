@@ -1,0 +1,69 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type Box struct {
+	n int64
+}
+
+func NewBox(n int64) *Box {
+	this := &Box{}
+	this.n = n
+	return this
+}
+
+var __decorators_Box = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Box = []string{}
+
+var __fields_Box = []string{"n"}
+
+type Bag struct {
+	s string
+}
+
+func NewBag(s string) *Bag {
+	this := &Bag{}
+	this.s = s
+	return this
+}
+
+var __decorators_Bag = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Bag = []string{}
+
+var __fields_Bag = []string{"s"}
+
+type Color int
+
+const (
+	ColorRed Color = iota
+	ColorGreen
+	ColorBlue
+)
+
+func (__v Color) String() string {
+	switch __v {
+	case ColorRed:
+		return "Color.Red"
+	case ColorGreen:
+		return "Color.Green"
+	case ColorBlue:
+		return "Color.Blue"
+	}
+	return "Color.?"
+}
+
+func main() {
+	var b *Box = NewBox(42)
+	var g *Bag = NewBag("hi")
+	fmt.Println(transpilert.Show(func() bool { _, __ok := any(b).(*Box); return __ok }()))
+	fmt.Println(transpilert.Show(func() bool { _, __ok := any(b).(*Bag); return __ok }()))
+	fmt.Println(transpilert.Show(func() bool { _, __ok := any(g).(*Bag); return __ok }()))
+	var c Color = ColorRed
+	fmt.Println(transpilert.Show(func() bool { _, __ok := any(c).(Color); return __ok }()))
+}

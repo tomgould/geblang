@@ -1,0 +1,11 @@
+import io;
+
+func double(int n): int { return n * 2; }
+func addOne(int n): int { return n + 1; }
+
+let x = 5 |> double |> addOne;
+io.println(x);
+
+func tag(string s, string suffix): string { return s + suffix; }
+let s = "hi" |> tag("!");
+io.println(s);

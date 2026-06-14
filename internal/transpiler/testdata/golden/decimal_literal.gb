@@ -1,0 +1,11 @@
+import io;
+
+decimal a = 1.5;
+decimal b = 0.1;
+decimal c = 1234.5;
+decimal big = 1_000.25;
+
+io.println(a as string);
+io.println(b as string);
+io.println(c as string);
+io.println(big as string);

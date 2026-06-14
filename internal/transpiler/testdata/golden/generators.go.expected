@@ -1,0 +1,48 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+	"iter"
+)
+
+func numbers(max_ int64) iter.Seq[int64] {
+	return func(yield func(int64) bool) {
+		for i := int64(1); i <= max_; i++ {
+			if !yield(i) {
+				return
+			}
+		}
+	}
+}
+
+func sum(values iter.Seq[int64]) int64 {
+	var total int64 = 0
+	for n := range values {
+		total = (total + n)
+	}
+	return total
+}
+
+func naturals() iter.Seq[int64] {
+	return func(yield func(int64) bool) {
+		var n int64 = 0
+		for true {
+			if !yield(n) {
+				return
+			}
+			n = (n + 1)
+		}
+	}
+}
+
+func main() {
+	fmt.Println(transpilert.Show(sum(numbers(4))))
+	for n := range naturals() {
+		fmt.Println(transpilert.Show(n))
+		if n == 2 {
+			break
+		}
+	}
+}

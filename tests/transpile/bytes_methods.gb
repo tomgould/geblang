@@ -1,0 +1,36 @@
+import io;
+import bytes;
+
+/* bytes module construction + bytes-value primitive methods over the stdlib
+   hex/base64 surface. Fixed inputs, pinned output; all three backends match. */
+
+let b = bytes.fromString("Geblang");
+io.println(b.length());
+io.println(b.isEmpty());
+io.println(b.toHex());
+io.println(b.toBase64());
+io.println(b.toBase64Url());
+io.println(b.toString());
+
+/* hex / base64 round trips through the module functions */
+let h = bytes.toHex(b);
+io.println(bytes.fromHex(h).toString());
+io.println(bytes.fromBase64(bytes.toBase64(b)).toString());
+io.println(bytes.fromBase64Url(bytes.toBase64Url(b)).toString());
+
+/* element access, list view, slicing */
+io.println(b.get(0));
+io.println(b.get(-1));
+io.println(b.toList());
+io.println(b.slice(0, 3).toString());
+io.println(b.slice(3).toString());
+
+/* contains: sub-slice and single int byte */
+io.println(b.contains(bytes.fromString("lan")));
+io.println(b.contains(71));
+io.println(b.contains(999));
+
+/* fromList + concat */
+let parts = bytes.concat(bytes.fromList([72, 105]), bytes.fromString("!"));
+io.println(parts.toString());
+io.println(parts.length());

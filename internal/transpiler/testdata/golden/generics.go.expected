@@ -1,0 +1,26 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func identity[T any](x T) T {
+	return x
+}
+
+func first[T any](xs []T) T {
+	return xs[0]
+}
+
+func pair[A any, B any](a A, b B) []any {
+	return []any{a, b}
+}
+
+func main() {
+	fmt.Println(transpilert.Show(identity[int64](42)))
+	fmt.Println(transpilert.Show(identity[string]("hi")))
+	fmt.Println(transpilert.Show(first[int64]([]int64{1, 2, 3})))
+	fmt.Println(transpilert.Show(first[string]([]string{"a", "b", "c"})))
+}

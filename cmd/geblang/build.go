@@ -25,9 +25,12 @@ func runBuild(args []string) {
 	withDocker := false
 	dockerForce := false
 	dockerPort := 0
+	native := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--native":
+			native = true
 		case "--entry":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "geblang build: --entry requires a value")
@@ -78,12 +81,12 @@ func runBuild(args []string) {
 
 	if entry == "" {
 		fmt.Fprintln(os.Stderr, "geblang build: --entry is required")
-		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--docker [--docker-port N] [--force]] [<package-dir>]")
+		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--docker [--docker-port N] [--force]] [<package-dir>]")
 		os.Exit(2)
 	}
 	if outPath == "" {
 		fmt.Fprintln(os.Stderr, "geblang build: --out is required")
-		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--docker [--docker-port N] [--force]] [<package-dir>]")
+		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--docker [--docker-port N] [--force]] [<package-dir>]")
 		os.Exit(2)
 	}
 
@@ -116,6 +119,11 @@ func runBuild(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "geblang build: %v\n", err)
 		os.Exit(1)
+	}
+
+	if native {
+		runBuildNative(entry, outPath, absPkgDir, entrySig)
+		return
 	}
 
 	allModules, err := bundle.WalkImports(entry, entryPath, resolver, check.IsNativeImport)

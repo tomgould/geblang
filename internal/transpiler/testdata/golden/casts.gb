@@ -1,0 +1,10 @@
+import io;
+
+int port = 8080;
+bool tls = true;
+
+io.println("port=" + (port as string));
+io.println("tls=" + (tls as string));
+io.println(3.7 as int);
+io.println(5 as float);
+io.println(-5 as string);

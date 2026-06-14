@@ -1,0 +1,37 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+	"slices"
+)
+
+func main() {
+	xs := []int64{1, 2, 3}
+	pushed := func(__p *[]int64) []int64 { *__p = append(*__p, 4); return *__p }(&xs)
+	fmt.Println(transpilert.Show(int64(len(pushed))))
+	fmt.Println(transpilert.Show(pushed[3]))
+	popped := func(__p *[]int64) []int64 {
+		if len(*__p) > 0 {
+			*__p = (*__p)[:len(*__p)-1]
+		}
+		return *__p
+	}(&pushed)
+	fmt.Println(transpilert.Show(int64(len(popped))))
+	fmt.Println(transpilert.Show(slices.Contains(xs, 2)))
+	fmt.Println(transpilert.Show(slices.Contains(xs, 99)))
+	d := func() *transpilert.OrderedDict[string, int64] {
+		__d := transpilert.NewOrderedDict[string, int64]()
+		__d.Set("a", 1)
+		__d.Set("b", 2)
+		__d.Set("c", 3)
+		return __d
+	}()
+	fmt.Println(transpilert.Show(func() bool { _, __ok := d.Get("b"); return __ok }()))
+	fmt.Println(transpilert.Show(func() bool { _, __ok := d.Get("z"); return __ok }()))
+	ks := d.Keys()
+	fmt.Println(transpilert.Show(int64(len(ks))))
+	vs := d.Values()
+	fmt.Println(transpilert.Show(int64(len(vs))))
+}

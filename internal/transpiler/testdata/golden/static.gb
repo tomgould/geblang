@@ -1,0 +1,11 @@
+import io;
+
+class MathUtils {
+    static func double(int n): int { return n * 2; }
+    static func square(int n): int { return n * n; }
+    static func add(int a, int b): int { return a + b; }
+}
+
+io.println(MathUtils.double(5));
+io.println(MathUtils.square(4));
+io.println(MathUtils.add(3, 4));

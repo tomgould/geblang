@@ -1,0 +1,70 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func main() {
+	xs := []int64{1, 2, 3, 4, 5}
+	evens := func() []int64 {
+		__dt1 := []int64{}
+		for _, x := range xs {
+			if (x % 2) == 0 {
+				__dt1 = append(__dt1, x)
+			}
+		}
+		return __dt1
+	}()
+	fmt.Println(transpilert.Show(int64(len(evens))))
+	fmt.Println(transpilert.Show(evens[0]))
+	fmt.Println(transpilert.Show(evens[1]))
+	pairs := func() []int64 {
+		__dt2 := []int64{}
+		for _, a := range []int64{1, 2} {
+			for _, b := range []int64{10, 20} {
+				__dt2 = append(__dt2, (a * b))
+			}
+		}
+		return __dt2
+	}()
+	fmt.Println(transpilert.Show(int64(len(pairs))))
+	fmt.Println(transpilert.Show(pairs[3]))
+	squares := func() []int64 {
+		__dt3 := []int64{}
+		for _, x := range xs {
+			if x > 2 {
+				__dt3 = append(__dt3, (x * x))
+			}
+		}
+		return __dt3
+	}()
+	fmt.Println(transpilert.Show(int64(len(squares))))
+	fmt.Println(transpilert.Show(squares[2]))
+	var d *transpilert.OrderedDict[string, int64] = func() *transpilert.OrderedDict[string, int64] {
+		__d := transpilert.NewOrderedDict[string, int64]()
+		__d.Set("a", 1)
+		__d.Set("b", 2)
+		return __d
+	}()
+	byVal := func() *transpilert.OrderedDict[int64, string] {
+		__dt4 := transpilert.NewOrderedDict[int64, string]()
+		for _, k := range d.Keys() {
+			v, _ := d.Get(k)
+			_ = v
+			__dt4.Set(v, k)
+		}
+		return __dt4
+	}()
+	fmt.Println(transpilert.Show(func() bool { _, __ok := byVal.Get(1); return __ok }()))
+	fmt.Println(transpilert.Show(func() string { __v, _ := byVal.Get(2); return __v }()))
+	m := func() *transpilert.OrderedDict[int64, int64] {
+		__dt5 := transpilert.NewOrderedDict[int64, int64]()
+		for _, x := range []int64{1, 2, 3} {
+			__dt5.Set(x, (x * x))
+		}
+		return __dt5
+	}()
+	fmt.Println(transpilert.Show(func() int64 { __v, _ := m.Get(3); return __v }()))
+}

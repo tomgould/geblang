@@ -1,0 +1,31 @@
+import io;
+import encoding;
+
+/* encoding module: base64 / base64Url / base32 / base58 / url / html round
+   trips, all stdlib-backed. Decoders that yield bytes are rendered via the
+   bytes inspector. */
+
+let text = "Geblang rocks! 123";
+let b64 = encoding.base64Encode(text);
+io.println(b64);
+io.println(encoding.base64Decode(b64));
+
+let url64 = encoding.base64UrlEncode("subjects?_d=qp+x");
+io.println(url64);
+io.println(encoding.base64UrlDecode(url64));
+
+/* base32/base58 decode return bytes; re-encode the decoded bytes (the encoders
+   accept a bytes input) to round-trip without a bytes-method dependency. */
+let b32 = encoding.base32Encode(text);
+io.println(b32);
+io.println(encoding.base32Encode(encoding.base32Decode(b32)));
+
+let b58 = encoding.base58Encode(text);
+io.println(b58);
+io.println(encoding.base58Encode(encoding.base58Decode(b58)));
+
+io.println(encoding.urlEncode("a b&c=d/e"));
+io.println(encoding.urlDecode("a+b%26c%3Dd%2Fe"));
+
+io.println(encoding.htmlEscape("<a href=\"x\">A & B</a>"));
+io.println(encoding.htmlUnescape("&lt;a&gt;A &amp; B&lt;/a&gt;"));

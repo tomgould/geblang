@@ -1,0 +1,12 @@
+module shapes;
+
+export class Shape {
+    func Shape() {
+    }
+    func area(): int {
+        return 0;
+    }
+    func describe(): string {
+        return "shape area=" + (this.area() as string);
+    }
+}

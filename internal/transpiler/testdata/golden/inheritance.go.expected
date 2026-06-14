@@ -1,0 +1,85 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type Animal interface {
+	describe() string
+	GbGet_name() string
+	GbSet_name(string)
+}
+
+type Animal_impl struct {
+	self Animal
+	name string
+}
+
+func (this *Animal_impl) GbGet_name() string  { return this.name }
+func (this *Animal_impl) GbSet_name(v string) { this.name = v }
+
+func NewAnimal(name string) Animal {
+	this := &Animal_impl{}
+	this.self = this
+	this.name = name
+	return this
+}
+
+func (this *Animal_impl) describe() string {
+	return ("Animal: " + this.name)
+}
+
+var __decorators_Animal = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Animal = []string{"describe"}
+
+var __fields_Animal = []string{"name"}
+
+type Dog interface {
+	describeDog() string
+	describe() string
+	GbGet_age() int64
+	GbSet_age(int64)
+	GbGet_name() string
+	GbSet_name(string)
+}
+
+type Dog_impl struct {
+	*Animal_impl
+	self Dog
+	age  int64
+}
+
+func (this *Dog_impl) GbGet_age() int64  { return this.age }
+func (this *Dog_impl) GbSet_age(v int64) { this.age = v }
+
+func NewDog(name string, age int64) Dog {
+	this := &Dog_impl{}
+	this.self = this
+	this.Animal_impl = NewAnimal(name).(*Animal_impl)
+	this.age = age
+	this.Animal_impl.self = this
+	return this
+}
+
+func (this *Dog_impl) describeDog() string {
+	return (((this.Animal_impl.describe() + " (dog, age ") + fmt.Sprintf("%v", this.age)) + ")")
+}
+
+var __decorators_Dog = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Dog = []string{"describeDog"}
+
+var __fields_Dog = []string{"age"}
+
+func main() {
+	var a Animal = NewAnimal("Generic")
+	var d Dog = NewDog("Rex", 5)
+	fmt.Println(transpilert.Show(a.describe()))
+	fmt.Println(transpilert.Show(d.describe()))
+	fmt.Println(transpilert.Show(d.describeDog()))
+	fmt.Println(transpilert.Show(d.GbGet_name()))
+	fmt.Println(transpilert.Show(d.GbGet_age()))
+}

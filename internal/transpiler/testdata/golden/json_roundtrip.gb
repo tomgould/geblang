@@ -1,0 +1,28 @@
+import io;
+import json;
+
+/* stringify: keys sorted, no spaces, nested */
+io.println(json.stringify({"name": "Bob", "age": 30, "active": true}));
+io.println(json.stringify([1, 2, 3]));
+io.println(json.stringify({"b": 2, "a": 1, "c": 3}));
+io.println(json.stringify("hi \"there\"\n"));
+io.println(json.stringify(42));
+io.println(json.stringify(true));
+
+/* string list */
+let names = ["x", "y"];
+io.println(json.stringify(names));
+
+/* validate */
+io.println(json.validate("{\"a\":1}"));
+io.println(json.validate("{bad"));
+
+/* parse then print: integers stay int, fractions become decimal,
+   object keys keep insertion order */
+io.println(json.parse("{\"a\": 1, \"b\": [2, 3.5], \"c\": \"x\", \"d\": true, \"e\": null}"));
+io.println(json.parse("[1, 2, 3]"));
+io.println(json.parse("42"));
+io.println(json.parse("3.5"));
+
+/* round trip: parse output re-stringified (parsed dict has sorted keys) */
+io.println(json.stringify(json.parse("{\"z\": 1, \"a\": 2}")));

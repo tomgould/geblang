@@ -1,0 +1,20 @@
+import io;
+
+/* string primitive methods: case, trimming, search, replace, and splitting,
+   all rendered directly. */
+
+let s = "  Hello, Geblang World  ";
+io.println(s.trim());
+io.println(s.trim().upper());
+io.println(s.trim().lower());
+io.println("len=${s.trim().length()}");
+io.println("empty=${s.trim().isEmpty()}");
+io.println("has-world=${s.contains("World")}");
+io.println("starts=${"prefix-body".startsWith("prefix")}");
+io.println("ends=${"prefix-body".endsWith("body")}");
+io.println("index=${s.trim().indexOf("Geblang")}");
+io.println(s.trim().replace("World", "Universe", -1));
+io.println("a,b,c,d".split(","));
+io.println("ab".repeat(3));
+io.println("trim-start=[${"  x".trimStart()}]");
+io.println("trim-end=[${"x  ".trimEnd()}]");

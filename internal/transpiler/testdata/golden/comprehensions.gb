@@ -1,0 +1,18 @@
+import io;
+let xs = [1, 2, 3, 4, 5];
+let evens = [x for x in xs if x % 2 == 0];
+io.println(evens.length());
+io.println(evens[0]);
+io.println(evens[1]);
+let pairs = [a * b for a in [1, 2] for b in [10, 20]];
+io.println(pairs.length());
+io.println(pairs[3]);
+let squares = [x * x for x in xs if x > 2];
+io.println(squares.length());
+io.println(squares[2]);
+dict<string, int> d = {"a": 1, "b": 2};
+let byVal = {v: k for k, v in d.items()};
+io.println(byVal.hasKey(1));
+io.println(byVal[2]);
+let m = {x: x * x for x in [1, 2, 3]};
+io.println(m[3]);

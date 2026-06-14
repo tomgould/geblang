@@ -1,0 +1,22 @@
+import async;
+import io;
+
+let a = async.run(func(): int {
+    await async.sleep(10);
+    return 1;
+});
+let b = async.run(func(): int {
+    await async.sleep(5);
+    return 2;
+});
+let c = async.run(func(): int {
+    await async.sleep(15);
+    return 3;
+});
+
+let all = await async.all([a, b, c]);
+io.println(all.length());
+io.println(all[0]);
+io.println(all[1]);
+io.println(all[2]);
+io.println((all[0] as int) + (all[1] as int) + (all[2] as int));

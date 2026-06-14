@@ -1,0 +1,41 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func service(cls any, name string) any {
+	return cls
+}
+
+type Greeter struct {
+	name string
+}
+
+func NewGreeter(name string) *Greeter {
+	this := &Greeter{}
+	this.name = name
+	return this
+}
+
+func (this *Greeter) hello() string {
+	return (("Hello, " + this.name) + "!")
+}
+
+var __decorators_Greeter = []*transpilert.OrderedDict[string, any]{func() *transpilert.OrderedDict[string, any] {
+	__d := transpilert.NewOrderedDict[string, any]()
+	__d.Set("name", "service")
+	__d.Set("args", []any{"greeter"})
+	return __d
+}()}
+
+var __methods_Greeter = []string{"hello"}
+
+var __fields_Greeter = []string{"name"}
+
+func main() {
+	g := NewGreeter("Ada")
+	fmt.Println(transpilert.Show(g.hello()))
+}

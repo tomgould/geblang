@@ -1,0 +1,33 @@
+import io;
+
+interface Printable {
+    func print(): string;
+}
+
+interface Labelled extends Printable {
+    func label(): string;
+}
+
+class Report implements Labelled {
+    string name;
+
+    func Report(string name) {
+        this.name = name;
+    }
+
+    func print(): string {
+        return "report:" + this.name;
+    }
+
+    func label(): string {
+        return this.name;
+    }
+}
+
+Report r = Report("Q1");
+io.println(r.print());
+io.println(r.label());
+
+Labelled l = r;
+io.println(l.print());
+io.println(l.label());

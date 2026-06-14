@@ -1,0 +1,29 @@
+import io;
+
+let d = {"gamma": 1, "alpha": 2, "beta": 3};
+d.set("delta", 4);
+d["epsilon"] = 5;
+
+/* keys(), values() and items() must report insertion order, not sorted or
+   randomized order. */
+for (k in d.keys()) {
+    io.println(k);
+}
+for (v in d.values()) {
+    io.println(v);
+}
+for (key, value in d.items()) {
+    io.println("${key}=${value}");
+}
+
+io.println(d.length());
+io.println(d.get("alpha"));
+io.println(d.hasKey("zeta"));
+io.println(d["beta"]);
+
+d.delete("gamma");
+io.println(d.length());
+io.println(d.hasKey("gamma"));
+for (k in d.keys()) {
+    io.println(k);
+}

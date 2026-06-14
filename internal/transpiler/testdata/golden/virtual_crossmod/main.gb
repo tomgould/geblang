@@ -1,0 +1,17 @@
+import io;
+import shapes;
+
+class Square extends shapes.Shape {
+    int side;
+    func Square(int side) {
+        parent();
+        this.side = side;
+    }
+    func area(): int {
+        return this.side * this.side;
+    }
+}
+
+Square sq = Square(4);
+io.println(sq.describe());
+io.println((sq.area() as string));

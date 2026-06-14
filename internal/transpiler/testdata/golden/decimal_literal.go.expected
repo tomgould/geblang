@@ -1,0 +1,27 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+	"math/big"
+)
+
+func gbDecimalLit(s string) *big.Rat {
+	r, ok := new(big.Rat).SetString(s)
+	if !ok {
+		panic("invalid decimal literal: " + s)
+	}
+	return r
+}
+
+func main() {
+	var a *big.Rat = gbDecimalLit("1.5")
+	var b *big.Rat = gbDecimalLit("0.1")
+	var c *big.Rat = gbDecimalLit("1234.5")
+	var big *big.Rat = gbDecimalLit("1000.25")
+	fmt.Println(transpilert.Show(a.FloatString(10)))
+	fmt.Println(transpilert.Show(b.FloatString(10)))
+	fmt.Println(transpilert.Show(c.FloatString(10)))
+	fmt.Println(transpilert.Show(big.FloatString(10)))
+}

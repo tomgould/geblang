@@ -1,0 +1,35 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func main() {
+	var day int64 = 3
+	label := func() string {
+		__m := day
+		if __m == 1 {
+			return "Monday"
+		} else if __m == 2 {
+			return "Tuesday"
+		} else if __m == 3 {
+			return "Wednesday"
+		} else if __m == 4 && (day > 0) {
+			return "Thursday"
+		} else {
+			return "weekend"
+		}
+	}()
+	fmt.Println(transpilert.Show(label))
+	var n int64 = 7
+	__m := n
+	if __m == 1 {
+		fmt.Println(transpilert.Show("one"))
+	} else if __m == 7 {
+		fmt.Println(transpilert.Show("seven"))
+	} else {
+		fmt.Println(transpilert.Show("other"))
+	}
+}

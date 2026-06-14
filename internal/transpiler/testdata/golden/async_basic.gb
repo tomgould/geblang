@@ -1,0 +1,19 @@
+import io;
+
+async func compute(int x): int {
+    return x * 2;
+}
+
+async func greet(string name): string {
+    return "Hello, " + name;
+}
+
+let a = compute(21);
+io.println(await a);
+
+let b = greet("world");
+io.println(await b);
+
+let c = compute(10);
+let d = compute(5);
+io.println((await c) + (await d));

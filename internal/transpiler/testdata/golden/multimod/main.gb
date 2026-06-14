@@ -1,0 +1,6 @@
+import io;
+import helper;
+
+io.println(helper.greet("World"));
+io.println(helper.square(7));
+io.println(helper.sum(1, 2, 3, 4, 5));

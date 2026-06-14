@@ -1,0 +1,26 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func double(n int64) int64 {
+	return (n * 2)
+}
+
+func addOne(n int64) int64 {
+	return (n + 1)
+}
+
+func tag(s string, suffix string) string {
+	return (s + suffix)
+}
+
+func main() {
+	var x int64 = addOne(double(5))
+	fmt.Println(transpilert.Show(x))
+	s := tag("hi", "!")
+	fmt.Println(transpilert.Show(s))
+}

@@ -1,0 +1,24 @@
+import io;
+import xml;
+
+/* xml module over encoding/xml (stdlib): validate well-formedness and stringify
+   an element dict (keys name/attributes/children/text), with attribute and text
+   escaping. Fixed input, pinned output across all three backends (VM ==
+   evaluator == native).
+
+   Navigating xml.parse's result (an any-typed dict) is not exercised here: the
+   transpiler has no any-typed method dispatch yet, which is a general frontier
+   independent of this bridge. The parse/tryParse/parseAs surface still lowers
+   (its result type is pinned); only consuming an any value is deferred. */
+
+io.println(xml.validate("<note id=\"1\"><to>Tove</to><from>Jani</from></note>"));
+io.println(xml.validate("<a><b></a>"));
+io.println(xml.validate("text outside root"));
+
+let body = {"name": "body", "attributes": {}, "children": [], "text": "Reminder & <ack>"};
+let to = {"name": "to", "attributes": {"k": "v\"q"}, "children": [], "text": "Tove"};
+let root = {"name": "note", "attributes": {"id": "1", "lang": "en"}, "children": [to, body], "text": ""};
+
+io.println(xml.stringify(root));
+io.println(xml.stringify(to));
+io.println(xml.stringify(body));

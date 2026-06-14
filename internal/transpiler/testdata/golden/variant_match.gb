@@ -1,0 +1,20 @@
+import io;
+
+enum Result { Ok(string), Err(string) }
+
+func describe(Result r): string {
+    return match (r) {
+        case Result.Ok(string s) => "ok: " + s;
+        case Result.Err(string e) => "err: " + e;
+    };
+}
+
+io.println(describe(Result.Ok("hello")));
+io.println(describe(Result.Err("nope")));
+
+match (Result.Ok("statement")) {
+    case Result.Ok(string s):
+        io.println("got: " + s);
+    case Result.Err(string e):
+        io.println("failed: " + e);
+}

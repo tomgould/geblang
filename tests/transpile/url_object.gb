@@ -1,0 +1,50 @@
+import io;
+import url;
+
+/* url.URL object: an opaque handle over net/url (stdlib). Accessors, a with*
+   chain, toDict, resolve, normalize. Fixed inputs, pinned output across all
+   three backends (VM == evaluator == native). */
+
+let u = url.URL("https://example.com:8443/a/b/c?q=hello&n=1#frag");
+io.println(u.scheme());
+io.println(u.host());
+io.println(u.port());
+io.println(u.path());
+io.println(u.fragment());
+io.println(u.toString());
+
+/* query() returns a parts dict (sorted keys) */
+let q = u.query();
+io.println(q.get("q"));
+io.println(q.get("n"));
+
+/* toDict returns scheme/host/port/path/query/fragment */
+let parts = u.toDict();
+io.println(parts.get("scheme"));
+io.println(parts.get("host"));
+io.println(parts.get("port"));
+io.println(parts.get("path"));
+io.println(parts.get("fragment"));
+
+/* with* chain: each returns a new URL handle, so chaining routes the
+   handle-returning method's receiver type */
+let v = u.withScheme("http").withHost("other.test").withPath("/x/y").withFragment("top");
+io.println(v.toString());
+io.println(v.scheme());
+io.println(v.host());
+
+/* withQuery from a dict */
+let w = u.withQuery({"k": "v", "z": "1"});
+io.println(w.query().get("k"));
+
+/* resolve a relative reference against the base */
+let r = url.URL("https://example.com/base/page.html").resolve("../other/thing");
+io.println(r.toString());
+
+/* normalize cleans a dotted path and re-encodes the query */
+let n = url.URL("https://example.com/a/./b/../c?x=1").normalize();
+io.println(n.toString());
+
+/* build a URL from a parts dict */
+let built = url.URL({"scheme": "https", "host": "h.test", "port": "9000", "path": "/p"});
+io.println(built.toString());

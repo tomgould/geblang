@@ -1,0 +1,20 @@
+import io;
+
+string s = "Hello, World!";
+io.println(s.length());
+io.println(s.isEmpty());
+io.println(s.contains("World"));
+io.println(s.contains("xyz"));
+io.println(s.startsWith("Hello"));
+io.println(s.endsWith("!"));
+io.println(s.lower());
+io.println(s.upper());
+io.println(s.replace("World", "Geblang"));
+io.println(s.indexOf("World"));
+io.println("  spaces  ".trim());
+io.println("ab".repeat(3));
+
+let parts = "a,b,c".split(",");
+io.println(parts.length());
+io.println(parts[0]);
+io.println(parts[2]);

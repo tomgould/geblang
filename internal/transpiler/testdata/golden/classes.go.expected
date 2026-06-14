@@ -1,0 +1,44 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type User struct {
+	name   string
+	visits int64
+}
+
+func NewUser(name string) *User {
+	this := &User{}
+	this.visits = 0
+	this.name = name
+	return this
+}
+
+func (this *User) visit() int64 {
+	this.visits = (this.visits + 1)
+	return this.visits
+}
+
+func (this *User) label() string {
+	return ((this.name + ":") + fmt.Sprintf("%v", this.visits))
+}
+
+var __decorators_User = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_User = []string{"visit", "label"}
+
+var __fields_User = []string{"name", "visits"}
+
+func main() {
+	var u *User = NewUser("Dave")
+	fmt.Println(transpilert.Show(u.name))
+	fmt.Println(transpilert.Show(u.visit()))
+	fmt.Println(transpilert.Show(u.visit()))
+	fmt.Println(transpilert.Show(u.label()))
+	u.name = "Eve"
+	fmt.Println(transpilert.Show(u.label()))
+}

@@ -1,0 +1,31 @@
+import io;
+
+/* Scalars and collections must print byte-identical to the interpreter. */
+io.println([1, 2, 3]);
+io.println([[1, 2], [3, 4]]);
+io.println(["a", "b", "c"]);
+io.println([3.14f, 2.0f]);
+
+let d = {"k": 1, "k2": 2};
+io.println(d);
+let nested = {"name": "alice", "tags": ["x", "y"]};
+io.println(nested);
+
+io.println(42);
+io.println(true);
+io.println(false);
+io.println("hello");
+io.println("with \"quote\"");
+
+io.println(1.0f);
+io.println(100.0f);
+io.println(0.5f);
+io.println(3.14f);
+
+io.println(2.5);
+io.println([1.5, 2.0]);
+
+let label = "world";
+io.println("hello ${label}");
+let xs = [1, 2, 3];
+io.println("list is ${xs}");

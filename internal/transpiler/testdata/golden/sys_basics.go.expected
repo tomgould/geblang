@@ -1,0 +1,20 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func main() {
+	transpilert.SysSetenv("GB_TRANSPILE_TEST", "hello")
+	fmt.Println(transpilert.Show(transpilert.SysGetenv("GB_TRANSPILE_TEST")))
+	fmt.Println(transpilert.Show(transpilert.SysGetenv("GB_TRANSPILE_DEFINITELY_MISSING")))
+	fmt.Println(transpilert.Show((int64(len([]rune(transpilert.SysPlatform()))) > 0)))
+	fmt.Println(transpilert.Show((int64(len([]rune(transpilert.SysArch()))) > 0)))
+	fmt.Println(transpilert.Show((int64(len([]rune(transpilert.SysCwd()))) > 0)))
+	fmt.Println(transpilert.Show((int64(len([]rune(transpilert.SysHostname()))) > 0)))
+	env := transpilert.SysEnviron()
+	fmt.Println(transpilert.Show(func() bool { _, __ok := env.Get("GB_TRANSPILE_TEST"); return __ok }()))
+	fmt.Println(transpilert.Show(func() string { __v, _ := env.Get("GB_TRANSPILE_TEST"); return __v }()))
+}

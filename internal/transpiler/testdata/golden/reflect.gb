@@ -1,0 +1,46 @@
+import io;
+import reflect;
+
+func service(any cls, string name): any {
+    return cls;
+}
+
+func logged(any fn): any {
+    return fn;
+}
+
+@logged
+func helper(): string {
+    return "ok";
+}
+
+@service("greeter")
+class Greeter {
+    string name;
+    int visits;
+
+    func Greeter(string name) {
+        this.name = name;
+        this.visits = 0;
+    }
+
+    func hello(): string {
+        return "Hello, " + this.name + "!";
+    }
+
+    func bye(): string {
+        return "Bye, " + this.name;
+    }
+}
+
+io.println(reflect.className(Greeter));
+io.println(reflect.methods(Greeter).length());
+io.println(reflect.fields(Greeter).length());
+io.println(reflect.decorators(Greeter).length());
+
+let deco = reflect.decorators(Greeter)[0];
+io.println(deco["name"]);
+
+let fnDecos = reflect.decorators(helper);
+io.println(fnDecos.length());
+io.println(fnDecos[0]["name"]);

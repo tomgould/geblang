@@ -1,0 +1,15 @@
+import io;
+
+func service(any cls, string name): any {
+    return cls;
+}
+
+@service("greeter")
+class Greeter {
+    string name;
+    func Greeter(string name) { this.name = name; }
+    func hello(): string { return "Hello, " + this.name + "!"; }
+}
+
+let g = Greeter("Ada");
+io.println(g.hello());

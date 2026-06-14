@@ -1,0 +1,25 @@
+import io;
+import re;
+
+/* re module: replace free function plus a compiled Pattern object whose chained
+   methods (test/find/findAll/split/match) run over RE2 with deterministic input. */
+
+io.println(re.replace("\\d+", "#", "a1b22c333"));
+
+let p = re.compile("[0-9]+");
+io.println("test-yes=${p.test("abc42")}");
+io.println("test-no=${p.test("nodigits")}");
+io.println("find=${p.find("foo123bar456")}");
+io.println("find-none=${p.find("nodigits")}");
+io.println(p.findAll("a1b22c333"));
+io.println(p.split("a1b22c333"));
+
+let word = re.compile("(?P<first>\\w+)-(?P<second>\\w+)");
+let m = word.match("alpha-beta");
+io.println(m);
+io.println("whole=${m["text"]}");
+
+let none = word.match("nodash");
+io.println("no-match=${none}");
+
+io.println(word.matchAll("a-b c-d"));

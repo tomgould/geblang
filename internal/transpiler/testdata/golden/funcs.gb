@@ -1,0 +1,26 @@
+import io;
+
+func double(int n): int {
+    return n * 2;
+}
+
+func sumEvensTo(int n): int {
+    int total = 0;
+    int i = 0;
+    while (i <= n) {
+        i = i + 1;
+        if (i % 2 != 0) {
+            continue;
+        }
+        if (i > 100) {
+            break;
+        }
+        total = total + i;
+    }
+    return total;
+}
+
+io.println(double(5));
+io.println(double(-3));
+io.println(sumEvensTo(10));
+io.println(!true);

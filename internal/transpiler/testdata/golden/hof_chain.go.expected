@@ -1,0 +1,35 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func main() {
+	xs := []int64{1, 2, 3, 4}
+	doubled := transpilert.Map(xs, func(x int64) int64 {
+		return (x * 2)
+	})
+	fmt.Println(transpilert.Show(transpilert.Reduce(doubled, func(a int64, b int64) int64 {
+		return (a + b)
+	}, 0)))
+	evens := transpilert.Filter(xs, func(x int64) bool {
+		return ((x % 2) == 0)
+	})
+	fmt.Println(transpilert.Show(transpilert.Map(evens, func(x int64) int64 {
+		return (x + 100)
+	})))
+	sorted := transpilert.SortInPlaceBy(&xs, func(x int64) int64 {
+		return (0 - x)
+	}, func(__a, __b int64) bool { return __a < __b }, false)
+	fmt.Println(transpilert.Show(int64(len(sorted))))
+	fmt.Println(transpilert.Show(sorted[0]))
+	fmt.Println(transpilert.Show(transpilert.Reduce(transpilert.Filter(transpilert.Map(xs, func(x int64) int64 {
+		return (x * 3)
+	}), func(x int64) bool {
+		return (x > 5)
+	}), func(a int64, b int64) int64 {
+		return (a + b)
+	}, 0)))
+}

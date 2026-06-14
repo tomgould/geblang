@@ -1,0 +1,20 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func util_twice(n int64) int64 {
+	return (n * 2)
+}
+
+func util_label(s string) string {
+	return (("[" + s) + "]")
+}
+
+func main() {
+	fmt.Println(transpilert.Show(util_twice(21)))
+	fmt.Println(transpilert.Show(util_label("hi")))
+}

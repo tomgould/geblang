@@ -1,0 +1,67 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func pair() []int64 {
+	return []int64{10, 20}
+}
+
+func main() {
+	__dt1 := pair()
+	a := __dt1[0]
+	_ = a
+	b := __dt1[1]
+	_ = b
+	fmt.Println(transpilert.Show((a + b)))
+	x := 1
+	_ = x
+	y := 2
+	_ = y
+	fmt.Println(transpilert.Show((x + y)))
+	coords := []int64{3, 4, 5}
+	__dt2 := coords
+	p := __dt2[0]
+	_ = p
+	q := __dt2[1]
+	_ = q
+	fmt.Println(transpilert.Show((p + q)))
+	var d *transpilert.OrderedDict[string, any] = func() *transpilert.OrderedDict[string, any] {
+		__d := transpilert.NewOrderedDict[string, any]()
+		__d.Set("name", "amy")
+		__d.Set("age", 30)
+		return __d
+	}()
+	__dt3 := d
+	name := func() any {
+		__v, __ok := __dt3.Get("name")
+		if !__ok {
+			return nil
+		}
+		return __v
+	}()
+	_ = name
+	age := func() any {
+		__v, __ok := __dt3.Get("age")
+		if !__ok {
+			return nil
+		}
+		return __v
+	}()
+	_ = age
+	fmt.Println(transpilert.Show(name))
+	fmt.Println(transpilert.Show(age))
+	__dt4 := d
+	missing := func() any {
+		__v, __ok := __dt4.Get("missing")
+		if !__ok {
+			return nil
+		}
+		return __v
+	}()
+	_ = missing
+	fmt.Println(transpilert.Show(missing))
+}

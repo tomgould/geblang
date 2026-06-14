@@ -1,0 +1,94 @@
+import io;
+
+class AppError extends Error {
+    func AppError(string m) {
+        parent(m);
+    }
+}
+
+class SubError extends AppError {
+    func SubError(string m) {
+        parent(m);
+    }
+}
+
+/* return inside try: value must flow past the try to the caller. */
+func returnInTry(): int {
+    try {
+        return 7;
+    } finally {
+        io.println("finally-return");
+    }
+}
+
+/* return inside catch. */
+func returnInCatch(): string {
+    try {
+        throw AppError("boom");
+    } catch (AppError e) {
+        return "caught:" + e.message;
+    } finally {
+        io.println("finally-catch");
+    }
+}
+
+/* break out of an enclosing loop from inside a try. */
+func breakInLoop(): int {
+    int total = 0;
+    for (int i = 0; i < 5; i = i + 1) {
+        try {
+            if (i == 3) {
+                break;
+            }
+            total = total + i;
+        } finally {
+            io.println("fin " + (i as string));
+        }
+    }
+    return total;
+}
+
+/* continue from inside a try. */
+func continueInLoop(): int {
+    int total = 0;
+    for (int i = 0; i < 4; i = i + 1) {
+        try {
+            if (i == 1) {
+                continue;
+            }
+            total = total + i;
+        } finally {
+            io.println("c-fin " + (i as string));
+        }
+    }
+    return total;
+}
+
+/* subclass caught by a base-class clause; nested try; rethrow. */
+func nestedAndSubclass(): string {
+    try {
+        try {
+            throw SubError("inner");
+        } finally {
+            io.println("inner-finally");
+        }
+    } catch (AppError e) {
+        return "outer:" + e.message;
+    } finally {
+        io.println("outer-finally");
+    }
+}
+
+io.println((returnInTry() as string));
+io.println(returnInCatch());
+io.println((breakInLoop() as string));
+io.println((continueInLoop() as string));
+io.println(nestedAndSubclass());
+
+/* catch-all and an uncaught-then-recaught at top level. */
+try {
+    throw AppError("top");
+} catch (Error e) {
+    io.println("top caught: " + e.message);
+}
+io.println("done");

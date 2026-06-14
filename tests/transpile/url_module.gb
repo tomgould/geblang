@@ -1,0 +1,23 @@
+import io;
+import url;
+
+/* url module: encode / decode round trips and parse into a parts dict, all
+   over net/url (stdlib). Fixed inputs, pinned output across all backends. */
+
+let raw = "a b&c=d/e";
+let enc = url.encode(raw);
+io.println(enc);
+io.println(url.decode(enc));
+io.println(url.decode("a+b%26c%3Dd%2Fe"));
+
+/* parse a full URL with a single query key (deterministic ordering) */
+let parts = url.parse("https://example.com:8443/path/to?q=hello#frag");
+io.println(parts.get("scheme"));
+io.println(parts.get("host"));
+io.println(parts.get("port"));
+io.println(parts.get("path"));
+io.println(parts.get("fragment"));
+
+/* join base + path parts, preserving a trailing slash */
+io.println(url.joinPath("https://example.com/api", "v1", "users"));
+io.println(url.joinPath("https://example.com/api", "v1/"));

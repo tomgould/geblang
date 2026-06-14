@@ -1,0 +1,23 @@
+import io;
+
+class Box {
+    int n;
+    func Box(int n) { this.n = n; }
+}
+
+class Bag {
+    string s;
+    func Bag(string s) { this.s = s; }
+}
+
+enum Color { Red, Green, Blue }
+
+Box b = Box(42);
+Bag g = Bag("hi");
+
+io.println(b instanceof Box);
+io.println(b instanceof Bag);
+io.println(g instanceof Bag);
+
+Color c = Color.Red;
+io.println(c instanceof Color);

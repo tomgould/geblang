@@ -1,0 +1,33 @@
+import io;
+import template;
+
+/* template module: backed by html/template (stdlib) on every backend. Both the
+   interpreter and --native parse + execute with html/template and marshal the
+   data the same way, so output (incl HTML auto-escaping) is byte-identical.
+   Fixed template + fixed data, pinned across VM == evaluator == native. */
+
+/* renderString with auto-escaping: the < > & " in the value get escaped */
+io.println(template.renderString("Hello, {{.name}}!", {"name": "<b>World</b>"}));
+io.println(template.renderString("Q: {{.q}}", {"q": "a & b \"c\""}));
+
+/* nested dict + list data, range over a list (Go template range order) */
+let data = {
+  "title": "Report",
+  "count": 3,
+  "items": ["one", "two", "three"]
+};
+let tmpl = "{{.title}} ({{.count}}): {{range .items}}[{{.}}]{{end}}";
+io.println(template.renderString(tmpl, data));
+
+/* range over a dict iterates keys in sorted order */
+io.println(template.renderString("{{range $k, $v := .m}}{{$k}}={{$v}};{{end}}", {"m": {"b": 2, "a": 1, "c": 3}}));
+
+/* Template handle: name(), path() (null for inline), toString(), render() */
+let t = template.Template("Hi {{.who}}", "greeting");
+io.println(t.name());
+io.println(t.path());
+io.println(t.toString());
+io.println(t.render({"who": "Ada"}));
+
+/* a bool and a nested map render through the json-style scalar marshaling */
+io.println(template.renderString("flag={{.on}} user={{.u.name}}", {"on": true, "u": {"name": "Sam"}}));

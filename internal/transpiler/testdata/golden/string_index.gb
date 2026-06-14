@@ -1,0 +1,10 @@
+import io;
+
+string s = "héllo";
+io.println(s[0]);
+io.println(s[1]);
+io.println(s[4]);
+io.println(s[-1]);
+
+string ascii = "abc";
+io.println(ascii[2]);

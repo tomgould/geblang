@@ -1,0 +1,66 @@
+import io;
+
+/* Exceptions composed with return / break / continue / finally across try, plus
+   subclass-by-base catching and a loop that drives multiple control paths. */
+
+class DataError extends Error {
+    func DataError(string m) { parent(m); }
+}
+
+class RangeError extends DataError {
+    func RangeError(string m) { parent(m); }
+}
+
+func validate(int x): string {
+    try {
+        if (x < 0) {
+            throw RangeError("negative");
+        }
+        if (x > 100) {
+            throw DataError("too big");
+        }
+        return "ok:" + (x as string);
+    } catch (RangeError e) {
+        return "range:" + e.message;
+    } catch (DataError e) {
+        return "data:" + e.message;
+    } finally {
+        io.println("checked " + (x as string));
+    }
+}
+
+let inputs = [50, -1, 200, 0];
+for (int v in inputs) {
+    io.println(validate(v));
+}
+
+/* return inside try flows past finally */
+func firstPositive(list<int> xs): int {
+    for (int x in xs) {
+        try {
+            if (x > 0) {
+                return x;
+            }
+            continue;
+        } finally {
+            io.println("scan " + (x as string));
+        }
+    }
+    return -1;
+}
+
+io.println(firstPositive([0, -2, 7, 9]));
+
+/* break out of a loop from inside a try */
+int seen = 0;
+for (int i = 0; i < 10; i = i + 1) {
+    try {
+        if (i == 4) {
+            break;
+        }
+        seen = seen + 1;
+    } finally {
+        io.println("iter " + (i as string));
+    }
+}
+io.println(seen);

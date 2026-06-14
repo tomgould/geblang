@@ -1,0 +1,13 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func main() {
+	var x int64 = (2 + (3 * 4))
+	fmt.Println(transpilert.Show(x))
+	fmt.Println(transpilert.Show("bytecode"))
+}

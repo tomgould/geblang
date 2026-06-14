@@ -1,0 +1,29 @@
+import io;
+import csv;
+
+/* csv module: parse + stringify round trip over encoding/csv (stdlib). The
+   table includes a field with an embedded comma and one with a newline so
+   the quoting path is exercised; output is pinned across all backends. */
+
+let table = [
+    ["name", "note", "qty"],
+    ["widget", "small, round", "12"],
+    ["gadget", "line one\nline two", "3"]
+];
+
+let text = csv.stringify(table);
+io.print(text);
+io.println("---");
+
+/* round trip: parse the stringified text back to rows */
+let rows = csv.parse(text);
+io.println(rows.length());
+io.println(rows[1][1]);
+io.println(rows[2][1]);
+
+/* parseDict keys the rows by header (sorted key order) */
+let dicts = csv.parseDict(text);
+io.println(dicts.length());
+io.println(dicts[0].get("name"));
+io.println(dicts[0].get("note"));
+io.println(dicts[0].get("qty"));

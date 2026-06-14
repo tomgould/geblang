@@ -1,0 +1,47 @@
+import io;
+import json;
+
+/* Navigate a json.parse result (an any-typed value) and cast navigated values
+   to concrete types. Index-into-any returns any so chained navigation and a
+   trailing cast compose; dict-miss yields null. Fixed input, pinned output
+   byte-identical across VM == evaluator == native. */
+
+let data = json.parse("{\"name\":\"widget\",\"qty\":12,\"price\":3.5,\"active\":true,\"tags\":[\"a\",\"b\",\"c\"],\"meta\":{\"owner\":\"acme\",\"limits\":[10,20,30]}}");
+
+/* direct key access */
+io.println(data["name"]);
+io.println(data["qty"]);
+
+/* nested object navigation */
+io.println(data["meta"]["owner"]);
+
+/* array index, including a nested array */
+io.println(data["tags"][0]);
+io.println(data["meta"]["limits"][2]);
+
+/* dict-miss returns null */
+io.println(data["missing"]);
+
+/* casts on navigated values */
+string name = data["name"] as string;
+io.println(name);
+int qty = data["qty"] as int;
+io.println(qty + 100);
+float price = data["price"] as float;
+io.println(price);
+bool active = data["active"] as bool;
+io.println(active);
+
+/* decimal-shaped value cast to int truncates toward zero */
+int truncated = data["price"] as int;
+io.println(truncated);
+
+/* cast a navigated value to a concrete collection, then iterate and length */
+let tags = data["tags"] as list<any>;
+io.println(tags.length());
+for (t in tags) {
+    io.println(t as string);
+}
+
+/* a navigated element cast inline */
+io.println((data["meta"]["limits"][0] as int) + 5);

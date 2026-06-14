@@ -1,0 +1,26 @@
+import io;
+import random;
+
+/* random module: a fixed seed makes the sequence reproducible and identical
+   across the evaluator, VM, and native build (all share Go's math/rand). */
+
+random.seed(1234);
+let xs = [];
+for (let i = 0; i < 5; i = i + 1) {
+    xs.push(random.intRange(0, 100));
+}
+io.println(xs);
+
+random.seed(1234);
+let reproducible = true;
+for (let i = 0; i < 5; i = i + 1) {
+    if (random.intRange(0, 100) != xs[i]) {
+        reproducible = false;
+    }
+}
+io.println("reproducible=${reproducible}");
+
+random.seed(99);
+io.println("bool=${random.bool()}");
+io.println("next-nonneg=${random.next() >= 0}");
+io.println("float-in-range=${random.float() >= 0.0f}");

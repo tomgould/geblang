@@ -1,0 +1,14 @@
+import io;
+
+let path = "/tmp/gb_transpile_io_test.txt";
+io.writeText(path, "hello\n");
+io.appendText(path, "world\n");
+io.println(io.readText(path));
+io.println(io.exists(path));
+io.println(io.exists("/tmp/gb_transpile_io_missing.txt"));
+
+let bpath = "/tmp/gb_transpile_io_test.bin";
+io.writeBytes(bpath, "abc" as bytes);
+io.println(io.readBytes(bpath));
+io.remove(path);
+io.remove(bpath);

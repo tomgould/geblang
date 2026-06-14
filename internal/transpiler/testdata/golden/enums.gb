@@ -1,0 +1,18 @@
+import io;
+
+enum Direction { North, South, East, West }
+
+Direction heading = Direction.North;
+io.println(heading);
+io.println(heading == Direction.North);
+io.println(heading == Direction.South);
+
+func opposite(Direction d): Direction {
+    if (d == Direction.North) { return Direction.South; }
+    if (d == Direction.South) { return Direction.North; }
+    if (d == Direction.East) { return Direction.West; }
+    return Direction.East;
+}
+
+io.println(opposite(Direction.North));
+io.println(opposite(Direction.East));

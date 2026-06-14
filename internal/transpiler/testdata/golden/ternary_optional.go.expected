@@ -1,0 +1,54 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type Box struct {
+	n int64
+}
+
+func NewBox(n int64) *Box {
+	this := &Box{}
+	this.n = n
+	return this
+}
+
+var __decorators_Box = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Box = []string{}
+
+var __fields_Box = []string{"n"}
+
+func main() {
+	var b *Box = NewBox(5)
+	fmt.Println(transpilert.Show(func() any {
+		__r := b
+		if __r == nil {
+			return nil
+		}
+		return __r.n
+	}()))
+	var score int64 = 85
+	grade := func() string {
+		if score >= 90 {
+			return "A"
+		}
+		return "B"
+	}()
+	fmt.Println(transpilert.Show(grade))
+	var x any = nil
+	y := func() any {
+		__x := x
+		if __x != nil {
+			return __x
+		}
+		return "default"
+	}()
+	fmt.Println(transpilert.Show(y))
+	var z int64 = 10
+	w := z
+	fmt.Println(transpilert.Show(w))
+}

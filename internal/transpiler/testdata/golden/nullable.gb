@@ -1,0 +1,39 @@
+/**
+ * @title Nullable types
+ * @summary Nullable value-types, null-coalescing, and optional chaining.
+ * @category General
+ */
+import io;
+
+class User {
+    string name;
+
+    func User(string name) {
+        this.name = name;
+    }
+
+    func greet(): string {
+        return "hi " + this.name;
+    }
+}
+
+?int x = null;
+io.println(x);
+io.println(x ?? 42);
+
+x = 7;
+io.println(x);
+io.println(x ?? 42);
+io.println("value is ${x}");
+
+?string label = null;
+io.println(label ?? "unnamed");
+label = "tagged";
+io.println(label ?? "unnamed");
+
+?User a = null;
+?User b = User("Ada");
+io.println(a?.name);
+io.println(b?.name);
+io.println(a?.greet());
+io.println(b?.greet());

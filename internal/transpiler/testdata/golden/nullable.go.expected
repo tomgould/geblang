@@ -1,0 +1,97 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func gbPtrOf[T any](v T) *T { return &v }
+
+type User struct {
+	name string
+}
+
+func NewUser(name string) *User {
+	this := &User{}
+	this.name = name
+	return this
+}
+
+func (this *User) greet() string {
+	return ("hi " + this.name)
+}
+
+var __decorators_User = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_User = []string{"greet"}
+
+var __fields_User = []string{"name"}
+
+func main() {
+	var x *int64 = (*int64)(nil)
+	fmt.Println(transpilert.Show(x))
+	fmt.Println(transpilert.Show(func() int64 {
+		__x := x
+		if __x != nil {
+			return *__x
+		}
+		return 42
+	}()))
+	x = gbPtrOf(int64(7))
+	fmt.Println(transpilert.Show(x))
+	fmt.Println(transpilert.Show(func() int64 {
+		__x := x
+		if __x != nil {
+			return *__x
+		}
+		return 42
+	}()))
+	fmt.Println(transpilert.Show(fmt.Sprintf("value is %v", transpilert.Show(x))))
+	var label *string = (*string)(nil)
+	fmt.Println(transpilert.Show(func() string {
+		__x := label
+		if __x != nil {
+			return *__x
+		}
+		return "unnamed"
+	}()))
+	label = gbPtrOf("tagged")
+	fmt.Println(transpilert.Show(func() string {
+		__x := label
+		if __x != nil {
+			return *__x
+		}
+		return "unnamed"
+	}()))
+	var a *User = (*User)(nil)
+	var b *User = NewUser("Ada")
+	fmt.Println(transpilert.Show(func() any {
+		__r := a
+		if __r == nil {
+			return nil
+		}
+		return __r.name
+	}()))
+	fmt.Println(transpilert.Show(func() any {
+		__r := b
+		if __r == nil {
+			return nil
+		}
+		return __r.name
+	}()))
+	fmt.Println(transpilert.Show(func() any {
+		__r := a
+		if __r == nil {
+			return nil
+		}
+		return __r.greet()
+	}()))
+	fmt.Println(transpilert.Show(func() any {
+		__r := b
+		if __r == nil {
+			return nil
+		}
+		return __r.greet()
+	}()))
+}

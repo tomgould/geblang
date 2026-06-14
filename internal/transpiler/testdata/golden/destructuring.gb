@@ -1,0 +1,20 @@
+import io;
+
+func pair(): list<int> { return [10, 20]; }
+
+let [a, b] = pair();
+io.println(a + b);
+
+let x, y = 1, 2;
+io.println(x + y);
+
+let coords = [3, 4, 5];
+let [p, q] = coords;
+io.println(p + q);
+
+dict<string, any> d = {"name": "amy", "age": 30};
+let {name, age} = d;
+io.println(name);
+io.println(age);
+let {missing} = d;
+io.println(missing);

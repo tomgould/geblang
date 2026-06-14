@@ -1,0 +1,22 @@
+import io;
+
+/* List and dict comprehensions composed with HOF and nested data. */
+
+let squares = [x * x for x in range(1, 6)];
+io.println(squares);
+
+let evens = [x for x in range(0, 10) if x % 2 == 0];
+io.println(evens);
+
+let lengths = {w: w.length() for w in ["a", "bb", "ccc"]};
+for (string k in lengths.keys()) {
+    io.println(k + "->" + (lengths[k] as string));
+}
+
+/* comprehension feeding a reduce */
+let total = [x * 2 for x in range(1, 5)].reduce(func(int a, int b): int { return a + b; }, 0);
+io.println(total);
+
+/* nested comprehension */
+let grid = [[r * c for c in range(1, 4)] for r in range(1, 4)];
+io.println(grid);

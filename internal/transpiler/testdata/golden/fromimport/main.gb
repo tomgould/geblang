@@ -1,0 +1,6 @@
+import util;
+from io import println;
+from util import twice, label as tag;
+
+println(twice(21));
+println(tag("hi"));

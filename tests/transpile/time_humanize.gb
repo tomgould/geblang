@@ -1,0 +1,18 @@
+import io;
+import time;
+
+/* time module: deterministic humanize rendering plus a monotonic-clock
+   non-negativity check (the raw reading is timing-dependent, so only its
+   sign is asserted). */
+
+let durations = [45, 1500, 2000, 184000, 7500000, 90000000];
+for (int d in durations) {
+    io.println("${d} -> ${time.humanize(d)}");
+}
+
+let a = time.monotonicNs();
+let b = time.monotonicNs();
+io.println("monotonic-nondecreasing=${b >= a}");
+
+let start = time.now();
+io.println("elapsed-nonneg=${time.elapsed(start) >= 0}");

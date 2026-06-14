@@ -1,0 +1,13 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func main() {
+	fmt.Println(transpilert.Show("first"))
+	fmt.Println(transpilert.Show("init runs"))
+	fmt.Println(transpilert.Show("last"))
+}

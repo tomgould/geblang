@@ -1,0 +1,13 @@
+module helper;
+
+export func greet(string name): string {
+    return "Hello, " + name + "!";
+}
+
+export func square(int n): int {
+    return n * n;
+}
+
+export func sum(int a, int b, int c, int d, int e): int {
+    return a + b + c + d + e;
+}

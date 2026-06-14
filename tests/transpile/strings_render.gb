@@ -1,0 +1,26 @@
+import io;
+
+/* String operations + collection rendering + interpolation composed. */
+
+let words = ["apple", "banana", "cherry", "date"];
+
+let lengths = words.map(func(string w): int { return w.length(); });
+io.println(lengths);
+
+let upper = words.map(func(string w): string { return w.upper(); });
+io.println(upper);
+
+let joined = words.filter(func(string w): bool { return w.length() > 4; });
+io.println(joined);
+
+/* interpolation that calls Inspect on containers */
+io.println("words=${words} total-len=${lengths.reduce(func(int a, int b): int { return a + b; }, 0)}");
+
+/* nested list of mixed-shape data rendered directly */
+let table = [[1, 2, 3], [4, 5], [6]];
+io.println(table);
+
+let sums = table.map(func(list<int> row): int {
+    return row.reduce(func(int a, int b): int { return a + b; }, 0);
+});
+io.println(sums);

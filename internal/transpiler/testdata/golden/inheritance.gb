@@ -1,0 +1,35 @@
+import io;
+
+class Animal {
+    string name;
+
+    func Animal(string name) {
+        this.name = name;
+    }
+
+    func describe(): string {
+        return "Animal: " + this.name;
+    }
+}
+
+class Dog extends Animal {
+    int age;
+
+    func Dog(string name, int age) {
+        parent(name);
+        this.age = age;
+    }
+
+    func describeDog(): string {
+        return parent.describe() + " (dog, age " + (this.age as string) + ")";
+    }
+}
+
+Animal a = Animal("Generic");
+Dog d = Dog("Rex", 5);
+
+io.println(a.describe());
+io.println(d.describe());
+io.println(d.describeDog());
+io.println(d.name);
+io.println(d.age);

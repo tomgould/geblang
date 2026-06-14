@@ -17,6 +17,16 @@
   enum's method. The bare `enum Name { A, B }` form is unchanged. Identical on
   both backends.
 
+### Native compilation (experimental)
+
+- `geblang build --native` is a preview that compiles a program to a standalone
+  native binary by transpiling it to Go, for a speedup on compute-heavy code. It
+  supports a growing subset of the language and standard library and fails the
+  build with a clear diagnostic on anything unsupported, never producing a binary
+  that behaves differently from the interpreter; use plain `geblang build` for
+  the full language. The supported set is unstable and will change between
+  releases. See the bundling chapter for what is and is not supported.
+
 ### Process and system management
 
 - `sys.osVersion()` returns the OS kernel and release string, complementing
@@ -42,6 +52,12 @@
   (`push`, `insert`, index assignment, `set`, `add`), while a non-nullable
   `list<int>` still rejects it. Identical on both backends.
 - The bytecode VM's unary-minus type error now matches the evaluator's wording.
+- `x as any` is accepted as a widening no-op on the bytecode VM, matching the
+  evaluator; it previously raised a spurious "cannot cast" error.
+- `geblang build` reports a missing or incompatible entry `main` at build time
+  and writes no binary, instead of failing only when the built binary runs. The
+  entry module must `export func main()` or
+  `export func main(list<string> args)`, optionally returning `: int`.
 
 ## 1.20.0
 

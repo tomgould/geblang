@@ -1,0 +1,28 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+	"strings"
+)
+
+func main() {
+	var s string = "Hello, World!"
+	fmt.Println(transpilert.Show(int64(len([]rune(s)))))
+	fmt.Println(transpilert.Show((s == "")))
+	fmt.Println(transpilert.Show(strings.Contains(s, "World")))
+	fmt.Println(transpilert.Show(strings.Contains(s, "xyz")))
+	fmt.Println(transpilert.Show(strings.HasPrefix(s, "Hello")))
+	fmt.Println(transpilert.Show(strings.HasSuffix(s, "!")))
+	fmt.Println(transpilert.Show(strings.ToLower(s)))
+	fmt.Println(transpilert.Show(strings.ToUpper(s)))
+	fmt.Println(transpilert.Show(strings.Replace(s, "World", "Geblang", -1)))
+	fmt.Println(transpilert.Show(int64(strings.Index(s, "World"))))
+	fmt.Println(transpilert.Show(strings.TrimSpace("  spaces  ")))
+	fmt.Println(transpilert.Show(strings.Repeat("ab", int(3))))
+	parts := strings.Split("a,b,c", ",")
+	fmt.Println(transpilert.Show(int64(len(parts))))
+	fmt.Println(transpilert.Show(parts[0]))
+	fmt.Println(transpilert.Show(parts[2]))
+}

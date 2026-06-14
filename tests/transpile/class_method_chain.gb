@@ -1,0 +1,37 @@
+import io;
+
+/* A user-class instance method returns a collection; the result is then chained
+   through HOFs, both bound-to-variable and inline. This is the class-method-result
+   receiver case the three-way net is built to catch. */
+
+class Inventory {
+    list<int> stock;
+
+    func Inventory() {
+        this.stock = [10, 4, 7, 2, 9, 1];
+    }
+
+    func levels(): list<int> {
+        return this.stock;
+    }
+
+    func lowStock(int threshold): list<int> {
+        return this.stock.filter(func(int x): bool { return x < threshold; });
+    }
+
+    func totalValue(int unitPrice): int {
+        return this.stock.reduce(func(int a, int b): int { return a + b; }, 0) * unitPrice;
+    }
+}
+
+let inv = Inventory();
+
+/* method result bound to a variable, then HOF on it */
+let lows = inv.lowStock(5);
+io.println(lows.sorted());
+io.println(lows.reduce(func(int a, int b): int { return a + b; }, 0));
+
+/* inline: method result chained directly */
+io.println(inv.levels().map(func(int x): int { return x * 10; }).sorted());
+
+io.println(inv.totalValue(3));

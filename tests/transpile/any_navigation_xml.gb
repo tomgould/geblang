@@ -1,0 +1,22 @@
+import io;
+import xml;
+
+/* Navigate an xml.parse result the same way as json: the parsed element is an
+   any-typed dict (name/attributes/children/text), so index-into-any plus a
+   trailing cast compose. Fixed input, pinned output across all three backends. */
+
+let root = xml.parse("<note id=\"1\" lang=\"en\"><to>Tove</to><from>Jani</from></note>");
+
+io.println(root["name"]);
+io.println(root["attributes"]["id"]);
+io.println(root["attributes"]["lang"]);
+
+let children = root["children"] as list<any>;
+io.println(children.length());
+
+let first = children[0];
+io.println(first["name"]);
+io.println(first["text"] as string);
+
+/* dict-miss on an absent attribute returns null */
+io.println(root["attributes"]["missing"]);

@@ -1,0 +1,110 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+	"slices"
+)
+
+func showInts(xs []int64) {
+	var out string = ""
+	for i := int64(0); i < int64(len(xs)); i++ {
+		out = (out + fmt.Sprintf("%v", xs[int(i)]))
+		if i < (int64(len(xs)) - 1) {
+			out = (out + ",")
+		}
+	}
+	fmt.Println(transpilert.Show(out))
+}
+
+type Bag struct {
+	items []int64
+}
+
+func NewBag() *Bag {
+	this := &Bag{}
+	this.items = []int64{}
+	return this
+}
+
+func (this *Bag) add(v int64) {
+	func(__p *[]int64) []int64 { *__p = append(*__p, v); return *__p }(&this.items)
+}
+
+func (this *Bag) total() int64 {
+	var sum int64 = 0
+	for _, n := range this.items {
+		sum = (sum + n)
+	}
+	return sum
+}
+
+var __decorators_Bag = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Bag = []string{"add", "total"}
+
+var __fields_Bag = []string{"items"}
+
+func main() {
+	var acc []int64 = []int64{}
+	for i := int64(1); i <= 4; i++ {
+		func(__p *[]int64) []int64 { *__p = append(*__p, (i * i)); return *__p }(&acc)
+	}
+	showInts(acc)
+	func(__p *[]int64) []int64 {
+		if len(*__p) > 0 {
+			*__p = (*__p)[:len(*__p)-1]
+		}
+		return *__p
+	}(&acc)
+	showInts(acc)
+	func(__p *[]int64) []int64 { *__p = append([]int64{0}, (*__p)...); return *__p }(&acc)
+	showInts(acc)
+	func(__p *[]int64) []int64 {
+		__i := int(2)
+		if __i < 0 {
+			__i = len(*__p) + __i
+		}
+		if __i < 0 {
+			__i = 0
+		}
+		if __i > len(*__p) {
+			__i = len(*__p)
+		}
+		*__p = slices.Insert(*__p, __i, 99)
+		return *__p
+	}(&acc)
+	showInts(acc)
+	func(__p *[]int64) []int64 {
+		__i := int(0)
+		if __i < 0 {
+			__i += len(*__p)
+		}
+		if __i < 0 || __i >= len(*__p) {
+			panic("list index out of range")
+		}
+		*__p = slices.Delete(*__p, __i, __i+1)
+		return *__p
+	}(&acc)
+	showInts(acc)
+	func(__p *[]int64) []int64 {
+		if __i := slices.Index(*__p, 99); __i >= 0 {
+			*__p = slices.Delete(*__p, __i, __i+1)
+		}
+		return *__p
+	}(&acc)
+	showInts(acc)
+	func(__p *[]int64) []int64 { slices.Reverse(*__p); return *__p }(&acc)
+	showInts(acc)
+	func(__p *[]int64) []int64 { slices.Sort(*__p); return *__p }(&acc)
+	showInts(acc)
+	var bag *Bag = NewBag()
+	bag.add(3)
+	bag.add(7)
+	bag.add(5)
+	fmt.Println(transpilert.Show(bag.total()))
+	y := func(__p *[]int64) []int64 { *__p = append(*__p, 42); return *__p }(&acc)
+	showInts(acc)
+	fmt.Println(transpilert.Show(int64(len(y))))
+}

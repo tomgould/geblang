@@ -1,0 +1,27 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func main() {
+	var t int64 = transpilert.DatetimeParse("2024-01-15T10:30:00Z")
+	fmt.Println(transpilert.Show(t))
+	fmt.Println(transpilert.Show(transpilert.DatetimeFormat(t, "%Y-%m-%d %H:%M:%S")))
+	fmt.Println(transpilert.Show(transpilert.DatetimeFormatDate(t)))
+	fmt.Println(transpilert.Show(transpilert.DatetimeFormatTime(t)))
+	fmt.Println(transpilert.Show(transpilert.DatetimeUnix(t)))
+	var d5 int64 = transpilert.DatetimeAddDays(t, 5)
+	fmt.Println(transpilert.Show(transpilert.DatetimeFormatDate(d5)))
+	fmt.Println(transpilert.Show((transpilert.DatetimeAddMonths(t, 1) > t)))
+	fmt.Println(transpilert.Show((transpilert.DatetimeAddYears(t, 1) > t)))
+	fmt.Println(transpilert.Show((transpilert.DatetimeAddSeconds(t, 60) - t)))
+	fmt.Println(transpilert.Show(transpilert.DatetimeDiff(d5, t)))
+	var made int64 = transpilert.DatetimeMake(2024, 1, 15, 10, 30, 0)
+	fmt.Println(transpilert.Show((made == t)))
+	fmt.Println(transpilert.Show(transpilert.DatetimeWeekdayName(1)))
+	fmt.Println(transpilert.Show(transpilert.DatetimeMonthName(1)))
+	fmt.Println(transpilert.Show((transpilert.DatetimeParseRFC3339("2024-01-15T10:30:00Z") == t)))
+}

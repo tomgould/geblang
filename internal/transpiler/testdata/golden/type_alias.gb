@@ -1,0 +1,14 @@
+import io;
+
+type Count = int;
+type Names = list<string>;
+
+func bump(Count n): Count {
+    return n + 1;
+}
+
+Count total = 41;
+io.println(bump(total));
+
+Names names = ["a", "b"];
+io.println(names.length());

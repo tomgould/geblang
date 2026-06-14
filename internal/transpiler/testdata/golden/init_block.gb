@@ -1,0 +1,6 @@
+import io;
+io.println("first");
+init {
+    io.println("init runs");
+}
+io.println("last");

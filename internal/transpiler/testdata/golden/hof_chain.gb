@@ -1,0 +1,23 @@
+import io;
+
+let xs = [1, 2, 3, 4];
+
+/* map result bound to a variable, then reduce on it */
+let doubled = xs.map(func(int x): int { return x * 2; });
+io.println(doubled.reduce(func(int a, int b): int { return a + b; }, 0));
+
+/* filter result bound to a variable, then map on it */
+let evens = xs.filter(func(int x): bool { return x % 2 == 0; });
+io.println(evens.map(func(int x): int { return x + 100; }));
+
+/* sortBy result bound to a variable, then length and index access */
+let sorted = xs.sortBy(func(int x): int { return 0 - x; });
+io.println(sorted.length());
+io.println(sorted[0]);
+
+/* inline chain: map then filter then reduce */
+io.println(
+  xs.map(func(int x): int { return x * 3; })
+    .filter(func(int x): bool { return x > 5; })
+    .reduce(func(int a, int b): int { return a + b; }, 0)
+);

@@ -1,0 +1,16 @@
+import io;
+import profiler;
+
+/* Dual-name module: the external `profiler.timer()` routes to the transpiled
+   source export (returning a Timer), and the chained `.elapsedMs()` resolves
+   off that class type. Inside profiler.gb the self-imported native snapshot /
+   delta route to the native bridge. Output is timing-independent. */
+
+let total = 0;
+let t = profiler.timer();
+for (let i = 0; i < 1000; i = i + 1) {
+    total = total + i;
+}
+io.println("total=${total}");
+io.println("elapsed-nonneg=${t.elapsedMs() >= 0.0f}");
+io.println("elapsed-ns-nonneg=${t.elapsedNs() >= 0}");

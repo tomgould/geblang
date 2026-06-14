@@ -1,0 +1,21 @@
+import io;
+
+class Box {
+    int n;
+    func Box(int n) { this.n = n; }
+}
+
+Box b = Box(5);
+io.println(b?.n);
+
+let score = 85;
+let grade = score >= 90 ? "A" : "B";
+io.println(grade);
+
+let x = null;
+let y = x ?? "default";
+io.println(y);
+
+let z = 10;
+let w = z ?? 99;
+io.println(w);

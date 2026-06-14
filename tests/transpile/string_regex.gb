@@ -1,0 +1,15 @@
+import io;
+
+/* string regex methods: matchesRegex (re.test), splitRegex (re.split), and
+   replaceRegex (re.replace) over RE2, all with fixed inputs and pinned output. */
+
+io.println("match-digits=${"abc123".matchesRegex("[0-9]+")}");
+io.println("match-none=${"abcdef".matchesRegex("[0-9]+")}");
+io.println("match-anchor=${"hello".matchesRegex("^h.*o$")}");
+
+io.println("a1b2c3".splitRegex("[0-9]"));
+io.println("one  two   three".splitRegex("\\s+"));
+
+io.println("2024-06-14".replaceRegex("-", "/"));
+io.println("hello world".replaceRegex("(\\w+) (\\w+)", "$2 $1"));
+io.println("aXbXc".replaceRegex("X", "-"));

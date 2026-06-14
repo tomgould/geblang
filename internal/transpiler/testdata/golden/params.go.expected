@@ -1,0 +1,62 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func greet(name string, greeting string) string {
+	return ((greeting + ", ") + name)
+}
+
+func sum(nums ...int64) int64 {
+	var total int64 = 0
+	for _, n := range nums {
+		total = (total + n)
+	}
+	return total
+}
+
+type Calc struct {
+	base int64
+}
+
+func NewCalc(base int64) *Calc {
+	this := &Calc{}
+	this.base = base
+	return this
+}
+
+func (this *Calc) add(x int64, y int64) int64 {
+	return ((this.base + x) + y)
+}
+
+func (this *Calc) total(vals ...int64) int64 {
+	var t int64 = this.base
+	for _, v := range vals {
+		t = (t + v)
+	}
+	return t
+}
+
+var __decorators_Calc = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Calc = []string{"add", "total"}
+
+var __fields_Calc = []string{"base"}
+
+func main() {
+	fmt.Println(transpilert.Show(greet("Amy", "Hello")))
+	fmt.Println(transpilert.Show(greet("Bob", "Hi")))
+	fmt.Println(transpilert.Show(sum()))
+	fmt.Println(transpilert.Show(sum(1, 2, 3)))
+	xs := []int64{4, 5, 6}
+	fmt.Println(transpilert.Show(sum(xs...)))
+	c := NewCalc(1)
+	fmt.Println(transpilert.Show(c.add(2, 100)))
+	fmt.Println(transpilert.Show(c.add(2, 3)))
+	fmt.Println(transpilert.Show(c.total(10, 20)))
+	more := []int64{5, 5}
+	fmt.Println(transpilert.Show(c.total(more...)))
+}

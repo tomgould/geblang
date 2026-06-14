@@ -1,0 +1,52 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type Money struct {
+	cents int64
+}
+
+func NewMoney(cents int64) *Money {
+	this := &Money{}
+	this.cents = cents
+	return this
+}
+
+func (this *Money) __add(other *Money) *Money {
+	return NewMoney((this.cents + other.cents))
+}
+
+func (this *Money) __sub(other *Money) *Money {
+	return NewMoney((this.cents - other.cents))
+}
+
+func (this *Money) __lt(other *Money) bool {
+	return (this.cents < other.cents)
+}
+
+func (this *Money) __eq(other *Money) bool {
+	return (this.cents == other.cents)
+}
+
+var __decorators_Money = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Money = []string{"__add", "__sub", "__lt", "__eq"}
+
+var __fields_Money = []string{"cents"}
+
+func main() {
+	var a *Money = NewMoney(125)
+	var b *Money = NewMoney(75)
+	var c *Money = a.__add(b)
+	var d *Money = a.__sub(b)
+	fmt.Println(transpilert.Show(c.cents))
+	fmt.Println(transpilert.Show(d.cents))
+	fmt.Println(transpilert.Show(b.__lt(a)))
+	fmt.Println(transpilert.Show(a.__lt(b)))
+	fmt.Println(transpilert.Show(a.__eq(NewMoney(125))))
+	fmt.Println(transpilert.Show(a.__eq(b)))
+}

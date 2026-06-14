@@ -1,0 +1,33 @@
+import io;
+
+/* Generators driven through for-in and composed with collection building. */
+
+func squares(int n): generator<int> {
+    for (let int i = 0; i < n; i++) {
+        yield i * i;
+    }
+}
+
+func fib(int n): generator<int> {
+    int a = 0;
+    int b = 1;
+    for (let int i = 0; i < n; i++) {
+        yield a;
+        int next = a + b;
+        a = b;
+        b = next;
+    }
+}
+
+list<int> sq = [];
+for (v in squares(5)) {
+    sq.push(v);
+}
+io.println(sq);
+
+list<int> fibs = [];
+for (v in fib(8)) {
+    fibs.push(v);
+}
+io.println(fibs);
+io.println(fibs.reduce(func(int a, int b): int { return a + b; }, 0));

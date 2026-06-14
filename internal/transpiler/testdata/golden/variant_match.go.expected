@@ -1,0 +1,67 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type Result interface{ __gbResult() }
+
+type ResultOk struct {
+	V0 string
+}
+
+func (ResultOk) __gbResult() {}
+
+func NewResultOk(v0 string) ResultOk {
+	return ResultOk{V0: v0}
+}
+
+func (__v ResultOk) String() string {
+	return "Result.Ok(" + fmt.Sprintf("%v", __v.V0) + ")"
+}
+
+type ResultErr struct {
+	V0 string
+}
+
+func (ResultErr) __gbResult() {}
+
+func NewResultErr(v0 string) ResultErr {
+	return ResultErr{V0: v0}
+}
+
+func (__v ResultErr) String() string {
+	return "Result.Err(" + fmt.Sprintf("%v", __v.V0) + ")"
+}
+
+func describe(r Result) string {
+	return func() string {
+		switch __m := any(r).(type) {
+		case ResultOk:
+			s := __m.V0
+			return ("ok: " + s)
+		case ResultErr:
+			e := __m.V0
+			return ("err: " + e)
+		default:
+			_ = __m
+			panic("match: no case matched")
+		}
+		panic("unreachable")
+	}()
+}
+
+func main() {
+	fmt.Println(transpilert.Show(describe(NewResultOk("hello"))))
+	fmt.Println(transpilert.Show(describe(NewResultErr("nope"))))
+	switch __m := any(NewResultOk("statement")).(type) {
+	case ResultOk:
+		s := __m.V0
+		fmt.Println(transpilert.Show(("got: " + s)))
+	case ResultErr:
+		e := __m.V0
+		fmt.Println(transpilert.Show(("failed: " + e)))
+	}
+}

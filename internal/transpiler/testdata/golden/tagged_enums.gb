@@ -1,0 +1,14 @@
+import io;
+
+enum Result { Ok(string), Err(string) }
+
+let r1 = Result.Ok("hello");
+let r2 = Result.Err("oops");
+
+io.println(r1);
+io.println(r2);
+io.println(r1 == Result.Ok("hello"));
+io.println(r1 == Result.Err("hello"));
+io.println(r1 instanceof Result);
+io.println(r1 instanceof Result.Ok);
+io.println(r1 instanceof Result.Err);

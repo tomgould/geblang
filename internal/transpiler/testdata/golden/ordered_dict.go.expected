@@ -1,0 +1,39 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func main() {
+	d := func() *transpilert.OrderedDict[string, int64] {
+		__d := transpilert.NewOrderedDict[string, int64]()
+		__d.Set("gamma", 1)
+		__d.Set("alpha", 2)
+		__d.Set("beta", 3)
+		return __d
+	}()
+	d.Set("delta", 4)
+	d.Set("epsilon", 5)
+	for _, k := range d.Keys() {
+		fmt.Println(transpilert.Show(k))
+	}
+	for _, v := range d.Values() {
+		fmt.Println(transpilert.Show(v))
+	}
+	for _, key := range d.Keys() {
+		value, _ := d.Get(key)
+		fmt.Println(transpilert.Show(fmt.Sprintf("%v=%v", transpilert.Show(key), transpilert.Show(value))))
+	}
+	fmt.Println(transpilert.Show(int64(d.Len())))
+	fmt.Println(transpilert.Show(func() int64 { __v, _ := d.Get("alpha"); return __v }()))
+	fmt.Println(transpilert.Show(func() bool { _, __ok := d.Get("zeta"); return __ok }()))
+	fmt.Println(transpilert.Show(func() int64 { __v, _ := d.Get("beta"); return __v }()))
+	d.Delete("gamma")
+	fmt.Println(transpilert.Show(int64(d.Len())))
+	fmt.Println(transpilert.Show(func() bool { _, __ok := d.Get("gamma"); return __ok }()))
+	for _, k := range d.Keys() {
+		fmt.Println(transpilert.Show(k))
+	}
+}

@@ -1,0 +1,27 @@
+import io;
+
+/* for-in over a typed empty list refined by later pushes, and over a dict. */
+let nums = [];
+for (int i = 0; i < 6; i++) {
+    nums = nums.push(i * i);
+}
+
+int sum = 0;
+for (n in nums) {
+    if (n % 2 == 0) {
+        sum = sum + n;
+    }
+}
+io.println(sum);
+
+let scores = {};
+scores["alice"] = 10;
+scores["bob"] = 25;
+scores["carol"] = 7;
+
+int totalScore = 0;
+for (name, score in scores.items()) {
+    totalScore = totalScore + score;
+    io.println(name + ": " + (score as string));
+}
+io.println(totalScore);

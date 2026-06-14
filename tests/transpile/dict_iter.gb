@@ -1,0 +1,25 @@
+import io;
+
+/* Ordered-dict insertion-order iteration, mutation, and nested-structure print. */
+
+let counts = {"red": 0, "green": 0, "blue": 0};
+let picks = ["red", "blue", "red", "green", "red", "blue"];
+for (string p in picks) {
+    counts[p] = counts[p] + 1;
+}
+
+for (string k in counts.keys()) {
+    io.println(k + "=" + (counts[k] as string));
+}
+
+io.println(counts);
+
+/* nested dict + list printed directly through the value renderer */
+let report = {
+    "totals": [counts["red"], counts["green"], counts["blue"]],
+    "max": counts["red"]
+};
+io.println(report);
+
+io.println(counts.values());
+io.println(counts.keys().length());

@@ -1,0 +1,20 @@
+/**
+ * @title Math
+ * @summary Demonstrates math in a runnable Geblang example.
+ * @category General
+ */
+import io;
+import math;
+
+io.println(math.abs(-5));
+io.println(math.min(3, 1, 2));
+io.println(math.max(3, 1, 2));
+io.println(math.clamp(12, 0, 10));
+io.println(math.floor(3.7));
+io.println(math.ceil(3.1));
+io.println(math.round(3.5));
+io.println(math.sqrt(9));
+io.println(math.pow(2, 3));
+io.println(math.sin(0));
+io.println(math.pi());
+io.println(math.e());

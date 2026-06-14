@@ -1,0 +1,18 @@
+import io;
+import collections;
+
+list<int> items = [];
+for (int i = 0; i < 12; i++) {
+    items = items.push(i);
+}
+
+/* The module-call form of the higher-order functions. */
+let evens = collections.filter(items, func(int x): bool { return x % 2 == 0; });
+let squared = collections.map(evens, func(int x): int { return x * x; });
+int total = collections.reduce(squared, func(int a, int b): int { return a + b; }, 0);
+io.println(total);
+
+bool anyBig = collections.any(squared, func(int x): bool { return x > 50; });
+bool allNonNeg = collections.all(squared, func(int x): bool { return x >= 0; });
+io.println(anyBig);
+io.println(allNonNeg);

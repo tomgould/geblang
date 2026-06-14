@@ -1,0 +1,19 @@
+import io;
+import crypt;
+
+/* crypt module, stdlib-backed hashes only: md5/sha1/sha256/sha512 (hex),
+   crc32 (int), hmacSha256 (hex), and base64Encode/Decode of a fixed input.
+   sha3_256/blake2b/bcrypt/argon2/aes/chacha20/jwt need non-stdlib libs and are
+   not bridged. */
+
+let msg = "The quick brown fox";
+io.println(crypt.md5(msg));
+io.println(crypt.sha1(msg));
+io.println(crypt.sha256(msg));
+io.println(crypt.sha512(msg));
+io.println("crc=${crypt.crc32(msg)}");
+io.println(crypt.hmacSha256("secret-key", msg));
+
+let enc = crypt.base64Encode(msg);
+io.println(enc);
+io.println(crypt.base64Decode(enc));

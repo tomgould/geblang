@@ -1,0 +1,85 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+	"os"
+	"time"
+)
+
+func gbAllTasks(tasks []any) *gbTask[[]any] {
+	return gbRunTask(func() []any {
+		out := make([]any, len(tasks))
+		for i, t := range tasks {
+			out[i] = t.(gbAwaitable).gbAwaitAny()
+		}
+		return out
+	})
+}
+
+func gbSleepTask(ms int64) *gbTask[any] {
+	return gbRunTask(func() any {
+		if ms > 0 {
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		}
+		return nil
+	})
+}
+
+type gbTask[T any] struct {
+	done chan struct{}
+	val  T
+}
+
+type gbAwaitable interface{ gbAwaitAny() any }
+
+func gbRunTask[T any](fn func() T) *gbTask[T] {
+	t := &gbTask[T]{done: make(chan struct{})}
+	go func() {
+		t.val = fn()
+		close(t.done)
+	}()
+	return t
+}
+
+func (t *gbTask[T]) Await() T {
+	<-t.done
+	return t.val
+}
+
+func (t *gbTask[T]) gbAwaitAny() any { return t.Await() }
+
+func gbUncaught() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	if e, ok := r.(*transpilert.Error); ok {
+		fmt.Fprintln(os.Stderr, e.Render())
+		os.Exit(1)
+	}
+	panic(r)
+}
+
+func main() {
+	defer gbUncaught()
+	a := gbRunTask(func() int64 {
+		gbSleepTask(int64(10)).Await()
+		return 1
+	})
+	b := gbRunTask(func() int64 {
+		gbSleepTask(int64(5)).Await()
+		return 2
+	})
+	c := gbRunTask(func() int64 {
+		gbSleepTask(int64(15)).Await()
+		return 3
+	})
+	all := gbAllTasks([]any{a, b, c}).Await()
+	fmt.Println(transpilert.Show(int64(len(all))))
+	fmt.Println(transpilert.Show(all[0]))
+	fmt.Println(transpilert.Show(all[1]))
+	fmt.Println(transpilert.Show(all[2]))
+	fmt.Println(transpilert.Show(((transpilert.AsIntFast(all[0]) + transpilert.AsIntFast(all[1])) + transpilert.AsIntFast(all[2]))))
+}

@@ -1,0 +1,32 @@
+import io;
+
+/* Async functions composed: multiple awaits, await feeding arithmetic and a
+   list build, async helper called from another async function. */
+
+async func square(int x): int {
+    return x * x;
+}
+
+async func sumSquares(list<int> xs): int {
+    int total = 0;
+    for (int x in xs) {
+        let t = square(x);
+        total = total + (await t);
+    }
+    return total;
+}
+
+let a = square(4);
+let b = square(5);
+io.println((await a) + (await b));
+
+let s = sumSquares([1, 2, 3, 4]);
+io.println(await s);
+
+/* a batch of tasks awaited and collected */
+list<int> results = [];
+for (int n in [2, 3, 4]) {
+    let task = square(n);
+    results.push(await task);
+}
+io.println(results);

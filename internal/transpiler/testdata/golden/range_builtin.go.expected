@@ -1,0 +1,46 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func gbRange(start, end, step int64, auto bool) []int64 {
+	if auto {
+		if start > end {
+			step = -1
+		} else {
+			step = 1
+		}
+	}
+	if step == 0 {
+		panic("range step cannot be zero")
+	}
+	out := []int64{}
+	if step > 0 {
+		for i := start; i <= end; i += step {
+			out = append(out, i)
+		}
+	} else {
+		for i := start; i >= end; i += step {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func main() {
+	for _, x := range gbRange(int64(0), int64(3), 0, true) {
+		fmt.Println(transpilert.Show(x))
+	}
+	for _, y := range gbRange(int64(2), int64(6), 0, true) {
+		fmt.Println(transpilert.Show(y))
+	}
+	for _, z := range gbRange(int64(10), int64(0), int64(-3), false) {
+		fmt.Println(transpilert.Show(z))
+	}
+	for _, w := range gbRange(int64(5), int64(1), 0, true) {
+		fmt.Println(transpilert.Show(w))
+	}
+}

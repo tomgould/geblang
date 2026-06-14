@@ -1,0 +1,52 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type gbTask[T any] struct {
+	done chan struct{}
+	val  T
+}
+
+type gbAwaitable interface{ gbAwaitAny() any }
+
+func gbRunTask[T any](fn func() T) *gbTask[T] {
+	t := &gbTask[T]{done: make(chan struct{})}
+	go func() {
+		t.val = fn()
+		close(t.done)
+	}()
+	return t
+}
+
+func (t *gbTask[T]) Await() T {
+	<-t.done
+	return t.val
+}
+
+func (t *gbTask[T]) gbAwaitAny() any { return t.Await() }
+
+func compute(x int64) *gbTask[int64] {
+	return gbRunTask(func() int64 {
+		return (x * 2)
+	})
+}
+
+func greet(name string) *gbTask[string] {
+	return gbRunTask(func() string {
+		return ("Hello, " + name)
+	})
+}
+
+func main() {
+	a := compute(21)
+	fmt.Println(transpilert.Show(a.Await()))
+	b := greet("world")
+	fmt.Println(transpilert.Show(b.Await()))
+	c := compute(10)
+	d := compute(5)
+	fmt.Println(transpilert.Show((c.Await() + d.Await())))
+}

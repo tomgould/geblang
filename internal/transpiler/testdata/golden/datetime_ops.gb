@@ -1,0 +1,23 @@
+import io;
+import datetime;
+
+let t = datetime.parse("2024-01-15T10:30:00Z");
+io.println(t);
+io.println(datetime.format(t, "%Y-%m-%d %H:%M:%S"));
+io.println(datetime.formatDate(t));
+io.println(datetime.formatTime(t));
+io.println(datetime.unix(t));
+
+let d5 = datetime.addDays(t, 5);
+io.println(datetime.formatDate(d5));
+io.println(datetime.addMonths(t, 1) > t);
+io.println(datetime.addYears(t, 1) > t);
+io.println(datetime.addSeconds(t, 60) - t);
+
+io.println(datetime.diff(d5, t));
+
+let made = datetime.make(2024, 1, 15, 10, 30, 0);
+io.println(made == t);
+io.println(datetime.weekdayName(1));
+io.println(datetime.monthName(1));
+io.println(datetime.parseRFC3339("2024-01-15T10:30:00Z") == t);

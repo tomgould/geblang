@@ -1,0 +1,23 @@
+import io;
+
+let xs = [1, 2, 3];
+
+let pushed = xs.push(4);
+io.println(pushed.length());
+io.println(pushed[3]);
+
+let popped = pushed.pop();
+io.println(popped.length());
+
+io.println(xs.contains(2));
+io.println(xs.contains(99));
+
+let d = {"a": 1, "b": 2, "c": 3};
+io.println(d.hasKey("b"));
+io.println(d.hasKey("z"));
+
+let ks = d.keys();
+io.println(ks.length());
+
+let vs = d.values();
+io.println(vs.length());

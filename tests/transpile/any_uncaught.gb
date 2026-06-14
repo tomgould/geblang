@@ -1,0 +1,9 @@
+import io;
+import json;
+
+/* An uncaught runtime error raised from any-navigation (CallMethod / Index)
+   must render through the top-level handler and exit 1 on all three backends,
+   not panic raw natively. */
+let d = json.parse("{\"a\": 1}");
+io.println("before");
+io.println("${d.nope()}");

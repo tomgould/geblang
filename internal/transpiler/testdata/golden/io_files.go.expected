@@ -1,0 +1,21 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func main() {
+	path := "/tmp/gb_transpile_io_test.txt"
+	transpilert.WriteText(path, "hello\n")
+	transpilert.AppendText(path, "world\n")
+	fmt.Println(transpilert.Show(transpilert.ReadText(path)))
+	fmt.Println(transpilert.Show(transpilert.Exists(path)))
+	fmt.Println(transpilert.Show(transpilert.Exists("/tmp/gb_transpile_io_missing.txt")))
+	bpath := "/tmp/gb_transpile_io_test.bin"
+	transpilert.WriteBytes(bpath, []byte("abc"))
+	fmt.Println(transpilert.Show(transpilert.ReadBytes(bpath)))
+	transpilert.Remove(path)
+	transpilert.Remove(bpath)
+}

@@ -1,0 +1,28 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+func gbStringIndex(s string, i int64) string {
+	rs := []rune(s)
+	if i < 0 {
+		i += int64(len(rs))
+	}
+	if i < 0 || i >= int64(len(rs)) {
+		panic("string index out of range")
+	}
+	return string(rs[i])
+}
+
+func main() {
+	var s string = "héllo"
+	fmt.Println(transpilert.Show(gbStringIndex(s, int64(0))))
+	fmt.Println(transpilert.Show(gbStringIndex(s, int64(1))))
+	fmt.Println(transpilert.Show(gbStringIndex(s, int64(4))))
+	fmt.Println(transpilert.Show(gbStringIndex(s, int64(-1))))
+	var ascii string = "abc"
+	fmt.Println(transpilert.Show(gbStringIndex(ascii, int64(2))))
+}

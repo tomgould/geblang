@@ -1,0 +1,64 @@
+import io;
+
+/* Template method: a base method calls this.name(); subclasses override it. */
+class Base {
+    string tag;
+
+    func Base(string tag) {
+        this.tag = tag;
+    }
+
+    func describe(): string {
+        return "I am " + this.name() + " [" + this.tag + "]";
+    }
+
+    func name(): string {
+        return "base";
+    }
+}
+
+class Derived extends Base {
+    func Derived() {
+        parent("d");
+    }
+
+    func name(): string {
+        return "derived";
+    }
+}
+
+class Deeper extends Derived {
+    func Deeper() {
+        parent();
+    }
+
+    func name(): string {
+        return "deeper";
+    }
+
+    /* super-call: parent.describe() is static dispatch to Derived's (inherited
+       Base) describe, but this.name() inside it still late-binds to Deeper. */
+    func describeViaParent(): string {
+        return parent.describe();
+    }
+}
+
+Base b = Base("b");
+Derived d = Derived();
+Deeper x = Deeper();
+
+io.println(b.describe());
+io.println(d.describe());
+io.println(x.describe());
+io.println(x.describeViaParent());
+
+/* Override reached through a base-typed parameter (upcast). */
+func render(Base item): string {
+    return item.describe();
+}
+
+io.println(render(d));
+io.println(render(x));
+
+/* Inherited field accessed across levels through the most-derived instance. */
+io.println(x.tag);

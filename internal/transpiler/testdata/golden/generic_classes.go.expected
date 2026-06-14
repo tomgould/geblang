@@ -1,0 +1,35 @@
+// === main/main.go ===
+package main
+
+import (
+	"fmt"
+	"geblang/pkg/transpilert"
+)
+
+type Box[T any] struct {
+	value T
+}
+
+func NewBox[T any](v T) *Box[T] {
+	this := &Box[T]{}
+	this.value = v
+	return this
+}
+
+func (this *Box[T]) get() T {
+	return this.value
+}
+
+var __decorators_Box = []*transpilert.OrderedDict[string, any]{}
+
+var __methods_Box = []string{"get"}
+
+var __fields_Box = []string{"value"}
+
+func main() {
+	var bi *Box[int64] = NewBox[int64](42)
+	var bs *Box[string] = NewBox[string]("hi")
+	fmt.Println(transpilert.Show(bi.get()))
+	fmt.Println(transpilert.Show(bs.get()))
+	fmt.Println(transpilert.Show(bi.value))
+}
