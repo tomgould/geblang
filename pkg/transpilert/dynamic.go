@@ -95,6 +95,82 @@ func Index(v any, key any) any {
 	panic(NewError("RuntimeError", gbTypeName(v)+" is not indexable"))
 }
 
+// IndexSet performs recv[key] = value for an any-typed receiver, mutating in
+// place and matching the interpreter's index-assignment runtime: dict key
+// add-or-overwrite (a new key appends, an existing key keeps its position),
+// list element set with negative-from-end support and out-of-range
+// RuntimeError, and the same "not indexable"/"does not support index
+// assignment" errors. The receiver owns its backing storage (a parser result),
+// so in-place mutation is safe and matches the interpreter.
+func IndexSet(recv any, key any, value any) {
+	switch r := recv.(type) {
+	case []any:
+		i := indexInt(key)
+		if i < 0 {
+			i += len(r)
+		}
+		if i < 0 || i >= len(r) {
+			panic(NewError("RuntimeError", "list index out of range"))
+		}
+		r[i] = value
+		return
+	case nil:
+		panic(NewError("RuntimeError", "null does not support index assignment"))
+	}
+	rv := reflect.ValueOf(recv)
+	if orderedDictSet(rv, key, value) {
+		return
+	}
+	if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
+		setReflectSlice(rv, key, value)
+		return
+	}
+	panic(NewError("RuntimeError", gbTypeName(recv)+" does not support index assignment"))
+}
+
+func setReflectSlice(rv reflect.Value, key any, value any) {
+	i := indexInt(key)
+	n := rv.Len()
+	if i < 0 {
+		i += n
+	}
+	if i < 0 || i >= n {
+		panic(NewError("RuntimeError", "list index out of range"))
+	}
+	rv.Index(i).Set(reflect.ValueOf(value).Convert(rv.Type().Elem()))
+}
+
+// orderedDictSet calls *OrderedDict.Set(key, value) via reflection, matching the
+// interpreter's dict key-set (new key appends, existing key overwrites in
+// place). Reports whether recv was an ordered dict.
+func orderedDictSet(rv reflect.Value, key any, value any) bool {
+	if rv.Kind() != reflect.Pointer || rv.IsNil() {
+		return false
+	}
+	elem := rv.Type().Elem()
+	if elem.Kind() != reflect.Struct || !hasPrefix(elem.Name(), "OrderedDict[") {
+		return false
+	}
+	setM := rv.MethodByName("Set")
+	if !setM.IsValid() {
+		return false
+	}
+	keyType := setM.Type().In(0)
+	kv := reflect.ValueOf(unwrapKey(key))
+	if !kv.IsValid() || !kv.Type().AssignableTo(keyType) {
+		panic(NewError("RuntimeError", "cannot use "+gbTypeName(key)+" key in "+gbTypeName(rv.Interface())))
+	}
+	valType := setM.Type().In(1)
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		vv = reflect.Zero(valType)
+	} else if !vv.Type().AssignableTo(valType) {
+		vv = vv.Convert(valType)
+	}
+	setM.Call([]reflect.Value{kv, vv})
+	return true
+}
+
 func indexList(xs []any, key any) any {
 	i := indexInt(key)
 	if i < 0 {

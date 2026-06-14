@@ -1,0 +1,11 @@
+import io;
+import json;
+
+/* An out-of-range list write into an any-typed value raises the same uncaught
+   RuntimeError on all three backends and exits 1, rendered through the
+   top-level handler natively rather than a raw Go panic. */
+
+let data = json.parse("{\"items\":[1,2,3]}");
+io.println("before");
+data["items"][9] = 0;
+io.println("after");

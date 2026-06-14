@@ -1,0 +1,25 @@
+import io;
+
+/* A no-default `match (this)` over a tagged enum that misses a variant raises an
+   uncaught MatchError: the lowering site installs the top-level handler so the
+   native binary renders the error and exits 1, never a raw Go panic. Stdout up
+   to the miss + the exit code match the VM and evaluator (the render itself goes
+   to stderr). */
+
+enum Shape {
+    Circle(int),
+    Square(int),
+    Triangle(int);
+
+    func area(): int {
+        return match (this) {
+            case Shape.Circle(int r) => r * r * 3;
+            case Shape.Square(int s) => s * s;
+        };
+    }
+}
+
+io.println(Shape.Circle(2).area());
+io.println(Shape.Square(3).area());
+io.println(Shape.Triangle(4).area());
+io.println("unreachable");

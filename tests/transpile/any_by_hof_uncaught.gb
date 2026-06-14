@@ -1,0 +1,12 @@
+import io;
+import json;
+
+/* A runtime error raised inside a *By selector on an any receiver (a failed
+   cast) must propagate uncaught: the dispatch site installs the top-level
+   handler so the native binary renders the error and exits 1, never a raw Go
+   panic. Stdout and exit code match the VM and evaluator. */
+
+let rows = json.parse("[{\"team\":\"a\"},{\"team\":\"b\"}]");
+io.println("before");
+io.println(rows.sortBy(func(any r): any { return (r as dict<string, any>)["team"] as int; }));
+io.println("after");

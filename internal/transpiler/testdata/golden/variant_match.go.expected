@@ -4,9 +4,24 @@ package main
 import (
 	"fmt"
 	"geblang/pkg/transpilert"
+	"os"
 )
 
-type Result interface{ __gbResult() }
+func gbUncaught() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	if e, ok := r.(*transpilert.Error); ok {
+		fmt.Fprintln(os.Stderr, e.Render())
+		os.Exit(1)
+	}
+	panic(r)
+}
+
+type Result interface {
+	__gbResult()
+}
 
 type ResultOk struct {
 	V0 string
@@ -41,27 +56,33 @@ func describe(r Result) string {
 		switch __m := any(r).(type) {
 		case ResultOk:
 			s := __m.V0
+			_ = s
 			return ("ok: " + s)
 		case ResultErr:
 			e := __m.V0
+			_ = e
 			return ("err: " + e)
 		default:
-			_ = __m
-			panic("match: no case matched")
+			panic(transpilert.NewError("MatchError", "no match case matched (add a 'default:' case to handle all values); got "+transpilert.Show(__m)+" (type: "+transpilert.GbTypeName(__m)+")"))
 		}
 		panic("unreachable")
 	}()
 }
 
 func main() {
+	defer gbUncaught()
 	fmt.Println(transpilert.Show(describe(NewResultOk("hello"))))
 	fmt.Println(transpilert.Show(describe(NewResultErr("nope"))))
 	switch __m := any(NewResultOk("statement")).(type) {
 	case ResultOk:
 		s := __m.V0
+		_ = s
 		fmt.Println(transpilert.Show(("got: " + s)))
 	case ResultErr:
 		e := __m.V0
+		_ = e
 		fmt.Println(transpilert.Show(("failed: " + e)))
+	default:
+		panic(transpilert.NewError("MatchError", "no match case matched (add a 'default:' case to handle all values); got "+transpilert.Show(__m)+" (type: "+transpilert.GbTypeName(__m)+")"))
 	}
 }

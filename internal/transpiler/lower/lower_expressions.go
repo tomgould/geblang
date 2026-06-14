@@ -105,9 +105,25 @@ func (l *Lowerer) lowerPostfix(e *ast.PostfixExpression) {
 
 func (l *Lowerer) lowerAssignment(e *ast.AssignmentExpression) {
 	if idx, ok := e.Left.(*ast.IndexExpression); ok {
-		if leftTy := l.inferExpressionType(idx.Left); leftTy != nil && leftTy.Kind == types.KindDict {
+		leftTy := l.inferExpressionType(idx.Left)
+		if leftTy != nil && leftTy.Kind == types.KindDict {
 			l.lowerExpression(idx.Left)
 			l.w.WriteString(".Set(")
+			l.lowerExpression(idx.Index)
+			l.w.WriteString(", ")
+			l.lowerExpression(e.Value)
+			l.w.WriteString(")")
+			return
+		}
+		if leftTy == nil || leftTy.Kind == types.KindAny || leftTy.Kind == types.KindUnknown {
+			// Index-assign into an any-typed receiver (e.g. a json.parse result):
+			// the lhs read lowers to transpilert.Index, not a Go lvalue, so route
+			// the write through the runtime helper instead.
+			l.requireUncaughtHandler()
+			l.Module.AddImport(types.OrderedDictImport)
+			l.w.WriteString("transpilert.IndexSet(")
+			l.lowerExpression(idx.Left)
+			l.w.WriteString(", ")
 			l.lowerExpression(idx.Index)
 			l.w.WriteString(", ")
 			l.lowerExpression(e.Value)
@@ -622,15 +638,22 @@ var anyHofPredKind = map[string]types.Kind{
 	"any":      types.KindBool,
 	"all":      types.KindBool,
 	"count":    types.KindBool,
+	// *By family: key selectors lower to func(any) any, partition to func(any) bool.
+	"sortBy":    types.KindAny,
+	"groupBy":   types.KindAny,
+	"maxBy":     types.KindAny,
+	"minBy":     types.KindAny,
+	"sumBy":     types.KindAny,
+	"averageBy": types.KindAny,
+	"uniqueBy":  types.KindAny,
+	"partition": types.KindBool,
 }
 
-// anyHofMethods are the remaining closure-taking methods (the *By family and
-// other multi-shape callbacks) still unsupported on an any receiver; they
-// diagnose and hint to cast the receiver to a concrete list type first.
+// anyHofMethods are the remaining closure-taking methods still unsupported on an
+// any receiver; they diagnose and hint to cast the receiver to a concrete list
+// type first.
 var anyHofMethods = map[string]bool{
-	"sortBy": true, "uniqueBy": true, "takeWhile": true, "dropWhile": true,
-	"groupBy": true, "indexBy": true, "partition": true, "maxBy": true,
-	"minBy": true, "sumBy": true, "averageBy": true, "scan": true,
+	"takeWhile": true, "dropWhile": true, "indexBy": true, "scan": true,
 	"zipWith": true, "containsBy": true, "differenceBy": true,
 	"intersectionBy": true, "topBy": true, "binarySearchBy": true,
 }

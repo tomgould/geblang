@@ -1,0 +1,42 @@
+import io;
+import json;
+
+/* The *By family on values whose static type is any (a navigated json array).
+   Key selectors lower to func(any) any, partition's predicate to func(any) bool;
+   the runtime dispatcher asserts and applies them, matching the interpreter's
+   sort stability, groupBy/partition shapes, maxBy/minBy tie-break + empty, and
+   sumBy/averageBy numeric handling. Pinned across VM == evaluator == native.
+
+   sumBy/averageBy selectors cast to float here: a json integer parses to a
+   small int that the evaluator's sumBy switch does not accept (a separate engine
+   matter), so the corpus stays on a numeric type all three backends agree on.
+   The native int-sum path is covered by the transpilert unit tests. */
+
+let rows = json.parse("[{\"team\":\"a\",\"score\":3},{\"team\":\"b\",\"score\":1},{\"team\":\"a\",\"score\":2},{\"team\":\"b\",\"score\":1}]");
+
+/* groupBy: dict keyed by selector result, insertion order, value lists */
+io.println(rows.groupBy(func(any r): any { return (r as dict<string, any>)["team"]; }));
+
+/* partition: [matching, non-matching] two-list shape */
+io.println(rows.partition(func(any r): bool { return ((r as dict<string, any>)["score"] as int) > 1; }));
+
+/* maxBy / minBy: extreme element, first wins ties */
+io.println(rows.maxBy(func(any r): any { return (r as dict<string, any>)["score"]; }));
+io.println(rows.minBy(func(any r): any { return (r as dict<string, any>)["score"]; }));
+
+/* sumBy / averageBy over a float selector */
+io.println(rows.sumBy(func(any r): any { return (r as dict<string, any>)["score"] as float; }));
+io.println(rows.averageBy(func(any r): any { return (r as dict<string, any>)["score"] as float; }));
+
+/* uniqueBy: first occurrence per selector key */
+io.println(rows.uniqueBy(func(any r): any { return (r as dict<string, any>)["team"]; }));
+
+/* sortBy: stable ascending, then descending via the flag */
+io.println(rows.sortBy(func(any r): any { return (r as dict<string, any>)["score"]; }));
+io.println(rows.sortBy(func(any r): any { return (r as dict<string, any>)["score"]; }, true));
+
+/* empty-list edges: maxBy null, sumBy 0, averageBy null */
+let empty = json.parse("[]");
+io.println(empty.maxBy(func(any r): any { return r; }));
+io.println(empty.sumBy(func(any r): any { return r as float; }));
+io.println(empty.averageBy(func(any r): any { return r as float; }));

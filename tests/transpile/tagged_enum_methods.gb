@@ -1,0 +1,55 @@
+import io;
+
+/* Tagged enum (variants carry associated values) with instance methods +
+   interface implementation. `this` is the (immutable) enum value; `match (this)`
+   destructures the associated values; a sibling method calls another on `this`;
+   an enum value flows into an interface-typed slot and interface-typed dispatch
+   lands on the enum method. */
+
+interface Describable {
+    func describe(): string;
+}
+
+enum Result implements Describable {
+    Ok(int),
+    Err(string);
+
+    func describe(): string {
+        return match (this) {
+            case Result.Ok(int v) => "ok=" + (v as string);
+            case Result.Err(string e) => "err=" + e;
+        };
+    }
+
+    func isOk(): bool {
+        return match (this) {
+            case Result.Ok(int v) => true;
+            default => false;
+        };
+    }
+
+    func loud(): string {
+        return this.describe() + "!";
+    }
+}
+
+func report(Describable d): string {
+    return d.describe();
+}
+
+let all = [Result.Ok(1), Result.Err("boom"), Result.Ok(42)];
+
+for (Result r in all) {
+    io.println(r.describe() + " ok=" + (r.isOk() as string));
+}
+
+io.println(Result.Ok(7).loud());
+io.println(Result.Err("nope").loud());
+
+/* through an interface-typed binding + an interface-typed parameter */
+Describable d = Result.Err("via-iface");
+io.println(report(d));
+io.println(report(Result.Ok(99)));
+
+io.println(Result.Ok(5));
+io.println(Result.Err("text"));

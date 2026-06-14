@@ -92,3 +92,117 @@ func TestCallMethodUnknownReceiverUsesTypeName(t *testing.T) {
 	}()
 	CallMethod(int64(5), "nope", nil)
 }
+
+func TestCallMethodSortBy(t *testing.T) {
+	pairs := []any{[]any{"b", int64(1)}, []any{"a", int64(2)}, []any{"a", int64(1)}}
+	key := func(p any) any { return p.([]any)[0] }
+	// Stable ascending: equal keys keep input order.
+	got := CallMethod(pairs, "sortBy", []any{key}).([]any)
+	if Show(got) != `[["a", 2], ["a", 1], ["b", 1]]` {
+		t.Errorf("sortBy = %s", Show(got))
+	}
+	// Descending flag.
+	got = CallMethod(got, "sortBy", []any{key, true}).([]any)
+	if Show(got) != `[["b", 1], ["a", 2], ["a", 1]]` {
+		t.Errorf("sortBy desc = %s", Show(got))
+	}
+}
+
+func TestCallMethodGroupBy(t *testing.T) {
+	xs := []any{
+		map3("g", "a", "n", int64(3)),
+		map3("g", "b", "n", int64(1)),
+		map3("g", "a", "n", int64(2)),
+	}
+	got := CallMethod(xs, "groupBy", []any{func(r any) any { return dget(r, "g") }})
+	if Show(got) != `{"a": [{"g": "a", "n": 3}, {"g": "a", "n": 2}], "b": [{"g": "b", "n": 1}]}` {
+		t.Errorf("groupBy = %s", Show(got))
+	}
+}
+
+func TestCallMethodPartition(t *testing.T) {
+	xs := []any{int64(1), int64(2), int64(3), int64(4)}
+	got := CallMethod(xs, "partition", []any{func(v any) bool { return v.(int64) > 2 }})
+	if Show(got) != `[[3, 4], [1, 2]]` {
+		t.Errorf("partition = %s", Show(got))
+	}
+}
+
+func TestCallMethodMaxMinBy(t *testing.T) {
+	xs := []any{int64(3), int64(1), int64(3), int64(2)}
+	id := func(v any) any { return v }
+	if got := CallMethod(xs, "maxBy", []any{id}); got != int64(3) {
+		t.Errorf("maxBy = %v, want first 3", got)
+	}
+	if got := CallMethod(xs, "minBy", []any{id}); got != int64(1) {
+		t.Errorf("minBy = %v, want 1", got)
+	}
+	if got := CallMethod([]any{}, "maxBy", []any{id}); got != nil {
+		t.Errorf("maxBy empty = %v, want nil", got)
+	}
+}
+
+func TestCallMethodSumByIntStaysInt(t *testing.T) {
+	// The int-sum path the three-way corpus cannot reach (a json int parses to a
+	// small int the evaluator's sumBy rejects); native keeps an exact int.
+	xs := []any{int64(1), int64(2), int64(3)}
+	got := CallMethod(xs, "sumBy", []any{func(v any) any { return v }})
+	if Show(got) != "6" {
+		t.Errorf("sumBy int = %s, want 6", Show(got))
+	}
+	if got := CallMethod([]any{}, "sumBy", []any{func(v any) any { return v }}); Show(got) != "0" {
+		t.Errorf("sumBy empty = %s, want 0", Show(got))
+	}
+}
+
+func TestCallMethodAverageBy(t *testing.T) {
+	xs := []any{int64(1), int64(2), int64(4)}
+	// Non-integral average is a decimal.
+	got := CallMethod(xs, "averageBy", []any{func(v any) any { return v }})
+	if Show(got) != "2.3333333333" {
+		t.Errorf("averageBy = %s", Show(got))
+	}
+	if got := CallMethod([]any{}, "averageBy", []any{func(v any) any { return v }}); got != nil {
+		t.Errorf("averageBy empty = %v, want nil", got)
+	}
+}
+
+func TestCallMethodUniqueBy(t *testing.T) {
+	xs := []any{"aa", "bb", "ac", "bd"}
+	got := CallMethod(xs, "uniqueBy", []any{func(s any) any { return s.(string)[:1] }}).([]any)
+	if Show(got) != `["aa", "bb"]` {
+		t.Errorf("uniqueBy = %s", Show(got))
+	}
+}
+
+func TestCallMethodSumByNonNumberPanics(t *testing.T) {
+	defer func() {
+		e, ok := recover().(*Error)
+		if !ok || e.Message != "list.sumBy: selector must return a number, got string" {
+			t.Fatalf("panic = %v", recover())
+		}
+	}()
+	CallMethod([]any{"x"}, "sumBy", []any{func(v any) any { return v }})
+}
+
+func TestCallMethodByConcreteCallbackPanics(t *testing.T) {
+	defer func() {
+		e, ok := recover().(*Error)
+		if !ok || e.Class != "RuntimeError" {
+			t.Fatalf("panic = %v", recover())
+		}
+	}()
+	CallMethod([]any{int64(1)}, "groupBy", []any{func(v int64) int64 { return v }})
+}
+
+func map3(k1 string, v1 any, k2 string, v2 any) *OrderedDict[string, any] {
+	d := NewOrderedDict[string, any]()
+	d.Set(k1, v1)
+	d.Set(k2, v2)
+	return d
+}
+
+func dget(r any, k string) any {
+	v, _ := r.(*OrderedDict[string, any]).Get(k)
+	return v
+}

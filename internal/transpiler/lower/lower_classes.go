@@ -22,12 +22,29 @@ func (l *Lowerer) lowerTaggedEnum(s *ast.EnumStatement) {
 
 	markerMethod := "__gb" + enumName
 
+	// User methods (plus folded interface defaults) become part of the enum
+	// interface's method set so an enum value flows into any interface it
+	// implements; each variant struct delegates to a single shared impl.
+	methods := l.taggedEnumMethods(s)
+	for _, m := range methods {
+		if !l.checkEnumMethodEmittable(s, m.Name.Value) {
+			return
+		}
+	}
+
 	decls := l.Module.TopDecls()
 	decls.WriteString("type ")
 	decls.WriteString(enumName)
-	decls.WriteString(" interface { ")
+	decls.WriteLine(" interface {")
+	decls.Indent()
 	decls.WriteString(markerMethod)
-	decls.WriteLine("() }")
+	decls.WriteLine("()")
+	for _, m := range methods {
+		l.registerEnumMethodSignature(enumName, m)
+		l.writeEnumMethodSignature(decls, m)
+	}
+	decls.Dedent()
+	decls.WriteLine("}")
 	decls.Newline()
 
 	l.Module.AddImport("fmt")
@@ -100,7 +117,157 @@ func (l *Lowerer) lowerTaggedEnum(s *ast.EnumStatement) {
 		decls.Dedent()
 		decls.WriteLine("}")
 		decls.Newline()
+
+		for _, m := range methods {
+			l.emitTaggedVariantDelegate(decls, enumName, variantStruct, m)
+		}
 	}
+
+	for _, m := range methods {
+		l.emitTaggedEnumImpl(s.Name.Value, enumName, m)
+	}
+}
+
+// taggedEnumMethods returns the enum's declared methods plus any default method
+// from an implemented interface it leaves unimplemented (mirroring the fold).
+func (l *Lowerer) taggedEnumMethods(s *ast.EnumStatement) []*ast.FunctionStatement {
+	defined := map[string]struct{}{}
+	var out []*ast.FunctionStatement
+	for _, m := range s.Methods {
+		if m.Name == nil {
+			continue
+		}
+		defined[strings.ToLower(m.Name.Value)] = struct{}{}
+		out = append(out, m)
+	}
+	out = append(out, l.enumInterfaceDefaults(s, defined)...)
+	return out
+}
+
+// writeEnumMethodSignature emits one method signature line for the enum
+// interface declaration so its method set covers the enum's methods.
+func (l *Lowerer) writeEnumMethodSignature(w *emit.Writer, m *ast.FunctionStatement) {
+	w.WriteString(emit.MangleIdent(m.Name.Value))
+	w.WriteString("(")
+	l.emitParamList(w, m.Parameters, l.resolveParamTypes(m.Parameters))
+	w.WriteString(")")
+	if m.ReturnType != nil {
+		w.WriteString(" ")
+		goRet := types.ToGo(l.resolveTypeRef(m.ReturnType), l.Module.IntMode)
+		l.Module.AddTypeImports(goRet)
+		w.WriteString(goRet.Source)
+	}
+	w.WriteLine("")
+}
+
+// emitTaggedVariantDelegate makes a variant struct satisfy the enum interface
+// by forwarding the call to the shared impl with the variant as `this`.
+func (l *Lowerer) emitTaggedVariantDelegate(w *emit.Writer, enumName, variantStruct string, m *ast.FunctionStatement) {
+	method := emit.MangleIdent(m.Name.Value)
+	w.WriteString("func (__v ")
+	w.WriteString(variantStruct)
+	w.WriteString(") ")
+	w.WriteString(method)
+	w.WriteString("(")
+	l.emitParamList(w, m.Parameters, l.resolveParamTypes(m.Parameters))
+	w.WriteString(") ")
+	if m.ReturnType != nil {
+		goRet := types.ToGo(l.resolveTypeRef(m.ReturnType), l.Module.IntMode)
+		l.Module.AddTypeImports(goRet)
+		w.WriteString(goRet.Source)
+		w.WriteString(" ")
+	}
+	w.WriteLine("{")
+	w.Indent()
+	if m.ReturnType != nil {
+		w.WriteString("return ")
+	}
+	w.WriteString(enumName)
+	w.WriteString("_")
+	w.WriteString(method)
+	w.WriteString("(__v")
+	for _, p := range m.Parameters {
+		w.WriteString(", ")
+		if p.Variadic {
+			w.WriteString(emit.MangleIdent(p.Name.Value) + "...")
+		} else {
+			w.WriteString(emit.MangleIdent(p.Name.Value))
+		}
+	}
+	w.WriteLine(")")
+	w.Dedent()
+	w.WriteLine("}")
+	w.Newline()
+}
+
+// emitTaggedEnumImpl lowers a tagged enum method's body once into a shared
+// function with `this` bound to the enum interface value, so `match (this)`
+// destructures the variant and a sibling call dispatches via the method set.
+func (l *Lowerer) emitTaggedEnumImpl(enumGbName, enumGoName string, m *ast.FunctionStatement) {
+	decls := l.Module.TopDecls()
+	bodyWriter := emit.NewWriter()
+	savedW := l.w
+	l.w = bodyWriter
+	methodRetGo := ""
+	if m.ReturnType != nil {
+		methodRetGo = types.ToGo(l.resolveTypeRef(m.ReturnType), l.Module.IntMode).Source
+	}
+	l.withReturnGo(methodRetGo, func() {
+		l.withChildScope(func() {
+			l.scope.Define(&types.Binding{
+				Name:    "this",
+				Type:    &types.Type{Kind: types.KindEnum, Name: enumGoName},
+				Mutable: false,
+			})
+			for _, p := range m.Parameters {
+				l.scope.Define(&types.Binding{
+					Name:    p.Name.Value,
+					Type:    paramBindingType(p, l.resolveTypeRef(p.Type)),
+					Mutable: true,
+					IsParam: true,
+				})
+			}
+			if m.Body != nil {
+				l.lowerBlock(m.Body.Statements)
+			}
+		})
+		if methodRetGo != "" && bodyEndsWithTry(m.Body) {
+			l.w.WriteLine("return " + zeroValue(methodRetGo))
+		}
+	})
+	l.w = savedW
+
+	decls.WriteString("func ")
+	decls.WriteString(enumGoName)
+	decls.WriteString("_")
+	decls.WriteString(emit.MangleIdent(m.Name.Value))
+	decls.WriteString("(this ")
+	decls.WriteString(enumGoName)
+	for _, p := range m.Parameters {
+		decls.WriteString(", ")
+		decls.WriteString(emit.MangleIdent(p.Name.Value))
+		decls.WriteString(" ")
+		goTy := types.ToGo(l.resolveTypeRef(p.Type), l.Module.IntMode)
+		l.Module.AddTypeImports(goTy)
+		if p.Variadic {
+			decls.WriteString("...")
+		}
+		decls.WriteString(goTy.Source)
+	}
+	decls.WriteString(") ")
+	if m.ReturnType != nil {
+		goRet := types.ToGo(l.resolveTypeRef(m.ReturnType), l.Module.IntMode)
+		l.Module.AddTypeImports(goRet)
+		decls.WriteString(goRet.Source)
+		decls.WriteString(" ")
+	}
+	decls.WriteLine("{")
+	decls.Indent()
+	decls.WriteString(bodyWriter.String())
+	decls.Dedent()
+	decls.WriteLine("}")
+	decls.Newline()
+	_ = enumGbName
 }
 
 func (l *Lowerer) lowerInterface(s *ast.InterfaceStatement) {
@@ -155,14 +322,6 @@ func (l *Lowerer) lowerEnum(s *ast.EnumStatement) {
 		}
 	}
 	if tagged {
-		// Tagged enums lower to a Go interface + per-variant structs; methods and
-		// interface conformance there need runtime support deferred to a later phase.
-		if len(s.Methods) > 0 || len(s.Implements) > 0 {
-			l.errAt(s.Token.Line, s.Token.Column,
-				"the transpiler does not yet support methods or interface implementation on a tagged enum",
-				"tagged-enum method dispatch is deferred to a later phase")
-			return
-		}
 		l.lowerTaggedEnum(s)
 		return
 	}

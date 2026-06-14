@@ -1457,6 +1457,12 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					return nil, err
 				}
 				switch k := key.(type) {
+				case runtime.SmallInt:
+					if hasFloat {
+						floatSum += float64(k.Value)
+					} else {
+						sum.Add(sum, new(big.Rat).SetInt64(k.Value))
+					}
 				case runtime.Int:
 					if hasFloat {
 						f, _ := new(big.Float).SetInt(k.Value).Float64()
@@ -1504,6 +1510,12 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 					return nil, err
 				}
 				switch k := key.(type) {
+				case runtime.SmallInt:
+					if hasFloat {
+						floatSum += float64(k.Value)
+					} else {
+						sum.Add(sum, new(big.Rat).SetInt64(k.Value))
+					}
 				case runtime.Int:
 					if hasFloat {
 						f, _ := new(big.Float).SetInt(k.Value).Float64()

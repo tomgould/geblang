@@ -1,0 +1,31 @@
+import io;
+import json;
+
+/* Index-assign INTO an any-typed value (a json.parse result): overwrite an
+   existing key, add a new key (appended in insertion order), set a list
+   element, and a nested object write. Mutation is in place and the whole
+   structure stringifies byte-identical across VM == evaluator == native. */
+
+let data = json.parse("{\"count\":1,\"items\":[10,20,30],\"obj\":{\"k\":false},\"name\":\"widget\"}");
+
+/* overwrite an existing key */
+data["count"] = 5;
+
+/* add a new key (appends after existing keys) */
+data["new"] = "x";
+
+/* set a list element (also a negative-index write) */
+data["items"][0] = 99;
+data["items"][-1] = 77;
+
+/* nested object write */
+data["obj"]["k"] = true;
+
+io.println(json.stringify(data));
+
+/* read the mutated values back through any-navigation */
+io.println(data["count"]);
+io.println(data["new"]);
+io.println(data["items"][0]);
+io.println(data["items"][2]);
+io.println(data["obj"]["k"]);

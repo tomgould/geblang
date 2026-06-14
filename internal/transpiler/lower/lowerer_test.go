@@ -2062,11 +2062,42 @@ func TestLowererAnyTypedHofPredicateNonBoolDiagnosed(t *testing.T) {
 }
 
 func TestLowererAnyTypedHofByVariantDiagnosed(t *testing.T) {
-	// The *By family stays unsupported on an any receiver.
-	src := "import io;\nany x = [1, 2, 3];\nio.println(x.sortBy(func(any n): any { return n; }));\n"
+	// The less-common *By variants stay unsupported on an any receiver.
+	src := "import io;\nany x = [1, 2, 3];\nio.println(x.takeWhile(func(any n): bool { return true; }));\n"
 	_, l := runLowerer(t, src)
-	if !errorsContain(l.Errors(), "higher-order method 'sortBy' on an any-typed value") {
+	if !errorsContain(l.Errors(), "higher-order method 'takeWhile' on an any-typed value") {
 		t.Errorf("expected *By HOF-on-any diagnostic, got: %v", l.Errors())
+	}
+}
+
+func TestLowererAnyTypedSortByRoutesToCallMethod(t *testing.T) {
+	// The common *By selectors route through the dispatcher with an any callback.
+	src := "import io;\nany x = [1, 2, 3];\nio.println(x.sortBy(func(any n): any { return n; }));\n"
+	mod, l := runLowerer(t, src)
+	if len(l.Errors()) != 0 {
+		t.Fatalf("unexpected errors: %v", l.Errors())
+	}
+	body := mod.MainBody().String()
+	if !strings.Contains(body, `transpilert.CallMethod(`) || !strings.Contains(body, `"sortBy"`) {
+		t.Errorf("expected CallMethod sortBy dispatch, got:\n%s", body)
+	}
+}
+
+func TestLowererAnyTypedGroupByConcreteCallbackDiagnosed(t *testing.T) {
+	// A concrete-typed selector still diagnoses with the cast-first hint.
+	src := "import io;\nany x = [1, 2, 3];\nio.println(x.groupBy(func(int n): int { return n; }));\n"
+	_, l := runLowerer(t, src)
+	if !errorsContain(l.Errors(), "needs an any-typed callback for 'groupBy'") {
+		t.Errorf("expected callback-type diagnostic, got: %v", l.Errors())
+	}
+}
+
+func TestLowererAnyTypedPartitionNonBoolDiagnosed(t *testing.T) {
+	// partition needs a bool-returning predicate; an any-returning one diagnoses.
+	src := "import io;\nany x = [1, 2, 3];\nio.println(x.partition(func(any n): any { return n; }));\n"
+	_, l := runLowerer(t, src)
+	if !errorsContain(l.Errors(), "needs an any-typed callback for 'partition'") {
+		t.Errorf("expected callback-type diagnostic, got: %v", l.Errors())
 	}
 }
 
@@ -2185,20 +2216,34 @@ enum Status implements Describable {
 	}
 }
 
-func TestLowererTaggedEnumWithMethodDiagnoses(t *testing.T) {
-	src := `enum Nat {
-    Zero, Succ(int);
-    func toInt(): int {
+func TestLowererTaggedEnumMethodEmitsInterfaceSigAndImpl(t *testing.T) {
+	src := `interface Describable { func describe(): string; }
+enum Result implements Describable {
+    Ok(int), Err(string);
+    func describe(): string {
         return match (this) {
-            case Nat.Zero => 0;
-            case Nat.Succ(int n) => n;
+            case Result.Ok(int v) => "ok";
+            case Result.Err(string e) => e;
         };
     }
 }
 `
-	_, l := runLowerer(t, src)
-	if !errorsContain(l.Errors(), "tagged enum") {
-		t.Errorf("expected tagged-enum-method diagnostic, got: %v", l.Errors())
+	mod, l := runLowerer(t, src)
+	if errs := l.Errors(); len(errs) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", errs)
+	}
+	decls := mod.TopDecls().String()
+	for _, want := range []string{
+		"type Result interface {",            // enum interface
+		"describe() string",                  // method sig on the interface
+		"func Result_describe(this Result)",  // shared impl, this is the interface
+		"func (__v ResultOk) describe()",     // variant delegate
+		"func (__v ResultErr) describe()",    // variant delegate
+		"return Result_describe(__v)",        // delegate forwards to shared impl
+	} {
+		if !strings.Contains(decls, want) {
+			t.Errorf("expected %q in decls, got:\n%s", want, decls)
+		}
 	}
 }
 

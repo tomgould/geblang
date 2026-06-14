@@ -352,6 +352,125 @@ export func main(): int {
 	}
 }
 
+// TestBuildNativeAnyIndexAssign transpiles an exported main that json.parses a
+// fixed string and writes INTO the any-typed result (overwrite key, add key,
+// list element, nested object write), builds it offline with --native, and
+// asserts byte-identical stdout against the bundled VM build.
+func TestBuildNativeAnyIndexAssign(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping native build e2e in -short mode")
+	}
+	bin := buildNativeTestGeblang(t)
+
+	dir := t.TempDir()
+	src := `import io;
+import json;
+
+export func main(): int {
+    let data = json.parse("{\"count\":1,\"items\":[10,20,30],\"obj\":{\"k\":false}}");
+    data["count"] = 5;
+    data["new"] = "x";
+    data["items"][0] = 99;
+    data["obj"]["k"] = true;
+    io.println(json.stringify(data));
+    io.println(data["count"]);
+    io.println(data["new"]);
+    io.println(data["items"][0]);
+    io.println(data["obj"]["k"]);
+    return 0;
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.gb"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bundleOut := filepath.Join(dir, "bundle")
+	bundleBuild := exec.Command(bin, "build", "--entry", "main", "--out", bundleOut, ".")
+	bundleBuild.Dir = dir
+	if combined, err := bundleBuild.CombinedOutput(); err != nil {
+		t.Fatalf("bundle build failed: %v\n%s", err, combined)
+	}
+	wantOut, err := exec.Command(bundleOut).Output()
+	if err != nil {
+		t.Fatalf("run bundle binary: %v", err)
+	}
+
+	out := filepath.Join(dir, "app")
+	build := exec.Command(bin, "build", "--native", "--entry", "main", "--out", out, ".")
+	build.Dir = dir
+	build.Env = nativeBuildEnv()
+	if combined, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("native build failed: %v\n%s", err, combined)
+	}
+
+	run := exec.Command(out)
+	run.Dir = t.TempDir()
+	gotOut, err := run.Output()
+	if err != nil {
+		t.Fatalf("run native binary: %v", err)
+	}
+	if string(gotOut) != string(wantOut) {
+		t.Fatalf("native output != bundle\n--- want ---\n%q\n--- got ---\n%q", wantOut, gotOut)
+	}
+}
+
+// TestBuildNativeAnyByHof transpiles an exported main that json.parses an array
+// of objects and runs the *By family (sortBy, groupBy, maxBy, sumBy) with
+// any-typed key selectors, builds it offline with --native, and asserts
+// byte-identical stdout against the bundled VM build.
+func TestBuildNativeAnyByHof(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping native build e2e in -short mode")
+	}
+	bin := buildNativeTestGeblang(t)
+
+	dir := t.TempDir()
+	src := `import io;
+import json;
+
+export func main(): int {
+    let rows = json.parse("[{\"team\":\"a\",\"score\":3},{\"team\":\"b\",\"score\":1},{\"team\":\"a\",\"score\":2}]");
+    io.println(rows.groupBy(func(any r): any { return (r as dict<string, any>)["team"]; }));
+    io.println(rows.maxBy(func(any r): any { return (r as dict<string, any>)["score"]; }));
+    io.println(rows.sumBy(func(any r): any { return (r as dict<string, any>)["score"] as float; }));
+    io.println(rows.sortBy(func(any r): any { return (r as dict<string, any>)["score"]; }));
+    return 0;
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.gb"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bundleOut := filepath.Join(dir, "bundle")
+	bundleBuild := exec.Command(bin, "build", "--entry", "main", "--out", bundleOut, ".")
+	bundleBuild.Dir = dir
+	if combined, err := bundleBuild.CombinedOutput(); err != nil {
+		t.Fatalf("bundle build failed: %v\n%s", err, combined)
+	}
+	wantOut, err := exec.Command(bundleOut).Output()
+	if err != nil {
+		t.Fatalf("run bundle binary: %v", err)
+	}
+
+	out := filepath.Join(dir, "app")
+	build := exec.Command(bin, "build", "--native", "--entry", "main", "--out", out, ".")
+	build.Dir = dir
+	build.Env = nativeBuildEnv()
+	if combined, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("native build failed: %v\n%s", err, combined)
+	}
+
+	run := exec.Command(out)
+	run.Dir = t.TempDir()
+	gotOut, err := run.Output()
+	if err != nil {
+		t.Fatalf("run native binary: %v", err)
+	}
+	if string(gotOut) != string(wantOut) {
+		t.Fatalf("native output != bundle\n--- want ---\n%q\n--- got ---\n%q", wantOut, gotOut)
+	}
+}
+
 // TestBuildNativeDateTimeObject transpiles an exported main using the datetime
 // OO handles (Instant chained add, diff -> Duration, format, parts/inZone dicts,
 // Zone), builds it offline with --native, and asserts its stdout is
@@ -914,6 +1033,89 @@ export func main(): int {
     io.println(data["name"].upper());
     io.println(data["name"].upper().length());
     io.println(data.keys()[0]);
+    return 0;
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.gb"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bundleOut := filepath.Join(dir, "bundle")
+	bundleBuild := exec.Command(bin, "build", "--entry", "main", "--out", bundleOut, ".")
+	bundleBuild.Dir = dir
+	if combined, err := bundleBuild.CombinedOutput(); err != nil {
+		t.Fatalf("bundle build failed: %v\n%s", err, combined)
+	}
+	wantOut, err := exec.Command(bundleOut).Output()
+	if err != nil {
+		t.Fatalf("run bundle binary: %v", err)
+	}
+
+	out := filepath.Join(dir, "app")
+	build := exec.Command(bin, "build", "--native", "--entry", "main", "--out", out, ".")
+	build.Dir = dir
+	build.Env = nativeBuildEnv()
+	if combined, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("native build failed: %v\n%s", err, combined)
+	}
+
+	run := exec.Command(out)
+	run.Dir = t.TempDir()
+	gotOut, err := run.Output()
+	if err != nil {
+		t.Fatalf("run native binary: %v", err)
+	}
+	if string(gotOut) != string(wantOut) {
+		t.Fatalf("native output != bundle\n--- want ---\n%q\n--- got ---\n%q", wantOut, gotOut)
+	}
+}
+
+// TestBuildNativeTaggedEnumMethods transpiles an exported main using a tagged
+// enum with methods + interface dispatch (match (this) destructures associated
+// values, a sibling method call, an enum value through an interface-typed slot),
+// builds it offline with --native, and asserts byte-identical stdout against the
+// bundled VM build.
+func TestBuildNativeTaggedEnumMethods(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping native build e2e in -short mode")
+	}
+	bin := buildNativeTestGeblang(t)
+
+	dir := t.TempDir()
+	src := `import io;
+
+interface Describable {
+    func describe(): string;
+}
+
+enum Result implements Describable {
+    Ok(int), Err(string);
+
+    func describe(): string {
+        return match (this) {
+            case Result.Ok(int v) => "ok=" + (v as string);
+            case Result.Err(string e) => "err=" + e;
+        };
+    }
+
+    func loud(): string {
+        return this.describe() + "!";
+    }
+}
+
+func report(Describable d): string {
+    return d.describe();
+}
+
+export func main(): int {
+    let all = [Result.Ok(1), Result.Err("boom")];
+    for (Result r in all) {
+        io.println(r.describe());
+    }
+    io.println(Result.Ok(7).loud());
+    Describable d = Result.Err("via-iface");
+    io.println(report(d));
+    io.println(Result.Ok(5));
     return 0;
 }
 `

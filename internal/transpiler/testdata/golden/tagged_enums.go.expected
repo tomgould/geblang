@@ -6,7 +6,9 @@ import (
 	"geblang/pkg/transpilert"
 )
 
-type Result interface{ __gbResult() }
+type Result interface {
+	__gbResult()
+}
 
 type ResultOk struct {
 	V0 string

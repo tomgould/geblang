@@ -4,8 +4,20 @@
  */
 import test;
 import collections;
+import json;
 
 class CollectionsTest extends test.Test {
+    @test
+    func sumByAverageByAcceptSmallInt(): void {
+        let xs = [1, 2, 3, 4];
+        this.assertEquals(10, xs.sumBy(func(int n): any { return n; }));
+        this.assertEquals(5, xs.averageBy(func(int n): any { return n * 2; }));
+        /* json.parse yields SmallInt for small ints; sumBy/averageBy must
+           accept them on both backends (regression). */
+        let rows = json.parse("[{\"v\": 10}, {\"v\": 20}]");
+        this.assertEquals(30, rows.sumBy(func(any r): any { return (r as dict<string, any>)["v"]; }));
+    }
+
     @test
     func sortList(): void {
         let xs = [3, 1, 4, 1, 5, 9, 2, 6];

@@ -118,3 +118,27 @@ io.println(xs.length());
 		}
 	}
 }
+
+// Index-ASSIGN into an any-typed receiver lowers to transpilert.IndexSet (the
+// read lhs is not a Go lvalue), and a nested write composes IndexSet over Index.
+func TestIndexAssignIntoAnyLowersToIndexSet(t *testing.T) {
+	src := `import json;
+let data = json.parse("{}");
+data["count"] = 5;
+data["items"][0] = 99;
+data["obj"]["k"] = true;
+`
+	l := lowerSource(t, src)
+	if errs := l.Errors(); len(errs) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", errs)
+	}
+	got := string(l.Module.Render())
+	for _, want := range []string{
+		`transpilert.IndexSet(`,
+		`transpilert.IndexSet(transpilert.Index(`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in output:\n%s", want, got)
+		}
+	}
+}

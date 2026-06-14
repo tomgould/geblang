@@ -85,18 +85,28 @@ io.println(s.codePointAt(0));
 	}
 }
 
-// Untagged-enum methods + interface implementation now lower to Go methods on
-// the int type; methods on a TAGGED enum still diagnose (its variants lower to
-// distinct structs behind an interface, where dispatch needs later-phase work).
-func TestTaggedEnumMethodsDiagnose(t *testing.T) {
+// Tagged-enum methods lower to a shared impl (body lowered once with `this` the
+// enum interface value) plus a per-variant delegate, so every variant satisfies
+// the enum interface and the method set is real.
+func TestTaggedEnumMethodsLower(t *testing.T) {
 	src := `enum Status {
-	Active, Closed(string);
-	func describe(): string { return match (this) { case Status.Active => "a"; default => "c"; }; }
+	Active(int), Closed(string);
+	func describe(): string { return match (this) { case Status.Active(int n) => "a"; default => "c"; }; }
 }
 `
 	l := lowerSource(t, src)
-	if !diagnosed(l.Errors(), "tagged enum") {
-		t.Fatalf("expected tagged-enum-methods diagnostic, got: %v", l.Errors())
+	if errs := l.Errors(); len(errs) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", errs)
+	}
+	decls := l.Module.TopDecls().String()
+	for _, want := range []string{
+		"func Status_describe(this Status) string",
+		"func (__v StatusActive) describe() string",
+		"return Status_describe(__v)",
+	} {
+		if !strings.Contains(decls, want) {
+			t.Errorf("expected %q in decls, got:\n%s", want, decls)
+		}
 	}
 }
 

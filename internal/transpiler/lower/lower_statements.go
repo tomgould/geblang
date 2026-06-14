@@ -426,6 +426,9 @@ func (l *Lowerer) emitMatchAsTypeSwitch(scrutinee ast.Expression, cases []ast.Ma
 				l.w.WriteString(" := __m.V")
 				l.w.WriteString(fmt.Sprintf("%d", i))
 				l.w.WriteLine("")
+				// The interpreter binds the param unconditionally; a body that
+				// never reads it must still compile as Go.
+				l.w.WriteLine("_ = " + name)
 			}
 			if len(c.EnumVariant.Params) == 0 {
 				l.w.WriteLine("_ = __m")
@@ -440,11 +443,13 @@ func (l *Lowerer) emitMatchAsTypeSwitch(scrutinee ast.Expression, cases []ast.Ma
 		l.w.WriteLine("_ = __m")
 		l.emitMatchCaseBody(defaultCase, asExpression)
 		l.w.Dedent()
-	} else if asExpression {
+	} else {
+		// The interpreter raises an uncaught MatchError when no variant matches
+		// (statement and expression alike), so mirror it rather than fall
+		// through silently or panic raw.
 		l.w.WriteLine("default:")
 		l.w.Indent()
-		l.w.WriteLine("_ = __m")
-		l.w.WriteLine("panic(\"match: no case matched\")")
+		l.emitMatchNoCasePanic("__m")
 		l.w.Dedent()
 	}
 	l.w.WriteLine("}")

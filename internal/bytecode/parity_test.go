@@ -3644,3 +3644,17 @@ string
 int
 `)
 }
+
+func TestParitySumByAverageBySmallInt(t *testing.T) {
+	runParity(t, `import io;
+import json;
+let xs = [1, 2, 3, 4];
+io.println(xs.sumBy(func(int n): any { return n; }));
+io.println(xs.averageBy(func(int n): any { return n * 2; }));
+let rows = json.parse("[{\"v\": 10}, {\"v\": 20}]");
+io.println(rows.sumBy(func(any r): any { return (r as dict<string, any>)["v"]; }));
+`, `10
+5
+30
+`)
+}
