@@ -1,0 +1,12 @@
+import io;
+import json;
+
+/* A runtime error raised inside an any-typed HOF callback (a failed cast) must
+   propagate uncaught: the dispatch site installs the top-level handler so the
+   native binary renders the error and exits 1, never a raw Go panic. Stdout and
+   exit code match the VM and evaluator (the render itself goes to stderr). */
+
+let data = json.parse("{\"words\":[\"alpha\",\"beta\"]}");
+io.println("before");
+io.println(data["words"].map(func(any w): any { return (w as int) + 1; }));
+io.println("after");

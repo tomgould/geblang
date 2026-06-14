@@ -201,6 +201,10 @@ func (l *Lowerer) preregisterTopLevel(stmts []ast.Statement) {
 		if alias, ok := s.(*ast.TypeAliasStatement); ok {
 			l.Module.RegisterTypeAlias(alias.Name.Value, alias.Type)
 		}
+		if iface, ok := s.(*ast.InterfaceStatement); ok {
+			l.Module.RegisterInterface(iface.Name.Value)
+			l.Module.RegisterInterfaceDecl(iface.Name.Value, iface)
+		}
 	}
 }
 
@@ -528,6 +532,10 @@ func (l *Lowerer) inferExpressionType(expr ast.Expression) *types.Type {
 		}
 	}
 	switch e := expr.(type) {
+	case *ast.Literal:
+		if _, ok := e.Value.(bool); ok {
+			return &types.Type{Kind: types.KindBool}
+		}
 	case *ast.InfixExpression:
 		switch e.Operator {
 		case "==", "!=", "<", ">", "<=", ">=", "&&", "||", "instanceof":

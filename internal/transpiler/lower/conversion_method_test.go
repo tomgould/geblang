@@ -85,18 +85,18 @@ io.println(s.codePointAt(0));
 	}
 }
 
-// Enum methods and interface implementation are not yet lowered; the enum must
-// diagnose rather than emit a Go enum whose missing methods only fail go build.
-func TestUnsupportedEnumMethodsDiagnose(t *testing.T) {
-	src := `interface Describable { func describe(): string; }
-enum Status implements Describable {
-	Active, Closed;
+// Untagged-enum methods + interface implementation now lower to Go methods on
+// the int type; methods on a TAGGED enum still diagnose (its variants lower to
+// distinct structs behind an interface, where dispatch needs later-phase work).
+func TestTaggedEnumMethodsDiagnose(t *testing.T) {
+	src := `enum Status {
+	Active, Closed(string);
 	func describe(): string { return match (this) { case Status.Active => "a"; default => "c"; }; }
 }
 `
 	l := lowerSource(t, src)
-	if !diagnosed(l.Errors(), "does not yet support enum methods") {
-		t.Fatalf("expected enum-methods diagnostic, got: %v", l.Errors())
+	if !diagnosed(l.Errors(), "tagged enum") {
+		t.Fatalf("expected tagged-enum-methods diagnostic, got: %v", l.Errors())
 	}
 }
 

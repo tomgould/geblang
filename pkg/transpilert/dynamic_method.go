@@ -13,9 +13,9 @@ import (
 // routes name to the same per-type helpers the concrete-typed lowering uses, so
 // a `.length()` on a known list and on an any-list give identical results.
 // Return values and unknown-method errors match the interpreter's evalMethodCall
-// byte for byte. Higher-order methods (map/filter/reduce/...) take a Geblang
-// closure lowered to a typed Go func that this dispatcher cannot invoke from an
-// any value; those are diagnosed at lower time, never reached here.
+// byte for byte. Higher-order methods (map/filter/reduce/...) take an any-typed
+// Geblang closure lowered to a `func(any) any`/`func(any) bool`, asserted and
+// applied here; concrete-typed callbacks and *By variants diagnose at lower time.
 
 // CallMethod dispatches name on an any-typed receiver. args are boxed to any.
 func CallMethod(recv any, name string, args []any) any {
@@ -485,14 +485,85 @@ func listMethod(xs []any, name string, args []any) any {
 	case "sorted":
 		wantArgs("list", name, len(args), 0)
 		return listSorted(xs)
-	case "map", "filter", "reduce", "find", "findLast", "any", "all", "count",
-		"flatMap", "sortBy", "uniqueBy", "takeWhile", "dropWhile", "groupBy",
+	case "map":
+		return Map(xs, hofMapFn(name, args))
+	case "filter":
+		return Filter(xs, hofPredFn(name, args))
+	case "find":
+		return Find(xs, hofPredFn(name, args))
+	case "findLast":
+		return FindLast(xs, hofPredFn(name, args))
+	case "any":
+		return AnyMatch(xs, hofPredFn(name, args))
+	case "all":
+		return AllMatch(xs, hofPredFn(name, args))
+	case "count":
+		return Count(xs, hofPredFn(name, args))
+	case "reduce":
+		if len(args) != 2 {
+			panic(NewError("RuntimeError", "list.reduce expects two arguments (function, initial)"))
+		}
+		fn := hofReduceFn(args[0])
+		acc := args[1]
+		for _, el := range xs {
+			acc = fn(acc, el)
+		}
+		return acc
+	case "flatMap":
+		fn := hofMapFn(name, args)
+		var out []any
+		for _, el := range xs {
+			nested, ok := fn(el).([]any)
+			if !ok {
+				panic(NewError("RuntimeError", "list.flatMap function must return a list"))
+			}
+			out = append(out, nested...)
+		}
+		return out
+	case "sortBy", "uniqueBy", "takeWhile", "dropWhile", "groupBy",
 		"indexBy", "partition", "maxBy", "minBy", "sumBy", "averageBy", "scan",
 		"zipWith", "containsBy", "differenceBy", "intersectionBy", "topBy",
 		"binarySearchBy":
 		panic(NewError("RuntimeError", "list."+name+" on an any value needs a typed list (cast to list<...> first) in --native"))
 	}
 	panic(NewError("RuntimeError", "unknown method list."+name))
+}
+
+// hofMapFn asserts a 1-arg map-style callback lowered from `func(any): any`.
+func hofMapFn(method string, args []any) func(any) any {
+	if len(args) != 1 {
+		panic(NewError("RuntimeError", "list."+method+" expects one argument (function)"))
+	}
+	fn, ok := args[0].(func(any) any)
+	if !ok {
+		panic(hofCallbackError(method, args[0]))
+	}
+	return fn
+}
+
+// hofPredFn asserts a 1-arg predicate callback lowered from `func(any): bool`.
+func hofPredFn(method string, args []any) func(any) bool {
+	if len(args) != 1 {
+		panic(NewError("RuntimeError", "list."+method+" expects one argument (function)"))
+	}
+	fn, ok := args[0].(func(any) bool)
+	if !ok {
+		panic(hofCallbackError(method, args[0]))
+	}
+	return fn
+}
+
+// hofReduceFn asserts the 2-arg fold callback lowered from `func(any, any): any`.
+func hofReduceFn(arg any) func(any, any) any {
+	fn, ok := arg.(func(any, any) any)
+	if !ok {
+		panic(hofCallbackError("reduce", arg))
+	}
+	return fn
+}
+
+func hofCallbackError(method string, got any) *Error {
+	return NewError("RuntimeError", "list."+method+" callback on an any value must be an any-typed function; got "+gbTypeName(got))
 }
 
 func listSlice(xs []any, args []any) []any {

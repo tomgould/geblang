@@ -29,6 +29,7 @@ type Module struct {
 	classes        map[string]struct{}
 	enums          map[string][]string
 	interfaces     map[string]struct{}
+	interfaceDecls map[string]*ast.InterfaceStatement
 	taggedVariants map[string]int
 	classMethods   map[string]map[string]struct{}
 	classFields    map[string]map[string]string
@@ -348,6 +349,15 @@ func (m *Module) IsEnum(name string) bool {
 	return ok
 }
 
+func (m *Module) EnumHasVariant(enumName, variant string) bool {
+	for _, v := range m.enums[enumName] {
+		if v == variant {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Module) EnumVariants(name string) ([]string, bool) {
 	v, ok := m.enums[name]
 	return v, ok
@@ -383,6 +393,20 @@ func (m *Module) RegisterInterface(name string) {
 func (m *Module) IsInterface(name string) bool {
 	_, ok := m.interfaces[name]
 	return ok
+}
+
+// RegisterInterfaceDecl stores the interface AST so an implementer can fold in
+// any default method it does not override.
+func (m *Module) RegisterInterfaceDecl(name string, s *ast.InterfaceStatement) {
+	if m.interfaceDecls == nil {
+		m.interfaceDecls = map[string]*ast.InterfaceStatement{}
+	}
+	m.interfaceDecls[name] = s
+}
+
+func (m *Module) InterfaceDecl(name string) (*ast.InterfaceStatement, bool) {
+	s, ok := m.interfaceDecls[name]
+	return s, ok
 }
 
 // RegisterTypeAlias records `type Name = T`; uses resolve the target inline.

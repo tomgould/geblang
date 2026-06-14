@@ -2030,11 +2030,43 @@ func TestLowererAnyTypedNonHofMethodRoutesToCallMethod(t *testing.T) {
 	}
 }
 
-func TestLowererAnyTypedHofMethodDiagnosed(t *testing.T) {
+func TestLowererAnyTypedHofConcreteCallbackDiagnosed(t *testing.T) {
+	// A concrete-typed callback lowers to a non-assertable func, so it diagnoses.
 	src := "import io;\nany x = [1, 2, 3];\nio.println(x.map(func(int n): int { return n; }));\n"
 	_, l := runLowerer(t, src)
-	if !errorsContain(l.Errors(), "higher-order method 'map' on an any-typed value") {
-		t.Errorf("expected HOF-on-any diagnostic, got: %v", l.Errors())
+	if !errorsContain(l.Errors(), "needs an any-typed callback for 'map'") {
+		t.Errorf("expected callback-type diagnostic, got: %v", l.Errors())
+	}
+}
+
+func TestLowererAnyTypedHofAnyCallbackRoutesToCallMethod(t *testing.T) {
+	// An any-typed callback lowers to the asserted func(any) any, so it routes.
+	src := "import io;\nany x = [1, 2, 3];\nio.println(x.map(func(any n): any { return n; }));\n"
+	mod, l := runLowerer(t, src)
+	if len(l.Errors()) != 0 {
+		t.Fatalf("unexpected errors: %v", l.Errors())
+	}
+	body := mod.MainBody().String()
+	if !strings.Contains(body, `transpilert.CallMethod(`) || !strings.Contains(body, `"map"`) {
+		t.Errorf("expected CallMethod map dispatch, got:\n%s", body)
+	}
+}
+
+func TestLowererAnyTypedHofPredicateNonBoolDiagnosed(t *testing.T) {
+	// filter needs a bool-returning callback; an any-returning one diagnoses.
+	src := "import io;\nany x = [1, 2, 3];\nio.println(x.filter(func(any n): any { return n; }));\n"
+	_, l := runLowerer(t, src)
+	if !errorsContain(l.Errors(), "needs an any-typed callback for 'filter'") {
+		t.Errorf("expected callback-type diagnostic, got: %v", l.Errors())
+	}
+}
+
+func TestLowererAnyTypedHofByVariantDiagnosed(t *testing.T) {
+	// The *By family stays unsupported on an any receiver.
+	src := "import io;\nany x = [1, 2, 3];\nio.println(x.sortBy(func(any n): any { return n; }));\n"
+	_, l := runLowerer(t, src)
+	if !errorsContain(l.Errors(), "higher-order method 'sortBy' on an any-typed value") {
+		t.Errorf("expected *By HOF-on-any diagnostic, got: %v", l.Errors())
 	}
 }
 
@@ -2120,5 +2152,64 @@ func TestLowererRangeAsValueDiagnosed(t *testing.T) {
 	_, l := runLowerer(t, src)
 	if !errorsContain(l.Errors(), "range used as a value") {
 		t.Errorf("expected range-as-value diagnostic, got: %v", l.Errors())
+	}
+}
+
+func TestLowererUntaggedEnumMethodEmitsGoMethod(t *testing.T) {
+	src := `interface Describable { func describe(): string; }
+enum Status implements Describable {
+    Active, Closed;
+    func describe(): string {
+        return match (this) {
+            case Status.Closed => "closed";
+            default => "active";
+        };
+    }
+    func loud(): string { return this.describe() + "!"; }
+}
+`
+	mod, l := runLowerer(t, src)
+	if len(l.Errors()) != 0 {
+		t.Fatalf("unexpected errors: %v", l.Errors())
+	}
+	decls := mod.TopDecls().String()
+	for _, want := range []string{
+		"func (this Status) describe() string",
+		"func (this Status) loud() string",
+		"if __m == StatusClosed",
+		"this.describe()",
+	} {
+		if !strings.Contains(decls, want) {
+			t.Errorf("decls missing %q:\n%s", want, decls)
+		}
+	}
+}
+
+func TestLowererTaggedEnumWithMethodDiagnoses(t *testing.T) {
+	src := `enum Nat {
+    Zero, Succ(int);
+    func toInt(): int {
+        return match (this) {
+            case Nat.Zero => 0;
+            case Nat.Succ(int n) => n;
+        };
+    }
+}
+`
+	_, l := runLowerer(t, src)
+	if !errorsContain(l.Errors(), "tagged enum") {
+		t.Errorf("expected tagged-enum-method diagnostic, got: %v", l.Errors())
+	}
+}
+
+func TestLowererEnumMethodNamedStringDiagnoses(t *testing.T) {
+	src := `enum E {
+    A, B;
+    func String(): string { return "x"; }
+}
+`
+	_, l := runLowerer(t, src)
+	if !errorsContain(l.Errors(), `enum method named "String"`) {
+		t.Errorf("expected String-collision diagnostic, got: %v", l.Errors())
 	}
 }

@@ -608,23 +608,41 @@ func (l *Lowerer) lowerCall(e *ast.CallExpression) {
 	l.emitCallArgs(calleeKey, e.Arguments, e.Token, "this call")
 }
 
-// anyHofMethods are the higher-order primitive methods that take a Geblang
-// closure. On an any-typed receiver the closure is lowered to a typed Go func
-// the runtime dispatcher cannot invoke from an any value, so these diagnose and
-// hint to cast first; the non-HOF surface routes through transpilert.CallMethod.
+// anyHofPredKind maps a supported higher-order method on an any receiver to the
+// Go return kind its any-typed callback must lower to: a predicate (func(any)
+// bool) or a mapper/fold (func(any) any). The runtime dispatcher asserts the
+// matching signature, so a callback that lowers otherwise is diagnosed here.
+var anyHofPredKind = map[string]types.Kind{
+	"map":      types.KindAny,
+	"flatMap":  types.KindAny,
+	"reduce":   types.KindAny,
+	"filter":   types.KindBool,
+	"find":     types.KindBool,
+	"findLast": types.KindBool,
+	"any":      types.KindBool,
+	"all":      types.KindBool,
+	"count":    types.KindBool,
+}
+
+// anyHofMethods are the remaining closure-taking methods (the *By family and
+// other multi-shape callbacks) still unsupported on an any receiver; they
+// diagnose and hint to cast the receiver to a concrete list type first.
 var anyHofMethods = map[string]bool{
-	"map": true, "filter": true, "reduce": true, "find": true, "findLast": true,
-	"any": true, "all": true, "count": true, "flatMap": true, "sortBy": true,
-	"uniqueBy": true, "takeWhile": true, "dropWhile": true, "groupBy": true,
-	"indexBy": true, "partition": true, "maxBy": true, "minBy": true, "sumBy": true,
-	"averageBy": true, "scan": true, "zipWith": true, "containsBy": true,
-	"differenceBy": true, "intersectionBy": true, "topBy": true, "binarySearchBy": true,
+	"sortBy": true, "uniqueBy": true, "takeWhile": true, "dropWhile": true,
+	"groupBy": true, "indexBy": true, "partition": true, "maxBy": true,
+	"minBy": true, "sumBy": true, "averageBy": true, "scan": true,
+	"zipWith": true, "containsBy": true, "differenceBy": true,
+	"intersectionBy": true, "topBy": true, "binarySearchBy": true,
 }
 
 // lowerAnyMethodCall routes a method call on an any-typed receiver through the
 // runtime dispatcher; the result is any so chaining composes. Spread/named args
-// and the callback-taking HOFs are unsupported and diagnose.
+// diagnose; supported HOFs route when their callback is any-typed, else diagnose.
 func (l *Lowerer) lowerAnyMethodCall(sel *ast.SelectorExpression, e *ast.CallExpression) {
+	if retKind, ok := anyHofPredKind[sel.Name.Value]; ok {
+		l.lowerAnyHofMethodCall(sel, e, retKind)
+		return
+	}
 	if anyHofMethods[sel.Name.Value] {
 		l.errAt(sel.Token.Line, sel.Token.Column,
 			"the transpiler does not support the higher-order method '"+sel.Name.Value+"' on an any-typed value",
@@ -636,8 +654,62 @@ func (l *Lowerer) lowerAnyMethodCall(sel *ast.SelectorExpression, e *ast.CallExp
 		l.w.WriteString("nil")
 		return
 	}
-	// CallMethod can panic a runtime *Error (unknown method, bad arg); install
-	// the top-level renderer so an uncaught one renders like the interpreter.
+	l.emitCallMethod(sel, e.Arguments)
+}
+
+// lowerAnyHofMethodCall routes a supported HOF on an any receiver through the
+// dispatcher when its callback lowers to the asserted any-typed Go signature; a
+// concrete-typed callback (which would lower to a non-assertable func) diagnoses.
+func (l *Lowerer) lowerAnyHofMethodCall(sel *ast.SelectorExpression, e *ast.CallExpression, retKind types.Kind) {
+	if !l.requirePositionalArgs(e.Arguments, sel.Token, "a method call on an any-typed value") {
+		l.w.WriteString("nil")
+		return
+	}
+	if len(e.Arguments) == 0 || !l.anyTypedCallback(e.Arguments[0].Value, retKind) {
+		l.errAt(sel.Token.Line, sel.Token.Column,
+			"the transpiler needs an any-typed callback for '"+sel.Name.Value+"' on an any value",
+			"use an any-typed callback (e.g. func(any x): "+anyCallbackReturnHint(retKind)+") when mapping over an any value, or cast the receiver to list<...> first")
+		l.w.WriteString("nil")
+		return
+	}
+	l.emitCallMethod(sel, e.Arguments)
+}
+
+// anyTypedCallback reports whether cb is a function literal whose parameters all
+// lower to Go `any` and whose return lowers to wantRet, i.e. the closure becomes
+// the `func(any) any`/`func(any) bool` the runtime dispatcher type-asserts.
+func (l *Lowerer) anyTypedCallback(cb ast.Expression, wantRet types.Kind) bool {
+	fn, ok := cb.(*ast.FunctionLiteral)
+	if !ok || fn.Async {
+		return false
+	}
+	for _, p := range fn.Parameters {
+		if p.Variadic || !isAnyParamType(p.Type) {
+			return false
+		}
+	}
+	return l.resolveTypeRef(fn.ReturnType).Kind == wantRet
+}
+
+// isAnyParamType reports whether a closure parameter lowers to Go `any`: an
+// explicit `any` annotation or an unannotated parameter (KindUnknown -> any).
+func isAnyParamType(t *ast.TypeRef) bool {
+	return t == nil || t.Name == "any"
+}
+
+func anyCallbackReturnHint(retKind types.Kind) string {
+	if retKind == types.KindBool {
+		return "bool"
+	}
+	return "any"
+}
+
+// emitCallMethod emits the transpilert.CallMethod dispatch for an any-receiver
+// method, boxing each argument (a closure boxes as a Go func value) into []any.
+func (l *Lowerer) emitCallMethod(sel *ast.SelectorExpression, args []ast.CallArgument) {
+	// CallMethod can panic a runtime *Error (unknown method, bad arg, a bad cast
+	// inside a callback); install the top-level renderer so an uncaught one
+	// renders like the interpreter instead of a raw Go panic.
 	l.requireUncaughtHandler()
 	l.Module.AddImport(types.OrderedDictImport)
 	l.w.WriteString("transpilert.CallMethod(")
@@ -645,7 +717,7 @@ func (l *Lowerer) lowerAnyMethodCall(sel *ast.SelectorExpression, e *ast.CallExp
 	l.w.WriteString(", ")
 	l.w.WriteString(strconv.Quote(sel.Name.Value))
 	l.w.WriteString(", []any{")
-	for i, a := range e.Arguments {
+	for i, a := range args {
 		if i > 0 {
 			l.w.WriteString(", ")
 		}

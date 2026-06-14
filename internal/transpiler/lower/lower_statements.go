@@ -475,7 +475,8 @@ func (l *Lowerer) emitMatchAsIfChain(scrutinee ast.Expression, cases []ast.Match
 		if c.Default {
 			continue
 		}
-		if c.Pattern == nil {
+		variantConst, isEnumVariant := l.enumVariantTypePattern(c.Type)
+		if c.Pattern == nil && !isEnumVariant {
 			l.errAt(c.Token.Line, c.Token.Column,
 				"only literal patterns + default are supported in Phase 1",
 				"type-patterns and enum-variant patterns are deferred to Phase 2/3")
@@ -490,7 +491,11 @@ func (l *Lowerer) emitMatchAsIfChain(scrutinee ast.Expression, cases []ast.Match
 		l.w.WriteString(" ")
 		l.w.WriteString(scrutineeName)
 		l.w.WriteString(" == ")
-		l.lowerExpression(c.Pattern)
+		if isEnumVariant {
+			l.w.WriteString(variantConst)
+		} else {
+			l.lowerExpression(c.Pattern)
+		}
 		if c.Guard != nil {
 			l.w.WriteString(" && (")
 			l.lowerExpression(c.Guard)
@@ -515,8 +520,38 @@ func (l *Lowerer) emitMatchAsIfChain(scrutinee ast.Expression, cases []ast.Match
 		l.w.WriteLine("")
 	}
 	if asExpression && defaultCase == nil {
-		l.w.WriteLine("return nil")
+		l.emitMatchNoCasePanic(scrutineeName)
 	}
+}
+
+// emitMatchNoCasePanic renders the no-default fall-through of a match expression
+// as an uncaught MatchError (mirroring the interpreter), so a typed-return IIFE
+// stays valid Go and an unmatched value exits cleanly rather than panicking raw.
+func (l *Lowerer) emitMatchNoCasePanic(scrutineeName string) {
+	l.requireUncaughtHandler()
+	l.w.WriteString("panic(transpilert.NewError(\"MatchError\", \"no match case matched (add a 'default:' case to handle all values); got \" + transpilert.Show(")
+	l.w.WriteString(scrutineeName)
+	l.w.WriteString(") + \" (type: \" + transpilert.GbTypeName(")
+	l.w.WriteString(scrutineeName)
+	l.w.WriteLine(") + \")\"))")
+}
+
+// enumVariantTypePattern reports a `case Enum.Variant` over an untagged enum
+// (parsed as a type ref `Enum.Variant`), returning the Go const for an equality
+// test; the interpreter treats this pattern as a variant identity check.
+func (l *Lowerer) enumVariantTypePattern(t *ast.TypeRef) (string, bool) {
+	if t == nil {
+		return "", false
+	}
+	dot := strings.IndexByte(t.Name, '.')
+	if dot < 0 {
+		return "", false
+	}
+	enumName, variant := t.Name[:dot], t.Name[dot+1:]
+	if !l.Module.IsEnum(enumName) || !l.Module.EnumHasVariant(enumName, variant) {
+		return "", false
+	}
+	return emit.MangleIdent(enumName) + emit.MangleIdent(variant), true
 }
 
 func (l *Lowerer) emitMatchCaseBody(c *ast.MatchCase, asExpression bool) {

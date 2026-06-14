@@ -1,0 +1,40 @@
+import io;
+import json;
+
+/* Higher-order methods on values whose static type is any (a navigated
+   json array). The any-typed callback lowers to a Go func(any) any /
+   func(any) bool that the runtime dispatcher asserts and applies, with the
+   same ordering, short-circuit, reduce-init and empty-list behaviour as the
+   interpreter. Pinned output across VM == evaluator == native. */
+
+let data = json.parse("{\"nums\":[1,2,3,4,5,6],\"words\":[\"alpha\",\"beta\",\"gamma\"]}");
+
+/* map / filter / reduce with a cast inside the callback body */
+io.println(data["nums"].map(func(any n): any { return (n as int) * 2; }));
+io.println(data["nums"].filter(func(any n): bool { return (n as int) % 2 == 0; }));
+io.println(data["nums"].reduce(func(any acc, any n): any { return (acc as int) + (n as int); }, 0));
+
+/* find / findLast / any / all (short-circuit, null on miss) */
+io.println(data["nums"].find(func(any n): bool { return (n as int) > 3; }));
+io.println(data["nums"].find(func(any n): bool { return (n as int) > 99; }));
+io.println(data["nums"].findLast(func(any n): bool { return (n as int) < 4; }));
+io.println(data["nums"].any(func(any n): bool { return (n as int) > 5; }));
+io.println(data["nums"].all(func(any n): bool { return (n as int) > 0; }));
+io.println(data["nums"].all(func(any n): bool { return (n as int) > 3; }));
+io.println(data["nums"].count(func(any n): bool { return (n as int) % 2 == 1; }));
+
+/* flatMap returning a list per element */
+io.println(data["nums"].flatMap(func(any n): any { return [n, (n as int) * 10]; }));
+
+/* chained HOFs: the map result is any, so the next stage routes again */
+io.println(data["nums"].map(func(any n): any { return (n as int) + 1; }).filter(func(any n): bool { return (n as int) % 2 == 0; }));
+
+/* a non-HOF method on a HOF result (length of the mapped list) */
+io.println(data["nums"].map(func(any n): any { return (n as int) * (n as int); }).length());
+
+/* string elements: map upper, filter by length */
+io.println(data["words"].map(func(any w): any { return (w as string).upper(); }));
+io.println(data["words"].filter(func(any w): bool { return (w as string).length() == 4; }));
+
+/* empty-list reduce keeps the initial value */
+io.println(data["nums"].filter(func(any n): bool { return (n as int) > 100; }).reduce(func(any acc, any n): any { return (acc as int) + (n as int); }, 42));

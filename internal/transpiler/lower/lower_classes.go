@@ -7,6 +7,7 @@ import (
 	"geblang/internal/transpiler/types"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 func (l *Lowerer) lowerTaggedEnum(s *ast.EnumStatement) {
@@ -146,12 +147,6 @@ func (l *Lowerer) lowerInterface(s *ast.InterfaceStatement) {
 }
 
 func (l *Lowerer) lowerEnum(s *ast.EnumStatement) {
-	if len(s.Methods) > 0 || len(s.Implements) > 0 {
-		l.errAt(s.Token.Line, s.Token.Column,
-			"the transpiler does not yet support enum methods or interface implementation",
-			"enum method dispatch needs runtime support deferred to a later phase")
-		return
-	}
 	tagged := false
 	for _, v := range s.Variants {
 		if len(v.FieldTypes) > 0 {
@@ -160,6 +155,14 @@ func (l *Lowerer) lowerEnum(s *ast.EnumStatement) {
 		}
 	}
 	if tagged {
+		// Tagged enums lower to a Go interface + per-variant structs; methods and
+		// interface conformance there need runtime support deferred to a later phase.
+		if len(s.Methods) > 0 || len(s.Implements) > 0 {
+			l.errAt(s.Token.Line, s.Token.Column,
+				"the transpiler does not yet support methods or interface implementation on a tagged enum",
+				"tagged-enum method dispatch is deferred to a later phase")
+			return
+		}
 		l.lowerTaggedEnum(s)
 		return
 	}
@@ -215,6 +218,139 @@ func (l *Lowerer) lowerEnum(s *ast.EnumStatement) {
 	decls.Dedent()
 	decls.WriteLine("}")
 	decls.Newline()
+
+	l.emitEnumMethods(s, name)
+}
+
+// emitEnumMethods lowers an untagged enum's instance methods (plus any interface
+// default it does not override) as Go methods on the enum's int type, so a value
+// receiver binds `this` and interface conformance is structural.
+func (l *Lowerer) emitEnumMethods(s *ast.EnumStatement, name string) {
+	defined := map[string]struct{}{}
+	for _, m := range s.Methods {
+		if m.Name == nil {
+			continue
+		}
+		if !l.checkEnumMethodEmittable(s, m.Name.Value) {
+			return
+		}
+		defined[strings.ToLower(m.Name.Value)] = struct{}{}
+		l.registerEnumMethodSignature(name, m)
+		l.emitEnumMethod(s.Name.Value, name, m)
+	}
+	for _, m := range l.enumInterfaceDefaults(s, defined) {
+		if !l.checkEnumMethodEmittable(s, m.Name.Value) {
+			return
+		}
+		defined[strings.ToLower(m.Name.Value)] = struct{}{}
+		l.registerEnumMethodSignature(name, m)
+		l.emitEnumMethod(s.Name.Value, name, m)
+	}
+}
+
+// enumInterfaceDefaults collects default methods from implemented interfaces
+// that the enum leaves unimplemented, mirroring the interpreter's fold.
+func (l *Lowerer) enumInterfaceDefaults(s *ast.EnumStatement, defined map[string]struct{}) []*ast.FunctionStatement {
+	var out []*ast.FunctionStatement
+	for _, ref := range s.Implements {
+		iface, ok := l.Module.InterfaceDecl(ref.Name)
+		if !ok {
+			continue
+		}
+		for _, def := range iface.Defaults {
+			if def.Name == nil {
+				continue
+			}
+			key := strings.ToLower(def.Name.Value)
+			if _, done := defined[key]; done {
+				continue
+			}
+			defined[key] = struct{}{}
+			out = append(out, def)
+		}
+	}
+	return out
+}
+
+// checkEnumMethodEmittable rejects names the interpreter forbids (variant data
+// accessors) and the generated String() the int type already carries.
+func (l *Lowerer) checkEnumMethodEmittable(s *ast.EnumStatement, methodName string) bool {
+	switch strings.ToLower(methodName) {
+	case "variant", "fields":
+		l.errAt(s.Token.Line, s.Token.Column,
+			fmt.Sprintf("enum %s method %q collides with a built-in variant accessor", s.Name.Value, methodName),
+			"")
+		return false
+	}
+	if emit.MangleIdent(methodName) == "String" {
+		l.errAt(s.Token.Line, s.Token.Column,
+			fmt.Sprintf("the transpiler does not yet support an enum method named %q", methodName),
+			"it collides with the generated String() method; build with 'geblang build' for the VM binary")
+		return false
+	}
+	return true
+}
+
+func (l *Lowerer) registerEnumMethodSignature(enumGoName string, m *ast.FunctionStatement) {
+	key := methodCalleeKey(enumGoName, m.Name.Value)
+	l.Module.RegisterCalleeParams(key, paramNames(m.Parameters))
+	l.Module.RegisterCalleeSignature(key, paramDefaults(m.Parameters), lastVariadic(m.Parameters))
+}
+
+func (l *Lowerer) emitEnumMethod(enumGbName, enumGoName string, m *ast.FunctionStatement) {
+	decls := l.Module.TopDecls()
+	bodyWriter := emit.NewWriter()
+	savedW := l.w
+	l.w = bodyWriter
+	methodRetGo := ""
+	if m.ReturnType != nil {
+		methodRetGo = types.ToGo(l.resolveTypeRef(m.ReturnType), l.Module.IntMode).Source
+	}
+	l.withReturnGo(methodRetGo, func() {
+		l.withChildScope(func() {
+			l.scope.Define(&types.Binding{
+				Name:    "this",
+				Type:    &types.Type{Kind: types.KindEnum, Name: enumGoName},
+				Mutable: false,
+			})
+			for _, p := range m.Parameters {
+				l.scope.Define(&types.Binding{
+					Name:    p.Name.Value,
+					Type:    paramBindingType(p, l.resolveTypeRef(p.Type)),
+					Mutable: true,
+					IsParam: true,
+				})
+			}
+			if m.Body != nil {
+				l.lowerBlock(m.Body.Statements)
+			}
+		})
+		if methodRetGo != "" && bodyEndsWithTry(m.Body) {
+			l.w.WriteLine("return " + zeroValue(methodRetGo))
+		}
+	})
+	l.w = savedW
+
+	decls.WriteString("func (this ")
+	decls.WriteString(enumGoName)
+	decls.WriteString(") ")
+	decls.WriteString(emit.MangleIdent(m.Name.Value))
+	decls.WriteString("(")
+	l.emitParamList(decls, m.Parameters, l.resolveParamTypes(m.Parameters))
+	decls.WriteString(") ")
+	if m.ReturnType != nil {
+		goRet := types.ToGo(l.resolveTypeRef(m.ReturnType), l.Module.IntMode)
+		l.Module.AddTypeImports(goRet)
+		decls.WriteString(goRet.Source)
+		decls.WriteString(" ")
+	}
+	decls.WriteLine("{")
+	decls.Indent()
+	decls.WriteString(bodyWriter.String())
+	decls.Dedent()
+	decls.WriteLine("}")
+	decls.Newline()
+	_ = enumGbName
 }
 
 func (l *Lowerer) lowerClass(s *ast.ClassStatement) {

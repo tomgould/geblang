@@ -779,6 +779,15 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if errors.As(err, &typed) {
 				return vm.throwTyped(instruction, ip, typed.class, typed.message)
 			}
+			// A callback's runtime error is already a formed VM error carrying the
+			// throw-site frames (a vmRuntimeError, or a wrappedError from the
+			// closure's own uncaught render); propagate it rather than re-rendering
+			// its string into a fresh error, which doubled the prefix and frames.
+			var rtErr *vmRuntimeError
+			var wrErr *wrappedError
+			if errors.As(err, &rtErr) || errors.As(err, &wrErr) {
+				return 0, err
+			}
 			return 0, vm.runtimeError(instruction, "%s", err.Error())
 		}
 		if handled {

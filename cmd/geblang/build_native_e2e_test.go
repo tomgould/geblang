@@ -559,6 +559,155 @@ export func main(): int {
 	}
 }
 
+// TestBuildNativeEnumMethods transpiles an exported main using an untagged enum
+// with instance methods (one using `match (this)`, one calling a sibling) that
+// implements an interface, dispatched both directly on a variant and through an
+// interface-typed parameter, builds it offline with --native, and asserts
+// byte-identical stdout against the bundled VM build.
+func TestBuildNativeEnumMethods(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping native build e2e in -short mode")
+	}
+	bin := buildNativeTestGeblang(t)
+
+	dir := t.TempDir()
+	src := `import io;
+
+interface Describable {
+    func describe(): string;
+}
+
+enum Status implements Describable {
+    Active, Suspended, Closed;
+
+    func describe(): string {
+        return match (this) {
+            case Status.Active => "active";
+            case Status.Suspended => "suspended";
+            default => "closed";
+        };
+    }
+
+    func isTerminal(): bool {
+        return match (this) {
+            case Status.Closed => true;
+            default => false;
+        };
+    }
+
+    func loud(): string { return this.describe() + "!"; }
+}
+
+func report(Describable d): string { return d.describe(); }
+
+export func main(): int {
+    for (Status s in [Status.Active, Status.Suspended, Status.Closed]) {
+        io.println(s.describe() + " terminal=" + (s.isTerminal() as string));
+    }
+    io.println(Status.Closed.loud());
+    Describable d = Status.Suspended;
+    io.println(report(d));
+    io.println(report(Status.Active));
+    io.println(Status.Active);
+    return 0;
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.gb"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bundleOut := filepath.Join(dir, "bundle")
+	bundleBuild := exec.Command(bin, "build", "--entry", "main", "--out", bundleOut, ".")
+	bundleBuild.Dir = dir
+	if combined, err := bundleBuild.CombinedOutput(); err != nil {
+		t.Fatalf("bundle build failed: %v\n%s", err, combined)
+	}
+	wantOut, err := exec.Command(bundleOut).Output()
+	if err != nil {
+		t.Fatalf("run bundle binary: %v", err)
+	}
+
+	out := filepath.Join(dir, "app")
+	build := exec.Command(bin, "build", "--native", "--entry", "main", "--out", out, ".")
+	build.Dir = dir
+	build.Env = nativeBuildEnv()
+	if combined, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("native build failed: %v\n%s", err, combined)
+	}
+
+	run := exec.Command(out)
+	run.Dir = t.TempDir()
+	gotOut, err := run.Output()
+	if err != nil {
+		t.Fatalf("run native binary: %v", err)
+	}
+	if string(gotOut) != string(wantOut) {
+		t.Fatalf("native output != bundle\n--- want ---\n%q\n--- got ---\n%q", wantOut, gotOut)
+	}
+}
+
+// TestBuildNativeAnyHof transpiles an exported main that json-parses an array
+// and runs map/filter/reduce/find/any/all/flatMap with any-typed callbacks
+// (casting inside the body, chained, and a method on the result), builds it
+// offline with --native, and asserts byte-identical stdout to the bundled VM.
+func TestBuildNativeAnyHof(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping native build e2e in -short mode")
+	}
+	bin := buildNativeTestGeblang(t)
+
+	dir := t.TempDir()
+	src := `import io;
+import json;
+
+export func main(): int {
+    let data = json.parse("{\"nums\":[1,2,3,4,5,6]}");
+    io.println(data["nums"].map(func(any n): any { return (n as int) * 2; }));
+    io.println(data["nums"].filter(func(any n): bool { return (n as int) % 2 == 0; }));
+    io.println(data["nums"].reduce(func(any acc, any n): any { return (acc as int) + (n as int); }, 0));
+    io.println(data["nums"].find(func(any n): bool { return (n as int) > 4; }));
+    io.println(data["nums"].any(func(any n): bool { return (n as int) > 5; }));
+    io.println(data["nums"].all(func(any n): bool { return (n as int) > 0; }));
+    io.println(data["nums"].flatMap(func(any n): any { return [n, (n as int) * 10]; }));
+    io.println(data["nums"].map(func(any n): any { return (n as int) + 1; }).filter(func(any n): bool { return (n as int) % 2 == 0; }));
+    io.println(data["nums"].map(func(any n): any { return (n as int) * (n as int); }).length());
+    return 0;
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.gb"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bundleOut := filepath.Join(dir, "bundle")
+	bundleBuild := exec.Command(bin, "build", "--entry", "main", "--out", bundleOut, ".")
+	bundleBuild.Dir = dir
+	if combined, err := bundleBuild.CombinedOutput(); err != nil {
+		t.Fatalf("bundle build failed: %v\n%s", err, combined)
+	}
+	wantOut, err := exec.Command(bundleOut).Output()
+	if err != nil {
+		t.Fatalf("run bundle binary: %v", err)
+	}
+
+	out := filepath.Join(dir, "app")
+	build := exec.Command(bin, "build", "--native", "--entry", "main", "--out", out, ".")
+	build.Dir = dir
+	build.Env = nativeBuildEnv()
+	if combined, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("native build failed: %v\n%s", err, combined)
+	}
+
+	run := exec.Command(out)
+	run.Dir = t.TempDir()
+	gotOut, err := run.Output()
+	if err != nil {
+		t.Fatalf("run native binary: %v", err)
+	}
+	if string(gotOut) != string(wantOut) {
+		t.Fatalf("native output != bundle\n--- want ---\n%q\n--- got ---\n%q", wantOut, gotOut)
+	}
+}
+
 // writeEntryPkg writes a single-module package with the given entry source and
 // returns the package dir. The module is named "app".
 func writeEntryPkg(t *testing.T, src string) string {

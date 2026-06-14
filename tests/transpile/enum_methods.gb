@@ -1,0 +1,69 @@
+import io;
+
+/* Untagged enum with instance methods + interface implementation. `this` is the
+   (immutable) enum value; `match (this)` dispatches per variant; a sibling
+   method calls another on `this`; an enum value flows into an interface-typed
+   slot and interface-typed dispatch lands on the enum method. */
+
+interface Describable {
+    func describe(): string;
+}
+
+enum Status implements Describable {
+    Active, Suspended, Closed;
+
+    func describe(): string {
+        return match (this) {
+            case Status.Active => "active";
+            case Status.Suspended => "suspended";
+            default => "closed";
+        };
+    }
+
+    func isTerminal(): bool {
+        return match (this) {
+            case Status.Closed => true;
+            default => false;
+        };
+    }
+
+    func loud(): string {
+        return this.describe() + "!";
+    }
+}
+
+func report(Describable d): string {
+    return d.describe();
+}
+
+let all = [Status.Active, Status.Suspended, Status.Closed];
+
+for (Status s in all) {
+    io.println(s.describe() + " terminal=" + (s.isTerminal() as string));
+}
+
+io.println(Status.Closed.loud());
+
+/* through an interface-typed binding + an interface-typed parameter */
+Describable d = Status.Suspended;
+io.println(report(d));
+io.println(report(Status.Active));
+
+io.println(Status.Active);
+
+/* a no-default match (this) that misses raises an uncaught MatchError natively,
+   exiting 1 - the same as the interpreter (stack trace differs, exit code does
+   not). */
+enum Step {
+    One, Two, Three;
+    func code(): int {
+        return match (this) {
+            case Step.One => 1;
+            case Step.Two => 2;
+        };
+    }
+}
+
+io.println(Step.One.code());
+io.println(Step.Three.code());
+io.println("unreachable");

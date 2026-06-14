@@ -17,6 +17,20 @@ import (
 // (int64/*big.Int, *big.Rat, string, bool, []any, *OrderedDict) are unwrapped
 // to the transpiler's concrete Go types.
 
+// GbTypeName reports a value's Geblang type name for diagnostics. An untagged
+// enum prints as `Enum.Variant` via String(), so its type is the part before
+// the dot; everything else defers to gbTypeName.
+func GbTypeName(v any) string {
+	if s, ok := v.(fmt.Stringer); ok {
+		if rendered := s.String(); rendered != "" {
+			if dot := strings.IndexByte(rendered, '.'); dot > 0 {
+				return rendered[:dot]
+			}
+		}
+	}
+	return gbTypeName(v)
+}
+
 // gbTypeName reports the Geblang type name of a boxed dynamic value, matching
 // runtime.Value.TypeName() for the shapes any-typed values hold.
 func gbTypeName(v any) string {

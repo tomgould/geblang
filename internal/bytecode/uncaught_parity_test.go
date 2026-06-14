@@ -2,6 +2,7 @@ package bytecode_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"geblang/internal/bytecode"
@@ -423,5 +424,32 @@ io.println("main done");
 				t.Fatalf("canonical mismatch:\n--- got ---\n%s\n--- want ---\n%s", evGot, tc.want)
 			}
 		})
+	}
+}
+
+// TestUncaughtHofClosureErrorNotDoubled guards the fix for the VM doubling an
+// uncaught error raised inside a list-HOF closure (the message prefix and the
+// stack frames were rendered twice). The VM must render it once, like the
+// evaluator. (A residual top-level-frame line-number difference is a separate,
+// minor divergence, so this asserts no-doubling rather than byte-identity.)
+func TestUncaughtHofClosureErrorNotDoubled(t *testing.T) {
+	src := `import io;
+let xs = ["alpha", "beta"];
+io.println(xs.map(func(string w): int { return (w as int) + 1; }));
+`
+	evGot, vmGot := uncaughtOnBothBackends(t, src)
+	for backend, got := range map[string]string{"evaluator": evGot, "vm": vmGot} {
+		if strings.Contains(got, "uncaught RuntimeError: uncaught") {
+			t.Fatalf("%s doubled the uncaught prefix:\n%s", backend, got)
+		}
+		if n := strings.Count(got, "<closure>"); n != 1 {
+			t.Fatalf("%s rendered %d <closure> frames (want 1):\n%s", backend, n, got)
+		}
+		if n := strings.Count(got, "<top level>"); n != 1 {
+			t.Fatalf("%s rendered %d <top level> frames (want 1):\n%s", backend, n, got)
+		}
+		if !strings.Contains(got, `invalid integer literal "alpha"`) {
+			t.Fatalf("%s missing the underlying message:\n%s", backend, got)
+		}
 	}
 }

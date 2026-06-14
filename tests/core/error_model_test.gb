@@ -58,4 +58,16 @@ class ErrorModelTest extends test.Test {
         this.assertTrue(RuntimeError("x") instanceof RuntimeError);
         this.assertFalse(RuntimeError("x") instanceof ValueError);
     }
+
+    @test
+    func hofClosureFaultIsCatchableWithCleanMessage(): void {
+        let threw = false;
+        try {
+            ["alpha"].map(func(string w): int { return w as int; });
+        } catch (RuntimeError e) {
+            threw = true;
+            this.assertEquals("invalid integer literal \"alpha\"", e.message);
+        }
+        this.assertTrue(threw);
+    }
 }
