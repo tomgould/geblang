@@ -1,0 +1,34 @@
+/**
+ * @title Cross-module enum methods + interface conformance
+ * @summary An enum defined in another module, with methods called from here,
+ * including dispatch through an interface declared in that module. Guards the
+ * VM same-chunk vs evaluator runtime-chain trap for enum method tables.
+ */
+import test;
+import enumstatus;
+
+func renderVia(enumstatus.Describable d): string { return d.describe(); }
+
+class EnumCrossModuleTest extends test.Test {
+
+    @test
+    func callsForeignEnumMethod(): void {
+        this.assertEquals("active", enumstatus.Status.Active.describe());
+        this.assertEquals("closed: x", enumstatus.Status.Closed("x").describe());
+        this.assertTrue(enumstatus.Status.Closed("x").isTerminal());
+        this.assertFalse(enumstatus.Status.Active.isTerminal());
+    }
+
+    @test
+    func polymorphicThroughForeignInterface(): void {
+        enumstatus.Describable d = enumstatus.Status.Active;
+        this.assertEquals("active", d.describe());
+        this.assertEquals("closed: y", renderVia(enumstatus.Status.Closed("y")));
+    }
+
+    @test
+    func foreignEnumInstanceofInterface(): void {
+        let s = enumstatus.Status.Active;
+        this.assertTrue(s instanceof enumstatus.Describable);
+    }
+}

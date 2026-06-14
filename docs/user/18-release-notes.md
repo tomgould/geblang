@@ -2,6 +2,21 @@
 
 ## 1.21.0
 
+### Language
+
+- Enums can declare instance methods, callable on any variant with `this` bound
+  to the receiving variant and read via `match this`. There is one method body
+  per name; per-variant behaviour is expressed inside it, not as an override
+  table. Methods sit beside the existing associated-value and backed-scalar
+  access (which still resolve first), and a method named like a built-in variant
+  accessor is a compile error. Enums stay immutable.
+- Enums can implement interfaces with `implements`. Conformance is checked (a
+  missing method is an error agreeing across check, test, run, and build),
+  interface defaults apply where an enum leaves a method unimplemented, and an
+  enum value flows into an interface-typed slot with dispatch landing on the
+  enum's method. The bare `enum Name { A, B }` form is unchanged. Identical on
+  both backends.
+
 ### Process and system management
 
 - `sys.osVersion()` returns the OS kernel and release string, complementing

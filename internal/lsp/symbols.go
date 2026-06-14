@@ -12,6 +12,7 @@ const (
 	symbolKindFunction  = 12
 	symbolKindClass     = 5
 	symbolKindInterface = 11
+	symbolKindEnum      = 10
 	symbolKindVariable  = 13
 	symbolKindConstant  = 14
 )
@@ -64,6 +65,12 @@ func symbolsFromStatement(stmt ast.Statement) []userSymbol {
 			return nil
 		}
 		return []userSymbol{{name: s.Name.Value, kind: symbolKindInterface, line: s.Token.Line, detail: "interface " + s.Name.Value}}
+
+	case *ast.EnumStatement:
+		if s.Name == nil {
+			return nil
+		}
+		return []userSymbol{{name: s.Name.Value, kind: symbolKindEnum, line: s.Token.Line, detail: "enum " + s.Name.Value}}
 
 	case *ast.DeclarationStatement:
 		if s.Name == nil {

@@ -1358,3 +1358,74 @@ let message = match (result) {
     case SaveResult.Failed(string error) => error;
 };
 ```
+
+### Enum methods
+
+An enum may declare instance methods, callable on any variant. The body is the
+variant list, then a single `;`, then the method declarations:
+
+```gb
+enum Status {
+    Active, Suspended, Closed(string);
+
+    func isTerminal(): bool {
+        return match (this) {
+            case Status.Closed(string r) => true;
+            default => false;
+        };
+    }
+
+    func describe(): string {
+        return match (this) {
+            case Status.Active        => "active";
+            case Status.Suspended     => "suspended";
+            case Status.Closed(string r) => "closed: " + r;
+        };
+    }
+}
+
+let s = Status.Closed("fraud");
+s.isTerminal();   // true
+s.describe();     // "closed: fraud"
+```
+
+Inside a method `this` is the receiving variant, typed as the enum. Per-variant
+behaviour is expressed with `match (this)` in one body; there is no per-variant
+override. A method may call sibling methods on `this`. Methods sit beside the
+existing data access: associated values and a backed scalar are read first, so a
+method never shadows them, and a method named like a built-in variant accessor
+(`variant`, `fields`) is a compile error.
+
+Enums remain immutable value types. A method cannot mutate the receiver; the bare
+`enum Name { A, B }` form is unchanged.
+
+### Enums and interfaces
+
+An enum may implement one or more interfaces with `implements`, mirroring the
+class form (there is no `extends` for enums). Every interface method must be
+satisfied by a declared enum method of matching arity, or the program is
+rejected; an interface default applies when the enum leaves a method
+unimplemented. A conforming enum value flows into an interface-typed slot, and
+interface-typed dispatch lands on the enum's method:
+
+```gb
+interface Describable { func describe(): string; }
+
+enum Status implements Describable {
+    Active, Closed(string);
+
+    func describe(): string {
+        return match (this) {
+            case Status.Active => "active";
+            case Status.Closed(string r) => "closed: " + r;
+        };
+    }
+}
+
+Describable d = Status.Active;
+d.describe();                       // "active"
+Status.Active instanceof Describable;  // true
+```
+
+Enum methods are limited to instance methods and interface implementation. Static
+methods on enums and enum constants are not part of this surface.

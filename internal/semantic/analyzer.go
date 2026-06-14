@@ -41,7 +41,7 @@ type Analyzer struct {
 	functions   map[string][]methodInfo
 	classes     map[string]classInfo
 	interfaces  map[string]interfaceInfo
-	enums       map[string]struct{}
+	enums       map[string]enumInfo
 	aliases     map[string]typeInfo
 	// typeParamScope counts in-scope generic type-param names so the
 	// unknown-type check accepts `func f<T>(T x)`.
@@ -137,6 +137,12 @@ type interfaceInfo struct {
 	methods map[string][]methodInfo
 }
 
+type enumInfo struct {
+	name       string
+	implements []string
+	methods    map[string][]methodInfo
+}
+
 type methodInfo struct {
 	name       string
 	parameters []typeInfo
@@ -208,7 +214,7 @@ func (a *Analyzer) checkBuiltinModuleShadow(name *ast.Identifier, declaredType *
 }
 
 func New() *Analyzer {
-	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, enums: map[string]struct{}{}, aliases: map[string]typeInfo{}, typeParamScope: map[string]int{}, deprecatedFuncs: map[string]string{}, deprecatedClasses: map[string]string{}, deprecatedMethods: map[string]map[string]string{}, importedNames: map[string]bool{}, moduleAliases: map[string]bool{}, declaredNames: map[string]struct{}{}}
+	return &Analyzer{scopes: []map[string]typeInfo{{}}, functions: map[string][]methodInfo{}, classes: map[string]classInfo{}, interfaces: map[string]interfaceInfo{}, enums: map[string]enumInfo{}, aliases: map[string]typeInfo{}, typeParamScope: map[string]int{}, deprecatedFuncs: map[string]string{}, deprecatedClasses: map[string]string{}, deprecatedMethods: map[string]map[string]string{}, importedNames: map[string]bool{}, moduleAliases: map[string]bool{}, declaredNames: map[string]struct{}{}}
 }
 
 func (a *Analyzer) Analyze(program *ast.Program) []Diagnostic {
@@ -413,7 +419,16 @@ func (a *Analyzer) collectTypeDeclarations(stmts []ast.Statement) {
 			}
 			a.interfaces[info.name] = info
 		case *ast.EnumStatement:
-			a.enums[stmt.Name.Value] = struct{}{}
+			info := enumInfo{name: stmt.Name.Value, methods: map[string][]methodInfo{}}
+			for _, iface := range stmt.Implements {
+				info.implements = append(info.implements, iface.Name)
+			}
+			for _, method := range stmt.Methods {
+				m := a.methodInfoFromFunction(method)
+				key := strings.ToLower(m.name)
+				info.methods[key] = append(info.methods[key], m)
+			}
+			a.enums[stmt.Name.Value] = info
 		case *ast.ImportStatement:
 			a.moduleAliases[stmt.ModuleName()] = true
 		case *ast.FromImportStatement:
@@ -483,6 +498,13 @@ func (a *Analyzer) validateStmtAnnotations(stmt ast.Statement) {
 			a.validateStmtAnnotations(field)
 		}
 		pop()
+	case *ast.EnumStatement:
+		for _, iface := range s.Implements {
+			a.checkTypeRefExists(iface, "implements clause of "+nameOf(s.Name))
+		}
+		for _, method := range s.Methods {
+			a.validateStmtAnnotations(method)
+		}
 	case *ast.InitStatement:
 		a.validateBlockAnnotations(s.Body)
 	case *ast.ExpressionStatement:
@@ -716,6 +738,27 @@ func (a *Analyzer) validateInterfaceImplementations() {
 			}
 		}
 	}
+	for _, enum := range a.enums {
+		for _, ifaceName := range enum.implements {
+			required := a.interfaceMethods(ifaceName, map[string]bool{})
+			for name, expectedMethods := range required {
+				for _, expected := range expectedMethods {
+					if !a.enumHasCompatibleMethod(enum, name, expected) {
+						a.errorf("enum %s implements %s but is missing compatible method %s%s", enum.name, ifaceName, name, expected.signatureKey())
+					}
+				}
+			}
+		}
+	}
+}
+
+func (a *Analyzer) enumHasCompatibleMethod(enum enumInfo, name string, expected methodInfo) bool {
+	for _, actual := range enum.methods[strings.ToLower(name)] {
+		if a.methodCompatible(expected, actual) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatement) {
@@ -799,6 +842,7 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		a.declare(stmt.Name.Value, typeInfo{name: stmt.Name.Value, known: true})
 	case *ast.EnumStatement:
 		a.declare(stmt.Name.Value, typeInfo{name: stmt.Name.Value, known: true})
+		a.analyzeEnumMembers(stmt)
 	case *ast.DelStatement:
 		if stmt.Target == nil {
 			return
@@ -866,6 +910,25 @@ func (a *Analyzer) analyzeClassMembers(stmt *ast.ClassStatement) {
 		if !method.Static {
 			a.declare("this", typeInfo{name: stmt.Name.Value, known: true})
 		}
+		for _, param := range method.Parameters {
+			a.declare(param.Name.Value, a.parameterBindingType(param))
+			if param.Default != nil {
+				a.checkAssignable(param.Type, param.Default, fmt.Sprintf("cannot use %s default for %s parameter %s", a.expressionTypeName(param.Default).display(), param.Type.String(), param.Name.Value))
+			}
+		}
+		a.analyzeBlock(method.Body, method)
+		a.popScope()
+	}
+}
+
+func (a *Analyzer) analyzeEnumMembers(stmt *ast.EnumStatement) {
+	for _, method := range stmt.Methods {
+		switch strings.ToLower(method.Name.Value) {
+		case "variant", "fields":
+			a.errorAt(method.Name.Token, "enum %s method %q collides with a built-in variant accessor", stmt.Name.Value, method.Name.Value)
+		}
+		a.pushScope()
+		a.declare("this", typeInfo{name: stmt.Name.Value, known: true})
 		for _, param := range method.Parameters {
 			a.declare(param.Name.Value, a.parameterBindingType(param))
 			if param.Default != nil {
@@ -2317,7 +2380,7 @@ func (a *Analyzer) isAssignableType(target, actual string) bool {
 		return true
 	}
 	if _, ok := a.interfaces[target]; ok {
-		return a.classImplements(actual, target) || a.interfaceExtends(actual, target)
+		return a.classImplements(actual, target) || a.interfaceExtends(actual, target) || a.enumImplements(actual, target)
 	}
 	if _, ok := a.classes[target]; ok {
 		return a.classExtends(actual, target)
@@ -2343,6 +2406,19 @@ func (a *Analyzer) typeHasInvoke(name string) bool {
 func (a *Analyzer) classExtends(actual, target string) bool {
 	for current, ok := a.classes[actual]; ok && current.parent != ""; current, ok = a.classes[current.parent] {
 		if current.parent == target {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *Analyzer) enumImplements(enumName, ifaceName string) bool {
+	enum, ok := a.enums[enumName]
+	if !ok {
+		return false
+	}
+	for _, implemented := range enum.implements {
+		if implemented == ifaceName || a.interfaceExtends(implemented, ifaceName) {
 			return true
 		}
 	}

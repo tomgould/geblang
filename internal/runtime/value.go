@@ -945,6 +945,18 @@ type EnumVariantDefRuntime struct {
 type EnumDef struct {
 	Name     string
 	Variants []EnumVariantDefRuntime
+	// Module is the enum's home module; the VM routes a method call to that
+	// module's chunk when it differs from the executing VM's module.
+	Module string
+	// Implements names the interfaces the enum conforms to (reflect + dispatch).
+	Implements []string
+	// Methods holds compiled instance methods, keyed lowercased. The
+	// evaluator populates Functions directly; the VM populates Indices into
+	// the chunk's function table (only the latter is serialized to .gbc).
+	Methods map[string][]Function
+	// MethodIndices is the VM's method table: lowercased name -> chunk
+	// function indices. Round-trips through the .gbc encoding.
+	MethodIndices map[string][]int64
 }
 
 func (v *EnumDef) TypeName() string { return v.Name }

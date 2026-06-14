@@ -86,6 +86,9 @@ func (c *Compiler) compileStatement(stmt ast.Statement) error {
 		if iface, ok := stmt.Statement.(*ast.InterfaceStatement); ok && iface.Name != nil {
 			c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: iface.Name.Value, Slot: -1, FunctionIndex: -1, ClassIndex: -1, InterfaceIndex: c.interfaces[strings.ToLower(iface.Name.Value)]})
 		}
+		if enum, ok := stmt.Statement.(*ast.EnumStatement); ok && enum.Name != nil {
+			c.chunk.Exports = append(c.chunk.Exports, ExportInfo{Name: enum.Name.Value, Slot: c.globalSlot(enum.Name.Value), FunctionIndex: -1, ClassIndex: -1, InterfaceIndex: -1})
+		}
 		return nil
 	case *ast.InitStatement:
 		return c.compileBlock(stmt.Body)

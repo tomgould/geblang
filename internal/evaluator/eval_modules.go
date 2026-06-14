@@ -574,6 +574,8 @@ func exportedStatementName(stmt ast.Statement) string {
 		return stmt.Name.Value
 	case *ast.InterfaceStatement:
 		return stmt.Name.Value
+	case *ast.EnumStatement:
+		return stmt.Name.Value
 	default:
 		return ""
 	}

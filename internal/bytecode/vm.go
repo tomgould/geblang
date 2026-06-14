@@ -5040,6 +5040,11 @@ func (vm *VM) Exports() (map[string]runtime.Value, error) {
 		if err != nil {
 			return nil, fmt.Errorf("export %s: %w", export.Name, err)
 		}
+		// Stamp an exported enum's home module so a foreign VM routes its
+		// method calls back to this chunk's function table.
+		if enumDef, ok := value.(*runtime.EnumDef); ok && enumDef.Module == "" {
+			enumDef.Module = vm.moduleName
+		}
 		exports[export.Name] = value
 	}
 	return exports, nil

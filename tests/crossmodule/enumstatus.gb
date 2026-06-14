@@ -1,0 +1,21 @@
+module enumstatus;
+
+export interface Describable { func describe(): string; }
+
+export enum Status implements Describable {
+    Active, Closed(string);
+
+    func describe(): string {
+        return match (this) {
+            case Status.Active => "active";
+            case Status.Closed(string r) => "closed: " + r;
+        };
+    }
+
+    func isTerminal(): bool {
+        return match (this) {
+            case Status.Closed(string r) => true;
+            default => false;
+        };
+    }
+}

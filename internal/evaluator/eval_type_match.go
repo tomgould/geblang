@@ -23,7 +23,9 @@ func (e *Evaluator) valueMatchesType(value runtime.Value, typeName string) bool 
 		if ev, ok := value.(runtime.EnumVariant); ok {
 			enumTypeName := typeName[:dotIdx]
 			variantName := typeName[dotIdx+1:]
-			return strings.EqualFold(ev.Enum.Name, enumTypeName) && strings.EqualFold(ev.Variant, variantName)
+			if strings.EqualFold(ev.Enum.Name, enumTypeName) {
+				return strings.EqualFold(ev.Variant, variantName)
+			}
 		}
 	}
 	stripped := simpleTypeName(typeName)
@@ -49,7 +51,12 @@ func valueMatchesType(value runtime.Value, typeName string) bool {
 		if ev, ok := value.(runtime.EnumVariant); ok {
 			enumTypeName := typeName[:dotIdx]
 			variantName := typeName[dotIdx+1:]
-			return strings.EqualFold(ev.Enum.Name, enumTypeName) && strings.EqualFold(ev.Variant, variantName)
+			// `Enum.Variant` is a variant test; a `module.Interface`
+			// qualified name (prefix is not this enum) falls through to
+			// the interface-conformance check below.
+			if strings.EqualFold(ev.Enum.Name, enumTypeName) {
+				return strings.EqualFold(ev.Variant, variantName)
+			}
 		}
 	}
 	if baseName, args, ok := splitGenericTypeName(typeName); ok {
@@ -60,7 +67,15 @@ func valueMatchesType(value runtime.Value, typeName string) bool {
 	}
 	typeName = simpleTypeName(typeName)
 	if ev, ok := value.(runtime.EnumVariant); ok {
-		return strings.EqualFold(ev.Enum.Name, typeName)
+		if strings.EqualFold(ev.Enum.Name, typeName) {
+			return true
+		}
+		for _, iface := range ev.Enum.Implements {
+			if strings.EqualFold(iface, typeName) {
+				return true
+			}
+		}
+		return false
 	}
 	if errValue, ok := value.(runtime.Error); ok {
 		return errorTypeMatches(errValue.Class, typeName)
@@ -778,6 +793,15 @@ func valueMatchesTypeRef(value runtime.Value, typ *ast.TypeRef) bool {
 		target := simpleTypeName(typ.Name)
 		for _, ancestor := range errValue.Parents {
 			if typeNamesEqual(ancestor, target) {
+				return true
+			}
+		}
+		return false
+	}
+	if ev, ok := value.(runtime.EnumVariant); ok {
+		target := simpleTypeName(typ.Name)
+		for _, iface := range ev.Enum.Implements {
+			if typeNamesEqual(iface, target) {
 				return true
 			}
 		}

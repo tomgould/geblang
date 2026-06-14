@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(74)
+	Version = uint16(75)
 )
 
 type Op byte
@@ -1071,10 +1071,23 @@ func appendConstant(out []byte, value runtime.Value) ([]byte, error) {
 	case *runtime.EnumDef:
 		out = append(out, 7)
 		out = appendString(out, value.Name)
+		out = appendString(out, value.Module)
 		out = binary.BigEndian.AppendUint16(out, uint16(len(value.Variants)))
 		for _, v := range value.Variants {
 			out = appendString(out, v.Name)
 			out = binary.BigEndian.AppendUint16(out, uint16(v.FieldCount))
+		}
+		out = binary.BigEndian.AppendUint16(out, uint16(len(value.Implements)))
+		for _, name := range value.Implements {
+			out = appendString(out, name)
+		}
+		out = binary.BigEndian.AppendUint16(out, uint16(len(value.MethodIndices)))
+		for name, indices := range value.MethodIndices {
+			out = appendString(out, name)
+			out = binary.BigEndian.AppendUint16(out, uint16(len(indices)))
+			for _, index := range indices {
+				out = binary.BigEndian.AppendUint64(out, uint64(index))
+			}
 		}
 		return out, nil
 	case runtime.Type:
@@ -1405,12 +1418,30 @@ func (r *byteReader) constant() runtime.Value {
 		return target
 	case 7:
 		name := r.string()
+		module := r.string()
 		count := int(r.u16())
-		enum := &runtime.EnumDef{Name: name, Variants: make([]runtime.EnumVariantDefRuntime, 0, count)}
+		enum := &runtime.EnumDef{Name: name, Module: module, Variants: make([]runtime.EnumVariantDefRuntime, 0, count)}
 		for i := 0; i < count; i++ {
 			variantName := r.string()
 			fieldCount := int(r.u16())
 			enum.Variants = append(enum.Variants, runtime.EnumVariantDefRuntime{Name: variantName, FieldCount: fieldCount})
+		}
+		implementsCount := int(r.u16())
+		for i := 0; i < implementsCount; i++ {
+			enum.Implements = append(enum.Implements, r.string())
+		}
+		methodCount := int(r.u16())
+		if methodCount > 0 {
+			enum.MethodIndices = make(map[string][]int64, methodCount)
+			for i := 0; i < methodCount; i++ {
+				methodName := r.string()
+				indexCount := int(r.u16())
+				indices := make([]int64, 0, indexCount)
+				for j := 0; j < indexCount; j++ {
+					indices = append(indices, int64(r.u64()))
+				}
+				enum.MethodIndices[methodName] = indices
+			}
 		}
 		return enum
 	case 8:

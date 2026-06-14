@@ -424,7 +424,15 @@ func (f *fmtr) fmtSignature(sig *ast.FunctionSignature) {
 // ---- enum ----
 
 func (f *fmtr) fmtEnum(s *ast.EnumStatement) {
-	f.writeln(f.pad() + "enum " + s.Name.Value + " {")
+	header := "enum " + s.Name.Value
+	if len(s.Implements) > 0 {
+		parts := make([]string, 0, len(s.Implements))
+		for _, iface := range s.Implements {
+			parts = append(parts, iface.String())
+		}
+		header += " implements " + strings.Join(parts, ", ")
+	}
+	f.writeln(f.pad() + header + " {")
 	f.depth++
 	for i, v := range s.Variants {
 		line := f.pad() + v.Name.Value
@@ -437,8 +445,13 @@ func (f *fmtr) fmtEnum(s *ast.EnumStatement) {
 		}
 		if i < len(s.Variants)-1 {
 			line += ","
+		} else if len(s.Methods) > 0 {
+			line += ";"
 		}
 		f.writeln(line)
+	}
+	for _, m := range s.Methods {
+		f.fmtFunction(m)
 	}
 	f.depth--
 	f.writeln(f.pad() + "}")

@@ -481,7 +481,7 @@ func streamInterface(name string, methods []methodSpec) *runtime.Interface {
 	return iface
 }
 
-func buildEnum(stmt *ast.EnumStatement) *runtime.EnumDef {
+func (e *Evaluator) buildEnum(stmt *ast.EnumStatement, env *runtime.Environment) (*runtime.EnumDef, error) {
 	enum := &runtime.EnumDef{Name: stmt.Name.Value}
 	for _, v := range stmt.Variants {
 		enum.Variants = append(enum.Variants, runtime.EnumVariantDefRuntime{
@@ -489,7 +489,124 @@ func buildEnum(stmt *ast.EnumStatement) *runtime.EnumDef {
 			FieldCount: len(v.FieldTypes),
 		})
 	}
-	return enum
+	if len(stmt.Methods) > 0 {
+		enum.Methods = map[string][]runtime.Function{}
+		for _, member := range stmt.Methods {
+			if err := checkEnumMethodCollision(enum, member.Name.Value); err != nil {
+				return nil, err
+			}
+			fn := runtime.Function{Name: member.Name.Value, Doc: member.Doc, TypeParameters: typeParameterNames(member.Generics), TypeParamConstraints: typeParamConstraints(member.Generics), Parameters: e.resolveParameters(member.Parameters), ReturnType: e.resolveTypeRef(member.ReturnType), Body: member.Body, Env: env, Decorators: member.Decorators, Target: "method", Async: member.Async, IsGenerator: blockContainsYield(member.Body), ForwardThis: true}
+			decorated, err := e.applyCallableFunctionDecorators(fn, member.Decorators, env)
+			if err != nil {
+				return nil, err
+			}
+			key := strings.ToLower(member.Name.Value)
+			enum.Methods[key] = append(enum.Methods[key], decorated)
+		}
+	}
+	for _, ifaceRef := range stmt.Implements {
+		ifaceValue, ok, err := e.resolveTypeValue(ifaceRef, env)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("interface %q is not declared", ifaceRef.Name)
+		}
+		iface, ok := ifaceValue.(*runtime.Interface)
+		if !ok {
+			return nil, fmt.Errorf("%q is not an interface", ifaceRef.Name)
+		}
+		enum.Implements = append(enum.Implements, iface.Name)
+		if enum.Methods == nil {
+			enum.Methods = map[string][]runtime.Function{}
+		}
+		if err := e.foldInterfaceDefaultsIntoEnum(enum, iface, env); err != nil {
+			return nil, err
+		}
+		if err := validateEnumInterfaceImplementation(enum, iface); err != nil {
+			return nil, err
+		}
+	}
+	return enum, nil
+}
+
+// foldInterfaceDefaultsIntoEnum compiles an interface's default method bodies
+// into the enum's method table for any method the enum leaves unimplemented.
+func (e *Evaluator) foldInterfaceDefaultsIntoEnum(enum *runtime.EnumDef, iface *runtime.Interface, env *runtime.Environment) error {
+	for _, parent := range iface.Parents {
+		if err := e.foldInterfaceDefaultsIntoEnum(enum, parent, env); err != nil {
+			return err
+		}
+	}
+	for _, def := range iface.Defaults {
+		key := strings.ToLower(def.Name.Value)
+		if len(enum.Methods[key]) > 0 {
+			continue
+		}
+		if err := checkEnumMethodCollision(enum, def.Name.Value); err != nil {
+			return err
+		}
+		fn := runtime.Function{Name: def.Name.Value, Doc: def.Doc, TypeParameters: typeParameterNames(def.Generics), TypeParamConstraints: typeParamConstraints(def.Generics), Parameters: e.resolveParameters(def.Parameters), ReturnType: e.resolveTypeRef(def.ReturnType), Body: def.Body, Env: env, Decorators: def.Decorators, Target: "method", Async: def.Async, IsGenerator: blockContainsYield(def.Body), ForwardThis: true}
+		enum.Methods[key] = append(enum.Methods[key], fn)
+	}
+	return nil
+}
+
+func (e *Evaluator) lookupEnumMethod(enum *runtime.EnumDef, name string) (runtime.Function, bool) {
+	methods := enum.Methods[strings.ToLower(name)]
+	if len(methods) == 0 {
+		return runtime.Function{}, false
+	}
+	return methods[0], true
+}
+
+// checkEnumMethodCollision rejects a method whose name shadows a variant's
+// built-in data accessor (`variant`, `fields`, or a numeric field index).
+func checkEnumMethodCollision(enum *runtime.EnumDef, name string) error {
+	switch strings.ToLower(name) {
+	case "variant", "fields":
+		return fmt.Errorf("enum %s method %q collides with a built-in variant accessor", enum.Name, name)
+	}
+	return nil
+}
+
+func interfaceHasDefault(iface *runtime.Interface, name string) bool {
+	for _, def := range iface.Defaults {
+		if def.Name != nil && strings.EqualFold(def.Name.Value, name) {
+			return true
+		}
+	}
+	for _, parent := range iface.Parents {
+		if interfaceHasDefault(parent, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func validateEnumInterfaceImplementation(enum *runtime.EnumDef, iface *runtime.Interface) error {
+	for _, parent := range iface.Parents {
+		if err := validateEnumInterfaceImplementation(enum, parent); err != nil {
+			return err
+		}
+	}
+	for _, sig := range iface.Methods {
+		found := false
+		for _, method := range enum.Methods[strings.ToLower(sig.Name.Value)] {
+			if len(method.Parameters) == len(sig.Parameters) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// An interface default supplies the body when the enum omits it.
+			if interfaceHasDefault(iface, sig.Name.Value) {
+				continue
+			}
+			return fmt.Errorf("enum %s implements %s but is missing compatible method %s", enum.Name, iface.Name, sig.Name.Value)
+		}
+	}
+	return nil
 }
 
 func enumVariantValue(enum *runtime.EnumDef, name string) (runtime.Value, error) {

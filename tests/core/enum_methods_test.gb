@@ -1,0 +1,145 @@
+/**
+ * @title Enum methods + interface implementation (1.21.0)
+ * @summary Enums may declare instance methods (called on any variant, with
+ * `this` bound to the receiving variant and read via `match this`) and may
+ * implement interfaces. One method table per enum; per-variant behaviour is a
+ * single body with `match this`. Enums stay immutable.
+ */
+import test;
+
+interface Describable { func describe(): string; }
+
+enum Status implements Describable {
+    Active, Suspended, Closed(string);
+
+    func isTerminal(): bool {
+        return match (this) {
+            case Status.Closed(string r) => true;
+            default => false;
+        };
+    }
+
+    func describe(): string {
+        return match (this) {
+            case Status.Active => "active";
+            case Status.Suspended => "suspended";
+            case Status.Closed(string r) => "closed: " + r;
+        };
+    }
+
+    func loud(): string { return this.describe() + "!"; }
+}
+
+interface Greeter {
+    func name(): string;
+    func greet(): string { return "Hi, " + this.name(); }
+}
+
+enum Person implements Greeter {
+    Alice, Bob;
+    func name(): string {
+        return match (this) {
+            case Person.Alice => "Alice";
+            default => "Bob";
+        };
+    }
+}
+
+enum Nat {
+    Zero, Succ(int);
+    func toInt(): int {
+        return match (this) {
+            case Nat.Zero => 0;
+            case Nat.Succ(int n) => n;
+        };
+    }
+}
+
+func describeFree(Describable d): string { return d.describe(); }
+
+class Renderer {
+    func render(Describable d): string { return d.describe(); }
+}
+
+class EnumMethodsTest extends test.Test {
+
+    @test
+    func nullaryVariantMethod(): void {
+        this.assertFalse(Status.Active.isTerminal());
+        this.assertEquals("active", Status.Active.describe());
+    }
+
+    @test
+    func associatedValueMethod(): void {
+        this.assertTrue(Status.Closed("fraud").isTerminal());
+        this.assertEquals("closed: fraud", Status.Closed("fraud").describe());
+    }
+
+    @test
+    func methodCallsSibling(): void {
+        this.assertEquals("closed: x!", Status.Closed("x").loud());
+    }
+
+    @test
+    func methodWithArgument(): void {
+        this.assertEquals(0, Nat.Zero.toInt());
+        this.assertEquals(7, Nat.Succ(7).toInt());
+    }
+
+    @test
+    func interfaceTypedBinding(): void {
+        Describable d = Status.Suspended;
+        this.assertEquals("suspended", d.describe());
+    }
+
+    @test
+    func interfaceTypedParameter(): void {
+        this.assertEquals("active", describeFree(Status.Active));
+        this.assertEquals("closed: z", describeFree(Status.Closed("z")));
+    }
+
+    @test
+    func dispatchFromClassMethod(): void {
+        this.assertEquals("active", Renderer().render(Status.Active));
+    }
+
+    @test
+    func dispatchFromMatchArm(): void {
+        let r = match (Status.Active) {
+            case Status.Active => Status.Active.describe();
+            default => "?";
+        };
+        this.assertEquals("active", r);
+    }
+
+    @test
+    func interfaceDefaultMethod(): void {
+        this.assertEquals("Hi, Alice", Person.Alice.greet());
+        this.assertEquals("Hi, Bob", Person.Bob.greet());
+    }
+
+    @test
+    func enumIsInstanceofInterface(): void {
+        let s = Status.Active;
+        this.assertTrue(s instanceof Status);
+        this.assertTrue(s instanceof Describable);
+        this.assertTrue(s instanceof Status.Active);
+        this.assertFalse(s instanceof Status.Suspended);
+    }
+
+    @test
+    func unknownMethodErrors(): void {
+        this.assertThrows(func(): void {
+            Status.Active.nope();
+        });
+    }
+
+    @test
+    func bareEnumStillWorks(): void {
+        let r = match (Status.Closed("k")) {
+            case Status.Closed(string m) => m;
+            default => "?";
+        };
+        this.assertEquals("k", r);
+    }
+}

@@ -59,7 +59,13 @@ type Evaluator struct {
 	stdinReader *bufio.Reader
 	// declAnnotation distinguishes a declaration annotation from other
 	// expected-type contexts (return position, arg hints) by pointer identity.
-	declAnnotation       *ast.TypeRef
+	declAnnotation *ast.TypeRef
+	// pendingEnumThis binds `this` to a non-Instance receiver (an enum
+	// variant) for the next method body; consumed at call-env setup.
+	pendingEnumThis runtime.Value
+	// enumThisForChild carries the enum receiver into a generator/async
+	// child evaluator, which runs the body on its own goroutine.
+	enumThisForChild runtime.Value
 	imports              map[string]bool
 	importNames          map[string]string
 	currentModule        string
@@ -1300,7 +1306,11 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 		}
 		return signal{}, env.Define(stmt.Name.Value, iface, true)
 	case *ast.EnumStatement:
-		return signal{}, env.Define(stmt.Name.Value, buildEnum(stmt), true)
+		enum, err := e.buildEnum(stmt, env)
+		if err != nil {
+			return signal{}, err
+		}
+		return signal{}, env.Define(stmt.Name.Value, enum, true)
 	default:
 		return signal{}, fmt.Errorf("unsupported statement %T", stmt)
 	}
@@ -5303,6 +5313,19 @@ func (e *Evaluator) applyFunctionWithThis(fn runtime.Function, args []runtime.Va
 	return e.applyFunctionWithThisSync(fn, args, this)
 }
 
+// applyEnumMethod invokes an enum instance method with `this` bound to the
+// receiving variant. The variant flows through pendingEnumThis to the call-env
+// setup (and into generator/async children) since `this` is not a *Instance.
+func (e *Evaluator) applyEnumMethod(fn runtime.Function, args []runtime.Value, receiver runtime.EnumVariant) (runtime.Value, error) {
+	e.pendingEnumThis = receiver
+	if fn.IsGenerator || fn.Async {
+		// The generator/async child consumes pendingEnumThis at body start.
+		e.enumThisForChild = receiver
+		defer func() { e.enumThisForChild = nil }()
+	}
+	return e.applyFunctionWithThis(fn, args, nil)
+}
+
 func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtime.Value, this *runtime.Instance) (runtime.Value, error) {
 	if fn.IsGenerator {
 		return e.lazyGenerator(fn, args, this), nil
@@ -5335,8 +5358,14 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 		return nil, err
 	}
 	callEnv := runtime.NewEnclosedEnvironment(fn.Env)
+	enumThis := e.pendingEnumThis
+	e.pendingEnumThis = nil
 	if this != nil {
 		if err := callEnv.Define("this", this, false); err != nil {
+			return nil, err
+		}
+	} else if enumThis != nil {
+		if err := callEnv.Define("this", enumThis, false); err != nil {
 			return nil, err
 		}
 	}
@@ -5432,6 +5461,7 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 }
 
 func (e *Evaluator) lazyGenerator(fn runtime.Function, args []runtime.Value, this *runtime.Instance) *runtime.Generator {
+	enumThis := e.enumThisForChild
 	items := make(chan generatorItem)
 	doneCh := make(chan struct{})
 	stop := sync.Once{}
@@ -5444,6 +5474,7 @@ func (e *Evaluator) lazyGenerator(fn runtime.Function, args []runtime.Value, thi
 			// concurrent generator starts race-clean on package-level
 			// native callbacks.
 			child := e.childForCallback()
+			child.pendingEnumThis = enumThis
 			runner := fn
 			runner.IsGenerator = false
 			child.pushYieldChannel(items, doneCh)
@@ -5493,6 +5524,7 @@ func (e *Evaluator) startAsyncFunction(fn runtime.Function, args []runtime.Value
 	// inside the goroutine races with parallel async calls on writes to
 	// package-level native callbacks (InstanceInvoker, ClassDeserializer).
 	child := e.childForCallback()
+	child.pendingEnumThis = e.enumThisForChild
 	runtime.AsyncEnter()
 	go func() {
 		defer runtime.AsyncLeave()

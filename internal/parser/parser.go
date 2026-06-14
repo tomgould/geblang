@@ -2054,12 +2054,20 @@ func (p *Parser) parseEnumStatement() ast.Statement {
 		return stmt
 	}
 	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	if p.peekTokenIs(token.Implements) {
+		p.nextToken()
+		stmt.Implements = p.parseTypeList()
+	}
 	if !p.expectPeek(token.LBrace) {
 		return stmt
 	}
+	// Variant list, optionally terminated by `;` to begin a method block.
 	for {
 		p.nextToken()
 		if p.curTokenIs(token.RBrace) || p.curTokenIs(token.EOF) {
+			return stmt
+		}
+		if p.curTokenIs(token.Semicolon) {
 			break
 		}
 		if !p.curTokenIs(token.Ident) {
@@ -2086,6 +2094,23 @@ func (p *Parser) parseEnumStatement() ast.Statement {
 		stmt.Variants = append(stmt.Variants, variant)
 		if p.peekTokenIs(token.Comma) {
 			p.nextToken() // consume ','
+		}
+	}
+	for {
+		p.nextToken()
+		if p.curTokenIs(token.RBrace) || p.curTokenIs(token.EOF) {
+			break
+		}
+		if !p.curTokenIs(token.Func) {
+			p.errorf(p.curToken, "expected enum method declaration, got %s", p.curToken.Type)
+			p.synchronize()
+			continue
+		}
+		member := p.parseStatement()
+		if fn, ok := member.(*ast.FunctionStatement); ok {
+			stmt.Methods = append(stmt.Methods, fn)
+		} else if member != nil {
+			p.errorf(p.curToken, "enum body allows only method declarations")
 		}
 	}
 	return stmt

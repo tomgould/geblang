@@ -51,6 +51,12 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 		}
 		return nil, native.UnknownMethodError(instance.Class.Name, name)
 	}
+	if variant, ok := receiver.(runtime.EnumVariant); ok {
+		if method, ok := e.lookupEnumMethod(variant.Enum, name); ok {
+			return e.applyEnumMethod(method, args, variant)
+		}
+		return nil, native.UnknownMethodError(variant.Enum.Name, name)
+	}
 	if target, ok := primitiveConversionTarget(name); ok {
 		if target == "int" {
 			if text, ok := receiver.(runtime.String); ok && len(args) >= 1 {

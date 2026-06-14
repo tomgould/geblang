@@ -743,6 +743,35 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		}
 		return 0, vm.runtimeError(instruction, "enum %s has no variant %s", enumDef.Name, variantName)
 	}
+	if variant, ok := receiver.(runtime.EnumVariant); ok {
+		indices, ok := variant.Enum.MethodIndices[strings.ToLower(nameValue.Value)]
+		if !ok || len(indices) == 0 {
+			return vm.throwTyped(instruction, ip, "RuntimeError", fmt.Sprintf("unknown method %s.%s", variant.Enum.Name, nameValue.Value))
+		}
+		// A foreign enum's method index resolves against its home chunk, not
+		// this one; route through the module loader.
+		if variant.Enum.Module != "" && variant.Enum.Module != vm.moduleName {
+			if vm.moduleLoader == nil {
+				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
+			}
+			fn := runtime.BytecodeFunction{Module: variant.Enum.Module, Index: indices[0]}
+			result, err := vm.moduleLoader.CallModuleFunction(fn, slots)
+			if err != nil {
+				return vm.propagateModuleError(instruction, ip, err)
+			}
+			vm.push(result)
+			return ip, nil
+		}
+		functionIndex, err := vm.selectRuntimeFunction(instruction, nameValue.Value, indices, args, 1)
+		if err != nil {
+			return 0, err
+		}
+		if vm.chunk.Functions[functionIndex].IsGenerator && !vm.generatorExecution {
+			vm.push(vm.lazyGenerator(functionIndex, slots))
+			return ip, nil
+		}
+		return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], slots, nil)
+	}
 	if list, ok := receiver.(*runtime.List); ok {
 		result, handled, err := vm.listHigherOrderMethod(instruction, list, nameValue.Value, args)
 		if err != nil {

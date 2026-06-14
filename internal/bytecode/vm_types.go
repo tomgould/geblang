@@ -49,12 +49,26 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 	}
 	if ev, ok := value.(runtime.EnumVariant); ok {
 		if dotIdx := strings.Index(target, "."); dotIdx >= 0 {
-			enumName := target[:dotIdx]
-			variantName := target[dotIdx+1:]
-			vm.push(runtime.Bool{Value: strings.EqualFold(ev.Enum.Name, enumName) && strings.EqualFold(ev.Variant, variantName)})
-		} else {
-			vm.push(runtime.Bool{Value: strings.EqualFold(ev.Enum.Name, target)})
+			// `Enum.Variant` is a variant test; a `module.Interface`
+			// qualified name (prefix is not this enum) falls through to
+			// the name/interface check below.
+			if enumName := target[:dotIdx]; strings.EqualFold(ev.Enum.Name, enumName) {
+				vm.push(runtime.Bool{Value: strings.EqualFold(ev.Variant, target[dotIdx+1:])})
+				return nil
+			}
 		}
+		stripped := stripModulePrefix(target)
+		if strings.EqualFold(ev.Enum.Name, stripped) {
+			vm.push(runtime.Bool{Value: true})
+			return nil
+		}
+		for _, iface := range ev.Enum.Implements {
+			if strings.EqualFold(iface, stripped) {
+				vm.push(runtime.Bool{Value: true})
+				return nil
+			}
+		}
+		vm.push(runtime.Bool{Value: false})
 		return nil
 	}
 	if instance, ok := value.(*runtime.Instance); ok {
@@ -1020,6 +1034,14 @@ func (vm *VM) runtimeValueMatchesTypeSpec(value runtime.Value, spec vmTypeSpec) 
 		}
 		for _, ancestor := range errValue.Parents {
 			if strings.EqualFold(ancestor, stripped) {
+				return true
+			}
+		}
+		return false
+	}
+	if ev, ok := value.(runtime.EnumVariant); ok {
+		for _, iface := range ev.Enum.Implements {
+			if strings.EqualFold(iface, stripped) {
 				return true
 			}
 		}

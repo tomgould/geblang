@@ -724,6 +724,15 @@ func reflectClassMetadata(value runtime.Value) (runtime.ClassMetadata, bool) {
 		if value != nil && value.Class != nil {
 			return runtimeClassMetadata(value.Class)
 		}
+	case *runtime.EnumDef:
+		md := runtime.ClassMetadata{Name: value.Name, Module: value.Module}
+		for name := range value.MethodIndices {
+			md.Methods = append(md.Methods, name)
+		}
+		md.Interfaces = append(md.Interfaces, value.Implements...)
+		sort.Strings(md.Methods)
+		sort.Strings(md.Interfaces)
+		return md, true
 	}
 	return runtime.ClassMetadata{}, false
 }

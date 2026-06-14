@@ -619,9 +619,11 @@ type EnumVariantDef struct {
 }
 
 type EnumStatement struct {
-	Token    token.Token
-	Name     *Identifier
-	Variants []EnumVariantDef
+	Token      token.Token
+	Name       *Identifier
+	Variants   []EnumVariantDef
+	Implements []*TypeRef
+	Methods    []*FunctionStatement
 }
 
 func (*EnumStatement) statementNode()         {}

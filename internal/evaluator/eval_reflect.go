@@ -892,6 +892,17 @@ func reflectInterfaceParents(call *ast.CallExpression, args []runtime.Value) (ru
 	return stringList(names), nil
 }
 
+func classMetadataFromEnum(enum *runtime.EnumDef) runtime.ClassMetadata {
+	md := runtime.ClassMetadata{Name: enum.Name, Module: enum.Module}
+	for name := range enum.Methods {
+		md.Methods = append(md.Methods, name)
+	}
+	md.Interfaces = append(md.Interfaces, enum.Implements...)
+	sort.Strings(md.Methods)
+	sort.Strings(md.Interfaces)
+	return md
+}
+
 func reflectClassMetadataValue(call *ast.CallExpression, args []runtime.Value) (runtime.ClassMetadata, error) {
 	if len(args) != 1 {
 		return runtime.ClassMetadata{}, fmt.Errorf("%s expects class", call.Callee.String())
@@ -918,6 +929,8 @@ func reflectClassMetadataValue(call *ast.CallExpression, args []runtime.Value) (
 		}
 	case runtime.BytecodeClass:
 		return classMetadataFromBytecodeClass(value), nil
+	case *runtime.EnumDef:
+		return classMetadataFromEnum(value), nil
 	}
 	// Built-in primitive reflection: list / dict / set / string /
 	// bytes / range expose their method table via the curated table

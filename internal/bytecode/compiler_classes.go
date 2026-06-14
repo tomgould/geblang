@@ -709,9 +709,109 @@ func (c *Compiler) declareInterface(name string) int64 {
 
 func (c *Compiler) compileEnumStatement(stmt *ast.EnumStatement) error {
 	index := c.declareEnum(stmt)
+	enumDef, _ := c.chunk.Constants[index].(*runtime.EnumDef)
+	if err := c.injectEnumInterfaceMethods(stmt); err != nil {
+		return err
+	}
+	if len(stmt.Methods) > 0 && enumDef != nil {
+		enumDef.MethodIndices = map[string][]int64{}
+		for _, member := range stmt.Methods {
+			if err := c.checkEnumMethodCollision(stmt, member.Name.Value); err != nil {
+				return err
+			}
+			functionName := stmt.Name.Value + "." + member.Name.Value
+			compiledMember := *member
+			compiledMember.Static = false
+			if err := c.compileFunctionWithPrologue(&compiledMember, functionName, "this", nil); err != nil {
+				return c.withStatementLocation(member, err)
+			}
+			functionIndex, err := c.lastFunctionIndex(functionName)
+			if err != nil {
+				return err
+			}
+			key := strings.ToLower(member.Name.Value)
+			enumDef.MethodIndices[key] = append(enumDef.MethodIndices[key], functionIndex)
+		}
+	}
+	if enumDef != nil {
+		for _, ifaceRef := range stmt.Implements {
+			enumDef.Implements = append(enumDef.Implements, ifaceRef.Name)
+		}
+		if err := c.checkEnumConformance(stmt, enumDef); err != nil {
+			return err
+		}
+	}
 	c.emitAt(OpConstant, stmt.Token.Line, stmt.Token.Column, index)
 	slot := c.globalSlot(stmt.Name.Value)
 	c.emitAt(OpDefineGlobal, stmt.Token.Line, stmt.Token.Column, slot)
+	return nil
+}
+
+// injectEnumInterfaceMethods appends an interface's default method bodies to
+// the enum's method list for any method the enum leaves unimplemented.
+func (c *Compiler) injectEnumInterfaceMethods(stmt *ast.EnumStatement) error {
+	declared := map[string]bool{}
+	for _, m := range stmt.Methods {
+		declared[strings.ToLower(m.Name.Value)] = true
+	}
+	defaultSource := map[string]string{}
+	var defaults []*ast.FunctionStatement
+	for _, ifaceRef := range stmt.Implements {
+		iface, ok := c.interfaceAST[strings.ToLower(ifaceRef.Name)]
+		if !ok {
+			continue
+		}
+		for _, def := range iface.Defaults {
+			key := strings.ToLower(def.Name.Value)
+			if declared[key] {
+				continue
+			}
+			if prev, seen := defaultSource[key]; seen && prev != iface.Name.Value {
+				return c.withStatementLocation(stmt, fmt.Errorf("enum %s inherits multiple defaults for %s from %s and %s; enum must override", stmt.Name.Value, def.Name.Value, prev, iface.Name.Value))
+			}
+			defaultSource[key] = iface.Name.Value
+			defaults = append(defaults, def)
+			declared[key] = true
+		}
+	}
+	stmt.Methods = append(stmt.Methods, defaults...)
+	return nil
+}
+
+func (c *Compiler) checkEnumMethodCollision(stmt *ast.EnumStatement, name string) error {
+	switch strings.ToLower(name) {
+	case "variant", "fields":
+		return c.withStatementLocation(stmt, fmt.Errorf("enum %s method %q collides with a built-in variant accessor", stmt.Name.Value, name))
+	}
+	return nil
+}
+
+func (c *Compiler) checkEnumConformance(stmt *ast.EnumStatement, enumDef *runtime.EnumDef) error {
+	for _, ifaceRef := range stmt.Implements {
+		iface, ok := c.interfaceAST[strings.ToLower(ifaceRef.Name)]
+		if !ok {
+			continue
+		}
+		if err := c.checkEnumImplementsInterface(stmt, enumDef, iface); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Compiler) checkEnumImplementsInterface(stmt *ast.EnumStatement, enumDef *runtime.EnumDef, iface *ast.InterfaceStatement) error {
+	for _, parentRef := range iface.Parents {
+		if parent, ok := c.interfaceAST[strings.ToLower(parentRef.Name)]; ok {
+			if err := c.checkEnumImplementsInterface(stmt, enumDef, parent); err != nil {
+				return err
+			}
+		}
+	}
+	for _, sig := range iface.Methods {
+		if len(enumDef.MethodIndices[strings.ToLower(sig.Name.Value)]) == 0 {
+			return c.withStatementLocation(stmt, fmt.Errorf("enum %s implements %s but is missing compatible method %s", stmt.Name.Value, iface.Name.Value, sig.Name.Value))
+		}
+	}
 	return nil
 }
 
