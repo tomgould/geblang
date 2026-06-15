@@ -19,6 +19,12 @@
   the value is a whole number (`NaN` and infinity are not). Identical on both
   backends.
 
+- `zrange(start, end[, step])` is the exclusive, Python-style counterpart to the
+  inclusive `range` builtin: it omits the end value (`zrange(0, 5)` is
+  `[0, 1, 2, 3, 4]`) and adds a one-arg form `zrange(n)` that ranges from 0. It
+  returns an eager `list<int>`; `collections.range` remains the lazy exclusive
+  form. Identical on both backends.
+
 ### Tooling
 
 - `geblang check` now verifies that a `match` over an enum subject handles every
@@ -27,6 +33,14 @@
   (the code still runs and throws `MatchError` only if an unhandled value reaches
   the match); a variant handled only by a guarded case counts as missing, since
   the guard may be false. Surfaced in the editor through the language server.
+
+### Fixes
+
+- A private in-memory SQLite database (`:memory:`) now pins its connection pool
+  to a single connection. Each `:memory:` connection is a separate database, so
+  concurrent access previously could open a second, empty one (`no such table`);
+  pinning makes concurrent reads and writes share one database. Use
+  `file::memory:?cache=shared` or a file path for a larger pool.
 
 ### Standard library
 

@@ -314,6 +314,9 @@ const (
 	// Spread-aware OpCallStaticMethod. Operands [classIndex, nameIndex,
 	// staticArgCount]; stack [static_args..., spread_list_or_dict].
 	OpCallStaticMethodSpread
+	// OpZRange is OpRange with an exclusive end and a 1-arg form
+	// (zrange(n) ranges 0..n). Argument count operand is 1, 2, or 3.
+	OpZRange
 )
 
 type Instruction struct {

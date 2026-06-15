@@ -77,6 +77,11 @@ connection so concurrent access waits instead of failing with
 `database is locked`; pass your own `busy_timeout` or `_pragma` DSN parameter
 to override.
 
+A private in-memory database (`:memory:`) is distinct per connection, so its
+pool is pinned to a single connection; concurrent access shares one database
+rather than each connection seeing a separate empty one. Use a shared cache
+(`file::memory:?cache=shared`) or a file path if you need a larger pool.
+
 The repository includes runnable examples:
 
 - `examples/sqlite.gb` uses a local SQLite file and runs without external

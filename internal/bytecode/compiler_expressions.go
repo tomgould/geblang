@@ -594,6 +594,21 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				c.emitAt(OpRange, expr.Token.Line, expr.Token.Column, int64(len(expr.Arguments)))
 				return nil
 			}
+			if ident.Value == "zrange" {
+				if len(expr.Arguments) < 1 || len(expr.Arguments) > 3 {
+					return fmt.Errorf("zrange expects (n), (start, end), or (start, end, step)")
+				}
+				for _, arg := range expr.Arguments {
+					if arg.Name != nil {
+						return fmt.Errorf("zrange does not accept named arguments")
+					}
+					if err := c.compileExpression(arg.Value); err != nil {
+						return err
+					}
+				}
+				c.emitAt(OpZRange, expr.Token.Line, expr.Token.Column, int64(len(expr.Arguments)))
+				return nil
+			}
 			if isBuiltinErrorClass(ident.Value) {
 				if len(expr.Arguments) > 1 {
 					return fmt.Errorf("%s expects zero or one argument", ident.Value)

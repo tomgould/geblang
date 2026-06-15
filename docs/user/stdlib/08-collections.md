@@ -631,7 +631,8 @@ Graph and tree algorithms:
 
 Lazy helpers:
 
-- `range(start, end, step)`
+- `range(start, end, step)` - lazy, exclusive end (the eager builtins are the
+  inclusive `range` and the exclusive `zrange`; see chapter 4)
 - `take(iterable, count)`
 - `lazyMap`, `lazyFilter`
 

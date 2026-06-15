@@ -41,6 +41,12 @@ func (e *Evaluator) dbOpen(call *ast.CallExpression, args []runtime.Value) (runt
 		_ = db.Close()
 		return nil, err
 	}
+	// A private in-memory sqlite db is distinct per connection, so a pool of
+	// more than one would see separate empty databases. Pin to a single
+	// connection so concurrent access shares one db.
+	if driverName == "sqlite" && sqliteIsPrivateMemory(dsn) {
+		db.SetMaxOpenConns(1)
+	}
 	e.dbMu.Lock()
 	defer e.dbMu.Unlock()
 	e.nextDBID++
@@ -836,6 +842,15 @@ func sqliteDSNWithBusyTimeout(dsn string) string {
 		return out + "&" + pragma
 	}
 	return out + "?" + pragma
+}
+
+// sqliteIsPrivateMemory reports whether a sqlite DSN names a private in-memory
+// database (distinct per connection). A shared cache makes it process-wide.
+func sqliteIsPrivateMemory(dsn string) bool {
+	if !strings.Contains(dsn, ":memory:") && !strings.Contains(dsn, "mode=memory") {
+		return false
+	}
+	return !strings.Contains(dsn, "cache=shared")
 }
 
 func dbHandleID(value runtime.Value) (int64, error) {

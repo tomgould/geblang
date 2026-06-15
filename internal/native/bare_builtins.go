@@ -15,4 +15,5 @@ var BareBuiltins = []string{
 	"parent",
 	"range",
 	"typeof",
+	"zrange",
 }

@@ -32,6 +32,23 @@ class RangeToListTest extends test.Test {
     }
 
     @test
+    func zrangeBuiltinIsExclusive(): void {
+        this.assertEquals([0, 1, 2, 3, 4], zrange(0, 5));
+        this.assertEquals([2, 4, 6], zrange(2, 8, 2));
+    }
+
+    @test
+    func zrangeBuiltinOneArgFromZero(): void {
+        this.assertEquals([0, 1, 2, 3, 4], zrange(5));
+        this.assertEquals([], zrange(0));
+    }
+
+    @test
+    func zrangeBuiltinDefaultsNegativeStep(): void {
+        this.assertEquals([5, 4, 3, 2, 1], zrange(5, 0));
+    }
+
+    @test
     func charRangeIsList(): void {
         let xs = 'a'..'e';
         this.assertEquals(["a", "b", "c", "d", "e"], xs);

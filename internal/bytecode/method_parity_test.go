@@ -58,6 +58,7 @@ func TestPrimitiveMethodsRecognizedOnBothBackends(t *testing.T) {
 var bareBuiltinSnippets = map[string]string{
 	"typeof": "let x = typeof(1);\n",
 	"range":  "let x = range(0, 3);\n",
+	"zrange": "let x = zrange(0, 3);\n",
 	"assert": "assert(true);\n",
 	"dir":    "let x = dir(1);\n",
 	"dump":   "let x = dump(1);\n",

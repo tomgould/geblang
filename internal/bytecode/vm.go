@@ -1359,7 +1359,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			ip = nextIP
 		case OpRange:
-			if err := vm.execRange(*instruction); err != nil {
+			if err := vm.execRange(*instruction, false); err != nil {
+				return err
+			}
+		case OpZRange:
+			if err := vm.execRange(*instruction, true); err != nil {
 				return err
 			}
 		case OpTypeOf:
@@ -4630,12 +4634,16 @@ func (vm *VM) executeSelect(instruction Instruction, ip int) (int, error) {
 	return bodyOffsets[chosen] - 1, nil
 }
 
-func (vm *VM) execRange(instruction Instruction) error {
+func (vm *VM) execRange(instruction Instruction, exclusive bool) error {
 	if len(instruction.Operands) != 1 {
 		return vm.runtimeError(instruction, "range expects argument count operand")
 	}
 	argc := int(instruction.Operands[0])
-	if argc != 2 && argc != 3 {
+	minArgc := 2
+	if exclusive {
+		minArgc = 1
+	}
+	if argc < minArgc || argc > 3 {
 		return vm.runtimeError(instruction, "range expects (start, end) or (start, end, step)")
 	}
 	var step *big.Int
@@ -4658,13 +4666,18 @@ func (vm *VM) execRange(instruction Instruction) error {
 	if !ok {
 		return vm.runtimeError(instruction, "range end must be int")
 	}
-	startVal, err := vm.pop()
-	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
-	}
-	startBig, ok := native.IntValueToBigInt(startVal)
-	if !ok {
-		return vm.runtimeError(instruction, "range start must be int")
+	// One-arg zrange(n) ranges from 0; otherwise the start is on the stack.
+	startBig := big.NewInt(0)
+	if argc >= 2 {
+		startVal, err := vm.pop()
+		if err != nil {
+			return vm.runtimeError(instruction, "%s", err.Error())
+		}
+		s, ok := native.IntValueToBigInt(startVal)
+		if !ok {
+			return vm.runtimeError(instruction, "range start must be int")
+		}
+		startBig = s
 	}
 	if step == nil {
 		if startBig.Cmp(endBig) > 0 {
@@ -4680,11 +4693,14 @@ func (vm *VM) execRange(instruction Instruction) error {
 	current := new(big.Int).Set(startBig)
 	for {
 		cmp := current.Cmp(endBig)
-		if step.Sign() > 0 && cmp > 0 {
-			break
-		}
-		if step.Sign() < 0 && cmp < 0 {
-			break
+		if step.Sign() > 0 {
+			if (exclusive && cmp >= 0) || (!exclusive && cmp > 0) {
+				break
+			}
+		} else {
+			if (exclusive && cmp <= 0) || (!exclusive && cmp < 0) {
+				break
+			}
 		}
 		elements = append(elements, runtime.Int{Value: new(big.Int).Set(current)})
 		current.Add(current, step)

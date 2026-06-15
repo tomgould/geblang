@@ -775,6 +775,25 @@ io.println("${back[2]}");
 `, "1\n7\nrow\nbytes\n1\n3\n")
 }
 
+// TestParityDBMemoryConcurrentInsert pins that concurrent async writes to an
+// in-memory sqlite db all land (the pool is pinned to one connection so they
+// share a single database rather than each seeing a private empty one).
+func TestParityDBMemoryConcurrentInsert(t *testing.T) {
+	runParityStateful(t, `import db;
+import async;
+import io;
+let conn = db.connect("sqlite", ":memory:");
+conn.exec("CREATE TABLE t (n INTEGER)");
+list<any> tasks = [];
+for (i in range(1, 20)) {
+    tasks.push(async.run(func(): any { conn.exec("INSERT INTO t (n) VALUES (1)"); return null; }));
+}
+for (t in tasks) { async.await(t); }
+let rows = conn.query("SELECT COUNT(*) AS c FROM t").all();
+io.println(rows[0]["c"]);
+`, "20\n")
+}
+
 // TestParityDataFrameIO pins the stateful dataframe IO surface: CSV
 // file round trip and SQL load/store through in-memory SQLite.
 func TestParityDataFrameIO(t *testing.T) {

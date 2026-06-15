@@ -6,8 +6,27 @@
 import test;
 import db;
 import binary;
+import async;
 
 class DbTest extends test.Test {
+
+    @test
+    func concurrentMemoryWritesShareOneDb(): void {
+        /* A private :memory: db is pinned to one connection, so concurrent
+         * async writes all land in the same database rather than each seeing
+         * a private empty one. */
+        let c = db.connect("sqlite", ":memory:");
+        c.exec("CREATE TABLE n (v INTEGER)");
+        list<any> tasks = [];
+        for (i in range(1, 25)) {
+            tasks.push(async.run(func(): any { c.exec("INSERT INTO n (v) VALUES (1)"); return null; }));
+        }
+        for (t in tasks) {
+            async.await(t);
+        }
+        let rows = c.query("SELECT COUNT(*) AS c FROM n").all();
+        this.assertEquals(25, rows[0]["c"]);
+    }
 
     func conn(): any {
         let c = db.connect("sqlite", ":memory:");

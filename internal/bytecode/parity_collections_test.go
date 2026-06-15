@@ -725,6 +725,15 @@ io.println(r.length() as string);
 `, "10\n")
 }
 
+func TestParityZRange(t *testing.T) {
+	runParity(t, `import io;
+io.println("${zrange(0, 5)}");
+io.println("${zrange(5)}");
+io.println("${zrange(2, 8, 2)}");
+io.println("${zrange(5, 0)}");
+`, "[0, 1, 2, 3, 4]\n[0, 1, 2, 3, 4]\n[2, 4, 6]\n[5, 4, 3, 2, 1]\n")
+}
+
 func TestParityRangeIsEmpty(t *testing.T) {
 	runParity(t, `import io;
 let r = 5..3;

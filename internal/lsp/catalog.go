@@ -37,7 +37,8 @@ func (f functionDoc) signature() string {
 var globalBuiltins = map[string]functionDoc{
 	"assert": fn([]string{"bool cond", "string message = \"\""}, "void", "Throws AssertionError when cond is false. When message is omitted the error includes the source text of the cond expression. `--no-assert` elides the call (no argument evaluation) at compile time (1.6.0)."),
 	"typeof": fn([]string{"any value"}, "Type", "Returns a runtime Type describing the value's type."),
-	"range":  fn([]string{"int start", "int end", "int step = 1"}, "list<int>", "Builds an integer range. With one arg ranges from 0; with three the third is the step."),
+	"range":  fn([]string{"int start", "int end", "int step = 1"}, "list<int>", "Builds an inclusive integer range as a list: range(start, end) or range(start, end, step). For an exclusive end see zrange."),
+	"zrange": fn([]string{"int start", "int end", "int step = 1"}, "list<int>", "Builds an integer range with an exclusive end (Python-style): zrange(n) ranges 0..n-1; zrange(start, end) and zrange(start, end, step) exclude end."),
 	"dump":   fn([]string{"any value"}, "string", "Returns a debug-friendly string representation of value (recursive, ordered)."),
 	"dir":    fn([]string{"any value = null"}, "list<string>", "Returns the visible names: with no argument, names in the current scope; with an imported-module identifier, the module's exports; with any other value, its accessible members."),
 }

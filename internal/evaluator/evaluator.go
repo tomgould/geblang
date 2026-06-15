@@ -2957,6 +2957,9 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 	if ident, ok := call.Callee.(*ast.Identifier); ok && ident.Value == "range" {
 		return e.evalRangeBuiltin(call, env)
 	}
+	if ident, ok := call.Callee.(*ast.Identifier); ok && ident.Value == "zrange" {
+		return e.evalZRangeBuiltin(call, env)
+	}
 	if ident, ok := call.Callee.(*ast.Identifier); ok && isBuiltinErrorClass(ident.Value) {
 		args, err := e.evalCallArguments(call, env)
 		if err != nil {
@@ -4459,35 +4462,59 @@ func (e *Evaluator) evalAssertCall(call *ast.CallExpression, env *runtime.Enviro
 }
 
 func (e *Evaluator) evalRangeBuiltin(call *ast.CallExpression, env *runtime.Environment) (runtime.Value, error) {
+	return e.evalRangeLike(call, env, false)
+}
+
+// evalZRangeBuiltin is range with an exclusive end and a 1-arg form (zrange(n)).
+func (e *Evaluator) evalZRangeBuiltin(call *ast.CallExpression, env *runtime.Environment) (runtime.Value, error) {
+	return e.evalRangeLike(call, env, true)
+}
+
+func (e *Evaluator) evalRangeLike(call *ast.CallExpression, env *runtime.Environment, exclusive bool) (runtime.Value, error) {
 	args, err := e.evalCallArguments(call, env)
 	if err != nil {
 		return nil, err
 	}
-	if len(args) < 2 || len(args) > 3 {
+	name := "range"
+	minArgs := 2
+	if exclusive {
+		name = "zrange"
+		minArgs = 1
+	}
+	if len(args) < minArgs || len(args) > 3 {
+		if exclusive {
+			return nil, fmt.Errorf("zrange expects (n), (start, end), or (start, end, step)")
+		}
 		return nil, fmt.Errorf("range expects (start, end) or (start, end, step)")
 	}
-	startBig, ok := native.IntValueToBigInt(args[0])
-	if !ok {
-		return nil, fmt.Errorf("range start must be int")
+	startBig := big.NewInt(0)
+	endIdx := 0
+	if len(args) >= 2 {
+		s, ok := native.IntValueToBigInt(args[0])
+		if !ok {
+			return nil, fmt.Errorf("%s start must be int", name)
+		}
+		startBig = s
+		endIdx = 1
 	}
-	endBig, ok := native.IntValueToBigInt(args[1])
+	endBig, ok := native.IntValueToBigInt(args[endIdx])
 	if !ok {
-		return nil, fmt.Errorf("range end must be int")
+		return nil, fmt.Errorf("%s end must be int", name)
 	}
 	step := big.NewInt(1)
 	if len(args) == 3 {
 		stepBig, ok := native.IntValueToBigInt(args[2])
 		if !ok {
-			return nil, fmt.Errorf("range step must be int")
+			return nil, fmt.Errorf("%s step must be int", name)
 		}
 		step = stepBig
 	} else if startBig.Cmp(endBig) > 0 {
 		step = big.NewInt(-1)
 	}
 	if step.Sign() == 0 {
-		return nil, fmt.Errorf("range step cannot be zero")
+		return nil, fmt.Errorf("%s step cannot be zero", name)
 	}
-	rng := runtime.Range{Start: new(big.Int).Set(startBig), End: new(big.Int).Set(endBig), Exclusive: false, Step: new(big.Int).Set(step)}
+	rng := runtime.Range{Start: new(big.Int).Set(startBig), End: new(big.Int).Set(endBig), Exclusive: exclusive, Step: new(big.Int).Set(step)}
 	return rangeToList(rng), nil
 }
 
