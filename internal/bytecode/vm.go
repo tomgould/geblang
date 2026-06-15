@@ -22,6 +22,9 @@ type VM struct {
 	stderr  io.Writer
 	stack   []runtime.VMValue
 	globals []runtime.VMValue
+	// invokerScoped marks that this VM has claimed callable dispatch for the
+	// running goroutine, so nested Run() calls (e.g. HOF closures) skip it.
+	invokerScoped bool
 	// globalsMu guards bulk operations on the globals slice used by the
 	// wrap-bridge: setGlobal writes and the snapshot-in / per-slot
 	// write-back done when a wrapped callable fires on a different
@@ -496,12 +499,13 @@ func (vm *VM) displayString(value runtime.Value) (string, error) {
 }
 
 func (vm *VM) Run() (err error) {
-	// Scope callable dispatch to this VM for the running goroutine: a callback
-	// fired from native code (e.g. dataframe.filterFn) must run on this VM, not a
-	// stateful-native-caller evaluator or a concurrent worker. Per-goroutine +
-	// restore so nested runs and parallel async workers stay isolated.
-	prevInvoker, hadInvoker := native.SwapCallableInvoker(vm.invokeCallable)
-	defer native.RestoreCallableInvoker(prevInvoker, hadInvoker)
+	// Scope callable dispatch to this VM for the goroutine, but only on the
+	// outermost Run so per-element HOF closure calls stay off the hot path.
+	if !vm.invokerScoped {
+		vm.invokerScoped = true
+		prev, had := native.SwapCallableInvoker(vm.invokeCallable)
+		defer func() { native.RestoreCallableInvoker(prev, had); vm.invokerScoped = false }()
+	}
 	if !vm.runSuppressCleanup {
 		// Mirror the evaluator's behaviour: after a script finishes
 		// (success, exit, or runtime error) drain the destructor
