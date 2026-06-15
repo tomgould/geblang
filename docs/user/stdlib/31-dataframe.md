@@ -69,6 +69,22 @@ users.filter(df.col("age") > 30);
 users.withColumn("total", df.col("price") * df.col("qty"));
 ```
 
+When a predicate cannot be expressed columnwise, `filterFn` runs a
+function once per row. Each row is passed as a `dict` of column name to
+value (nulls included), and the function returns a `bool`:
+
+```gb
+let cutoff = 40;
+let adults = users.filterFn(func(any row): bool {
+    return row["age"] != null && (row["age"] as int) > cutoff;
+});
+```
+
+`filterFn` is the escape hatch, not the default: the columnwise
+expression filter is much faster, so reach for `filterFn` only when the
+condition genuinely needs per-row Geblang code. A `throw` inside the
+predicate propagates out of `filterFn` and is catchable as usual.
+
 `==` and `!=` keep their language-wide meaning; use `eq()` / `ne()` in
 expressions.
 

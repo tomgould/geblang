@@ -250,6 +250,23 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 	return nextIP, nil
 }
 
+// propagateCallbackError surfaces an error from a native method that ran a
+// Geblang callback (e.g. dataframe.filterFn): a typed error is re-thrown, an
+// already-formed VM error keeps its thrown class/message and frames, and a plain
+// error is rendered. Re-rendering a formed error would double its prefix.
+func (vm *VM) propagateCallbackError(instruction Instruction, ip int, err error) (int, error) {
+	var typed vmTypedError
+	if errors.As(err, &typed) {
+		return vm.throwTyped(instruction, ip, typed.class, typed.message)
+	}
+	var rtErr *vmRuntimeError
+	var wrErr *wrappedError
+	if errors.As(err, &rtErr) || errors.As(err, &wrErr) {
+		return 0, err
+	}
+	return 0, vm.runtimeError(instruction, "%s", err.Error())
+}
+
 func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if len(instruction.Operands) != 2 {
 		return 0, vm.fatalError(instruction, "method call instruction has invalid operands")
@@ -479,7 +496,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if frame, ok := receiver.(*runtime.DataFrame); ok {
 		result, err := native.DataFrameMethod(frame, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return vm.propagateCallbackError(instruction, ip, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -740,6 +757,13 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 				vm.push(runtime.EnumVariant{Enum: enumDef, Variant: v.Name, Fields: args})
 				return ip, nil
 			}
+		}
+		if value, handled, err := runtime.EnumStaticMethod(enumDef, variantName, args); handled {
+			if err != nil {
+				return 0, vm.runtimeError(instruction, "%s", err.Error())
+			}
+			vm.push(value)
+			return ip, nil
 		}
 		return 0, vm.runtimeError(instruction, "enum %s has no variant %s", enumDef.Name, variantName)
 	}

@@ -194,6 +194,8 @@ func (vm *VM) startAsyncFunction(index int64, args []runtime.Value) *runtime.Tas
 	worker := vm.spawnAsyncWorker()
 	runtime.AsyncEnter()
 	go func() {
+		gid := native.RegisterCallableInvoker(worker.invokeCallable)
+		defer native.UnregisterCallableInvoker(gid)
 		defer runtime.AsyncLeave()
 		result, err := worker.CallFunction(index, args)
 		task.Complete(result, err)
@@ -327,6 +329,8 @@ func (vm *VM) startAsyncCallableWithForwardThis(fn runtime.Value, args []runtime
 	}
 	runtime.AsyncEnter()
 	go func() {
+		gid := native.RegisterCallableInvoker(worker.invokeCallable)
+		defer native.UnregisterCallableInvoker(gid)
 		defer runtime.AsyncLeave()
 		result, err := worker.callCallable(fn, args)
 		task.Complete(result, err)
@@ -1967,6 +1971,16 @@ func (vm *VM) CallFunctionRaw(index int64, args []runtime.Value) (runtime.Value,
 
 func (vm *VM) CallClosure(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
 	return vm.callCallable(closure, args)
+}
+
+// invokeCallable is the installed native callable invoker. It runs the callable
+// on a fresh worker VM (its own stack and snapshot of host state), not inline on
+// this VM: a native call has left the dispatch loop, so an inline callback that
+// throws unwinds through and underflows the host VM's stack. The worker isolates
+// that, and concurrent async callbacks never share frame state. The error keeps
+// its thrown class/message for the caller's catch (see the DataFrame dispatch).
+func (vm *VM) invokeCallable(callable runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	return vm.spawnAsyncWorker().callCallable(callable, args)
 }
 
 func (vm *VM) ReflectConstructorsForChunkClass(class runtime.BytecodeClass) (runtime.Value, error) {

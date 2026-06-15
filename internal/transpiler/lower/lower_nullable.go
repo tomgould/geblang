@@ -9,7 +9,7 @@ import (
 // nullableValuePtr reports whether a slot of type t holds a nullable value-type
 // (int/float/bool/string), which lowers to a Go pointer so nil represents null.
 func nullableValuePtr(t *types.Type) bool {
-	return t != nil && t.Nullable && nullableValueKind(t.Kind)
+	return t != nil && t.Nullable && (nullableValueKind(t.Kind) || (t.Kind == types.KindEnum && t.EnumScalar))
 }
 
 func nullableValueKind(k types.Kind) bool {

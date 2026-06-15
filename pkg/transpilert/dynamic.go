@@ -364,6 +364,28 @@ func AsFloat(v any) float64 {
 	panic(castError(v, "float"))
 }
 
+// AsDecimal casts an any-typed value to a decimal (*big.Rat), matching the
+// interpreter's `as decimal`.
+func AsDecimal(v any) *big.Rat {
+	switch x := v.(type) {
+	case *big.Rat:
+		return x
+	case float64:
+		return FloatToDecimal(x)
+	case int64:
+		return IntToDecimal(x)
+	case int:
+		return IntToDecimal(int64(x))
+	case *big.Int:
+		return new(big.Rat).SetInt(x)
+	case Int:
+		return new(big.Rat).SetInt(x.big())
+	case string:
+		return StringToDecimal(x)
+	}
+	panic(castError(v, "decimal"))
+}
+
 // AsBool casts an any-typed value to bool, matching castValue.
 func AsBool(v any) bool {
 	switch x := v.(type) {

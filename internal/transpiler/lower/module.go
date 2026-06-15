@@ -349,6 +349,20 @@ func (m *Module) IsEnum(name string) bool {
 	return ok
 }
 
+// IsScalarEnum reports an untagged enum (Go int-based): registered with no
+// tagged variants, so its nullable form needs a pointer wrapper.
+func (m *Module) IsScalarEnum(name string) bool {
+	if _, ok := m.enums[name]; !ok {
+		return false
+	}
+	for key := range m.taggedVariants {
+		if strings.HasPrefix(key, name+".") {
+			return false
+		}
+	}
+	return true
+}
+
 func (m *Module) EnumHasVariant(enumName, variant string) bool {
 	for _, v := range m.enums[enumName] {
 		if v == variant {

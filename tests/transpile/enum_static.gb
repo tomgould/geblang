@@ -1,0 +1,30 @@
+import io;
+
+/* Enum static surface under --native: values() lists the nullary variants in
+   declaration order; fromName() resolves by exact name, ?Variant on miss. */
+enum Color { Red, Green, Blue }
+enum Token { Plus, Minus, Number(int) }
+
+list<Color> all = Color.values();
+io.println(all.length());
+for (Color c in all) {
+    io.println(c);
+}
+
+io.println(Color.fromName("Green"));
+io.println(Color.fromName("Green") == Color.Green);
+io.println(Color.fromName("nope") == null);
+io.println(Color.fromName("green") == null);
+
+Color picked = Color.fromName("Blue") ?? Color.Red;
+io.println(picked);
+Color fallback = Color.fromName("bad") ?? Color.Red;
+io.println(fallback);
+
+list<Token> simple = Token.values();
+io.println(simple.length());
+for (Token tk in simple) {
+    io.println(tk);
+}
+io.println(Token.fromName("Plus") == Token.Plus);
+io.println(Token.fromName("Number") == null);

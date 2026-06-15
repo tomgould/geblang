@@ -373,6 +373,61 @@ func (g *fuzzGen) loopBlock() (decls string, calls []string) {
 	return d.String(), calls
 }
 
+// collectionsBlock exercises list and dict higher-order and query methods whose
+// results print identically on both backends. List HOF dispatch and dict
+// ordering/keying are recurring divergence sources (the collections sweep and
+// dict-spread fixes landed this way).
+func (g *fuzzGen) collectionsBlock() (decls string, calls []string) {
+	a, b, c := g.intLit(), g.intLit(), g.intLit()
+	calls = append(calls,
+		"let xs = ["+a+", "+b+", "+c+"];",
+		"io.println(\"${xs.sorted()}\");",
+		"io.println(\"${xs.reversed()}\");",
+		"io.println(\"${xs.map(func(int n): int { return n + 1; })}\");",
+		"io.println(\"${xs.filter(func(int n): bool { return n >= 0; })}\");",
+		"io.println(xs.reduce(func(int acc, int n): int { return acc + n; }, 0));",
+		"io.println(xs.length());",
+		"io.println(xs.contains("+b+"));",
+		"io.println(xs.get(0));",
+		"let dd = {\"x\": "+a+", \"y\": "+b+"};",
+		"io.println(\"${dd.keys().sorted()}\");",
+		"io.println(dd.get(\"x\"));",
+		"io.println(dd.length());",
+		"io.println(dd.contains(\"x\"));",
+		"io.println(\"${dd}\");",
+	)
+	return "", calls
+}
+
+// matchBlock exercises match expressions: literal value cases with a default,
+// and list-destructuring patterns with guards (a proven divergence source -
+// guard ordering and binding must agree across backends).
+func (g *fuzzGen) matchBlock() (decls string, calls []string) {
+	var d strings.Builder
+	d.WriteString("func classify(int n): string {\n")
+	d.WriteString("  return match (n) {\n")
+	d.WriteString("    case 0 => \"zero\";\n")
+	d.WriteString("    case " + strconv.Itoa(1+g.rng.Intn(5)) + " => \"hit\";\n")
+	d.WriteString("    default => (n < 0) ? \"neg\" : \"many\";\n")
+	d.WriteString("  };\n")
+	d.WriteString("}\n")
+	d.WriteString("func pairLabel(list<int> p): string {\n")
+	d.WriteString("  return match (p) {\n")
+	d.WriteString("    case [int x, int y] if (x > y) => \"first\";\n")
+	d.WriteString("    case [int x, int y] if (x == y) => \"tie\";\n")
+	d.WriteString("    case [int x, int y] => \"second\";\n")
+	d.WriteString("    default => \"other\";\n")
+	d.WriteString("  };\n")
+	d.WriteString("}\n")
+	calls = append(calls,
+		"io.println(classify("+g.intLit()+"));",
+		"io.println(classify(0));",
+		"io.println(pairLabel(["+g.intLit()+", "+g.intLit()+"]));",
+		"io.println(pairLabel([5, 5]));",
+	)
+	return d.String(), calls
+}
+
 func (g *fuzzGen) program() string {
 	var b strings.Builder
 	b.WriteString("import io;\n")
@@ -380,7 +435,7 @@ func (g *fuzzGen) program() string {
 	// declarations cannot collide; the rest of the budget is scalar
 	// expressions and fault statements.
 	var sectionCalls []string
-	switch g.rng.Intn(5) {
+	switch g.rng.Intn(7) {
 	case 0:
 		decls, calls := g.classBlock()
 		b.WriteString(decls)
@@ -395,6 +450,14 @@ func (g *fuzzGen) program() string {
 		sectionCalls = calls
 	case 3:
 		decls, calls := g.loopBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 4:
+		decls, calls := g.collectionsBlock()
+		b.WriteString(decls)
+		sectionCalls = calls
+	case 5:
+		decls, calls := g.matchBlock()
 		b.WriteString(decls)
 		sectionCalls = calls
 	}

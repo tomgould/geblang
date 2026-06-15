@@ -43,6 +43,7 @@ func NewVM(chunk Chunk, stdout io.Writer) *VM {
 		vm.requiresCallSitePolymorphism = meta.requiresCallSitePolymorphism
 		native.SetInstanceInvoker(vm.invokeInstanceMethod)
 		native.SetClassDeserializer(vm.deserializeIntoClass)
+		native.SetCallableInvoker(vm.invokeCallable)
 		return vm
 	}
 	// Detach Functions so prepareFunctionTypeMetadata can mutate the
@@ -59,6 +60,7 @@ func NewVM(chunk Chunk, stdout io.Writer) *VM {
 	// time.
 	native.SetInstanceInvoker(vm.invokeInstanceMethod)
 	native.SetClassDeserializer(vm.deserializeIntoClass)
+	native.SetCallableInvoker(vm.invokeCallable)
 	return vm
 }
 
@@ -353,6 +355,7 @@ func (vm *VM) resetForReuse() {
 	// The global native hooks must point at a live VM for this chunk.
 	native.SetInstanceInvoker(vm.invokeInstanceMethod)
 	native.SetClassDeserializer(vm.deserializeIntoClass)
+	native.SetCallableInvoker(vm.invokeCallable)
 }
 
 func (vm *VM) prepareFunctionTypeMetadata() {

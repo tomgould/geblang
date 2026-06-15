@@ -2198,17 +2198,7 @@ var stdlibCatalog = map[string]moduleDoc{
 		},
 	}},
 	"schema": {functions: map[string]functionDoc{
-		"of":       fn([]string{"dict<string, any> schemaDict"}, "Validator", "Compiles a schema dict into a Validator."),
 		"validate": fn([]string{"any value", "dict<string, any> schemaDict"}, "dict<string, any>", "One-shot validation; returns the result dict (valid + errors)."),
-	}, classes: map[string]string{
-		"Validator": "Compiled schema validator with reusable validate / isValid / errors / fieldErrors helpers.",
-	}, classMethods: map[string]map[string]functionDoc{
-		"Validator": {
-			"validate":    fn([]string{"any value"}, "dict<string, any>", "Validates the value; returns {valid, errors}."),
-			"isValid":     fn([]string{"any value"}, "bool", "True if the value passes."),
-			"errors":      fn([]string{"any value"}, "list<string>", "All validation messages for the value."),
-			"fieldErrors": fn([]string{"any value", "string field"}, "list<string>", "Validation messages scoped to one field."),
-		},
 	}},
 	"ffi": {
 		functions: map[string]functionDoc{

@@ -496,6 +496,12 @@ func (vm *VM) displayString(value runtime.Value) (string, error) {
 }
 
 func (vm *VM) Run() (err error) {
+	// Scope callable dispatch to this VM for the running goroutine: a callback
+	// fired from native code (e.g. dataframe.filterFn) must run on this VM, not a
+	// stateful-native-caller evaluator or a concurrent worker. Per-goroutine +
+	// restore so nested runs and parallel async workers stay isolated.
+	prevInvoker, hadInvoker := native.SwapCallableInvoker(vm.invokeCallable)
+	defer native.RestoreCallableInvoker(prevInvoker, hadInvoker)
 	if !vm.runSuppressCleanup {
 		// Mirror the evaluator's behaviour: after a script finishes
 		// (success, exit, or runtime error) drain the destructor

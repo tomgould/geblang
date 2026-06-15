@@ -29,6 +29,28 @@ func (__v Direction) String() string {
 	return "Direction.?"
 }
 
+func DirectionValues() []Direction {
+	return []Direction{DirectionNorth, DirectionSouth, DirectionEast, DirectionWest}
+}
+
+func DirectionFromName(__s string) *Direction {
+	switch __s {
+	case "North":
+		__v := DirectionNorth
+		return &__v
+	case "South":
+		__v := DirectionSouth
+		return &__v
+	case "East":
+		__v := DirectionEast
+		return &__v
+	case "West":
+		__v := DirectionWest
+		return &__v
+	}
+	return nil
+}
+
 func opposite(d Direction) Direction {
 	if d == DirectionNorth {
 		return DirectionSouth

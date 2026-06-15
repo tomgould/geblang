@@ -4,6 +4,12 @@
 
 ### Language
 
+- Enums expose two operations on the enum type itself. `EnumName.values()`
+  returns a list of the simple (nullary) variants in declaration order, and
+  `EnumName.fromName(s)` resolves a variant by its exact, case-sensitive name,
+  returning the variant or `null` when none matches. Tagged variants are
+  excluded from both, since a bare name cannot construct a variant that carries
+  fields. Identical on both backends.
 - Numeric-check predicates let a value be tested before converting, instead of
   catching a failed cast. On strings: `isInt()`, `isDecimal()`, and
   `isNumeric()` report whether the string parses as an integer, a decimal, or
@@ -13,12 +19,25 @@
   the value is a whole number (`NaN` and infinity are not). Identical on both
   backends.
 
+### Standard library
+
+- `dataframe.filterFn(row -> bool)` filters a frame with a per-row Geblang
+  predicate, each row passed as a dict of column name to value, complementing
+  the faster columnwise expression filter. A `throw` inside the predicate
+  propagates and is catchable, and predicates run safely from concurrent async
+  tasks. Identical on both backends.
+
 ### Native compilation (experimental)
 
 - `geblang build --native` now lowers direct `as` casts from a string to `int`
   or `float`, and from a non-bool to `bool`, matching the interpreter (these
   previously reported as unsupported). The new numeric-check predicates compile
   natively as well.
+- The enum static surface (`values()` / `fromName()`) compiles natively, as do
+  nullable enums (`?Color`) and equality on nullable value-types (`?int == 5`),
+  which previously reported as unsupported or failed to build.
+- `as decimal` casts (from an int, float, string, or dynamic value) compile
+  natively, matching the interpreter.
 
 ## 1.21.0
 

@@ -265,6 +265,9 @@ func (l *Lowerer) lowerInfix(e *ast.InfixExpression) {
 			l.w.WriteString("false")
 			return
 		}
+		if l.lowerNullableEquality(e) {
+			return
+		}
 	}
 	if l.Module.IntMode == types.IntModeBigInt && l.bothIntOperands(e.Left, e.Right) {
 		if l.lowerSafeIntInfix(e) {
@@ -353,6 +356,64 @@ func goOperator(op string) string {
 		return op
 	}
 	return ""
+}
+
+// lowerNullableEquality lowers ==/!= when an operand is a nullable value-type
+// pointer (?int/?float/?bool/?string/?enum), with a nil-safe deref so the
+// comparison matches the interpreter (null equals only null). The value operand
+// is coerced to the pointer's element type. Returns false to defer to the plain
+// path (including when an operand is the null literal, where ptr == nil is fine).
+func (l *Lowerer) lowerNullableEquality(e *ast.InfixExpression) bool {
+	if isNullLiteral(e.Left) || isNullLiteral(e.Right) {
+		return false
+	}
+	lt := l.inferExpressionType(e.Left)
+	rt := l.inferExpressionType(e.Right)
+	lp := nullableValuePtr(lt)
+	rp := nullableValuePtr(rt)
+	if !lp && !rp {
+		return false
+	}
+	eq := e.Operator == "=="
+	l.w.WriteString("func() bool { __l := ")
+	if rp && !lp {
+		elem := *rt
+		elem.Nullable = false
+		l.lowerExpressionAsElem(&elem, e.Left)
+	} else {
+		l.lowerExpression(e.Left)
+	}
+	l.w.WriteString("; __r := ")
+	if lp && !rp {
+		elem := *lt
+		elem.Nullable = false
+		l.lowerExpressionAsElem(&elem, e.Right)
+	} else {
+		l.lowerExpression(e.Right)
+	}
+	l.w.WriteString("; return ")
+	switch {
+	case lp && rp:
+		if eq {
+			l.w.WriteString("(__l == nil) == (__r == nil) && (__l == nil || *__l == *__r)")
+		} else {
+			l.w.WriteString("(__l == nil) != (__r == nil) || (__l != nil && *__l != *__r)")
+		}
+	case lp:
+		if eq {
+			l.w.WriteString("__l != nil && *__l == __r")
+		} else {
+			l.w.WriteString("__l == nil || *__l != __r")
+		}
+	default:
+		if eq {
+			l.w.WriteString("__r != nil && __l == *__r")
+		} else {
+			l.w.WriteString("__r == nil || __l != *__r")
+		}
+	}
+	l.w.WriteString(" }()")
+	return true
 }
 
 func (l *Lowerer) lowerNullCoalesce(e *ast.InfixExpression) {
@@ -519,6 +580,28 @@ func (l *Lowerer) lowerCall(e *ast.CallExpression) {
 					return
 				}
 				l.emitPositionalArgs(e.Arguments)
+				return
+			}
+			if l.Module.IsEnum(base.Value) {
+				switch sel.Name.Value {
+				case "values":
+					l.w.WriteString(emit.MangleIdent(base.Value))
+					l.w.WriteString("Values()")
+					return
+				case "fromName":
+					l.w.WriteString(emit.MangleIdent(base.Value))
+					l.w.WriteString("FromName")
+					if !l.requirePositionalArgs(e.Arguments, sel.Token, "fromName") {
+						l.w.WriteString("()")
+						return
+					}
+					l.emitPositionalArgs(e.Arguments)
+					return
+				}
+				l.errAt(sel.Token.Line, sel.Token.Column,
+					fmt.Sprintf("geblang build --native does not support enum static call %s.%s", base.Value, sel.Name.Value),
+					"only values() and fromName() are available on an enum type")
+				l.w.WriteString("nil")
 				return
 			}
 		}
@@ -1059,8 +1142,26 @@ func (l *Lowerer) isHierarchyFieldAccess(obj ast.Expression, name string) bool {
 
 func (l *Lowerer) lowerSelector(e *ast.SelectorExpression) {
 	if base, ok := e.Object.(*ast.Identifier); ok && l.Module.IsEnum(base.Value) {
-		l.w.WriteString(emit.MangleIdent(base.Value))
-		l.w.WriteString(emit.MangleIdent(e.Name.Value))
+		switch {
+		case !l.Module.EnumHasVariant(base.Value, e.Name.Value):
+			l.errAt(e.Token.Line, e.Token.Column,
+				fmt.Sprintf("the transpiler does not support %s.%s as a value", base.Value, e.Name.Value),
+				"call it instead, e.g. "+base.Value+"."+e.Name.Value+"(...)")
+			l.w.WriteString("nil")
+		case l.Module.IsScalarEnum(base.Value):
+			l.w.WriteString(emit.MangleIdent(base.Value) + emit.MangleIdent(e.Name.Value))
+		default:
+			// Tagged-enum variant as a value: a nullary one is constructed; a
+			// fielded one cannot be reached without its arguments.
+			if arity, _ := l.Module.TaggedVariantArity(base.Value, e.Name.Value); arity > 0 {
+				l.errAt(e.Token.Line, e.Token.Column,
+					fmt.Sprintf("enum variant %s.%s carries fields; construct it with a call", base.Value, e.Name.Value),
+					"e.g. "+base.Value+"."+e.Name.Value+"(...)")
+				l.w.WriteString("nil")
+			} else {
+				l.w.WriteString("New" + emit.MangleIdent(base.Value) + emit.MangleIdent(e.Name.Value) + "()")
+			}
+		}
 		return
 	}
 	if e.Optional {
@@ -1165,6 +1266,29 @@ func (l *Lowerer) lowerCast(e *ast.CastExpression) {
 			return
 		}
 		l.lowerExpression(e.Value)
+	case types.KindDecimal:
+		switch {
+		case fromAny:
+			l.emitAsHelper("AsDecimal", e.Value)
+		case source != nil && source.Kind == types.KindDecimal:
+			l.lowerExpression(e.Value)
+		case source != nil && source.Kind == types.KindString:
+			l.emitAsHelper("StringToDecimal", e.Value)
+		case source != nil && source.Kind == types.KindInt:
+			l.Module.AddImport(types.OrderedDictImport)
+			l.w.WriteString("transpilert.IntToDecimal(")
+			l.lowerExpression(e.Value)
+			l.w.WriteString(")")
+		case source != nil && source.Kind == types.KindFloat:
+			l.Module.AddImport(types.OrderedDictImport)
+			l.w.WriteString("transpilert.FloatToDecimal(")
+			l.lowerExpression(e.Value)
+			l.w.WriteString(")")
+		default:
+			l.errAt(e.Token.Line, e.Token.Column,
+				fmt.Sprintf("cast to %s from this type is not yet supported", e.Type.String()), "")
+			l.w.WriteString("nil")
+		}
 	case types.KindBytes:
 		l.w.WriteString("[]byte(")
 		l.lowerExpression(e.Value)

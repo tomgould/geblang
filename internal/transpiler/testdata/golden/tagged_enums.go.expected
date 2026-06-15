@@ -38,6 +38,14 @@ func (__v ResultErr) String() string {
 	return "Result.Err(" + fmt.Sprintf("%v", __v.V0) + ")"
 }
 
+func ResultValues() []Result { return []Result{} }
+
+func ResultFromName(__s string) Result {
+	switch __s {
+	}
+	return nil
+}
+
 func main() {
 	var r1 Result = NewResultOk("hello")
 	var r2 Result = NewResultErr("oops")

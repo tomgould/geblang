@@ -802,6 +802,61 @@ io.println(loaded.dtypes());
 `)
 }
 
+// dataframe.filterFn runs a Geblang predicate per row through the native
+// callable invoker; the predicate captures outer state and both backends agree.
+func TestParityDataFrameFilterFn(t *testing.T) {
+	runParityStateful(t, `import io;
+import dataframe as df;
+
+let users = df.fromDict({
+    "country": ["UK", "US", "FI", "US"],
+    "age": [36, 41, 50, 55]
+});
+let us = users.filterFn(func(any row): bool { return row["country"] == "US"; });
+io.println(us.rows());
+let threshold = 40;
+let older = users.filterFn(func(any row): bool { return (row["age"] as int) > threshold; });
+io.println(older.rows());
+io.println(older.col("age").toList());
+`, "2\n3\n[41, 50, 55]\n")
+}
+
+// filterFn predicates fired from concurrent async tasks must not corrupt backend
+// state and must each see their own captured value (the per-goroutine invoker
+// isolation proof). Run with -race.
+func TestParityDataFrameFilterFnConcurrent(t *testing.T) {
+	runParityStateful(t, `import io;
+import async;
+import dataframe as df;
+
+let frame = df.fromDict({"v": [10, 20, 30, 40, 50]});
+let thresholds = [10, 20, 30];
+let tasks = [];
+for (int th in thresholds) {
+    let threshold = th;
+    tasks = tasks.push(async.run(func(): int {
+        return frame.filterFn(func(any row): bool { return (row["v"] as int) > threshold; }).rows();
+    }));
+}
+io.println(async.await(async.all(tasks)));
+`, "[4, 3, 2]\n")
+}
+
+// A throw inside a filterFn predicate propagates across the native boundary with
+// its class and message, and is catchable, on both backends.
+func TestParityDataFrameFilterFnError(t *testing.T) {
+	runParityStateful(t, `import io;
+import dataframe as df;
+let frame = df.fromDict({"v": [1, 2, 3]});
+try {
+    frame.filterFn(func(any row): bool { throw RuntimeError("boom"); });
+} catch (RuntimeError e) {
+    io.println("caught: " + e.message);
+}
+io.println("done");
+`, "caught: boom\ndone\n")
+}
+
 // db.Rows streams without caching; for-in iterates the cursor; all()
 // after streaming returns the REMAINING rows (1.19.0 semantics).
 func TestParityDBRowsStreaming(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 var (
 	DataFrameMethods = []string{
 		"shape", "columns", "dtypes", "rows", "head", "tail", "describe",
-		"col", "select", "filter", "sort", "unique",
+		"col", "select", "filter", "filterFn", "sort", "unique",
 		"withColumn", "rename", "drop", "dropNulls", "fillNull",
 		"groupBy", "join", "pivot", "toCsv", "toJson", "toDicts",
 	}
@@ -348,6 +348,25 @@ func DataFrameMethod(frame *runtime.DataFrame, name string, args []runtime.Value
 		var idx []int
 		for i := 0; i < frame.Rows(); i++ {
 			if !mask.IsNull(i) && mask.Bool[i] {
+				idx = append(idx, i)
+			}
+		}
+		return dfTake(frame, idx), nil
+	case "filterFn":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("dataframe.filterFn expects a predicate function")
+		}
+		var idx []int
+		for i := 0; i < frame.Rows(); i++ {
+			res, err := InvokeCallable(args[0], []runtime.Value{dfRowDict(frame, i)})
+			if err != nil {
+				return nil, err
+			}
+			keep, ok := res.(runtime.Bool)
+			if !ok {
+				return nil, fmt.Errorf("dataframe.filterFn predicate must return a bool, got %s", res.TypeName())
+			}
+			if keep.Value {
 				idx = append(idx, i)
 			}
 		}

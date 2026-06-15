@@ -166,6 +166,38 @@ io.println(e instanceof Result.Err);
 `, "true\ntrue\ntrue\nfalse\ntrue\n")
 }
 
+func TestParityEnumValuesAndFromName(t *testing.T) {
+	runParity(t, `import io;
+
+enum Color { Red, Green, Blue }
+
+list<Color> all = Color.values();
+io.println(all.length());
+for (Color c in all) {
+    io.println(c);
+}
+io.println(Color.fromName("Green"));
+io.println(Color.fromName("Green") == Color.Green);
+io.println(Color.fromName("nope") == null);
+io.println(Color.fromName("green") == null);
+`, "3\nColor.Red\nColor.Green\nColor.Blue\nColor.Green\ntrue\ntrue\ntrue\n")
+}
+
+func TestParityEnumStaticSurfaceTaggedExcluded(t *testing.T) {
+	runParity(t, `import io;
+
+enum Token { Plus, Minus, Number(int) }
+
+list<Token> simple = Token.values();
+io.println(simple.length());
+for (Token tk in simple) {
+    io.println(tk);
+}
+io.println(Token.fromName("Plus") == Token.Plus);
+io.println(Token.fromName("Number") == null);
+`, "2\nToken.Plus\nToken.Minus\ntrue\ntrue\n")
+}
+
 func TestParityEnumMatchSimpleVariants(t *testing.T) {
 	runParity(t, `import io;
 

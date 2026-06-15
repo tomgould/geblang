@@ -58,6 +58,23 @@ func (__v Color) String() string {
 	return "Color.?"
 }
 
+func ColorValues() []Color { return []Color{ColorRed, ColorGreen, ColorBlue} }
+
+func ColorFromName(__s string) *Color {
+	switch __s {
+	case "Red":
+		__v := ColorRed
+		return &__v
+	case "Green":
+		__v := ColorGreen
+		return &__v
+	case "Blue":
+		__v := ColorBlue
+		return &__v
+	}
+	return nil
+}
+
 func main() {
 	var b *Box = NewBox(42)
 	var g *Bag = NewBag("hi")

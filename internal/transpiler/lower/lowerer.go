@@ -479,6 +479,7 @@ func (l *Lowerer) fixupTypeKinds(ty *types.Type) {
 			ty.Kind = types.KindTypeParam
 		} else if l.Module.IsEnum(ty.Name) {
 			ty.Kind = types.KindEnum
+			ty.EnumScalar = l.Module.IsScalarEnum(ty.Name)
 		} else if l.Module.IsInterface(ty.Name) {
 			ty.Kind = types.KindInterface
 		} else if l.Module.InClassHierarchy(ty.Name) {
@@ -521,6 +522,10 @@ func (l *Lowerer) withTypeParams(generics []*ast.TypeParam, fn func()) {
 func (l *Lowerer) inferExpressionType(expr ast.Expression) *types.Type {
 	if l.exprTypes != nil {
 		if t, ok := l.exprTypes[expr]; ok && t != nil && t.Kind != types.KindUnknown {
+			// Semantic types arrive as raw FromAST (every named type is KindClass);
+			// refine to KindEnum/KindInterface and set EnumScalar so nullable-enum
+			// decisions match the scope-binding types.
+			l.fixupTypeKinds(t)
 			// A scope binding with a resolved element type wins over a semantic
 			// collection type left element-unresolved (refined empty literals).
 			if id, ok := expr.(*ast.Identifier); ok && collectionElemUnresolved(t) {
@@ -649,6 +654,16 @@ func (l *Lowerer) inferExpressionType(expr ast.Expression) *types.Type {
 				}
 				if l.Module.IsTaggedVariant(base.Value, sel.Name.Value) {
 					return &types.Type{Kind: types.KindInterface, Name: emit.MangleIdent(base.Value)}
+				}
+				if l.Module.IsEnum(base.Value) {
+					goName := emit.MangleIdent(base.Value)
+					scalar := l.Module.IsScalarEnum(base.Value)
+					switch sel.Name.Value {
+					case "values":
+						return &types.Type{Kind: types.KindList, Elem: &types.Type{Kind: types.KindEnum, Name: goName, EnumScalar: scalar}}
+					case "fromName":
+						return &types.Type{Kind: types.KindEnum, Name: goName, Nullable: true, EnumScalar: scalar}
+					}
 				}
 			}
 			receiverTy := l.inferExpressionType(sel.Object)

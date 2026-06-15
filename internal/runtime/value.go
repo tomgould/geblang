@@ -980,6 +980,41 @@ func (v EnumVariant) Inspect() string {
 	return v.Enum.Name + "." + v.Variant + "(" + strings.Join(parts, ", ") + ")"
 }
 
+// EnumStaticMethod implements the type-level enum surface (values/fromName)
+// from one source so both backends stay byte-identical. ok is false when name
+// is not a static method, letting the caller fall through to its variant logic.
+// Only nullary variants participate: a bare name cannot construct a tagged one.
+func EnumStaticMethod(enum *EnumDef, name string, args []Value) (Value, bool, error) {
+	switch name {
+	case "values":
+		if len(args) != 0 {
+			return nil, true, fmt.Errorf("enum %s.values expects 0 arguments, got %d", enum.Name, len(args))
+		}
+		elems := make([]Value, 0, len(enum.Variants))
+		for _, v := range enum.Variants {
+			if v.FieldCount == 0 {
+				elems = append(elems, EnumVariant{Enum: enum, Variant: v.Name})
+			}
+		}
+		return &List{Elements: elems}, true, nil
+	case "fromName":
+		if len(args) != 1 {
+			return nil, true, fmt.Errorf("enum %s.fromName expects 1 argument, got %d", enum.Name, len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, true, fmt.Errorf("enum %s.fromName expects a string argument, got %s", enum.Name, args[0].TypeName())
+		}
+		for _, v := range enum.Variants {
+			if v.FieldCount == 0 && v.Name == s.Value {
+				return EnumVariant{Enum: enum, Variant: v.Name}, true, nil
+			}
+		}
+		return Null{}, true, nil
+	}
+	return nil, false, nil
+}
+
 type TaskResult struct {
 	Value Value
 	Err   error

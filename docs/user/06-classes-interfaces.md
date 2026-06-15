@@ -1427,5 +1427,33 @@ d.describe();                       // "active"
 Status.Active instanceof Describable;  // true
 ```
 
-Enum methods are limited to instance methods and interface implementation. Static
-methods on enums and enum constants are not part of this surface.
+### Enum static surface
+
+Two operations are available on the enum type itself:
+
+- `EnumName.values()` returns a `list` of the simple (nullary) variants, in
+  declaration order.
+- `EnumName.fromName(s)` resolves a variant by its exact name and returns
+  `?Variant`: the matching variant, or `null` when no variant has that name.
+  The match is case-sensitive.
+
+```
+enum Status { Active, Suspended, Closed }
+
+Status.values();              // [Status.Active, Status.Suspended, Status.Closed]
+Status.fromName("Suspended"); // Status.Suspended
+Status.fromName("unknown");   // null
+Status.fromName("active");    // null (case-sensitive)
+```
+
+Tagged variants are excluded from both: a bare name cannot construct a variant
+that carries fields, so `values()` lists only the nullary variants and
+`fromName` resolves only their names. Because `fromName` returns `?Variant`, a
+caller can supply a fallback at the call site without catching an error:
+
+```
+Status s = Status.fromName(input) ?? Status.Active;
+```
+
+Apart from `values` and `fromName`, the enum surface is instance methods and
+interface implementation only.

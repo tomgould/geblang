@@ -1,0 +1,20 @@
+import io;
+
+/* Nullable untagged enums: null is representable, and assignment, == null,
+   ?? and printing all match the interpreter. */
+enum Color { Red, Green, Blue }
+
+?Color a = null;
+io.println(a == null);
+io.println(a);
+
+a = Color.Green;
+io.println(a == null);
+io.println(a);
+
+Color picked = a ?? Color.Red;
+io.println(picked);
+
+?Color b = null;
+Color fallback = b ?? Color.Blue;
+io.println(fallback);

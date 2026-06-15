@@ -105,15 +105,19 @@ func (l *Lowerer) lowerTaggedEnum(s *ast.EnumStatement) {
 		decls.WriteLine(") String() string {")
 		decls.Indent()
 		decls.WriteString("return ")
-		decls.WriteString(strconv.Quote(s.Name.Value + "." + v.Name.Value + "("))
-		for i := range v.FieldTypes {
-			decls.WriteString(" + fmt.Sprintf(\"%v\", __v.V")
-			decls.WriteString(fmt.Sprintf("%d)", i))
-			if i+1 < len(v.FieldTypes) {
-				decls.WriteString(` + ", "`)
+		if len(v.FieldTypes) == 0 {
+			decls.WriteLine(strconv.Quote(s.Name.Value + "." + v.Name.Value))
+		} else {
+			decls.WriteString(strconv.Quote(s.Name.Value + "." + v.Name.Value + "("))
+			for i := range v.FieldTypes {
+				decls.WriteString(" + fmt.Sprintf(\"%v\", __v.V")
+				decls.WriteString(fmt.Sprintf("%d)", i))
+				if i+1 < len(v.FieldTypes) {
+					decls.WriteString(` + ", "`)
+				}
 			}
+			decls.WriteLine(` + ")"`)
 		}
-		decls.WriteLine(` + ")"`)
 		decls.Dedent()
 		decls.WriteLine("}")
 		decls.Newline()
@@ -126,6 +130,43 @@ func (l *Lowerer) lowerTaggedEnum(s *ast.EnumStatement) {
 	for _, m := range methods {
 		l.emitTaggedEnumImpl(s.Name.Value, enumName, m)
 	}
+	l.emitTaggedEnumStatics(s, enumName)
+}
+
+// emitTaggedEnumStatics emits values()/fromName() for a tagged enum, restricted
+// to the nullary variants: a bare name cannot construct a variant with fields.
+// The helpers return the enum interface (nil for an unknown name).
+func (l *Lowerer) emitTaggedEnumStatics(s *ast.EnumStatement, enumName string) {
+	decls := l.Module.TopDecls()
+	decls.WriteString("func " + enumName + "Values() []" + enumName + " { return []" + enumName + "{")
+	first := true
+	for _, v := range s.Variants {
+		if len(v.FieldTypes) != 0 {
+			continue
+		}
+		if !first {
+			decls.WriteString(", ")
+		}
+		first = false
+		decls.WriteString("New" + enumName + emit.MangleIdent(v.Name.Value) + "()")
+	}
+	decls.WriteLine("} }")
+	decls.Newline()
+
+	decls.WriteLine("func " + enumName + "FromName(__s string) " + enumName + " {")
+	decls.Indent()
+	decls.WriteLine("switch __s {")
+	for _, v := range s.Variants {
+		if len(v.FieldTypes) != 0 {
+			continue
+		}
+		decls.WriteLine("case " + strconv.Quote(v.Name.Value) + ": return New" + enumName + emit.MangleIdent(v.Name.Value) + "()")
+	}
+	decls.WriteLine("}")
+	decls.WriteLine("return nil")
+	decls.Dedent()
+	decls.WriteLine("}")
+	decls.Newline()
 }
 
 // taggedEnumMethods returns the enum's declared methods plus any default method
@@ -379,6 +420,35 @@ func (l *Lowerer) lowerEnum(s *ast.EnumStatement) {
 	decls.Newline()
 
 	l.emitEnumMethods(s, name)
+	l.emitUntaggedEnumStatics(name, variantNames)
+}
+
+// emitUntaggedEnumStatics emits the per-enum values()/fromName() helpers. Values
+// lists every variant; fromName returns *Enum (nil for an unknown name) so the
+// nullable value-type contract holds. Match on the exact variant name.
+func (l *Lowerer) emitUntaggedEnumStatics(name string, variantNames []string) {
+	decls := l.Module.TopDecls()
+	decls.WriteString("func " + name + "Values() []" + name + " { return []" + name + "{")
+	for i, v := range variantNames {
+		if i > 0 {
+			decls.WriteString(", ")
+		}
+		decls.WriteString(name + emit.MangleIdent(v))
+	}
+	decls.WriteLine("} }")
+	decls.Newline()
+
+	decls.WriteLine("func " + name + "FromName(__s string) *" + name + " {")
+	decls.Indent()
+	decls.WriteLine("switch __s {")
+	for _, v := range variantNames {
+		decls.WriteLine("case " + strconv.Quote(v) + ": __v := " + name + emit.MangleIdent(v) + "; return &__v")
+	}
+	decls.WriteLine("}")
+	decls.WriteLine("return nil")
+	decls.Dedent()
+	decls.WriteLine("}")
+	decls.Newline()
 }
 
 // emitEnumMethods lowers an untagged enum's instance methods (plus any interface

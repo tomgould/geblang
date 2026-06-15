@@ -65,7 +65,7 @@ type Evaluator struct {
 	pendingEnumThis runtime.Value
 	// enumThisForChild carries the enum receiver into a generator/async
 	// child evaluator, which runs the body on its own goroutine.
-	enumThisForChild runtime.Value
+	enumThisForChild     runtime.Value
 	imports              map[string]bool
 	importNames          map[string]string
 	currentModule        string
@@ -534,6 +534,7 @@ func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []st
 	// at startup. See bytecode.NewVM for the VM counterpart.
 	native.SetInstanceInvoker(e.invokeInstanceMethod)
 	native.SetClassDeserializer(e.deserializeIntoClass)
+	native.SetCallableInvoker(e.callValue)
 	return e
 }
 
@@ -3899,6 +3900,9 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 				return runtime.EnumVariant{Enum: enumDef, Variant: v.Name, Fields: args}, nil
 			}
 		}
+		if value, handled, err := runtime.EnumStaticMethod(enumDef, name, args); handled {
+			return value, err
+		}
 		return nil, fmt.Errorf("enum %s has no variant %s", enumDef.Name, name)
 	}
 	if class, ok := receiver.(*runtime.Class); ok {
@@ -5527,6 +5531,8 @@ func (e *Evaluator) startAsyncFunction(fn runtime.Function, args []runtime.Value
 	child.pendingEnumThis = e.enumThisForChild
 	runtime.AsyncEnter()
 	go func() {
+		gid := native.RegisterCallableInvoker(child.callValue)
+		defer native.UnregisterCallableInvoker(gid)
 		defer runtime.AsyncLeave()
 		value, err := child.applyFunctionWithThisSync(fn, args, this)
 		if exit, ok := value.(exitValue); ok && err == nil {

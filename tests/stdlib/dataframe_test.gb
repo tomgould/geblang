@@ -146,4 +146,27 @@ class DataFrameTest extends test.Test {
             this.assertTrue(e.message.contains("numeric"));
         }
     }
+
+    @test
+    func filterFnRowCallback(): void {
+        let users = this.sample();
+        let us = users.filterFn(func(any row): bool { return row["country"] == "US"; });
+        this.assertEquals(["Grace", "Ken"], us.col("name").toList());
+
+        let cutoff = 40;
+        let older = users.filterFn(func(any row): bool {
+            return row["age"] != null && (row["age"] as int) > cutoff;
+        });
+        this.assertEquals(["Grace", "Ken"], older.col("name").toList());
+    }
+
+    @test
+    func filterFnPropagatesThrow(): void {
+        try {
+            this.sample().filterFn(func(any row): bool { throw RuntimeError("boom"); });
+            this.fail("a throw in the predicate must propagate");
+        } catch (RuntimeError e) {
+            this.assertEquals("boom", e.message);
+        }
+    }
 }

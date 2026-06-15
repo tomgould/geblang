@@ -1,0 +1,25 @@
+import io;
+
+/* Nullable value-type ==/!= : a nil-safe deref so null equals only null. */
+?int a = 5;
+io.println(a == 5);
+io.println(a != 5);
+io.println(a == 3);
+
+?int b = null;
+io.println(b == 5);
+io.println(b != 5);
+io.println(b == null);
+
+?int c = 5;
+?int d = 5;
+?int e = null;
+io.println(c == d);
+io.println(c == e);
+io.println(e == e);
+
+?string s = "hi";
+io.println(s == "hi");
+io.println(s == "no");
+?string t = null;
+io.println(t == "hi");

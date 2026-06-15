@@ -1,0 +1,92 @@
+/**
+ * @title Enum static surface: values() and fromName() (1.22.0)
+ * @summary An enum type exposes `EnumName.values()` returning its simple
+ * (nullary) variants in declaration order, and `EnumName.fromName(s)` resolving
+ * a variant by exact (case-sensitive) name, returning `?Variant` (null on miss).
+ * Tagged variants are excluded from both: a bare name cannot construct one.
+ */
+import test;
+
+enum Color { Red, Green, Blue }
+
+enum Token { Plus, Minus, Number(int) }
+
+func firstColor(): Color {
+    return Color.values()[0];
+}
+
+class Parser {
+    func parse(string name): ?Color {
+        return Color.fromName(name);
+    }
+}
+
+class EnumStaticSurfaceTest extends test.Test {
+
+    @test
+    func valuesReturnsAllNullaryVariantsInOrder(): void {
+        list<Color> all = Color.values();
+        this.assertEquals(3, all.length());
+        this.assertEquals(Color.Red, all[0]);
+        this.assertEquals(Color.Green, all[1]);
+        this.assertEquals(Color.Blue, all[2]);
+    }
+
+    @test
+    func valuesIsIterable(): void {
+        let names = [];
+        for (Color c in Color.values()) {
+            names = names.push("${c}");
+        }
+        this.assertEquals("Color.Red,Color.Green,Color.Blue", names.join(","));
+    }
+
+    @test
+    func valuesExcludesTaggedVariants(): void {
+        list<Token> simple = Token.values();
+        this.assertEquals(2, simple.length());
+        this.assertEquals(Token.Plus, simple[0]);
+        this.assertEquals(Token.Minus, simple[1]);
+    }
+
+    @test
+    func fromNameResolvesExactName(): void {
+        this.assertTrue(Color.fromName("Green") == Color.Green);
+        this.assertTrue(Color.fromName("Red") == Color.Red);
+    }
+
+    @test
+    func fromNameReturnsNullOnUnknownName(): void {
+        this.assertTrue(Color.fromName("Purple") == null);
+    }
+
+    @test
+    func fromNameIsCaseSensitive(): void {
+        this.assertTrue(Color.fromName("green") == null);
+        this.assertTrue(Color.fromName("GREEN") == null);
+    }
+
+    @test
+    func fromNameRejectsTaggedVariantName(): void {
+        this.assertTrue(Token.fromName("Number") == null);
+        this.assertTrue(Token.fromName("Plus") == Token.Plus);
+    }
+
+    @test
+    func usableFromFreeFunction(): void {
+        this.assertEquals(Color.Red, firstColor());
+    }
+
+    @test
+    func usableFromClassMethod(): void {
+        let parsed = Parser().parse("Blue");
+        this.assertTrue(parsed == Color.Blue);
+        this.assertTrue(Parser().parse("nope") == null);
+    }
+
+    @test
+    func nullCoalescesAtCallSite(): void {
+        Color c = Color.fromName("bad") ?? Color.Green;
+        this.assertEquals(Color.Green, c);
+    }
+}

@@ -38,6 +38,9 @@ type Type struct {
 	Value    *Type
 	Params   []*Type
 	Result   *Type
+	// EnumScalar marks an untagged enum (Go int-based), whose nullable form
+	// needs a pointer wrapper; tagged enums are Go interfaces (already nil-able).
+	EnumScalar bool
 }
 
 func Any() *Type     { return &Type{Kind: KindAny} }
@@ -163,9 +166,9 @@ func ToGo(t *Type, intMode IntMode) GoType {
 	if t == nil {
 		return GoType{Source: "any"}
 	}
-	if t.Nullable && isNullableValueKind(t.Kind) {
+	if t.Nullable && nullablePtrKind(t) {
 		// Nullable value-types become pointers so nil represents null;
-		// reference-types (list/dict/set/class) are already nil-able.
+		// reference-types (list/dict/set/class/tagged enum) are already nil-able.
 		inner := *t
 		inner.Nullable = false
 		g := ToGo(&inner, intMode)
@@ -264,6 +267,12 @@ func isNullableValueKind(k Kind) bool {
 		return true
 	}
 	return false
+}
+
+// nullablePtrKind reports whether a nullable t needs a Go pointer wrapper:
+// the scalar value-types plus untagged (int-based) enums.
+func nullablePtrKind(t *Type) bool {
+	return isNullableValueKind(t.Kind) || (t.Kind == KindEnum && t.EnumScalar)
 }
 
 func renderTypeArgs(args []*Type, intMode IntMode) string {

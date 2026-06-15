@@ -94,17 +94,6 @@ func findStdlibRoot() string {
 	}
 }
 
-func moduleHasStdlibSource(root, module string) bool {
-	rel := strings.ReplaceAll(module, ".", string(filepath.Separator))
-	if _, err := os.Stat(filepath.Join(root, rel+".gb")); err == nil {
-		return true
-	}
-	if info, err := os.Stat(filepath.Join(root, rel)); err == nil && info.IsDir() {
-		return true
-	}
-	return false
-}
-
 // TestCatalogHasNoPhantomNativeFunctions closes the reverse of the
 // completeness guard for Go-native modules: a catalog function must
 // exist on the engine, or completion suggests a call that fails at
@@ -117,27 +106,62 @@ func TestCatalogHasNoPhantomNativeFunctions(t *testing.T) {
 		t.Skip("stdlib source tree not found")
 	}
 	eng := evaluator.NativeModuleSymbols()
+	srcFuncs := stdlibSourceFunctionsByModule(root)
 	phantom := []string{}
 	for module, d := range stdlibCatalog {
-		if internalCatalogModules[module] || moduleHasStdlibSource(root, module) {
+		if internalCatalogModules[module] {
 			continue
 		}
-		engMembers := eng[module]
-		if len(engMembers) == 0 {
-			continue // not a Go-native surface
-		}
+		// A catalogued function must resolve as module.name: either the native
+		// surface or that module's OWN source file exposes it. Source members of
+		// a SUB-module (e.g. schema.validator.of) do not make schema.of resolve,
+		// so listing them under the parent's entry is a phantom. Class type names
+		// are catalogued for hover, not as module exports, so they are not checked.
 		for name := range d.functions {
 			if isInternalMember(module, name) {
 				continue
 			}
-			if _, ok := engMembers[name]; !ok {
-				phantom = append(phantom, module+"."+name)
+			if _, ok := eng[module][name]; ok {
+				continue
 			}
+			if _, ok := srcFuncs[module][name]; ok {
+				continue
+			}
+			phantom = append(phantom, module+"."+name)
 		}
 	}
 	if len(phantom) > 0 {
 		sort.Strings(phantom)
-		t.Fatalf("catalog lists functions the engine does not expose (%d):\n%s",
+		t.Fatalf("catalog lists functions that do not resolve on the module (%d):\n%s",
 			len(phantom), strings.Join(phantom, "\n"))
 	}
+}
+
+// stdlibSourceFunctionsByModule maps each declared stdlib module to the set of
+// names its own .gb files export (functions plus class names, both valid as
+// module.name references), keyed by the module name declared in the file.
+func stdlibSourceFunctionsByModule(root string) map[string]map[string]struct{} {
+	out := map[string]map[string]struct{}{}
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(p, ".gb") {
+			return nil
+		}
+		module, funcs, classes, perr := sourceModuleExports(p)
+		if perr != nil || module == "" {
+			return nil
+		}
+		set := out[module]
+		if set == nil {
+			set = map[string]struct{}{}
+			out[module] = set
+		}
+		for _, fn := range funcs {
+			set[fn] = struct{}{}
+		}
+		for cls := range classes {
+			set[cls] = struct{}{}
+		}
+		return nil
+	})
+	return out
 }

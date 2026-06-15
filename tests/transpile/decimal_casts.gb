@@ -1,0 +1,22 @@
+import io;
+import json;
+
+/* `as decimal` from int, float, string, and a dynamic (json) value. */
+int n = 5;
+decimal d1 = n as decimal;
+io.println(d1);
+
+float f = 3.5f;
+decimal d2 = f as decimal;
+io.println(d2);
+
+string s = "2.5";
+decimal d3 = s as decimal;
+io.println(d3);
+
+any parsed = json.parse("42");
+decimal d4 = parsed as decimal;
+io.println(d4);
+
+decimal d5 = d1 as decimal;
+io.println(d5);

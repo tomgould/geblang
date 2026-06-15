@@ -499,8 +499,10 @@ to `geblang build` if it reports something unsupported.
 ### What is supported
 
 - The core language: functions, classes (inheritance and virtual dispatch),
-  interfaces, generics, enums (data variants), `match` (type / list / enum /
-  guard patterns), exceptions, generators, async/await, comprehensions,
+  interfaces, generics, enums (data variants, instance methods, interface
+  implementation, and the `values()` / `fromName()` static surface), `match`
+  (type / list / enum / guard patterns), exceptions, generators, async/await,
+  comprehensions,
   destructuring, closures, optional chaining, spread, named/optional/variadic
   arguments, `with`, string interpolation, slicing, and dynamic navigation of
   `any`-typed values (indexing and `as` casts, e.g. over a `json.parse` result).
@@ -516,9 +518,8 @@ to `geblang build` if it reports something unsupported.
   `pcre`, and `unicode` normalization.
 - Stateful / I/O modules: `db`, `http`, `net`, `sockets`, `log`, messaging, and
   similar.
-- Enum methods and enum interface implementation; calling a method on an
-  `any`-typed value (cast it to a concrete type first); assigning into an
-  `any`-typed index.
+- Calling a method on an `any`-typed value (cast it to a concrete type first);
+  assigning into an `any`-typed index.
 - Arbitrary-precision integers: native arithmetic uses a fast machine-width path
   that wraps on overflow rather than promoting to big integers.
 
