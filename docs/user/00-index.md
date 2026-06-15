@@ -7,6 +7,9 @@ of those languages while making static typing, generics, async programming,
 runtime metadata and modern tooling part of the core language and standard
 developer experience.
 
+> See [Gebweb](https://github.com/dwgebler/gebweb) for the accompanying web and
+> API framework built on top of Geblang.
+
 To that end, Geblang combines features that will feel familiar to developers
 from both ecosystems.
 

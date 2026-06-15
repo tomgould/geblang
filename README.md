@@ -5,6 +5,9 @@ Current version: **1.22.0**. It combines the ergonomics of PHP and
 Python with strong static typing, generics, decorators, async, and
 runtime reflection.
 
+> See [Gebweb](https://github.com/dwgebler/gebweb) for the accompanying web and
+> API framework built on top of Geblang.
+
 ## Quick overview
 
 Geblang compiles to bytecode for a stack VM, with a tree-walking interpreter as
