@@ -1,0 +1,17 @@
+/**
+ * @category Tests
+ * @summary geblang check MUST flag a match over an enum subject that omits a
+ *          variant and has no default case (warning[match-nonexhaustive]).
+ */
+import io;
+
+enum Color { Red, Green, Blue }
+
+func describe(Color c): string {
+    return match (c) {
+        case Color.Red => "red";
+        case Color.Green => "green";
+    };
+}
+
+io.println(describe(Color.Red));

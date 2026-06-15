@@ -15,6 +15,28 @@ import (
 // imported source module to bytecode on demand, and caches the result
 // inside the loader struct.
 
+// TestParityNonExhaustiveMatchRuntime pins that a non-exhaustive enum match
+// (which the analyzer warns on at check time) is unchanged at runtime on both
+// backends: covered variants return, an uncovered variant throws identically.
+func TestParityNonExhaustiveMatchRuntime(t *testing.T) {
+	runParity(t, `import io;
+enum Color { Red, Green, Blue }
+func describe(Color c): string {
+    return match (c) {
+        case Color.Red => "red";
+        case Color.Green => "green";
+    };
+}
+io.println(describe(Color.Red));
+io.println(describe(Color.Green));
+try {
+    io.println(describe(Color.Blue));
+} catch (Error e) {
+    io.println("unmatched");
+}
+`, "red\ngreen\nunmatched\n")
+}
+
 func TestParityMatchExpression(t *testing.T) {
 	runParity(t, `import io;
 func classify(int n): string {

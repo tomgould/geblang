@@ -19,6 +19,15 @@
   the value is a whole number (`NaN` and infinity are not). Identical on both
   backends.
 
+### Tooling
+
+- `geblang check` now verifies that a `match` over an enum subject handles every
+  variant. A match that omits a variant and has no `default` is reported as
+  `warning[match-nonexhaustive]`, naming the missing variants. It is advisory
+  (the code still runs and throws `MatchError` only if an unhandled value reaches
+  the match); a variant handled only by a guarded case counts as missing, since
+  the guard may be false. Surfaced in the editor through the language server.
+
 ### Standard library
 
 - `dataframe.filterFn(row -> bool)` filters a frame with a per-row Geblang

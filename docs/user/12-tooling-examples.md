@@ -179,6 +179,18 @@ warning tells you `geblang run` / `geblang build` need `--disable-vm` for that
 file until the VM gains support. This keeps `geblang check` in agreement with
 `geblang test` while still surfacing what would block a release build.
 
+A `match` over an enum that omits a variant and has no `default` is reported as
+`match-nonexhaustive`, naming the missing variants:
+
+```sh
+$ geblang check app.gb
+app.gb:5:12: warning[match-nonexhaustive]: match on enum 'Color' is not exhaustive: missing Blue (add the missing case(s) or a 'default:' case)
+```
+
+It is a warning, not an error: the code still runs and throws `MatchError` only
+if an unhandled value reaches the match. See chapter 4 for the exhaustiveness
+rules (guards do not count as covering a variant).
+
 ## Introspection Builtins
 
 Two builtins help inspect values at runtime, on both execution backends:

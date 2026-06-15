@@ -464,6 +464,33 @@ match (value) {
 # prints: a string: hello
 ```
 
+### Exhaustiveness checking
+
+When a `match` subject is an enum, `geblang check` verifies that every
+variant is handled. A match that omits a variant and has no `default`
+case is reported as `warning[match-nonexhaustive]`, listing the missing
+variants:
+
+```gb
+enum Color { Red, Green, Blue }
+
+func describe(Color c): string {
+    return match (c) {
+        case Color.Red   => "red";
+        case Color.Green => "green";
+    };
+}
+# geblang check: warning[match-nonexhaustive]: match on enum 'Color'
+# is not exhaustive: missing Blue (add the missing case(s) or a 'default:' case)
+```
+
+Add the missing cases, or a `default` (or a `case Color c` catch-all),
+to make it exhaustive. A variant handled only by a guarded case
+(`case Color.Blue if (...)`) still counts as missing, since the guard
+may be false at runtime. The check is advisory: a non-exhaustive match
+still runs and throws `MatchError` only if an unhandled value reaches
+it.
+
 ## Defer
 
 `defer` registers a call to run when the surrounding function or top-level

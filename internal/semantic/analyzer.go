@@ -141,6 +141,7 @@ type enumInfo struct {
 	name       string
 	implements []string
 	methods    map[string][]methodInfo
+	variants   []string
 }
 
 type methodInfo struct {
@@ -420,6 +421,11 @@ func (a *Analyzer) collectTypeDeclarations(stmts []ast.Statement) {
 			a.interfaces[info.name] = info
 		case *ast.EnumStatement:
 			info := enumInfo{name: stmt.Name.Value, methods: map[string][]methodInfo{}}
+			for _, v := range stmt.Variants {
+				if v.Name != nil {
+					info.variants = append(info.variants, v.Name.Value)
+				}
+			}
 			for _, iface := range stmt.Implements {
 				info.implements = append(info.implements, iface.Name)
 			}
@@ -832,6 +838,7 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		}
 		a.analyzeBlock(stmt.Finally, fn)
 	case *ast.MatchStatement:
+		a.checkMatchExhaustiveness(stmt.Expr, stmt.Cases, stmt.Token)
 		for _, matchCase := range stmt.Cases {
 			a.analyzeBlock(matchCase.Body, fn)
 		}
@@ -1879,6 +1886,8 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		a.analyzeExpression(expr.Right)
 	case *ast.PostfixExpression:
 		a.analyzeExpression(expr.Left)
+	case *ast.MatchExpression:
+		a.checkMatchExhaustiveness(expr.Expr, expr.Cases, expr.Token)
 	case *ast.SelectorExpression:
 		a.checkUnimportedModuleSelector(expr)
 		if !a.isModuleValueRef(expr.Object) {
@@ -2858,6 +2867,109 @@ func (a *Analyzer) ruleWarningAt(tok token.Token, rule, format string, args ...a
 		Severity: SeverityWarning,
 		Rule:     rule,
 	})
+}
+
+// checkMatchExhaustiveness warns on an enum match missing a variant (guarded cases never cover; unknowns suppress).
+func (a *Analyzer) checkMatchExhaustiveness(subject ast.Expression, cases []ast.MatchCase, tok token.Token) {
+	if subject == nil {
+		return
+	}
+	st := a.expressionTypeName(subject)
+	if !st.known {
+		return
+	}
+	info, ok := a.enums[st.name]
+	if !ok || len(info.variants) == 0 {
+		return
+	}
+	covered := map[string]bool{}
+	variantSet := map[string]bool{}
+	for _, v := range info.variants {
+		variantSet[v] = true
+	}
+	for _, mc := range cases {
+		if mc.Guard != nil {
+			continue
+		}
+		if mc.Default {
+			return
+		}
+		// No-payload variants parse as type patterns (Enum.Variant, or a union TypeRef for `A | B`).
+		if mc.Type != nil {
+			if collectTypeVariants(mc.Type, st.name, variantSet, covered) {
+				return
+			}
+			continue
+		}
+		if mc.EnumVariant != nil && mc.EnumVariant.Variant != nil {
+			covered[mc.EnumVariant.Variant.Value] = true
+			continue
+		}
+		markCoveredVariant(mc.Pattern, st.name, variantSet, covered)
+		for _, alt := range mc.Alternates {
+			markCoveredVariant(alt, st.name, variantSet, covered)
+		}
+	}
+	var missing []string
+	for _, v := range info.variants {
+		if !covered[v] {
+			missing = append(missing, v)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	a.ruleWarningAt(tok, "match-nonexhaustive",
+		"match on enum '%s' is not exhaustive: missing %s (add the missing case(s) or a 'default:' case)",
+		st.name, strings.Join(missing, ", "))
+}
+
+// markCoveredVariant records the variant a selector or (qualified) identifier names.
+func markCoveredVariant(expr ast.Expression, enumName string, variantSet, covered map[string]bool) {
+	switch e := expr.(type) {
+	case *ast.SelectorExpression:
+		if e.Name != nil && variantSet[e.Name.Value] {
+			covered[e.Name.Value] = true
+		}
+	case *ast.Identifier:
+		if v, ok := variantFromQualified(e.Value, enumName, variantSet); ok {
+			covered[v] = true
+		}
+	}
+}
+
+// collectTypeVariants records variants from a (possibly union) type pattern,
+// returning true when it is a catch-all over the whole enum (bare enum or `any`).
+func collectTypeVariants(tr *ast.TypeRef, enumName string, variantSet, covered map[string]bool) bool {
+	if tr == nil {
+		return false
+	}
+	if tr.Operator == "|" || tr.Operator == "&" {
+		left := collectTypeVariants(tr.Left, enumName, variantSet, covered)
+		right := collectTypeVariants(tr.Right, enumName, variantSet, covered)
+		return left || right
+	}
+	if !strings.Contains(tr.Name, ".") {
+		return tr.Name == enumName || strings.EqualFold(tr.Name, "any")
+	}
+	if v, ok := variantFromQualified(tr.Name, enumName, variantSet); ok {
+		covered[v] = true
+	}
+	return false
+}
+
+// variantFromQualified resolves Enum.Variant or a bare variant, requiring the prefix to match.
+func variantFromQualified(name, enumName string, variantSet map[string]bool) (string, bool) {
+	if enum, variant, ok := strings.Cut(name, "."); ok {
+		if enum == enumName && variantSet[variant] {
+			return variant, true
+		}
+		return "", false
+	}
+	if variantSet[name] {
+		return name, true
+	}
+	return "", false
 }
 
 // tokenOfExpression returns the leading token of an AST expression,
