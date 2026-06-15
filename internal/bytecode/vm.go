@@ -23,7 +23,8 @@ type VM struct {
 	stack   []runtime.VMValue
 	globals []runtime.VMValue
 	// invokerScoped marks that this VM has claimed callable dispatch for the
-	// running goroutine, so nested Run() calls (e.g. HOF closures) skip it.
+	// goroutine, so nested Run() calls (e.g. a map/filter callback per element)
+	// skip the claim.
 	invokerScoped bool
 	// globalsMu guards bulk operations on the globals slice used by the
 	// wrap-bridge: setGlobal writes and the snapshot-in / per-slot
@@ -499,8 +500,8 @@ func (vm *VM) displayString(value runtime.Value) (string, error) {
 }
 
 func (vm *VM) Run() (err error) {
-	// Scope callable dispatch to this VM for the goroutine, but only on the
-	// outermost Run so per-element HOF closure calls stay off the hot path.
+	// Claim callable dispatch for this VM on the outermost Run only, so a
+	// callback invoked per element does not pay the cost on every nested Run.
 	if !vm.invokerScoped {
 		vm.invokerScoped = true
 		prev, had := native.SwapCallableInvoker(vm.invokeCallable)
