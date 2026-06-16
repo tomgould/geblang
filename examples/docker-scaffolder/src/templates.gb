@@ -1,0 +1,427 @@
+/**
+ * @title Templates
+ * @summary Renders a Project into a Compose file set and a Dockerfile per
+ * service, following current best practices: spec-style compose.yaml (no
+ * version key), multi-stage non-root Dockerfiles on slim/alpine bases,
+ * database healthchecks with depends_on: service_healthy, named volumes,
+ * and a shared network. Pure given the model, so it is unit-testable.
+ * @category Docker Scaffolder
+ */
+module docker.scaffolder.templates;
+
+import io;
+import yaml;
+import docker.scaffolder.model as model;
+
+let netName = "appnet";
+
+/* The port a service publishes directly (0 = none; nginx-fronted PHP and
+ * PHP CLI publish nothing of their own). */
+export func containerPort(model.Service svc): int {
+    if (svc.language == "PHP") {
+        return (svc.runtime == "apache" || svc.runtime == "frankenphp") ? 80 : 0;
+    }
+    if (svc.language == "Python") { return 8000; }
+    if (svc.language == "Node") { return 3000; }
+    if (svc.language == "Go") { return 8080; }
+    if (svc.language == "Geblang") { return 8080; }
+    return 0;
+}
+
+/* The Dockerfile body for a service, multi-stage and non-root. */
+export func dockerfileFor(model.Service svc): string {
+    if (svc.language == "PHP") { return phpDockerfile(svc); }
+    if (svc.language == "Python") { return pythonDockerfile(svc); }
+    if (svc.language == "Node") { return nodeDockerfile(svc); }
+    if (svc.language == "Go") { return goDockerfile(svc); }
+    if (svc.language == "Geblang") { return geblangDockerfile(svc); }
+    return "FROM debian:stable-slim\nWORKDIR /app\nCOPY . /app\n";
+}
+
+func phpDockerfile(model.Service svc): string {
+    if (svc.runtime == "frankenphp") {
+        return [
+            "FROM dunglas/frankenphp:1-php${svc.version}",
+            "WORKDIR /app",
+            "COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer",
+            "COPY composer.* ./",
+            "RUN composer install --no-dev --no-interaction --no-progress --prefer-dist || true",
+            "COPY . /app",
+            /* FrankenPHP binds 80/443; run unprivileged with the bind capability. */
+            "RUN setcap cap_net_bind_service=+ep /usr/local/bin/frankenphp || true",
+            "USER www-data",
+        ].join("\n") + "\n";
+    }
+    /* nginx -> php-fpm (served by a generated nginx); apache -> mod_php;
+     * cli -> no web server, runs the script. */
+    string base = "php:${svc.version}-fpm-alpine";
+    if (svc.runtime == "apache") {
+        base = "php:${svc.version}-apache";
+    } else if (svc.runtime == "cli") {
+        base = "php:${svc.version}-cli";
+    }
+    list<string> lines = [
+        "FROM composer:2 AS vendor",
+        "WORKDIR /app",
+        "COPY composer.* ./",
+        "RUN composer install --no-dev --no-interaction --no-progress --prefer-dist || true",
+        "",
+        "FROM ${base}",
+        "WORKDIR /app",
+        "COPY --from=vendor /app/vendor ./vendor",
+        "COPY . /app",
+        "USER www-data",
+    ];
+    if (svc.runtime == "cli") {
+        lines.push("CMD [\"php\", \"index.php\"]");
+    }
+    return lines.join("\n") + "\n";
+}
+
+/* Geblang runs on the official toolchain image; the entrypoint is geblang. */
+func geblangDockerfile(model.Service svc): string {
+    return [
+        "FROM dwgebler/geblang:${svc.version}",
+        "WORKDIR /app",
+        "COPY . /app",
+        "CMD [\"main.gb\"]",
+    ].join("\n") + "\n";
+}
+
+func pythonDockerfile(model.Service svc): string {
+    if (svc.gpu) {
+        return cudaPythonDockerfile(svc);
+    }
+    list<string> lines = [
+        "FROM python:${svc.version}-${svc.runtime} AS builder",
+        "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1",
+        "WORKDIR /app",
+        "RUN python -m venv /opt/venv",
+        "ENV PATH=\"/opt/venv/bin:$PATH\"",
+        "COPY requirements.txt* ./",
+        "RUN pip install --no-cache-dir -r requirements.txt || true",
+        "",
+        "FROM python:${svc.version}-${svc.runtime}",
+        "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH=\"/opt/venv/bin:$PATH\"",
+        "WORKDIR /app",
+        "COPY --from=builder /opt/venv /opt/venv",
+        "COPY . /app",
+        "RUN useradd --create-home app && chown -R app /app",
+        "USER app",
+        "CMD [\"python\", \"main.py\"]",
+    ];
+    return lines.join("\n") + "\n";
+}
+
+/* GPU Python: a CUDA runtime base with Python installed on top. */
+func cudaPythonDockerfile(model.Service svc): string {
+    list<string> lines = [
+        "FROM nvidia/cuda:13.3.0-runtime-ubuntu24.04",
+        "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DEBIAN_FRONTEND=noninteractive",
+        "RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip && rm -rf /var/lib/apt/lists/*",
+        "WORKDIR /app",
+        "COPY requirements.txt* ./",
+        "RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt || true",
+        "COPY . /app",
+        "CMD [\"python3\", \"main.py\"]",
+    ];
+    return lines.join("\n") + "\n";
+}
+
+func nodeDockerfile(model.Service svc): string {
+    string install = svc.packageManager == "npm" ? "npm ci" : "${svc.packageManager} install --frozen-lockfile";
+    list<string> lines = [
+        "FROM node:${svc.version}-${svc.runtime} AS deps",
+        "WORKDIR /app",
+        "COPY package*.json ./",
+        "RUN ${install} || true",
+        "",
+        "FROM node:${svc.version}-${svc.runtime}",
+        "ENV NODE_ENV=production",
+        "WORKDIR /app",
+        "COPY --from=deps /app/node_modules ./node_modules",
+        "COPY . /app",
+        "USER node",
+        "CMD [\"node\", \"index.js\"]",
+    ];
+    return lines.join("\n") + "\n";
+}
+
+func goDockerfile(model.Service svc): string {
+    list<string> lines = [
+        "FROM golang:${svc.version}-alpine AS builder",
+        "WORKDIR /src",
+        "COPY go.* ./",
+        "RUN go mod download || true",
+        "COPY . .",
+        "RUN CGO_ENABLED=0 GOOS=linux go build -ldflags=\"-w -s\" -o /app ./... || true",
+        "",
+        "FROM gcr.io/distroless/static-debian12:nonroot",
+        "COPY --from=builder /app /app",
+        "USER nonroot:nonroot",
+        "ENTRYPOINT [\"/app\"]",
+    ];
+    return lines.join("\n") + "\n";
+}
+
+func composeService(model.Service svc, string database): dict<string, any> {
+    dict<string, any> out = {
+        "build": {"context": ".", "dockerfile": "docker/${svc.name}/Dockerfile"},
+        "restart": "unless-stopped",
+        "networks": [netName],
+    };
+    int cport = containerPort(svc);
+    if (svc.language == "PHP" && svc.runtime == "frankenphp") {
+        /* FrankenPHP (Caddy) serves HTTP on 80 and auto-HTTPS on 443,
+         * self-signing for localhost. Publish both. */
+        out["ports"] = ["${svc.port}:80", "443:443"];
+    } else if (cport > 0) {
+        out["ports"] = ["${svc.port}:${cport}"];
+    }
+    if (database != "none" && database != "sqlite") {
+        out["depends_on"] = {database: {"condition": "service_healthy"}};
+    }
+    if (svc.gpu) {
+        /* Compose GPU reservation: requires the host NVIDIA container toolkit. */
+        out["deploy"] = {"resources": {"reservations": {"devices":
+            [{"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}]}}};
+    }
+    return out;
+}
+
+/* The database service (with healthcheck) + its named volume, or null. */
+func databaseService(string kind): ?dict<string, any> {
+    dict<string, any> common = {"restart": "unless-stopped", "networks": [netName]};
+    if (kind == "postgres") {
+        common["image"] = "postgres:18-alpine";
+        common["environment"] = {"POSTGRES_DB": "app", "POSTGRES_USER": "app", "POSTGRES_PASSWORD": "secret"};
+        common["volumes"] = ["dbdata:/var/lib/postgresql/data"];
+        common["ports"] = ["5432:5432"];
+        common["healthcheck"] = healthcheck(["CMD-SHELL", "pg_isready -U app -d app"]);
+        return {"service": common, "volume": "dbdata"};
+    }
+    if (kind == "mysql" || kind == "mariadb") {
+        common["image"] = kind == "mysql" ? "mysql:8.4" : "mariadb:12";
+        common["environment"] = {"MYSQL_DATABASE": "app", "MYSQL_ROOT_PASSWORD": "secret"};
+        common["volumes"] = ["dbdata:/var/lib/mysql"];
+        common["ports"] = ["3306:3306"];
+        common["healthcheck"] = healthcheck(["CMD-SHELL", "mysqladmin ping -h localhost -psecret"]);
+        return {"service": common, "volume": "dbdata"};
+    }
+    if (kind == "mongodb") {
+        common["image"] = "mongo:8";
+        common["volumes"] = ["dbdata:/data/db"];
+        common["ports"] = ["27017:27017"];
+        common["healthcheck"] = healthcheck(["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand('ping')\""]);
+        return {"service": common, "volume": "dbdata"};
+    }
+    return null;
+}
+
+func healthcheck(list<string> test): dict<string, any> {
+    return {"test": test, "interval": "10s", "timeout": "5s", "retries": 5, "start_period": "30s"};
+}
+
+func redisService(): dict<string, any> {
+    return {"image": "redis:8-alpine", "restart": "unless-stopped", "networks": [netName],
+        "ports": ["6379:6379"], "healthcheck": healthcheck(["CMD", "redis-cli", "ping"])};
+}
+
+func mailpitService(): dict<string, any> {
+    return {"image": "axllent/mailpit:latest", "restart": "unless-stopped", "networks": [netName],
+        "ports": ["1025:1025", "8025:8025"],
+        "environment": {"MP_SMTP_AUTH_ACCEPT_ANY": "1", "MP_SMTP_AUTH_ALLOW_INSECURE": "1"}};
+}
+
+func isFpm(model.Service svc): bool {
+    return svc.language == "PHP" && svc.runtime == "nginx";
+}
+
+/* Services with a custom reverse-proxy hostname. */
+func proxiedServices(model.Project project): list<model.Service> {
+    list<model.Service> out = [];
+    for (svc in project.services) {
+        if (svc.hostname != "") {
+            out.push(svc);
+        }
+    }
+    return out;
+}
+
+/* Services that need an nginx front end: PHP-FPM (the Nginx architecture,
+ * always) and any service published under a hostname. */
+func webBackedServices(model.Project project): list<model.Service> {
+    list<model.Service> out = [];
+    for (svc in project.services) {
+        if (isFpm(svc) || svc.hostname != "") {
+            out.push(svc);
+        }
+    }
+    return out;
+}
+
+func nginxService(list<model.Service> web): dict<string, any> {
+    dict<string, any> depends = {};
+    list<string> ports = [];
+    bool needsCode = false;
+    bool port80 = false;
+    for (svc in web) {
+        depends[svc.name] = {"condition": "service_started"};
+        if (isFpm(svc)) {
+            needsCode = true;
+        }
+        if (svc.hostname != "") {
+            port80 = true;
+        } else {
+            /* No hostname: nginx serves this FPM app on its own port. */
+            ports = ports.push("${svc.port}:${svc.port}");
+        }
+    }
+    if (port80) {
+        ports = ports.push("80:80");
+    }
+    list<string> vols = ["./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro"];
+    if (needsCode) {
+        vols = vols.push(".:/app:ro");
+    }
+    return {"image": "nginx:alpine", "restart": "unless-stopped", "networks": [netName],
+        "ports": ports, "volumes": vols, "depends_on": depends};
+}
+
+/* The nginx server blocks for every web-backed service. */
+export func nginxConfig(model.Project project): string {
+    list<string> blocks = [];
+    for (svc in webBackedServices(project)) {
+        blocks.push(serverBlock(svc));
+    }
+    return blocks.join("\n");
+}
+
+func serverBlock(model.Service svc): string {
+    /* Hostname services answer on :80 by server_name; FPM apps without a
+     * hostname answer on their own port. */
+    string listen = svc.hostname != ""
+        ? "    listen 80;\n    server_name ${svc.hostname};"
+        : "    listen ${svc.port};";
+    if (isFpm(svc)) {
+        return [
+            "server {",
+            listen,
+            "    root /app/public;",
+            "    index index.php;",
+            "    location / { try_files $uri $uri/ /index.php?$query_string; }",
+            "    location ~ \\.php$ {",
+            "        fastcgi_pass ${svc.name}:9000;",
+            "        fastcgi_index index.php;",
+            "        include fastcgi_params;",
+            "        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;",
+            "    }",
+            "}",
+        ].join("\n") + "\n";
+    }
+    return [
+        "server {",
+        listen,
+        "    location / {",
+        "        proxy_pass http://${svc.name}:${containerPort(svc)};",
+        "        proxy_set_header Host $host;",
+        "        proxy_set_header X-Real-IP $remote_addr;",
+        "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+        "        proxy_set_header X-Forwarded-Proto $scheme;",
+        "    }",
+        "}",
+    ].join("\n") + "\n";
+}
+
+/* The /etc/hosts lines a developer adds to reach the proxied hostnames. */
+export func hostsLines(model.Project project): list<string> {
+    list<string> out = [];
+    for (svc in proxiedServices(project)) {
+        out = out.push("127.0.0.1 ${svc.hostname}");
+    }
+    return out;
+}
+
+export func composeDict(model.Project project): dict<string, any> {
+    dict<string, any> services = {};
+    for (svc in project.services) {
+        services[svc.name] = composeService(svc, project.database);
+    }
+    dict<string, any> volumes = {};
+    let dbInfo = databaseService(project.database);
+    if (dbInfo != null) {
+        let d = dbInfo as dict<string, any>;
+        services[project.database] = d["service"];
+        volumes[d["volume"] as string] = null;
+    }
+    if (project.cache) {
+        services["redis"] = redisService();
+    }
+    if (project.mail) {
+        services["mailpit"] = mailpitService();
+    }
+    let web = webBackedServices(project);
+    if (web.length() > 0) {
+        services["proxy"] = nginxService(web);
+    }
+    dict<string, any> out = {"services": services};
+    if (volumes.keys().length() > 0) {
+        out["volumes"] = volumes;
+    }
+    out["networks"] = {netName: null};
+    return out;
+}
+
+/* Dev overrides: live bind-mount the source into each app service. */
+export func overrideDict(model.Project project): dict<string, any> {
+    dict<string, any> services = {};
+    for (svc in project.services) {
+        services[svc.name] = {"volumes": [".:/app"]};
+    }
+    return {"services": services};
+}
+
+/* Prod overrides: always restart, plus any CPU / memory limits. */
+export func prodDict(model.Project project): dict<string, any> {
+    dict<string, any> services = {};
+    for (svc in project.services) {
+        dict<string, any> s = {"restart": "always"};
+        dict<string, any> limits = {};
+        if (svc.cpuLimit != "") {
+            limits["cpus"] = svc.cpuLimit;
+        }
+        if (svc.memLimit != "") {
+            limits["memory"] = svc.memLimit;
+        }
+        if (limits.keys().length() > 0) {
+            s["deploy"] = {"resources": {"limits": limits}};
+        }
+        services[svc.name] = s;
+    }
+    return {"services": services};
+}
+
+/* Write every file under outDir; returns the relative paths written. */
+export func write(model.Project project, string outDir): list<string> {
+    list<string> written = [];
+    io.mkdir(outDir, 0o755);
+    writeFile(outDir + "/compose.yaml", yaml.stringify(composeDict(project)), written, "compose.yaml");
+    writeFile(outDir + "/compose.override.yaml", yaml.stringify(overrideDict(project)), written, "compose.override.yaml");
+    writeFile(outDir + "/compose.prod.yaml", yaml.stringify(prodDict(project)), written, "compose.prod.yaml");
+    for (svc in project.services) {
+        string dir = outDir + "/docker/" + svc.name;
+        io.mkdir(dir, 0o755);
+        writeFile(dir + "/Dockerfile", dockerfileFor(svc), written, "docker/${svc.name}/Dockerfile");
+    }
+    if (webBackedServices(project).length() > 0) {
+        string ndir = outDir + "/docker/nginx";
+        io.mkdir(ndir, 0o755);
+        writeFile(ndir + "/default.conf", nginxConfig(project), written, "docker/nginx/default.conf");
+    }
+    return written;
+}
+
+func writeFile(string path, string content, list<string> written, string label): void {
+    io.writeText(path, content);
+    written.push(label);
+}

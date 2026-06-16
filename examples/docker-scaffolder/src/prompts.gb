@@ -1,0 +1,69 @@
+/**
+ * @title Prompts
+ * @summary Interactive gathering of a Project using the cli surface
+ * (prompt / multiChoose / choose). The prompt order is fixed so the flow
+ * can be driven deterministically by io.withStdin in tests.
+ * @category Docker Scaffolder
+ */
+module docker.scaffolder.prompts;
+
+import cli;
+import docker.scaffolder.model as model;
+
+let phpArchitectures = ["Nginx", "Apache", "CLI", "FrankenPHP"];
+let pyBases = ["slim", "alpine"];
+let nodeBases = ["alpine", "bookworm"];
+
+export func gather(): model.Project {
+    string name = cli.prompt("Project name: ", "app");
+    let project = model.Project(name);
+    let langs = cli.multiChoose("Languages (space toggles, enter confirms):",
+        ["PHP", "Python", "Node", "Go", "Geblang"]);
+    for (lang in langs) {
+        project.services.push(gatherService(lang as string));
+    }
+    project.database = cli.choose("Database:",
+        ["none", "postgres", "mysql", "mariadb", "mongodb", "sqlite"]);
+    project.cache = cli.confirm("Add a Redis cache? ", false);
+    project.mail = cli.confirm("Add a Mailpit mail catcher? ", false);
+    return project;
+}
+
+func gatherService(string lang): model.Service {
+    string name = lang.lower();
+    string version = "";
+    string runtime = "";
+    string pm = "";
+    if (lang == "PHP") {
+        version = cli.choose("PHP version:", ["8.5", "8.4", "8.3"]);
+        runtime = cli.choose("PHP architecture:", phpArchitectures).lower();
+        pm = "composer";
+    } else if (lang == "Python") {
+        version = cli.choose("Python version:", ["3.14", "3.13", "3.12"]);
+        runtime = cli.choose("Python base:", pyBases);
+        pm = "pip";
+    } else if (lang == "Node") {
+        version = cli.choose("Node version (24 LTS):", ["24", "22", "26"]);
+        runtime = cli.choose("Node base:", nodeBases);
+        pm = cli.choose("Package manager:", ["npm", "pnpm", "yarn"]);
+    } else if (lang == "Go") {
+        version = cli.choose("Go version:", ["1.26", "1.25"]);
+        runtime = "build";
+        pm = "go";
+    } else {
+        version = cli.choose("Geblang image tag:", ["latest", "1.21.0"]);
+        runtime = "run";
+        pm = "geblang";
+    }
+    let svc = model.Service(name, lang, version, runtime, pm, promptPort(name));
+    svc.cpuLimit = cli.prompt("CPU limit for ${name} (e.g. 1.0, blank for none): ", "");
+    svc.memLimit = cli.prompt("Memory limit for ${name} (e.g. 512M, blank for none): ", "");
+    svc.gpu = cli.confirm("GPU access for ${name}? ", false);
+    svc.hostname = cli.prompt("Reverse-proxy hostname for ${name} (blank for none): ", "");
+    return svc;
+}
+
+func promptPort(string name): int {
+    string raw = cli.prompt("Host port for ${name}: ", "8080");
+    return raw.isInt() ? raw.toInt() : 8080;
+}

@@ -206,6 +206,39 @@ After `make docker-build`, the binary at `./build/geblang` runs
 standalone; if you relocate it away from the bundled `stdlib/`,
 set `GEBLANG_STDLIB` to point at the moved directory.
 
+## Docker
+
+The official image ships the CLI and stdlib, so you can run Geblang
+without installing anything:
+
+```sh
+docker pull dwgebler/geblang
+
+# Run a script from the current directory (mounted at /app):
+docker run --rm -v "$PWD":/app dwgebler/geblang hello.gb
+
+# Start a REPL:
+docker run --rm -it dwgebler/geblang repl
+
+# Pin a version instead of latest:
+docker run --rm -v "$PWD":/app dwgebler/geblang:1.21.0 hello.gb
+```
+
+The entrypoint is `geblang`, so anything after the image name is passed
+straight to the CLI (`run`, `test`, `build`, `fmt`, ...). The working
+directory is `/app`; mount your project there. The image is built on a
+glibc base, so FFI (`dlopen`) works for shared libraries you install or
+mount in.
+
+For a containerised application, base your image on it:
+
+```dockerfile
+FROM dwgebler/geblang:latest
+WORKDIR /app
+COPY . /app
+CMD ["main.gb"]
+```
+
 ## Quickstart
 
 ### Hello world

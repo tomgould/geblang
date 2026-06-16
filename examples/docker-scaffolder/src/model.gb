@@ -1,0 +1,51 @@
+/**
+ * @title Model
+ * @summary Typed configuration the Docker scaffolder gathers and then
+ * renders into Compose files and Dockerfiles.
+ * @category Docker Scaffolder
+ */
+module docker.scaffolder.model;
+
+/* One application service backed by a generated Dockerfile. */
+export class Service {
+    string name;            /* compose service + docker/<name>/ */
+    string language;        /* PHP / Python / Node / Go */
+    string version;         /* image tag, e.g. "8.3" */
+    string runtime;         /* fpm / apache / frankenphp / slim / alpine / ... */
+    string packageManager;  /* composer / pip / npm / go */
+    int port;               /* host port to publish */
+    string cpuLimit;        /* deploy CPU limit, e.g. "1.0" (empty = none) */
+    string memLimit;        /* deploy memory limit, e.g. "512M" (empty = none) */
+    bool gpu;               /* reserve an NVIDIA GPU (+ CUDA base for Python) */
+    string hostname;        /* reverse-proxy host, e.g. "app.localhost" (empty = none) */
+
+    func Service(string name, string language, string version,
+                 string runtime, string packageManager, int port) {
+        this.name = name;
+        this.language = language;
+        this.version = version;
+        this.runtime = runtime;
+        this.packageManager = packageManager;
+        this.port = port;
+        this.cpuLimit = "";
+        this.memLimit = "";
+        this.gpu = false;
+        this.hostname = "";
+    }
+}
+
+export class Project {
+    string name;
+    list<Service> services;
+    string database;        /* none / postgres / mysql / mariadb / mongodb / sqlite */
+    bool cache;             /* Redis */
+    bool mail;              /* Mailpit */
+
+    func Project(string name) {
+        this.name = name;
+        this.services = [];
+        this.database = "none";
+        this.cache = false;
+        this.mail = false;
+    }
+}

@@ -1,0 +1,169 @@
+/**
+ * @title Scaffolder tests
+ * @summary Unit-tests the deterministic generation and drives the full
+ * interactive flow with io.withStdin (scripted prompts + key sequences),
+ * then asserts the generated files.
+ * @category Docker Scaffolder
+ */
+import test;
+import io;
+import docker.scaffolder.model as model;
+import docker.scaffolder.prompts as prompts;
+import docker.scaffolder.templates as templates;
+
+class ScaffolderTest extends test.Test {
+    @test
+    func phpFpmDockerfileIsMultiStageNonRoot(): void {
+        let svc = model.Service("php", "PHP", "8.5", "nginx", "composer", 8080);
+        let df = templates.dockerfileFor(svc);
+        this.assertTrue(df.contains("FROM composer:2 AS vendor"));
+        this.assertTrue(df.contains("FROM php:8.5-fpm-alpine"));
+        this.assertTrue(df.contains("USER www-data"));
+        /* The FPM app is fronted by nginx, so it publishes nothing directly. */
+        this.assertEquals(0, templates.containerPort(svc));
+    }
+
+    @test
+    func goDockerfileIsDistrolessStatic(): void {
+        let svc = model.Service("go", "Go", "1.26", "build", "go", 8080);
+        let df = templates.dockerfileFor(svc);
+        this.assertTrue(df.contains("FROM golang:1.26-alpine AS builder"));
+        this.assertTrue(df.contains("CGO_ENABLED=0"));
+        this.assertTrue(df.contains("distroless/static"));
+        this.assertTrue(df.contains("USER nonroot"));
+    }
+
+    @test
+    func composeIsSpecStyleWithHealthcheckAndDependsOn(): void {
+        let project = model.Project("shop");
+        project.services.push(model.Service("php", "PHP", "8.5", "apache", "composer", 8080));
+        project.database = "postgres";
+        let compose = templates.composeDict(project);
+        this.assertTrue(!compose.contains("version"));
+        let services = compose["services"] as dict<string, any>;
+        let pg = services["postgres"] as dict<string, any>;
+        this.assertEquals("postgres:18-alpine", pg["image"]);
+        this.assertTrue(pg.contains("healthcheck"));
+        let php = services["php"] as dict<string, any>;
+        let dep = php["depends_on"] as dict<string, any>;
+        this.assertEquals("service_healthy", (dep["postgres"] as dict<string, any>)["condition"]);
+        this.assertTrue((compose["volumes"] as dict<string, any>).contains("dbdata"));
+        this.assertTrue((compose["networks"] as dict<string, any>).contains("appnet"));
+    }
+
+    @test
+    func gathersFullFlowViaInjectedInput(): void {
+        /* name; multiChoose PHP (space, enter); version 1 (8.5); runtime 2
+         * (apache); port 8080; blank cpu/mem/gpu/hostname; database 2
+         * (postgres); blank cache/mail. */
+        let project = io.withStdin("shop\n \r1\n2\n8080\n\n\n\n\n2\n\n\n",
+            func(): any { return prompts.gather(); }) as model.Project;
+        this.assertEquals("shop", project.name);
+        this.assertEquals(1, project.services.length());
+        let svc = project.services[0];
+        this.assertEquals("PHP", svc.language);
+        this.assertEquals("8.5", svc.version);
+        this.assertEquals("apache", svc.runtime);
+        this.assertEquals("postgres", project.database);
+        this.assertTrue(!project.cache);
+    }
+
+    @test
+    func fullStackHasCacheMailProxyGpuLimits(): void {
+        let project = model.Project("full");
+        let php = model.Service("php", "PHP", "8.5", "nginx", "composer", 8080);
+        php.hostname = "app.localhost";
+        php.cpuLimit = "1.0";
+        php.memLimit = "512M";
+        let py = model.Service("py", "Python", "3.14", "slim", "pip", 8000);
+        py.gpu = true;
+        project.services.push(php);
+        project.services.push(py);
+        project.database = "postgres";
+        project.cache = true;
+        project.mail = true;
+
+        let services = templates.composeDict(project)["services"] as dict<string, any>;
+        this.assertTrue(services.contains("redis"));
+        this.assertTrue(services.contains("mailpit"));
+        this.assertTrue(services.contains("proxy"));
+        this.assertTrue((services["py"] as dict<string, any>).contains("deploy"));
+
+        let prodPhp = (templates.prodDict(project)["services"] as dict<string, any>)["php"] as dict<string, any>;
+        this.assertTrue(prodPhp.contains("deploy"));
+
+        let conf = templates.nginxConfig(project);
+        this.assertTrue(conf.contains("server_name app.localhost"));
+        this.assertTrue(conf.contains("fastcgi_pass php:9000"));
+        this.assertTrue(templates.hostsLines(project).contains("127.0.0.1 app.localhost"));
+    }
+
+    @test
+    func cudaPythonDockerfileWhenGpu(): void {
+        let svc = model.Service("py", "Python", "3.14", "slim", "pip", 8000);
+        svc.gpu = true;
+        let df = templates.dockerfileFor(svc);
+        this.assertTrue(df.contains("nvidia/cuda:13.3.0-runtime"));
+        this.assertTrue(df.contains("python3"));
+    }
+
+    @test
+    func phpArchitectures(): void {
+        let nginx = templates.dockerfileFor(model.Service("php", "PHP", "8.5", "nginx", "composer", 8080));
+        this.assertTrue(nginx.contains("php:8.5-fpm-alpine"));
+        let apache = templates.dockerfileFor(model.Service("php", "PHP", "8.5", "apache", "composer", 8080));
+        this.assertTrue(apache.contains("php:8.5-apache"));
+        let cliDf = templates.dockerfileFor(model.Service("php", "PHP", "8.5", "cli", "composer", 8080));
+        this.assertTrue(cliDf.contains("php:8.5-cli"));
+        this.assertTrue(cliDf.contains("CMD"));
+        let franken = templates.dockerfileFor(model.Service("php", "PHP", "8.5", "frankenphp", "composer", 8080));
+        this.assertTrue(franken.contains("dunglas/frankenphp:1-php8.5"));
+    }
+
+    @test
+    func frankenphpPublishesTlsPort(): void {
+        let project = model.Project("fp");
+        project.services.push(model.Service("php", "PHP", "8.5", "frankenphp", "composer", 8080));
+        let php = (templates.composeDict(project)["services"] as dict<string, any>)["php"] as dict<string, any>;
+        let ports = php["ports"] as list<any>;
+        this.assertTrue(ports.contains("8080:80"));
+        this.assertTrue(ports.contains("443:443"));
+    }
+
+    @test
+    func nginxFpmServedOnOwnPortWithoutHostname(): void {
+        let project = model.Project("web");
+        project.services.push(model.Service("php", "PHP", "8.5", "nginx", "composer", 8080));
+        let services = templates.composeDict(project)["services"] as dict<string, any>;
+        this.assertTrue(services.contains("proxy"));
+        /* the fpm app publishes nothing; nginx publishes its port */
+        this.assertTrue(!(services["php"] as dict<string, any>).contains("ports"));
+        this.assertTrue(((services["proxy"] as dict<string, any>)["ports"] as list<any>).contains("8080:8080"));
+        this.assertTrue(templates.nginxConfig(project).contains("listen 8080;"));
+    }
+
+    @test
+    func geblangServiceUsesOfficialImage(): void {
+        let svc = model.Service("geblang", "Geblang", "latest", "run", "geblang", 8080);
+        let df = templates.dockerfileFor(svc);
+        this.assertTrue(df.contains("FROM dwgebler/geblang:latest"));
+        this.assertTrue(df.contains("CMD [\"main.gb\"]"));
+        this.assertEquals(8080, templates.containerPort(svc));
+    }
+
+    @test
+    func writesFileSetToDisk(): void {
+        let project = model.Project("shop");
+        project.services.push(model.Service("php", "PHP", "8.5", "apache", "composer", 8080));
+        project.database = "postgres";
+        string out = io.tempDir() + "/scaffold-test-out";
+        if (io.exists(out)) { io.remove(out); }
+        let written = templates.write(project, out);
+        this.assertTrue(written.contains("compose.yaml"));
+        this.assertTrue(written.contains("docker/php/Dockerfile"));
+        this.assertTrue(io.exists(out + "/compose.override.yaml"));
+        this.assertTrue(io.exists(out + "/docker/php/Dockerfile"));
+        this.assertTrue(io.readText(out + "/compose.yaml").contains("postgres:18-alpine"));
+        io.remove(out);
+    }
+}

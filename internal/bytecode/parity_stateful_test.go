@@ -957,3 +957,14 @@ io.println(io.exists("TMPFILE/child.html"));
 io.println(io.exists("TMPFILE/a/b"));
 `, "content", "true\nfalse\nfalse\n")
 }
+
+// TestParitySysRunListArgs pins sys.run's list<string> argument form on
+// both backends (previously rejected as "arguments must be strings").
+func TestParitySysRunListArgs(t *testing.T) {
+	runParityStateful(t, `import io;
+import sys;
+let r = sys.run("echo", ["hello", "world"]);
+io.println(r["code"]);
+io.println((r["stdout"] as string).trim());
+`, "0\nhello world\n")
+}

@@ -1,0 +1,37 @@
+/**
+ * @title Templates private tests
+ * @summary Same-module test (declares docker.scaffolder.templates) so it
+ * can exercise the private helpers directly: database service shaping and
+ * the per-service depends_on wiring.
+ * @category Docker Scaffolder
+ */
+module docker.scaffolder.templates;
+
+import test;
+import docker.scaffolder.model as model;
+
+class TemplatesPrivateTest extends test.Test {
+    @test
+    func databaseServicePostgresHasImageVolumeHealthcheck(): void {
+        let info = databaseService("postgres");
+        this.assertTrue(info != null);
+        let d = info as dict<string, any>;
+        this.assertEquals("dbdata", d["volume"]);
+        let svc = d["service"] as dict<string, any>;
+        this.assertEquals("postgres:18-alpine", svc["image"]);
+        this.assertTrue(svc.contains("healthcheck"));
+    }
+
+    @test
+    func databaseServiceNoneOrSqliteIsNull(): void {
+        this.assertTrue(databaseService("none") == null);
+        this.assertTrue(databaseService("sqlite") == null);
+    }
+
+    @test
+    func composeServiceWiresDependsOnOnlyWithDatabase(): void {
+        let svc = model.Service("web", "Python", "3.14", "slim", "pip", 8000);
+        this.assertTrue(composeService(svc, "postgres").contains("depends_on"));
+        this.assertTrue(!composeService(svc, "none").contains("depends_on"));
+    }
+}

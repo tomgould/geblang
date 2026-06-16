@@ -1,0 +1,57 @@
+/**
+ * @title Docker scaffolder
+ * @summary Interactive CLI that scaffolds a Docker / Compose project: it
+ * detects Docker and Compose, gathers a stack with the cli prompt surface
+ * (including the multiChoose checkbox UI), and writes compose.yaml, dev /
+ * prod overrides, and a Dockerfile per service. Run:
+ *   geblang examples/docker-scaffolder/src/main.gb [--out DIR]
+ * @category Docker Scaffolder
+ */
+import io;
+import sys;
+import docker.scaffolder.prompts as prompts;
+import docker.scaffolder.templates as templates;
+
+export func main(list<string> args): int {
+    if (!dockerAvailable()) {
+        io.println("Note: Docker / Compose was not detected on PATH. Files are still generated.");
+    }
+    let project = prompts.gather();
+    string outDir = outDirFrom(args, project.name);
+    let written = templates.write(project, outDir);
+    io.println("");
+    io.println("Scaffolded '${project.name}' into ${outDir}/");
+    for (path in written) {
+        io.println("  ${outDir}/${path}");
+    }
+    let hosts = templates.hostsLines(project);
+    if (hosts.length() > 0) {
+        io.println("");
+        io.println("Add these lines to /etc/hosts for the reverse proxy:");
+        for (line in hosts) {
+            io.println("  ${line}");
+        }
+    }
+    io.println("");
+    io.println("Next: cd ${outDir} && docker compose up --build");
+    return 0;
+}
+
+/* Docker plus either Compose v2 (`docker compose`) or v1 (`docker-compose`). */
+func dockerAvailable(): bool {
+    let docker = sys.shell("docker --version");
+    if ((docker["code"] as int) != 0) { return false; }
+    let v2 = sys.shell("docker compose version");
+    if ((v2["code"] as int) == 0) { return true; }
+    let v1 = sys.shell("docker-compose --version");
+    return (v1["code"] as int) == 0;
+}
+
+func outDirFrom(list<string> args, string projectName): string {
+    for (i in 0..<args.length()) {
+        if ((args[i] as string) == "--out" && i + 1 < args.length()) {
+            return args[i + 1] as string;
+        }
+    }
+    return projectName;
+}

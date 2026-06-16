@@ -296,7 +296,7 @@ func sysRun(call *ast.CallExpression, args []runtime.Value) (runtime.Value, erro
 	if len(args) < 1 {
 		return nil, fmt.Errorf("%s expects at least one argument", call.Callee.String())
 	}
-	spec, err := processSpecFromArgs(call, args)
+	spec, err := processSpecFromCombinedArgs(call, args)
 	if err != nil {
 		return nil, err
 	}
@@ -379,22 +379,6 @@ func processSpecFromCombinedArgs(call *ast.CallExpression, args []runtime.Value)
 			return processSpec{}, fmt.Errorf("%s arguments must be strings", call.Callee.String())
 		}
 		commandArgs = append(commandArgs, s.Value)
-	}
-	return processSpec{command: command.Value, args: commandArgs}, nil
-}
-
-func processSpecFromArgs(call *ast.CallExpression, args []runtime.Value) (processSpec, error) {
-	command, ok := args[0].(runtime.String)
-	if !ok {
-		return processSpec{}, fmt.Errorf("%s command must be string", call.Callee.String())
-	}
-	commandArgs := make([]string, 0, len(args)-1)
-	for _, arg := range args[1:] {
-		value, ok := arg.(runtime.String)
-		if !ok {
-			return processSpec{}, fmt.Errorf("%s arguments must be strings", call.Callee.String())
-		}
-		commandArgs = append(commandArgs, value.Value)
 	}
 	return processSpec{command: command.Value, args: commandArgs}, nil
 }
@@ -482,7 +466,7 @@ func (e *Evaluator) sysStart(call *ast.CallExpression, args []runtime.Value) (ru
 	if len(args) < 1 {
 		return nil, fmt.Errorf("%s expects at least one argument", call.Callee.String())
 	}
-	spec, err := processSpecFromArgs(call, args)
+	spec, err := processSpecFromCombinedArgs(call, args)
 	if err != nil {
 		return nil, err
 	}

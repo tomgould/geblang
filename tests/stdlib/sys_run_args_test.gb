@@ -1,0 +1,30 @@
+/**
+ * @title sys.run argument forms
+ * @summary sys.run accepts a command plus either a list<string> of args
+ * (the documented form) or trailing varargs. Regression: the list form
+ * was rejected with "arguments must be strings".
+ */
+import test;
+import sys;
+
+class SysRunArgsTest extends test.Test {
+    @test
+    func acceptsListArgs(): void {
+        let r = sys.run("echo", ["hello", "world"]);
+        this.assertEquals(0, r["code"]);
+        this.assertEquals("hello world", (r["stdout"] as string).trim());
+    }
+
+    @test
+    func acceptsVarargs(): void {
+        let r = sys.run("echo", "a", "b", "c");
+        this.assertEquals(0, r["code"]);
+        this.assertEquals("a b c", (r["stdout"] as string).trim());
+    }
+
+    @test
+    func acceptsNoArgs(): void {
+        let r = sys.run("true");
+        this.assertEquals(0, r["code"]);
+    }
+}

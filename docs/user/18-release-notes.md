@@ -52,6 +52,9 @@
   requiring the class to be bound to a variable first.
 - `cli.choose(label, options, default)` accepts a literal default index again; a
   small integer literal was wrongly rejected as "default index must be int".
+- `sys.run(command, args)` accepts its documented `list<string>` argument form
+  again (it was rejected with "arguments must be strings"); the trailing-varargs
+  form keeps working.
 
 ### Standard library
 
