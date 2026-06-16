@@ -1,0 +1,81 @@
+/**
+ * @title json.parseAs reconstructs nested class fields (1.22.0)
+ * @summary A field whose declared type is a user class (or a list / dict
+ * of one) is recursively deserialized into an instance, including when the
+ * nested class is declared in another module. Primitive and `any` fields
+ * stay raw, and shape mismatches are left untouched.
+ */
+import test;
+import json;
+import reflect;
+import nested_parseas_donor as donor;
+
+class Inner {
+    string label;
+}
+
+class Item {
+    int qty;
+    func Item(int qty) { this.qty = qty; }
+}
+
+class Outer {
+    string name;
+    Inner inner;
+    list<Item> items;
+    dict<string, Inner> tags;
+    dict<string, any> extra;
+    Inner wrong;
+}
+
+class Shipment {
+    string ref;
+    donor.Address to;
+    list<donor.Address> stops;
+}
+
+class NestedParseAsTest extends test.Test {
+    @test
+    func singleNestedBecomesInstance(): void {
+        let o = json.parseAs("{\"name\":\"n\",\"inner\":{\"label\":\"L\"}}", Outer);
+        this.assertEquals("Inner", reflect.className(o.inner));
+        this.assertEquals("L", o.inner.label);
+    }
+
+    @test
+    func listOfDtoElementsBecomeInstances(): void {
+        let o = json.parseAs("{\"name\":\"n\",\"items\":[{\"qty\":2},{\"qty\":5}]}", Outer);
+        this.assertEquals("Item", reflect.className(o.items[0]));
+        this.assertEquals(5, o.items[1].qty);
+    }
+
+    @test
+    func dictOfDtoValuesBecomeInstances(): void {
+        let o = json.parseAs("{\"name\":\"n\",\"tags\":{\"a\":{\"label\":\"T\"}}}", Outer);
+        this.assertEquals("Inner", reflect.className(o.tags["a"]));
+        this.assertEquals("T", o.tags["a"].label);
+    }
+
+    @test
+    func anyTypedFieldStaysRaw(): void {
+        let o = json.parseAs("{\"name\":\"n\",\"extra\":{\"raw\":1}}", Outer);
+        this.assertEquals("dict", reflect.className(o.extra));
+    }
+
+    @test
+    func shapeMismatchIsLeftRaw(): void {
+        let o = json.parseAs("{\"name\":\"n\",\"wrong\":\"notadict\"}", Outer);
+        this.assertEquals("string", reflect.className(o.wrong));
+    }
+
+    @test
+    func crossModuleNestedClassReconstructs(): void {
+        let s = json.parseAs(
+            "{\"ref\":\"r1\",\"to\":{\"postcode\":\"EC1\",\"city\":\"London\"},\"stops\":[{\"postcode\":\"W1\",\"city\":\"London\"}]}",
+            Shipment);
+        this.assertEquals("Address", reflect.className(s.to));
+        this.assertEquals("EC1", s.to.postcode);
+        this.assertEquals("Address", reflect.className(s.stops[0]));
+        this.assertEquals("W1", s.stops[0].postcode);
+    }
+}

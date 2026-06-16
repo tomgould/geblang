@@ -120,6 +120,11 @@ func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value
 	if !ok {
 		return nil, fmt.Errorf("deserialize %s: expected dict, got %s", class.Name, value.TypeName())
 	}
+	hydrated, herr := native.HydrateNestedClassFields(vmFieldTypeInfos(classInfo), dict, vm.resolveDeserializeClass, vm.deserializeIntoClass)
+	if herr != nil {
+		return nil, herr
+	}
+	dict = hydrated
 	if len(classInfo.ConstructorIndices) == 0 {
 		// Classes without an explicit constructor get their fields
 		// populated directly from the dict. Matches the evaluator's
@@ -162,6 +167,34 @@ func (vm *VM) deserializeIntoClass(classValue runtime.Value, value runtime.Value
 		args = append(args, entry.Value)
 	}
 	return vm.ConstructClass(class.Index, args)
+}
+
+func vmFieldTypeInfos(classInfo ClassInfo) []native.FieldTypeInfo {
+	infos := make([]native.FieldTypeInfo, len(classInfo.FieldNames))
+	for i, name := range classInfo.FieldNames {
+		t := ""
+		if i < len(classInfo.FieldTypes) {
+			t = classInfo.FieldTypes[i]
+		}
+		infos[i] = native.FieldTypeInfo{Name: name, Type: t}
+	}
+	return infos
+}
+
+// resolveDeserializeClass resolves a field's declared class name to a
+// BytecodeClass for nested parseAs, locally then via the module loader.
+func (vm *VM) resolveDeserializeClass(name string) (runtime.Value, bool) {
+	if idx, ok := vm.classIndex[strings.ToLower(name)]; ok && int(idx) < len(vm.chunk.Classes) {
+		return vm.bytecodeClassFromInfo(vm.chunk.Classes[idx], int64(idx)), true
+	}
+	if vm.moduleLoader != nil {
+		if v, ok := vm.moduleLoader.FindClassByName(name); ok {
+			if bc, isClass := v.(runtime.BytecodeClass); isClass {
+				return bc, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func NewVMWithModuleLoader(chunk Chunk, stdout io.Writer, loader ModuleLoader) *VM {

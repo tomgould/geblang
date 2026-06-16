@@ -786,6 +786,33 @@ io.println(p.y == q.y);
 `, "10\n20\ntrue\ntrue\n")
 }
 
+// TestParityJSONParseAsNested pins recursive deserialization: a field
+// whose declared type is a user class (or a list / dict of one) is
+// reconstructed into an instance on both backends, while any / primitive
+// fields stay raw.
+func TestParityJSONParseAsNested(t *testing.T) {
+	runParity(t, `import io;
+import json;
+class Inner { string label; }
+class Item { int qty; }
+class Outer {
+    string name;
+    Inner inner;
+    list<Item> items;
+    dict<string, Inner> tags;
+    dict<string, any> extra;
+}
+let o = json.parseAs("{\"name\":\"n\",\"inner\":{\"label\":\"L\"},\"items\":[{\"qty\":2},{\"qty\":5}],\"tags\":{\"a\":{\"label\":\"T\"}},\"extra\":{\"raw\":1}}", Outer);
+io.println(typeof(o.inner));
+io.println(o.inner.label);
+io.println(typeof(o.items[0]));
+io.println(o.items[1].qty);
+io.println(typeof(o.tags["a"]));
+io.println(o.tags["a"].label);
+io.println(typeof(o.extra));
+`, "Inner\nL\nItem\n5\nInner\nT\ndict\n")
+}
+
 func TestParityMathStats(t *testing.T) {
 	runParity(t, `import io;
 import math;

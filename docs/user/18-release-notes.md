@@ -45,6 +45,11 @@
   concurrent access previously could open a second, empty one (`no such table`);
   pinning makes concurrent reads and writes share one database. Use
   `file::memory:?cache=shared` or a file path for a larger pool.
+- `reflect.fields`, `reflect.methods`, `reflect.className` and the other reflect
+  introspection calls now accept a nested `reflect.class(value)` (or
+  `reflect.function`) argument identically on both backends. Previously the
+  bytecode backend rejected the nested form with a non-literal argument,
+  requiring the class to be bound to a variable first.
 
 ### Standard library
 
@@ -53,6 +58,13 @@
   the faster columnwise expression filter. A `throw` inside the predicate
   propagates and is catchable, and predicates run safely from concurrent async
   tasks. Identical on both backends.
+- `json.parseAs` (and `yaml` / `toml` / `xml` `parseAs`) now reconstructs nested
+  class fields recursively: a field whose declared type is another class, or a
+  `list` / `dict` of one, is itself deserialized into an instance, so a whole
+  object tree comes back fully typed (including across modules). `any` and
+  primitive fields keep their raw parsed value, a class with `__deserialize`
+  still controls its own nesting, and a value whose shape does not match the
+  declared field is left as-is. Identical on both backends.
 
 ### Native compilation (experimental)
 

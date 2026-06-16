@@ -1906,8 +1906,15 @@ func (c *Compiler) reflectTargetFromExpression(expr ast.Expression) (runtime.Dec
 	if call, ok := expr.(*ast.CallExpression); ok {
 		if module, name, ok := selectorName(call.Callee); ok && module == "reflect" {
 			switch name {
-			case "function":
-				target, handled, err := c.reflectNamedTarget(call, "function")
+			case "function", "class":
+				// A value argument (e.g. an instance) resolves only at runtime.
+				if len(call.Arguments) != 1 {
+					return runtime.DecoratorTarget{}, false, nil
+				}
+				if _, ok := call.Arguments[0].Value.(*ast.StringLiteral); !ok {
+					return runtime.DecoratorTarget{}, false, nil
+				}
+				target, handled, err := c.reflectNamedTarget(call, name)
 				if err != nil {
 					return runtime.DecoratorTarget{}, true, err
 				}
@@ -1918,21 +1925,7 @@ func (c *Compiler) reflectTargetFromExpression(expr ast.Expression) (runtime.Dec
 					return targetValue, true, nil
 				}
 				return runtime.DecoratorTarget{}, false, nil
-			case "class":
-				target, handled, err := c.reflectNamedTarget(call, "class")
-				if err != nil {
-					return runtime.DecoratorTarget{}, true, err
-				}
-				if !handled {
-					return runtime.DecoratorTarget{}, false, nil
-				}
-				if targetValue, ok := target.(runtime.DecoratorTarget); ok {
-					return targetValue, true, nil
-				}
-				return runtime.DecoratorTarget{}, false, nil
-			case "method":
-				return runtime.DecoratorTarget{}, false, nil
-			case "staticMethod":
+			case "method", "staticMethod":
 				return runtime.DecoratorTarget{}, false, nil
 			}
 		}

@@ -2036,6 +2036,11 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 	if !ok {
 		return nil, fmt.Errorf("deserialize %s: expected dict, got %s", class.Name, value.TypeName())
 	}
+	hydrated, herr := native.HydrateNestedClassFields(vmFieldTypeInfos(classInfo), dict, vm.resolveDeserializeClass, vm.deserializeIntoClass)
+	if herr != nil {
+		return nil, herr
+	}
+	dict = hydrated
 	if len(classInfo.ConstructorIndices) == 0 {
 		v, err := vm.ConstructClass(class.Index, nil)
 		if err != nil {

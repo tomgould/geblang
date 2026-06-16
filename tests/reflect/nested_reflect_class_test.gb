@@ -1,0 +1,41 @@
+/**
+ * @title reflect over a nested reflect.class(<instance>) (1.22.0)
+ * @summary reflect.fields / methods / className / decorators applied to a
+ * nested reflect.class(<value>) call resolve at runtime. The bytecode VM
+ * previously rejected the nested non-literal form ("name must be a string
+ * literal in bytecode") while the evaluator accepted it; the two now agree.
+ */
+import test;
+import reflect;
+
+class Doc {
+    @Assert.notBlank string title;
+    func Doc(string t) { this.title = t; }
+    func render(): string { return this.title; }
+}
+
+class NestedReflectClassTest extends test.Test {
+    @test
+    func fieldsThroughNestedClass(): void {
+        let d = Doc("hi");
+        let fields = reflect.fields(reflect.class(d));
+        this.assertEquals(1, fields.length());
+        this.assertEquals("title", (fields[0] as dict<string, any>)["name"]);
+    }
+
+    @test
+    func decoratorsSurviveNestedClass(): void {
+        let d = Doc("hi");
+        let f = reflect.fields(reflect.class(d))[0] as dict<string, any>;
+        let decs = f["decorators"] as list<any>;
+        this.assertEquals(1, decs.length());
+        this.assertEquals("Assert.notBlank", (decs[0] as dict<string, any>)["name"]);
+    }
+
+    @test
+    func methodsAndNameThroughNestedClass(): void {
+        let d = Doc("hi");
+        this.assertEquals("render", reflect.methods(reflect.class(d))[0]);
+        this.assertEquals("Doc", reflect.className(reflect.class(d)));
+    }
+}

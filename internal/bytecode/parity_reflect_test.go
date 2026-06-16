@@ -358,6 +358,31 @@ io.println(reflect.fields(f)[0]["type"]);
 `, "hello\nhello\nhello\nname\nstring\n")
 }
 
+// TestParityReflectNestedClassFromInstance pins the fix for an eval/VM
+// divergence: reflect.fields / methods / className / decorators over a
+// nested reflect.class(<instance>) (a non-literal argument) errored on
+// the VM ("name must be a string literal in bytecode") while the
+// evaluator resolved it at runtime. The nested form must now behave the
+// same as the two-step form on both backends.
+func TestParityReflectNestedClassFromInstance(t *testing.T) {
+	runParity(t, `import io;
+import reflect;
+
+class Doc {
+    @Assert.notBlank string title;
+    func Doc(string t) { this.title = t; }
+    func render(): string { return this.title; }
+}
+
+let d = Doc("");
+io.println(reflect.fields(reflect.class(d))[0]["name"]);
+io.println(reflect.methods(reflect.class(d))[0]);
+io.println(reflect.className(reflect.class(d)));
+let decs = reflect.fields(reflect.class(d))[0]["decorators"] as list<any>;
+io.println((decs[0] as dict<string, any>)["name"]);
+`, "title\nrender\nDoc\nAssert.notBlank\n")
+}
+
 // TestParityReflectPrimitives verifies reflect.methods works on
 // built-in primitive values (list / dict / set / string / bytes /
 // range) and returns a sorted method list.

@@ -107,6 +107,30 @@ let p = json.parseAs("{\"x\":3,\"y\":4}", Point);
 io.println(p.x);
 ```
 
+Reconstruction is recursive: a field whose declared type is another
+class (or a `list` / `dict` of one) is itself deserialized into an
+instance, so a whole object tree comes back fully typed.
+
+```gb
+class Address { string postcode; }
+class Order {
+    string customer;
+    Address shipTo;            // nested object
+    list<Address> stops;       // list of objects
+}
+
+let o = json.parseAs(
+    "{\"customer\":\"Ada\",\"shipTo\":{\"postcode\":\"EC1\"},\"stops\":[{\"postcode\":\"W1\"}]}",
+    Order);
+io.println(o.shipTo.postcode);   // EC1
+io.println(o.stops[0].postcode); // W1
+```
+
+Fields typed `any` (or a primitive) keep their raw parsed value, a
+class with `__deserialize` controls its own nested handling, and a
+value whose shape does not match the field (for example a string where
+an object is declared) is left as-is.
+
 The same conventions apply to `yaml.parseAs`, `toml.parseAs`, and
 `xml.parseAs`. See chapter 6's *Serialisation* section for details.
 

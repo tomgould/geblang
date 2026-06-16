@@ -542,6 +542,27 @@ func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []st
 // the tree-walking evaluator. Tries static __deserialize__ first;
 // falls back to positional constructor calls with dict keys
 // matched against constructor parameter names.
+func evalFieldTypeInfos(class *runtime.Class) []native.FieldTypeInfo {
+	infos := make([]native.FieldTypeInfo, len(class.Fields))
+	for i, field := range class.Fields {
+		t := ""
+		if field.Type != nil {
+			t = field.Type.String()
+		}
+		infos[i] = native.FieldTypeInfo{Name: field.Name, Type: t}
+	}
+	return infos
+}
+
+// resolveDeserializeClass resolves a field's declared class name to a
+// class value for nested parseAs via the cross-module class registry.
+func (e *Evaluator) resolveDeserializeClass(name string) (runtime.Value, bool) {
+	if class, ok := e.globalClasses[name]; ok {
+		return class, true
+	}
+	return nil, false
+}
+
 func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime.Value) (runtime.Value, error) {
 	class, ok := classValue.(*runtime.Class)
 	if !ok {
@@ -554,6 +575,11 @@ func (e *Evaluator) deserializeIntoClass(classValue runtime.Value, value runtime
 	if !ok {
 		return nil, fmt.Errorf("deserialize %s: expected dict, got %s", class.Name, value.TypeName())
 	}
+	hydrated, herr := native.HydrateNestedClassFields(evalFieldTypeInfos(class), dict, e.resolveDeserializeClass, e.deserializeIntoClass)
+	if herr != nil {
+		return nil, herr
+	}
+	dict = hydrated
 	if len(class.Constructors) == 0 {
 		// Classes without an explicit constructor get their fields
 		// populated directly from the dict, matching the implicit
