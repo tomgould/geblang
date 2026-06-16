@@ -7,12 +7,8 @@ import async.http as ahttp;
 import http;
 import io;
 
-func handle(dict<string, any> request): dict<string, any> {
-    return {
-        "status": 200,
-        "body": "async http " + request["path"],
-        "headers": {"Content-Type": "text/plain"}
-    };
+func handle(Request req): Response {
+    return http.response("async http " + req.path);
 }
 
 let server = http.listen("127.0.0.1:0", handle);
@@ -20,7 +16,7 @@ let addr = http.serverAddr(server);
 let task = ahttp.get("http://" + addr + "/hello");
 let response = await task;
 
-io.println(response["body"]);
+io.println(response.text());
 
 http.shutdown(server, 1000);
 http.close(server);

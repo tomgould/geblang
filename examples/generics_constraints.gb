@@ -86,7 +86,7 @@ class Pet implements Named, Serializable {
     }
 
     func serialize(): string {
-        return "Pet(" + this.petName + ")";
+        return "Pet(${this.petName})";
     }
 }
 

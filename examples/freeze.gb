@@ -11,7 +11,7 @@ let scores = [95, 87, 72];
 scores = freeze.shallow(scores);
 
 io.println(freeze.isFrozen(scores));  # true
-io.println(freeze.isFrozen(42));      # true — primitives are always frozen
+io.println(freeze.isFrozen(42));      # true - primitives are always frozen
 
 # Mutation of a frozen collection raises ImmutableError.
 try {
@@ -58,7 +58,7 @@ io.println(a.x);  # 1
 
 Point b = a.withX(10);
 io.println(b.x);  # 10
-io.println(a.x);  # 1 — original unchanged
+io.println(a.x);  # 1 - original unchanged
 
 try {
     a.x = 99;

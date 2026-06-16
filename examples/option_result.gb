@@ -1,0 +1,98 @@
+/**
+ * @title Option and Result
+ * @summary Model fallible lookups with Result ok/err and missing values with Option some/none/ofNullable, then map, unwrapOr and pattern-match.
+ * @category General
+ */
+import io;
+import option;
+import result;
+
+/* A fallible lookup: ok(price) on success, err(reason) on failure. */
+func priceOf(string sku): result.Result<int, string> {
+    dict<string, int> catalog = {"apple": 30, "pear": 45, "plum": 60};
+    if (!catalog.hasKey(sku)) {
+        return result.err("no such sku: ${sku}");
+    }
+    return result.ok(catalog.get(sku));
+}
+
+/* A maybe-missing value: ofNullable bridges a nullable dict.get into an Option. */
+func displayName(int id): option.Option<string> {
+    dict<int, string> users = {1: "Ada", 2: "Grace"};
+    return option.ofNullable(users.get(id));
+}
+
+/* map over a Result: transform the ok value, leave an err untouched. */
+func mapResult(any r, func transform): any {
+    if (r.isErr()) {
+        return r;
+    }
+    return result.ok(transform(r.unwrap()));
+}
+
+/* match on a Result: one branch for ok, another for err. */
+func matchResult(any r): string {
+    if (r.isOk()) {
+        return "ok: ${r.unwrap()}";
+    }
+    return "err: ${r.unwrapErr()}";
+}
+
+/* map over an Option: transform the some value, leave a none untouched. */
+func mapOption(any o, func transform): any {
+    if (o.isNone()) {
+        return o;
+    }
+    return option.some(transform(o.unwrap()));
+}
+
+/* match on an Option via its some/none predicates. */
+func greet(any o): string {
+    if (o.isSome()) {
+        return "hello, ${o.unwrap()}";
+    }
+    return "hello, stranger";
+}
+
+io.println("== Result ==");
+
+let found = priceOf("pear");
+let missing = priceOf("kiwi");
+
+/* unwrapOr supplies a typed fallback whether the result is ok or err. */
+io.println("pear price: ${found.unwrapOr(0)}");
+io.println("kiwi price (fallback): ${missing.unwrapOr(0)}");
+io.println(matchResult(found));
+io.println(matchResult(missing));
+
+/* map applies a 2x markup only when the lookup succeeded. */
+let marked = mapResult(found, func(int p): int { return p * 2; });
+io.println("pear marked up: ${matchResult(marked)}");
+let markedMissing = mapResult(missing, func(int p): int { return p * 2; });
+io.println("kiwi still err: ${matchResult(markedMissing)}");
+
+io.println("== Option ==");
+
+let known = displayName(1);
+let unknown = displayName(99);
+
+io.println("user 1 present: ${known.isSome()}");
+io.println("user 99 present: ${unknown.isSome()}");
+
+/* unwrapOr reads the present value or supplies a fallback for none. */
+io.println("user 1 name: ${known.unwrapOr("guest")}");
+io.println("user 99 name: ${unknown.unwrapOr("guest")}");
+io.println(greet(known));
+io.println(greet(unknown));
+
+/* map shouts only the present name; a none stays a none. */
+let loud = mapOption(known, func(string s): string { return s.upper(); });
+let quiet = mapOption(unknown, func(string s): string { return s.upper(); });
+io.println("user 1 shouted: ${greet(loud)}");
+io.println("user 99 shouted: ${greet(quiet)}");
+
+/* some/none construct Options directly, without going through ofNullable. */
+let always = option.some(7);
+let never = option.none<int>();
+io.println("always present: ${always.isSome()} value: ${always.unwrap()}");
+io.println("never present: ${never.isSome()} fallback: ${never.unwrapOr(-1)}");

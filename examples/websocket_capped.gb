@@ -9,8 +9,8 @@ import async;
  * handshake.  The session goroutine releases its slot when the
  * handler returns (client disconnects or write fails).
  */
-let id = http.listen(":8080", func(dict<string, any> req): any {
-    if (req["path"] == "/ws") {
+let id = http.listen(":8080", func(Request req): any {
+    if (req.path == "/ws") {
         return websocket.upgrade(func(int conn): void {
             while (true) {
                 let msg = websocket.readText(conn);
@@ -19,7 +19,7 @@ let id = http.listen(":8080", func(dict<string, any> req): any {
             }
         });
     }
-    return {"status": 404, "body": "not found"};
+    return http.response("not found", 404);
 }, {
     "maxConcurrent": 1000,
     "queueSize":     0,

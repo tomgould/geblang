@@ -12,7 +12,7 @@ import io;
 class Repository {
     string name;
     func Repository(string name) { this.name = name; }
-    func describe(): string { return "repo:" + this.name; }
+    func describe(): string { return "repo:${this.name}"; }
 }
 
 class UsersRepository extends Repository {

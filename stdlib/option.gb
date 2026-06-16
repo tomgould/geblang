@@ -3,9 +3,9 @@ module option;
 ## A value that is either present (some = true) or absent (some = false).
 export class Option<T> {
     bool some;
-    T value;
+    ?T value;
 
-    func Option(bool some, T value) {
+    func Option(bool some, ?T value) {
         this.some = some;
         this.value = value;
     }
@@ -37,10 +37,7 @@ export class Option<T> {
     }
 
     ## Returns the value or null.
-    func orNull(): T {
-        if (!this.some) {
-            return null as T;
-        }
+    func orNull(): ?T {
         return this.value;
     }
 }
@@ -52,13 +49,13 @@ export func some<T>(T value): Option<T> {
 
 ## Returns an empty Option.
 export func none<T>(): Option<T> {
-    return Option(false, null);
+    return Option<T>(false, null);
 }
 
 ## Returns some(value) when value is not null, otherwise none().
-export func ofNullable<T>(T value): Option<T> {
+export func ofNullable<T>(?T value): Option<T> {
     if (value == null) {
-        return none();
+        return none<T>();
     }
-    return some(value);
+    return Option<T>(true, value);
 }

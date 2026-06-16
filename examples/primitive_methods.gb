@@ -33,6 +33,16 @@ bool ok = true;
 io.println(ok.not());
 io.println(ok.toString());
 
+/* Numeric-check predicates (1.22): non-throwing "would this convert?" tests. */
+io.println("\"42\".isInt() = ${"42".isInt()}");
+io.println("\"3.5\".isInt() = ${"3.5".isInt()}");
+io.println("\"3.5\".isDecimal() = ${"3.5".isDecimal()}");
+io.println("\"abc\".isNumeric() = ${"abc".isNumeric()}");
+io.println("(3.0f).isInt() = ${(3.0f).isInt()}");
+io.println("(3.5f).isInt() = ${(3.5f).isInt()}");
+io.println("(7.0).isInt() = ${(7.0).isInt()}");
+io.println("(0.1).isInt() = ${(0.1).isInt()}");
+
 class KeywordMethods {
     func bool(): string {
         return "bool method";

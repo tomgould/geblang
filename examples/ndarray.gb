@@ -1,0 +1,57 @@
+/**
+ * @title N-Dimensional Arrays
+ * @summary Build arrays, reshape and slice views, broadcast, reduce, and do linear algebra with the ndarray module.
+ * @category General
+ */
+import io;
+import ndarray as nd;
+
+/* Constructors: nd.array infers dtype, arange/linspace/eye build common shapes. */
+let a = nd.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+io.println("a shape: ${a.shape()}");          # [2, 3]
+io.println("a dtype: ${a.dtype()}");           # float64
+io.println("a sum:   ${a.sum()}");             # 21
+io.println("arange:  ${nd.arange(0, 6).toList()}");
+io.println("linspace:${nd.linspace(0.0, 1.0, 5).toList()}");
+
+/* Reshape is a zero-copy view; the flat range [0,6) becomes a 2x3 grid. */
+let grid = nd.arange(0, 6).reshape([2, 3]);
+io.println("grid:    ${grid.toList()}");
+
+/* Slice a row as a view, then read individual cells with get. */
+let row = a.slice([[1, 2]]);
+io.println("row 1:   ${row.toList()}");
+io.println("a[1,2]:  ${a.get([1, 2])}");
+
+/* Broadcasting: a [2,1] column plus a [1,3] row expands to [2,3]. */
+let col = nd.array([[10.0], [20.0]]);
+let lane = nd.array([[1.0, 2.0, 3.0]]);
+io.println("bcast:   ${col.add(lane).toList()}");
+
+/* Operators map to the elementwise methods; scalars mix on either side. */
+let scaled = 2.0 * a - 1.0;
+io.println("2a-1:    ${scaled.toList()}");
+
+/* Comparisons yield a mask; where selects the matching elements as 1-D. */
+let big = a.where(a.gt(3.0));
+io.println("> 3:     ${big.toList()}");
+
+/* Reductions over the whole array and along one axis. */
+io.println("mean:    ${a.mean()}");
+io.println("max:     ${a.max()}");
+io.println("col sums:${a.sum({"axis": 0}).toList()}");
+io.println("argmax:  ${a.argmax()}");
+
+/* Linear algebra: matrix product, vector dot, and a solved system. */
+let m = nd.array([[2.0, 0.0], [0.0, 3.0]]);
+io.println("m @ I:   ${m.matmul(nd.eye(2)).toList()}");
+
+let u = nd.array([1.0, 2.0, 3.0]);
+let v = nd.array([4.0, 5.0, 6.0]);
+io.println("u . v:   ${u.dot(v)}");
+
+/* solve, inv, and det are module functions taking arrays. */
+let b = nd.array([4.0, 9.0]);
+io.println("solve:   ${nd.solve(m, b).toList()}");
+io.println("det m:   ${nd.det(m)}");
+io.println("inv m:   ${nd.inv(m).toList()}");

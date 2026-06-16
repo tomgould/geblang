@@ -21,7 +21,7 @@ let target = path.join(sys.tmpdir(), "geb_watch_example.txt");
 io.writeText(target, "first");
 
 let handle = watch.start(target, func(dict<string, any> event): void {
-    events = events.push((event["type"] as string) + " " + (event["path"] as string));
+    events.push((event["type"] as string) + " " + (event["path"] as string));
 });
 
 sys.sleep(50);

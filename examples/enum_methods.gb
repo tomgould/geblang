@@ -1,0 +1,70 @@
+/**
+ * @title Enum methods and interfaces
+ * @summary Enum instance methods with match (this), interface implementation, plus values() and fromName() lookup.
+ * @category General
+ */
+import io;
+
+# An interface the enum will satisfy. Instance methods on an enum are dispatched
+# through `match (this)`, where `this` is the receiving variant.
+
+interface Describable {
+    func describe(): string;
+}
+
+enum Priority implements Describable {
+    Low, Medium, High, Urgent;
+
+    func describe(): string {
+        return match (this) {
+            case Priority.Low    => "low";
+            case Priority.Medium => "medium";
+            case Priority.High   => "high";
+            case Priority.Urgent => "urgent";
+        };
+    }
+
+    # A method may call a sibling method on `this`.
+    func banner(): string {
+        return "[" + this.describe() + "]";
+    }
+
+    func isCritical(): bool {
+        return match (this) {
+            case Priority.High   => true;
+            case Priority.Urgent => true;
+            default              => false;
+        };
+    }
+}
+
+# Call instance methods directly on a variant.
+Priority p = Priority.High;
+io.println(p.describe());        # high
+io.println(p.banner());          # [high]
+io.println(p.isCritical());      # true
+io.println(Priority.Low.isCritical()); # false
+
+# A conforming enum value flows into an interface-typed slot, and interface-typed
+# dispatch lands on the enum's own method.
+func report(Describable d): string {
+    return "priority is " + d.describe();
+}
+
+Describable d = Priority.Urgent;
+io.println(report(d));               # priority is urgent
+io.println(report(Priority.Medium)); # priority is medium
+io.println(Priority.Urgent instanceof Describable); # true
+
+# EnumName.values() lists the nullary variants in declaration order.
+io.println("---");
+for (Priority each in Priority.values()) {
+    io.println(each.banner());
+}
+
+# EnumName.fromName(s) resolves a variant by exact (case-sensitive) name and
+# returns null on a miss, so a caller can supply a fallback with ??.
+Priority found = Priority.fromName("Medium") ?? Priority.Low;
+io.println(found.describe());                       # medium
+io.println(Priority.fromName("bogus") == null);     # true
+io.println(Priority.fromName("medium") == null);    # true (case-sensitive)

@@ -12,7 +12,7 @@ interface Greetable {
     int age;
 
     func greet(): string {
-        return "hello, " + this.name + " (" + (this.age as string) + ")";
+        return "hello, ${this.name} (${this.age})";
     }
 
     func describe(): string;
@@ -25,7 +25,7 @@ class User implements Greetable {
     }
 
     func describe(): string {
-        return "user " + this.name;
+        return "user ${this.name}";
     }
 }
 
@@ -36,7 +36,7 @@ class Loud implements Greetable {
     }
 
     func greet(): string {
-        return "HELLO, " + this.name.upper();
+        return "HELLO, ${this.name.upper()}";
     }
 
     func describe(): string {

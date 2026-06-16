@@ -5,6 +5,6 @@ import clib.magic as magic;
 import io;
 
 let path = "go.mod";
-io.println("path: " + path);
-io.println("type: " + magic.detect(path));
-io.println("mime: " + magic.mime(path));
+io.println("path: ${path}");
+io.println("type: ${magic.detect(path)}");
+io.println("mime: ${magic.mime(path)}");

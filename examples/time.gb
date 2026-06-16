@@ -1,6 +1,6 @@
 /**
  * @title Time
- * @summary Monotonic-style elapsed-duration helpers.
+ * @summary Elapsed-duration helpers.
  * @category Standard Library
  */
 import time;
@@ -8,4 +8,4 @@ import io;
 
 let start = time.now();
 time.sleep(50);
-io.println("slept ~" + (time.elapsed(start) as string) + " ms");
+io.println("slept ~${time.elapsed(start)} ms");

@@ -13,15 +13,15 @@ let entries = [
 ];
 
 let zipped = archive.zipWrite(entries);
-io.println("zip bytes: " + ((zipped.length()) as string));
+io.println("zip bytes: ${zipped.length()}");
 
 for (e in archive.zipRead(zipped)) {
-    io.println("zip entry: " + (e["name"] as string));
+    io.println("zip entry: ${e["name"]}");
 }
 
 let tgz = archive.tarGzWrite(entries);
-io.println("tar.gz bytes: " + ((tgz.length()) as string));
+io.println("tar.gz bytes: ${tgz.length()}");
 
 for (e in archive.tarGzRead(tgz)) {
-    io.println("tgz entry: " + (e["name"] as string) + " -> " + bytes.toString(e["data"] as bytes));
+    io.println("tgz entry: ${e["name"]} -> ${bytes.toString(e["data"] as bytes)}");
 }

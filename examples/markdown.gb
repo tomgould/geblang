@@ -61,18 +61,18 @@ io.println(blocks.length());
 for (b in blocks) {
     let t = b["type"];
     if (t == "heading") {
-        io.println("heading level " + (b["level"] as string) + ": " + b["text"]);
+        io.println("heading level ${b["level"]}: ${b["text"]}");
     } else if (t == "table") {
-        io.println("table headers: " + b["headers"][0] + ", " + b["headers"][1]);
-        io.println("first row: " + b["rows"][0][0] + " = " + b["rows"][0][1]);
+        io.println("table headers: ${b["headers"][0]}, ${b["headers"][1]}");
+        io.println("first row: ${b["rows"][0][0]} = ${b["rows"][0][1]}");
     } else if (t == "task_list") {
         for (item in b["items"]) {
             let mark = " ";
             if (item["checked"] == true) { mark = "x"; }
-            io.println("task [" + mark + "] " + item["text"]);
+            io.println("task [${mark}] ${item["text"]}");
         }
     } else if (t == "blockquote") {
-        io.println("blockquote: " + b["text"]);
+        io.println("blockquote: ${b["text"]}");
     } else if (t == "hr") {
         io.println("--- (horizontal rule)");
     }

@@ -1,0 +1,91 @@
+/**
+ * @title Small utility modules
+ * @summary Cron scheduling, dotenv loading, secure random draws, and
+ * deep cloning - four self-contained utility modules in one program.
+ * @category General
+ */
+import io;
+import cron;
+import dotenv;
+import secureRandom;
+import clone;
+import datetime;
+
+/* Render a Unix timestamp as a readable UTC date + time. */
+func stamp(int unix): string {
+    return datetime.formatDate(unix) + " " + datetime.formatTime(unix) + " UTC";
+}
+
+func main() {
+    /* ---- cron: parse a spec and compute upcoming fire times ---- */
+    io.println("== cron ==");
+
+    let spec = "0 9 * * 1-5";   /* 09:00, Monday-Friday */
+    io.println("spec: " + spec + "  valid: " + (cron.isValid(spec) as string));
+
+    let fields = cron.parse(spec);
+    io.println("hours: " + (fields["hour"] as string));
+    io.println("days of week: " + (fields["dayOfWeek"] as string));
+
+    /* Fixed base time so the output is reproducible: 2026-01-01 00:00 UTC (a Thursday). */
+    let base = datetime.make(2026, 1, 1, 0, 0, 0);
+
+    let next = cron.nextAfter(spec, base);
+    io.println("first fire after base: " + stamp(next));
+
+    let upcoming = cron.nextN(spec, base, 3);
+    io.println("next 3 fire times:");
+    for (t in upcoming) {
+        io.println("  " + stamp(t));
+    }
+
+    /* ---- dotenv: load key=value pairs from a temp file ---- */
+    io.println("");
+    io.println("== dotenv ==");
+
+    let envPath = io.tempFile("misc-modules-*.env");
+    io.writeText(envPath, "# demo .env file\nAPP_ENV=staging\nPORT=8080\nGREETING=\"hello world\"\n");
+
+    let vars = dotenv.load(envPath);
+    io.println("APP_ENV: " + vars["APP_ENV"]);
+    io.println("PORT:    " + vars["PORT"]);
+    io.println("GREETING: " + vars["GREETING"]);
+
+    io.remove(envPath);
+
+    /* ---- secureRandom: draw bytes and ints from a session ---- */
+    io.println("");
+    io.println("== secureRandom ==");
+
+    let session = secureRandom.openSession({});
+    let raw = secureRandom.bytes(session, 8);
+    io.println("8 random bytes (hex): " + raw.toHex());
+
+    io.println("three dice rolls:");
+    for (i in [1, 2, 3]) {
+        let roll = secureRandom.uintRange(session, 1, 7);   /* [1, 7) -> 1..6 */
+        io.println("  " + (roll as string));
+    }
+
+    /* ---- clone: deep-copy a nested structure ---- */
+    io.println("");
+    io.println("== clone ==");
+
+    let original = {
+        "name": "config",
+        "tags": ["a", "b"],
+        "limits": {"max": 10},
+    };
+
+    let copy = clone.deep(original);
+    /* Mutate only the copy's nested containers. */
+    copy["tags"].push("c");
+    copy["limits"]["max"] = 99;
+
+    io.println("original tags:  " + (original["tags"] as string));
+    io.println("copy tags:      " + (copy["tags"] as string));
+    io.println("original limits: " + (original["limits"] as string));
+    io.println("copy limits:     " + (copy["limits"] as string));
+}
+
+main();

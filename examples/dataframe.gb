@@ -1,0 +1,114 @@
+/**
+ * @title DataFrame
+ * @summary Load columns, filter by expression and row predicate, group, pivot, and render a frame.
+ * @category General
+ */
+import io;
+import dataframe as df;
+
+/* Load named columns straight into a frame. Each list becomes a typed,
+   null-masked column; dtypes are inferred per column. */
+let sales = df.fromDict({
+    "region":  ["North", "North", "South", "South", "West", "West", "North"],
+    "quarter": ["Q1", "Q2", "Q1", "Q2", "Q1", "Q2", "Q1"],
+    "rep":     ["Ana", "Bo", "Cy", "Di", "Eli", "Fei", "Ana"],
+    "amount":  [1200, 900, 1500, 1100, 800, 1750, 600],
+    "units":   [12, 5, 15, 22, 8, 10, 6],
+});
+
+io.println("Loaded frame: ${sales}");
+io.println("shape (rows, cols): ${sales.shape()}");
+io.println("columns: ${sales.columns()}");
+
+/* Columnwise expression filter: fast, no per-row callback. */
+io.println("");
+io.println("== Big deals (amount >= 1000) ==");
+let bigDeals = sales
+    .filter(df.col("amount").gte(1000))
+    .sort("amount", {"desc": true});
+renderRows(bigDeals);
+
+/* 1.22 filterFn row predicate: the escape hatch for conditions that
+   cannot be expressed columnwise. Each row arrives as a dict. */
+io.println("");
+io.println("== High value per unit (amount / units > 120) ==");
+let efficient = sales.filterFn(func(any row): bool {
+    let amount = row["amount"] as float;
+    let units = row["units"] as float;
+    return units > 0.0 && (amount / units) > 120.0;
+});
+renderRows(efficient);
+
+/* Group by a key and aggregate several columns at once. Aggregated
+   columns are named <col>_<agg>. */
+io.println("");
+io.println("== Totals by region ==");
+let byRegion = sales.groupBy("region").agg({
+    "amount": ["sum", "mean"],
+    "units":  "sum",
+    "rep":    "count",
+});
+renderRows(byRegion.sort("amount_sum", {"desc": true}));
+
+/* Pivot: spread one column's values into new columns, aggregating per
+   cell. Here: total amount, region by quarter. */
+io.println("");
+io.println("== Amount pivot: region x quarter ==");
+let pivoted = sales.pivot({
+    "index": "region",
+    "columns": "quarter",
+    "values": "amount",
+    "agg": "sum",
+});
+renderRows(pivoted);
+
+/* Render a frame as an aligned text table from its row dicts. */
+func renderRows(any frame) {
+    let cols = frame.columns();
+    let rows = frame.toDicts();
+
+    let widths = {};
+    for (c in cols) {
+        widths[c] = c.length();
+    }
+    for (r in rows) {
+        for (c in cols) {
+            let cell = cellText(r[c]);
+            if (cell.length() > widths[c]) {
+                widths[c] = cell.length();
+            }
+        }
+    }
+
+    io.println(headerLine(cols, widths));
+    for (r in rows) {
+        let parts = [];
+        for (c in cols) {
+            parts.push(pad(cellText(r[c]), widths[c]));
+        }
+        io.println(parts.join("  "));
+    }
+}
+
+func headerLine(any cols, any widths): string {
+    let parts = [];
+    for (c in cols) {
+        parts.push(pad(c, widths[c]));
+    }
+    return parts.join("  ");
+}
+
+func cellText(any value): string {
+    if (value == null) {
+        return "-";
+    }
+    return "${value}";
+}
+
+func pad(string text, int width): string {
+    let out = text;
+    while (out.length() < width) {
+        out = out + " ";
+    }
+    return out;
+}

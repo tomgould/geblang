@@ -13,7 +13,7 @@ export class ExpenseRepository {
     }
 
     func add(any expense): void {
-        this.items = this.items.push(expense);
+        this.items.push(expense);
     }
 
     func all(): list<any> {

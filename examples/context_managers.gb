@@ -13,17 +13,17 @@ class Transaction {
     func Transaction(string label) { this.label = label; }
 
     func __enter(): Transaction {
-        io.println("begin " + this.label);
+        io.println("begin ${this.label}");
         return this;
     }
 
     func __exit(): void {
-        io.println("commit " + this.label);
+        io.println("commit ${this.label}");
     }
 }
 
 with (tx = Transaction("write")) {
-    io.println("inside " + tx.label);
+    io.println("inside ${tx.label}");
 }
 /* Output:
  *   begin write
@@ -37,15 +37,15 @@ class Span {
     string name;
     func Span(string n) { this.name = n; }
     func __enter(): Span { return this; }
-    func __exit(): void { io.println("end " + this.name); }
+    func __exit(): void { io.println("end ${this.name}"); }
 }
 
 for (i in [1, 2, 3]) {
-    with (s = Span("iter-" + (i as string))) {
+    with (s = Span("iter-${i}")) {
         if (i == 2) {
             break;
         }
-        io.println("body " + s.name);
+        io.println("body ${s.name}");
     }
 }
 /* Output:

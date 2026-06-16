@@ -9,20 +9,16 @@ import io;
 # A tiny local server that sets a session cookie on /login and echoes it
 # back on /me. We use it to demonstrate the cookieJar option without
 # depending on any external service.
-func handle(dict<string, any> req): dict<string, any> {
-    if (req["path"] == "/login") {
-        return {
-            "status":  200,
-            "headers": {"Set-Cookie": "sid=abc123; Path=/"},
-            "body":    "logged in"
-        };
+func handle(Request req): Response {
+    if (req.path == "/login") {
+        return http.response("logged in")
+            .withHeader("Set-Cookie", "sid=abc123; Path=/");
     }
-    let h = req["headers"];
-    let c = h.get("Cookie");
+    let c = req.header("Cookie");
     if (c == null) {
-        return {"status": 401, "body": "no session"};
+        return http.response("no session", 401);
     }
-    return {"status": 200, "body": c as string};
+    return http.response(c as string);
 }
 
 let server = http.listen("127.0.0.1:0", handle);
@@ -31,13 +27,13 @@ let base = "http://" + http.serverAddr(server);
 # 1. Default client - no shared state, no cookies.
 let plain = http.newClient();
 plain.get(base + "/login");
-io.println("plain   /me -> " + plain.get(base + "/me")["body"]);
+io.println("plain   /me -> " + plain.get(base + "/me").text());
 # -> "no session"
 
 # 2. cookieJar=true attaches a fresh jar for this client only.
 let auto = http.newClient({"cookieJar": true});
 auto.get(base + "/login");
-io.println("auto    /me -> " + auto.get(base + "/me")["body"]);
+io.println("auto    /me -> " + auto.get(base + "/me").text());
 
 # 3. Explicit jar lets you inspect and persist cookies across runs.
 let jar = http.newCookieJar();
@@ -49,7 +45,7 @@ let session = http.newClient({
     "maxIdleConns": 16
 });
 session.get("/login");
-io.println("session /me -> " + session.get("/me")["body"]);
+io.println("session /me -> " + session.get("/me").text());
 
 for (cookie in jar.cookies(base)) {
     io.println("  cookie " + cookie["name"] + "=" + cookie["value"]
@@ -60,7 +56,7 @@ for (cookie in jar.cookies(base)) {
 #    Use "proxy": "http://host:port" to hard-code a proxy URL instead.
 let viaProxy = http.newClient({"proxyFromEnv": true});
 io.println("proxyFromEnv /login -> "
-           + (viaProxy.get(base + "/login")["status"] as string));
+           + (viaProxy.get(base + "/login").status() as string));
 
 http.shutdown(server, 1000);
 http.close(server);

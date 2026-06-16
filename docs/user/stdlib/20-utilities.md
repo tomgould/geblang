@@ -258,7 +258,7 @@ absence explicit in the type rather than relying on `null` checks.
 | `isNone()` | `bool` | `true` when no value is present |
 | `unwrap()` | `T` | Return the value; throws `ValueError` if absent |
 | `unwrapOr(fallback)` | `T` | Return the value, or `fallback` if absent |
-| `orNull()` | `T` | Return the value or `null` |
+| `orNull()` | `?T` | Return the value or `null` |
 
 ### Example
 

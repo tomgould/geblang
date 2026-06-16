@@ -9,7 +9,7 @@ int x = 1;
 const label = "count";
 
 while (x < 4) {
-    io.println(label + ": tick");
+    io.println("${label}: tick");
     x = x + 1;
 }
 

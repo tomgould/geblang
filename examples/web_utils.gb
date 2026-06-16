@@ -1,0 +1,64 @@
+/**
+ * @title Web Utilities
+ * @summary UUID generation, URL parsing/rebuilding, and Unicode normalisation.
+ * @category General
+ */
+import io;
+import uuid;
+import url;
+import unicode;
+
+/* --- UUIDs --- */
+/* v4 and v7 are random, so validate their structure instead of printing the
+   random value (keeps output deterministic). */
+let v4 = uuid.v4();
+let v7 = uuid.v7();
+io.println("v4 valid:    ${uuid.isValid(v4)}");
+io.println("v4 length:   ${v4.length()}");
+io.println("v4 version:  ${v4.get(14)}");
+io.println("v7 valid:    ${uuid.isValid(v7)}");
+io.println("v7 version:  ${v7.get(14)}");
+
+/* v5 is deterministic: same namespace + name always yields the same UUID. */
+let id5 = uuid.v5(uuid.namespaceDNS(), "example.com");
+io.println("v5 stable:   ${id5}");
+io.println("nil uuid:    ${uuid.nil()}");
+
+/* --- URL parse and rebuild --- */
+let u = url.URL("https://example.com:8443/search?q=hello&lang=en#results");
+io.println("scheme:      ${u.scheme()}");
+io.println("host:        ${u.host()}");
+io.println("port:        ${u.port()}");
+io.println("path:        ${u.path()}");
+io.println("fragment:    ${u.fragment()}");
+
+let q = u.query();
+io.println("query q:     ${q["q"]}");
+io.println("query lang:  ${q["lang"]}");
+
+/* Rebuild with new query params. Encode() sorts keys, so the output is
+   deterministic. */
+let rebuilt = u.withQuery({"q": "geblang", "page": "2"});
+io.println("rebuilt:     ${rebuilt.toString()}");
+
+/* url.parse returns a plain dict; url.stringify reassembles one. */
+let assembled = url.stringify({
+    "scheme": "https",
+    "host": "api.example.com",
+    "path": "/v1/users",
+    "query": {"limit": "10"}
+});
+io.println("assembled:   ${assembled}");
+io.println("joined:      ${url.joinPath("https://api.example.com", "v1", "users")}");
+
+/* --- Unicode normalisation --- */
+/* nfd is base 'e' plus a combining acute accent: two code points that render
+   as one. NFC folds them into the single precomposed character. */
+let nfd = "é";
+let nfc = unicode.normalize(nfd, "NFC");
+io.println("nfd points:  ${nfd.length()}");
+io.println("nfc points:  ${nfc.length()}");
+io.println("nfc equals:  ${nfc == "é"}");
+io.println("nfc codepts: ${nfc.codePoints()}");
+io.println("ligature:    ${unicode.normalize("ﬁle", "NFKC")}");
+io.println("already nfc: ${unicode.isNormalized(nfc, "NFC")}");

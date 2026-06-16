@@ -17,8 +17,8 @@ func loadUser(): void {
 try {
     loadUser();
 } catch (RuntimeError e) {
-    let trace = e.stackTrace();
-    let first = trace.first();
+    let frames = e.stackTrace();
+    let first = frames.first();
 
     io.println(e.class + ": " + e.message);
     io.println(errors.hasStackTrace(e) as string);

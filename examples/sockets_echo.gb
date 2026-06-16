@@ -16,7 +16,7 @@ list<string> received = [];
 
 let server = sockets.serve("127.0.0.1", 0, func(sockets.Socket conn): void {
     for (line in conn) {
-        received = received.push(line as string);
+        received.push(line as string);
         conn.writeln("echo: " + (line as string));
     }
     conn.close();

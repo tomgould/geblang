@@ -8,7 +8,7 @@ import io;
 import sys;
 import web.sse as sse;
 
-func events(dict<string, any> request): dict<string, any> {
+func events(Request req): dict<string, any> {
     return sse.streaming(func(sse.EventStream stream): void {
         stream.write(sse.comment("connected"));
         stream.flush();
@@ -21,15 +21,12 @@ func events(dict<string, any> request): dict<string, any> {
     });
 }
 
-func app(dict<string, any> request): dict<string, any> {
-    if (request["path"] == "/events") {
-        return events(request);
+func app(Request req): any {
+    if (req.path == "/events") {
+        return events(req);
     }
-    return {
-        "status": 200,
-        "headers": {"Content-Type": "text/html; charset=utf-8"},
-        "body": "<!doctype html><body><pre id=\"log\"></pre><script>const log=document.getElementById('log');const es=new EventSource('/events');es.onmessage=e=>log.textContent+=e.data+'\\n';es.addEventListener('tick',e=>log.textContent+=e.lastEventId+': '+e.data+'\\n');</script></body>"
-    };
+    return http.response("<!doctype html><body><pre id=\"log\"></pre><script>const log=document.getElementById('log');const es=new EventSource('/events');es.onmessage=e=>log.textContent+=e.data+'\\n';es.addEventListener('tick',e=>log.textContent+=e.lastEventId+': '+e.data+'\\n');</script></body>")
+        .withHeader("Content-Type", "text/html; charset=utf-8");
 }
 
 io.println("SSE server listening on http://127.0.0.1:8080");

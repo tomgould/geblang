@@ -3,10 +3,10 @@ module result;
 ## A value that is either a success (ok = true, value set) or a failure (ok = false, error set).
 export class Result<T, E> {
     bool ok;
-    T value;
-    E error;
+    ?T value;
+    ?E error;
 
-    func Result(bool ok, T value, E error) {
+    func Result(bool ok, ?T value, ?E error) {
         this.ok = ok;
         this.value = value;
         this.error = error;
@@ -49,10 +49,10 @@ export class Result<T, E> {
 
 ## Returns a success Result wrapping value.
 export func ok<T, E>(T value): Result<T, E> {
-    return Result(true, value, null);
+    return Result<T, E>(true, value, null);
 }
 
 ## Returns a failure Result wrapping error.
 export func err<T, E>(E error): Result<T, E> {
-    return Result(false, null, error);
+    return Result<T, E>(false, null, error);
 }

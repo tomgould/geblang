@@ -20,6 +20,6 @@ let h = reflect.location(handler);
 let s = reflect.location(Service);
 let i = reflect.location(Service(1));
 
-io.println("handler @ line " + (h["line"] as string) + ", column " + (h["column"] as string));
-io.println("Service @ line " + (s["line"] as string) + ", column " + (s["column"] as string));
-io.println("instance fallback @ line " + (i["line"] as string));
+io.println("handler @ line ${h["line"]}, column ${h["column"]}");
+io.println("Service @ line ${s["line"]}, column ${s["column"]}");
+io.println("instance fallback @ line ${i["line"]}");

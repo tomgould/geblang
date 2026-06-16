@@ -5,7 +5,7 @@
  */
 import io;
 
-# Simple enum — no associated data
+# Simple enum - no associated data
 
 enum Direction { North, South, East, West }
 
@@ -15,7 +15,7 @@ io.println(heading == Direction.North);     # true
 io.println(heading == Direction.South);     # false
 io.println(heading instanceof Direction);   # true
 
-# Tagged enum — variants carry associated values
+# Tagged enum - variants carry associated values
 
 enum Result { Ok(string), Err(string) }
 
@@ -34,20 +34,27 @@ io.println(ok instanceof Result);        # true
 io.println(ok instanceof Result.Ok);     # true
 io.println(ok instanceof Result.Err);    # false
 
-# match on simple enum variants
+# match on simple enum variants - handle every variant so `geblang check`
+# confirms exhaustiveness (no default needed)
 
 func describe(Direction d): string {
     return match (d) {
         case Direction.North => "heading north";
         case Direction.South => "heading south";
         case Direction.East  => "heading east";
-        default              => "heading west";
+        case Direction.West  => "heading west";
     };
 }
 
 io.println(describe(Direction.North));  # heading north
 io.println(describe(Direction.East));   # heading east
 io.println(describe(Direction.West));   # heading west
+
+# static surface on the enum type itself
+
+io.println(Direction.values());                       # [Direction.North, Direction.South, Direction.East, Direction.West]
+io.println(Direction.fromName("South") == Direction.South);  # true
+io.println(Direction.fromName("Nope") == null);              # true
 
 # match on tagged enum variants with payload destructuring
 

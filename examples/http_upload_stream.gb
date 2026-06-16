@@ -11,8 +11,8 @@ import streams;
 import sys;
 
 # Local echo server for the demo.
-let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
-    return {"status": 200, "body": "received " + (req["body"].length() as string) + " bytes"};
+let server = http.listen("127.0.0.1:0", func(Request req): Response {
+    return http.response("received " + (req.text().length() as string) + " bytes");
 });
 let port = (http.serverAddr(server).split(":")[1] as string) as int;
 sys.sleep(30 as int);
@@ -24,7 +24,7 @@ let r = http.post("http://127.0.0.1:" + (port as string) + "/upload", body);
 body.close();
 io.remove("/tmp/upload.bin");
 
-io.println("status: " + (r["status"] as string));
-io.println(r["body"]);
+io.println("status: " + (r.status() as string));
+io.println(r.text());
 
 http.shutdown(server);

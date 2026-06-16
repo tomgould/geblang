@@ -1,0 +1,68 @@
+/**
+ * @title Binary and Structured Data Formats
+ * @summary Round-trip a value through msgpack, compress/decompress bytes
+ * with gzip, and parse plus emit XML and CSV. All offline, native modules.
+ * @category General
+ */
+import io;
+import bytes;
+import msgpack;
+import compress;
+import xml;
+import csv;
+
+/* MessagePack: encode a value to compact binary, then decode it back. */
+io.println("== MessagePack ==");
+let record = {"items": [1, 2, 3], "name": "widget", "ok": true};
+let packed = msgpack.encode(record);
+io.println("packed bytes: " + packed.length().toString());
+io.println("hex:          " + bytes.toHex(packed));
+io.println("valid:        " + msgpack.validate(packed).toString());
+
+let unpacked = msgpack.decode(packed);
+io.println("round-trip:   " + (unpacked == record).toString());
+io.println("name field:   " + (unpacked["name"] as string));
+
+/* Compression: gzip a byte payload and gunzip it back to the original. */
+io.println("");
+io.println("== Compression ==");
+let payload = bytes.fromString("payload payload payload payload payload payload");
+let zipped = compress.gzip(payload);
+io.println("original size:   " + payload.length().toString());
+io.println("compressed size: " + zipped.length().toString());
+
+let restored = compress.gunzip(zipped);
+io.println("restored text:   " + bytes.toString(restored));
+io.println("round-trip:      " + (bytes.toString(restored) == "payload payload payload payload payload payload").toString());
+
+/* XML: emit an element tree to text, then validate the emitted document. */
+io.println("");
+io.println("== XML ==");
+let to = {"name": "to", "attributes": {}, "children": [], "text": "Tove"};
+let from = {"name": "from", "attributes": {}, "children": [], "text": "Jani"};
+let note = {"name": "note", "attributes": {"id": "1"}, "children": [to, from], "text": ""};
+
+let xmlText = xml.stringify(note);
+io.println(xmlText);
+io.println("valid:   " + xml.validate(xmlText).toString());
+io.println("invalid: " + xml.validate("<a><b></a>").toString());
+
+/* CSV: serialise rows to text, then parse the text back to rows and dicts. */
+io.println("");
+io.println("== CSV ==");
+let table = [
+    ["name", "qty", "note"],
+    ["widget", "12", "small, round"],
+    ["gadget", "3", "line one\nline two"]
+];
+let csvText = csv.stringify(table);
+io.print(csvText);
+io.println("---");
+
+let rows = csv.parse(csvText);
+io.println("rows:     " + rows.length().toString());
+io.println("cell 1,0: " + rows[1][0]);
+
+let dicts = csv.parseDict(csvText);
+io.println("first qty:  " + dicts[0]["qty"]);
+io.println("first note: " + dicts[0]["note"]);

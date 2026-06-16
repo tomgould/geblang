@@ -1,0 +1,65 @@
+/**
+ * @title Match over Enums
+ * @summary Exhaustive match across every enum variant (no default) plus
+ * payload destructuring on tagged variants.
+ * @category General
+ */
+import io;
+
+# A simple enum: variants carry no associated data.
+
+enum Direction { North, South, East, West }
+
+# Handling every variant means no `default` case is needed. Drop one of the
+# four cases below and `geblang check` reports:
+#   warning[match-nonexhaustive]: match on enum 'Direction' is not exhaustive
+# (advisory only - the program still runs and throws MatchError if an
+#  unhandled value ever reaches the match).
+
+func describe(Direction d): string {
+    return match (d) {
+        case Direction.North => "heading north";
+        case Direction.South => "heading south";
+        case Direction.East  => "heading east";
+        case Direction.West  => "heading west";
+    };
+}
+
+for (Direction d in Direction.values()) {
+    io.println("${d}: ${describe(d)}");
+}
+
+# A tagged enum: variants carry typed payloads, destructured in `case`.
+
+enum Shape {
+    Circle(decimal),
+    Rect(decimal, decimal),
+    Point
+}
+
+func area(Shape s): decimal {
+    return match (s) {
+        case Shape.Circle(decimal radius)   => 3.14159 * radius * radius;
+        case Shape.Rect(decimal w, decimal h) => w * h;
+        case Shape.Point                     => 0.0;
+    };
+}
+
+let shapes = [Shape.Circle(5.0), Shape.Rect(3.0, 4.0), Shape.Point];
+for (Shape s in shapes) {
+    io.println("${s} => area ${area(s)}");
+}
+
+# Match can also return a description by both variant and bound payload.
+
+func label(Shape s): string {
+    return match (s) {
+        case Shape.Circle(decimal r)        => "circle r=${r}";
+        case Shape.Rect(decimal w, decimal h) => "rect ${w}x${h}";
+        case Shape.Point                     => "a single point";
+    };
+}
+
+for (Shape s in shapes) {
+    io.println(label(s));
+}

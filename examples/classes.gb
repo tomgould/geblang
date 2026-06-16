@@ -19,7 +19,7 @@ class User {
     }
 
     func label(): string {
-        return this.name + ":" + (this.visits as string);
+        return "${this.name}:${this.visits}";
     }
 }
 

@@ -21,7 +21,7 @@ let tunnel = c.forwardLocal(5432, "internal-db.private:5432");
 io.println("tunnel bound: " + tunnel.addr());
 
 # ... use 127.0.0.1:5432 from this process ...
-sys.sleep(5000 as int);
+sys.sleep(5000);
 
 tunnel.close();
 c.close();

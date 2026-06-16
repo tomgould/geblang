@@ -1,0 +1,46 @@
+/**
+ * @title Store key-value persistence
+ * @summary Open a Store and set/get/has/delete/keys, then iterate entries.
+ * @category General
+ */
+
+import io;
+import store;
+
+/* The Store is an in-process, thread-safe key-value map. It runs
+   entirely offline: no server, file, or network is involved. */
+let kv = store.Store();
+
+/* set: store typed values under string keys. */
+kv.set("name", "Ada");
+kv.set("age", 36);
+kv.set("active", true);
+kv.set("tags", ["math", "engine"]);
+
+/* get: read a value back (null when absent). */
+io.println("name  = ${kv.get("name")}");
+io.println("age   = ${kv.get("age")}");
+io.println("tags  = ${kv.get("tags")}");
+io.println("email = ${kv.get("email")}");
+
+/* has: test for key presence. */
+io.println("has name?  ${kv.has("name")}");
+io.println("has email? ${kv.has("email")}");
+
+/* len: number of entries. */
+io.println("entries = ${kv.len()}");
+
+/* keys: deterministic order; iterate entries via keys + get. */
+io.println("--- iterate entries ---");
+for (key in kv.keys()) {
+    io.println("${key} -> ${kv.get(key)}");
+}
+
+/* delete: remove a key; returns whether it was present. */
+io.println("delete active -> ${kv.delete("active")}");
+io.println("delete missing -> ${kv.delete("missing")}");
+io.println("has active? ${kv.has("active")}");
+
+/* keys after the delete. */
+io.println("keys now = ${kv.keys()}");
+io.println("entries now = ${kv.len()}");

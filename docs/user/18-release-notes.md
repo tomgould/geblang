@@ -36,6 +36,10 @@
 
 ### Fixes
 
+- `option` and `result`: the absent/error path no longer binds the generic type
+  to null. `none()`, `err()`, and `ofNullable(null)` now keep their declared type,
+  so a typed `unwrapOr` fallback works (`divide(5, 0).unwrapOr(-1)` returns `-1`
+  instead of throwing), `orNull()` returns `?T`, and the documented examples run.
 - A private in-memory SQLite database (`:memory:`) now pins its connection pool
   to a single connection. Each `:memory:` connection is a separate database, so
   concurrent access previously could open a second, empty one (`no such table`);

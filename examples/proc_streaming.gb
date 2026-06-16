@@ -11,7 +11,7 @@ import proc;
 # Capture stdout from a one-shot command.
 let p = proc.spawn("echo", ["hello from spawn"]);
 io.println(p.stdout.readAll());
-io.println("exit " + (p.wait() as string));
+io.println("exit ${p.wait()}");
 # hello from spawn
 #
 # exit 0
@@ -29,7 +29,7 @@ g.wait();
 # Stream stdout line by line.
 let l = proc.spawn("sh", ["-c", "for i in 1 2 3; do echo line $i; done"]);
 for (line in l.stdout) {
-    io.println("got: " + line);
+    io.println("got: ${line}");
 }
 l.wait();
 # got: line 1

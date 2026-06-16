@@ -1,0 +1,78 @@
+/**
+ * @title Numeric Checks
+ * @summary Test a value before converting: string isInt/isDecimal/isNumeric, float/decimal isInt, and zrange vs range.
+ * @category General
+ */
+import io;
+import math;
+
+/* String predicates report whether a cast would succeed, using the
+   exact same parse as toInt/toDecimal. They never throw, so you can
+   validate input before converting instead of catching a failed cast. */
+func parseInt(string raw): int {
+    if (raw.isInt()) {
+        return raw.toInt();
+    }
+    io.println("  not an int: ${raw}");
+    return 0;
+}
+
+func parseDecimal(string raw): decimal {
+    if (raw.isDecimal()) {
+        return raw.toDecimal();
+    }
+    io.println("  not a decimal: ${raw}");
+    return 0.0;
+}
+
+io.println("== validate before converting ==");
+let intInputs = ["42", "-7", "0xFF", "1_000", "3.5", "abc", ""];
+for (raw in intInputs) {
+    if (raw.isInt()) {
+        io.println("${raw} -> ${parseInt(raw)}");
+    } else {
+        io.println("${raw} is not a valid int");
+    }
+}
+
+io.println("");
+io.println("== isDecimal / isNumeric ==");
+let decInputs = ["3.5", "-0.25", "42", "abc", "1/2"];
+for (raw in decInputs) {
+    let kind = "neither";
+    if (raw.isDecimal()) {
+        kind = "decimal -> ${parseDecimal(raw)}";
+    } else if (raw.isNumeric()) {
+        kind = "int -> ${parseInt(raw)}";
+    }
+    io.println("${raw}: isNumeric=${raw.isNumeric()} (${kind})");
+}
+
+/* float.isInt() and decimal.isInt() report whether the value is a whole
+   number. float.isInt() is false for NaN and infinities. */
+io.println("");
+io.println("== whole-number checks ==");
+let floats = [3.0f, -8.0f, 3.5f, math.nan(), math.inf()];
+for (f in floats) {
+    io.println("float ${f}: isInt=${f.isInt()}");
+}
+
+let decimals = [7.0, -4.0, 7.5, 0.1];
+for (d in decimals) {
+    io.println("decimal ${d}: isInt=${d.isInt()}");
+}
+
+/* range is inclusive of its end; zrange is the exclusive, Python-style
+   counterpart. zrange(0, n) stops before n, and zrange(n) ranges 0..n-1. */
+io.println("");
+io.println("== range (inclusive) vs zrange (exclusive) ==");
+io.println("range(0, 5)  = ${range(0, 5)}");
+io.println("zrange(0, 5) = ${zrange(0, 5)}");
+io.println("zrange(5)    = ${zrange(5)}");
+io.println("zrange(2, 10, 2) = ${zrange(2, 10, 2)}");
+
+let total = 0;
+for (i in zrange(intInputs.length())) {
+    total += i;
+}
+io.println("sum of indices 0..${intInputs.length() - 1} = ${total}");

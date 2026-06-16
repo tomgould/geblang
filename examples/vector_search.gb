@@ -1,0 +1,78 @@
+/**
+ * @title Vector Search
+ * @summary Score vectors with vecmath, then build an in-memory HNSW index and query k-nearest neighbors.
+ * @category General
+ */
+import io;
+import hnsw;
+import vecmath;
+
+/* A tiny corpus of 4-dimensional embeddings. In a real program these come
+   from an embedding model; here they are hand-written so the output is
+   deterministic and runs entirely offline. */
+let docs = {
+    "fruit:apple":  [0.91, 0.10, 0.05, 0.02],
+    "fruit:banana": [0.88, 0.18, 0.04, 0.01],
+    "tech:laptop":  [0.04, 0.05, 0.90, 0.12],
+    "tech:phone":   [0.06, 0.03, 0.85, 0.20],
+    "animal:cat":   [0.05, 0.90, 0.10, 0.07],
+    "animal:dog":   [0.08, 0.86, 0.14, 0.05],
+};
+
+let query = [0.90, 0.12, 0.06, 0.03];   /* closest to the fruit cluster */
+
+/* --- Part 1: direct similarity with vecmath --- */
+io.println("== Pairwise similarity (vecmath) ==");
+io.println("cosine(apple, banana) = ${vecmath.score("cosine", docs["fruit:apple"], docs["fruit:banana"])}");
+io.println("cosine(apple, laptop) = ${vecmath.score("cosine", docs["fruit:apple"], docs["tech:laptop"])}");
+io.println("dot(query, apple)     = ${vecmath.score("dot", query, docs["fruit:apple"])}");
+
+/* vecmath.topK ranks a flat list of vectors against the query and returns
+   {index, score} dicts. Keep the ids in a parallel list to label the rows. */
+io.println("");
+io.println("== Brute-force top-3 (vecmath.topK) ==");
+let ids = [];
+let vectors = [];
+for (id in docs.keys()) {
+    ids = ids.push(id);
+    vectors = vectors.push(docs[id]);
+}
+let ranked = vecmath.topK(vectors, query, 3, "cosine");
+for (hit in ranked) {
+    let id = ids[hit["index"] as int];
+    io.println("  ${id}  score=${hit["score"]}");
+}
+
+/* --- Part 2: approximate nearest neighbors with an HNSW index --- */
+/* hnsw.new(metric, m, efSearch): m is graph degree, efSearch is search
+   breadth. Both tune recall vs speed; the defaults of the store wrapper are
+   m=16, efSearch=20. */
+io.println("");
+io.println("== HNSW index ==");
+let index = hnsw.new("cosine", 16, 20);
+for (id in docs.keys()) {
+    hnsw.add(index, id, docs[id]);
+}
+io.println("indexed ${hnsw.count(index)} vectors");
+
+/* hnsw.search returns approximate top-k as {id, score, vector} dicts. The
+   ranking is approximate, so sort the returned hits by score for a stable,
+   readable ordering. */
+io.println("");
+io.println("== Query 3-nearest neighbors (hnsw.search) ==");
+let neighbors = hnsw.search(index, query, 3);
+let byScore = neighbors.sortBy(func(any n): float {
+    return n["score"] as float;
+}, true);   /* true = descending */
+for (n in byScore) {
+    io.println("  ${n["id"]}  score=${n["score"]}");
+}
+
+/* Lookup and removal by id, all in memory. get returns the stored vector or
+   null; count tracks the live entries. */
+io.println("");
+io.println("== Mutate the index ==");
+io.println("get fruit:apple -> ${hnsw.get(index, "fruit:apple")}");
+hnsw.delete(index, "tech:laptop");
+io.println("deleted tech:laptop, get now returns ${hnsw.get(index, "tech:laptop")}");
+io.println("count now ${hnsw.count(index)}");

@@ -7,7 +7,6 @@
  */
 import io;
 import ssh;
-import streams;
 
 let c = ssh.connect("alice@server.example.com", {
     "agent": true,

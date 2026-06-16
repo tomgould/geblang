@@ -10,7 +10,7 @@ import web.websocket as ws;
 
 let app = router.newRouter();
 
-router.get(app, "/ws", func(dict<string, any> request): dict<string, any> {
+router.get(app, "/ws", func(Request req): dict<string, any> {
     return ws.upgrade(func(ws.Connection conn): void {
         let message = conn.readJson();
         conn.sendJson({"echo": message["text"]});

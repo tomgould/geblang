@@ -1,0 +1,100 @@
+/**
+ * @title Data Structures
+ * @summary Reach-for collections beyond list/dict/set: a Deque for
+ * push/pop at both ends, a PriorityQueue drained in priority order,
+ * an LruCache with capacity eviction, and a lazy seq.Stream pipeline.
+ * @category General
+ */
+import io;
+import deque;
+import priorityq;
+import lrucache;
+import seq;
+
+/* A Deque is a double-ended queue: amortised O(1) push and pop at
+ * either end. Handy as a sliding window or a work queue. */
+func demoDeque(): void {
+    io.println("== Deque ==");
+    let d = deque.Deque<int>();
+    d.pushBack(1);
+    d.pushBack(2);
+    d.pushFront(0);
+    io.println("contents front-to-back: ${d.toList()}");
+    io.println("popFront -> ${d.popFront()}");
+    io.println("popBack  -> ${d.popBack()}");
+    io.println("remaining: ${d.toList()} (length ${d.length()})");
+}
+
+/* A PriorityQueue is a binary heap. With a comparator it can order
+ * by any key; here jobs drain lowest-priority-number first. */
+class Job {
+    string name;
+    int priority;
+    func Job(string name, int priority) {
+        this.name = name;
+        this.priority = priority;
+    }
+}
+
+func demoPriorityQueue(): void {
+    io.println("");
+    io.println("== PriorityQueue ==");
+    let q = priorityq.PriorityQueue<Job>(func(Job a, Job b): int {
+        return a.priority - b.priority;
+    });
+    q.push(Job("ship-release", 3));
+    q.push(Job("fix-outage", 1));
+    q.push(Job("answer-email", 5));
+    q.push(Job("review-pr", 2));
+    io.println("draining in priority order:");
+    for (job in q.drain()) {
+        io.println("  [${job.priority}] ${job.name}");
+    }
+}
+
+/* An LruCache evicts the least-recently-used entry when it hits
+ * capacity. get() bumps a key to most-recent; here capacity 2 means
+ * inserting a third key drops the stalest one. */
+func demoLruCache(): void {
+    io.println("");
+    io.println("== LruCache ==");
+    let c = lrucache.LruCache<string, int>(2);
+    c.put("a", 1);
+    c.put("b", 2);
+    io.println("get('a') -> ${c.get("a")}");   /* touch 'a' so 'b' is now stalest */
+    c.put("c", 3);                              /* at capacity: evicts 'b' */
+    io.println("has('a'): ${c.has("a")}");
+    io.println("has('b'): ${c.has("b")} (evicted)");
+    io.println("has('c'): ${c.has("c")}");
+    io.println("keys MRU-to-LRU: ${c.keys()}");
+    io.println("stats: ${c.stats()}");
+}
+
+/* A seq.Stream is a lazy single-use pipeline: intermediate ops build
+ * a generator chain and run nothing until a terminal op pulls values
+ * through once, so no intermediate lists are materialised. take()
+ * stops pulling early, so the source range is never fully walked. */
+func demoStream(): void {
+    io.println("");
+    io.println("== seq.Stream ==");
+    let sumOfEvenSquares = seq.stream([1, 2, 3, 4, 5, 6])
+        .filter(func(any n): bool { return (n as int) % 2 == 0; })
+        .map(func(any n): any { return (n as int) * (n as int); })
+        .sum();
+    io.println("sum of even squares: ${sumOfEvenSquares}");
+
+    let firstThree = seq.stream(1..1000000)
+        .map(func(any n): any { return (n as int) * 10; })
+        .take(3)
+        .toList();
+    io.println("first three x10 (lazy, range never fully walked): ${firstThree}");
+}
+
+func main(): void {
+    demoDeque();
+    demoPriorityQueue();
+    demoLruCache();
+    demoStream();
+}
+
+main();

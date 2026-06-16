@@ -5,12 +5,11 @@
  */
 import http;
 
-func app(dict<string, any> request): dict<string, any> {
-    return {
-        "status": 200,
-        "headers": {"Content-Type": "text/plain"},
-        "body": "Geblang " + request["method"] + " " + request["path"]
-    };
+/* Declare the parameter as `Request` to opt into the rich request object and
+ * return a `Response` from the http builders. http.response sends text/plain
+ * 200 by default. (A dict-in/dict-out handler still works for back-compat.) */
+func app(Request req): Response {
+    return http.response("Geblang ${req.method} ${req.path}");
 }
 
 http.serve("127.0.0.1:8080", app);

@@ -1,0 +1,56 @@
+/**
+ * @title Option / Result absent-and-error path
+ * @summary Option and Result work across the absent/error path: unwrapOr with a
+ * typed fallback, orNull, ofNullable, and constructing from a null value. These
+ * regressed because an absent value bound the generic T to null's type.
+ */
+import test;
+import option;
+import result;
+
+func divideR(int a, int b): result.Result<int, string> {
+    if (b == 0) {
+        return result.err("divide by zero");
+    }
+    return result.ok(a // b);
+}
+
+class OptionResultTest extends test.Test {
+    @test
+    func optionNoneUnwrapOrTakesTypedFallback(): void {
+        this.assertEquals(99, option.none<int>().unwrapOr(99));
+        this.assertEquals("x", option.none<string>().unwrapOr("x"));
+    }
+
+    @test
+    func optionSomeUnwrapOrReturnsValue(): void {
+        this.assertEquals(5, option.some(5).unwrapOr(99));
+    }
+
+    @test
+    func optionOrNull(): void {
+        this.assertTrue(option.none<int>().orNull() == null);
+        this.assertEquals(7, option.some(7).orNull());
+    }
+
+    @test
+    func optionOfNullable(): void {
+        this.assertEquals("hi", option.ofNullable("hi").unwrapOr("fb"));
+        this.assertEquals("fb", option.ofNullable<string>(null).unwrapOr("fb"));
+    }
+
+    @test
+    func resultErrUnwrapOrTakesTypedFallback(): void {
+        let r = divideR(5, 0);
+        this.assertTrue(r.isErr());
+        this.assertEquals(-1, r.unwrapOr(-1));
+        this.assertEquals("divide by zero", r.unwrapErr());
+    }
+
+    @test
+    func resultOkUnwrap(): void {
+        let r = divideR(10, 2);
+        this.assertEquals(5, r.unwrapOr(-1));
+        this.assertEquals(5, r.unwrap());
+    }
+}

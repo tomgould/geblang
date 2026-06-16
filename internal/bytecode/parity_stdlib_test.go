@@ -15,6 +15,29 @@ import (
 // imported source module to bytecode on demand, and caches the result
 // inside the loader struct.
 
+// TestParityOptionResultAbsentPath pins that Option/Result work identically on
+// both backends across the absent/error path (a typed unwrapOr fallback on
+// none/err, orNull, ofNullable from null) - the path that regressed when an
+// absent value bound the generic T to null's type.
+func TestParityOptionResultAbsentPath(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import option;
+import result;
+func divideR(int a, int b): result.Result<int, string> {
+    if (b == 0) {
+        return result.err("err");
+    }
+    return result.ok(a // b);
+}
+io.println(option.none<int>().unwrapOr(99));
+io.println(option.ofNullable<string>(null).unwrapOr("fb"));
+io.println(option.some(5).unwrapOr(0));
+io.println(option.none<int>().orNull() == null);
+io.println(divideR(5, 0).unwrapOr(-1));
+io.println(divideR(10, 2).unwrap());
+`, "99\nfb\n5\ntrue\n-1\n5\n")
+}
+
 func TestParityMathStdlib(t *testing.T) {
 	runParity(t, `import io;
 import math;
