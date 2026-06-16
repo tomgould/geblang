@@ -1,0 +1,32 @@
+import io;
+
+/* Entry-module top-level let/const read by a function must hoist to a package-
+   level var so the function can see it. A let used only by main() stays local.
+   Pinned identical across VM == evaluator == native. */
+
+let prefix = "Item ";
+let limit = 3;
+let names = ["alpha", "beta"];
+
+func cap(): int {
+    return limit;
+}
+
+func label(string s): string {
+    return prefix + s;
+}
+
+func nameAt(int i): string {
+    return names[i];
+}
+
+export func main() {
+    let onlyHere = "local";
+    let n = cap();
+    for (i in range(0, n)) {
+        io.println(label("${i}"));
+    }
+    io.println(nameAt(0));
+    io.println(nameAt(1));
+    io.println(onlyHere);
+}

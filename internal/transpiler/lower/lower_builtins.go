@@ -109,6 +109,7 @@ func buildBuiltinMethodTable() map[builtinMethodKey]builtinMethodFn {
 	t[builtinMethodKey{types.KindList, "sortBy"}] = lowerListSortCmp
 	t[builtinMethodKey{types.KindList, "sorted"}] = lowerListSorted
 	t[builtinMethodKey{types.KindList, "reversed"}] = lowerListReversed
+	t[builtinMethodKey{types.KindList, "join"}] = lowerListJoin
 	t[builtinMethodKey{types.KindList, "map"}] = lowerListMap
 	t[builtinMethodKey{types.KindList, "filter"}] = lowerListFilter
 	t[builtinMethodKey{types.KindList, "reduce"}] = lowerListReduce
@@ -1210,6 +1211,8 @@ func builtinMethodReturnType(method string, recv *types.Type) *types.Type {
 			return &types.Type{Kind: types.KindBool}
 		case "push", "pop", "prepend", "unshift", "insert", "removeAt", "remove", "reverse", "sort", "sortBy", "sorted", "reversed":
 			return recv
+		case "join":
+			return &types.Type{Kind: types.KindString}
 		case "find", "findLast":
 			return &types.Type{Kind: types.KindAny}
 		case "filter":

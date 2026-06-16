@@ -1,6 +1,19 @@
 package transpilert
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
+
+// Join renders each element with Show and joins them with sep, matching the
+// interpreter's list.join (concatenate as strings).
+func Join[T any](xs []T, sep string) string {
+	parts := make([]string, len(xs))
+	for i, x := range xs {
+		parts[i] = Show(x)
+	}
+	return strings.Join(parts, sep)
+}
 
 // Typed adapters for Geblang's list higher-order methods on the transpiler's
 // unboxed []T. Transpiled Geblang closures are Go funcs, so these take Go

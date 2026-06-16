@@ -28,6 +28,14 @@ func WriteText(path, content string) any {
 	return nil
 }
 
+// Mkdir creates path and any missing parent directories.
+func Mkdir(path string, mode int64) any {
+	if err := os.MkdirAll(path, os.FileMode(mode)); err != nil {
+		panic(ioFail(err))
+	}
+	return nil
+}
+
 // AppendText appends content to path, creating it if absent.
 func AppendText(path, content string) any {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)

@@ -1117,6 +1117,45 @@ func (l *Lowerer) lowerDeclaration(s *ast.DeclarationStatement) {
 	l.w.WriteLine("")
 }
 
+// lowerModuleVar emits a non-entry module's top-level let/const as a package-level
+// var. The Go name carries NamePrefix so same-module references bind to it; the
+// binding is left out of the lexical scope so those references prefix rather than
+// resolve as locals. A non-entry module runs no top-level code, so this is pure.
+func (l *Lowerer) lowerModuleVar(s *ast.DeclarationStatement) {
+	name := l.NamePrefix + emit.MangleIdent(s.Name.Value)
+
+	var declared *types.Type
+	if s.Type != nil {
+		declared = l.resolveTypeRef(s.Type)
+	} else if s.Value != nil {
+		declared = l.inferExpressionType(s.Value)
+	}
+	hasType := declared != nil && declared.Kind != types.KindUnknown && declared.Kind != types.KindAny
+
+	l.w.WriteString("var ")
+	l.w.WriteString(name)
+	if hasType {
+		goTy := types.ToGo(declared, l.Module.IntMode)
+		l.Module.AddTypeImports(goTy)
+		l.w.WriteString(" ")
+		l.w.WriteString(goTy.Source)
+	}
+	if s.Value != nil {
+		l.w.WriteString(" = ")
+		switch {
+		case declared != nil && declared.Nullable:
+			l.lowerIntoNullable(declared, s.Value)
+		case hasType:
+			l.withExpectedType(declared, func() { l.lowerExpression(s.Value) })
+		default:
+			l.lowerExpression(s.Value)
+		}
+	} else if !hasType {
+		l.w.WriteString(" any = nil")
+	}
+	l.w.WriteLine("")
+}
+
 func isNullLiteral(expr ast.Expression) bool {
 	lit, ok := expr.(*ast.Literal)
 	if !ok {

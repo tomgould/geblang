@@ -1,0 +1,25 @@
+module greeting.app.text;
+
+/* A non-entry module: exported functions call a same-module private helper and
+   read module-level lets (string, int, list). The native build must prefix all
+   of these with the module's name prefix to bind the merged-package symbols. */
+
+let exclaim = "!";
+let repeatCount = 2;
+let langs = ["go", "geblang"];
+
+export func banner(string who): string {
+    return prefix() + who + exclaim;
+}
+
+export func reps(): int {
+    return repeatCount;
+}
+
+export func languages(): string {
+    return langs.join(", ");
+}
+
+func prefix(): string {
+    return "hello, ";
+}

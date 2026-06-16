@@ -1,0 +1,8 @@
+import io;
+import greeting.app.text as text;
+
+export func main() {
+    io.println(text.banner("world"));
+    io.println(text.reps());
+    io.println(text.languages());
+}

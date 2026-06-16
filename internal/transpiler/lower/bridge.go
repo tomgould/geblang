@@ -432,6 +432,7 @@ func (b *NativeBridge) registerIODefaults() {
 	b.Register("io", "appendBytes", transpilertCall("AppendBytes", null))
 	b.Register("io", "exists", transpilertCall("Exists", boolT))
 	b.Register("io", "remove", transpilertCall("Remove", null))
+	b.Register("io", "mkdir", transpilertCall("Mkdir", null))
 }
 
 func (b *NativeBridge) registerAsyncDefaults() {

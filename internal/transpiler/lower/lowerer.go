@@ -24,6 +24,14 @@ type Lowerer struct {
 	errors        []Error
 	w             *emit.Writer
 	parentClass   string
+	// moduleTopLevel holds the Geblang names of this module's top-level functions
+	// and module-level let/const; a same-module reference to one prefixes it with
+	// NamePrefix so it binds to the prefixed Go symbol (non-entry modules only).
+	moduleTopLevel map[string]bool
+	// entryHoist names entry-module top-level let/const referenced by a sibling
+	// function; these lower to package-level vars instead of main() locals so the
+	// functions can see them (entry modules only).
+	entryHoist map[string]bool
 	inConstructor bool
 	inGenerator   bool
 	typeParams    map[string]struct{}
@@ -119,12 +127,141 @@ func (l *Lowerer) emittedFuncName(gbName string) string {
 	return l.NamePrefix + emit.MangleIdent(gbName)
 }
 
+// qualifiedTopLevelName returns the Go symbol for a bare reference to a name. A
+// non-entry module prefixes its own top-level functions and module-level vars
+// with NamePrefix (matching their definitions); a local/param binding of the
+// same name, the entry module, and non-top-level names are left unprefixed.
+func (l *Lowerer) qualifiedTopLevelName(name string) string {
+	mangled := emit.MangleIdent(name)
+	if l.IsEntry || l.NamePrefix == "" || !l.moduleTopLevel[name] {
+		return mangled
+	}
+	if _, bound := l.scope.Lookup(name); bound {
+		return mangled
+	}
+	return l.NamePrefix + mangled
+}
+
 func (l *Lowerer) LowerProgram(prog *ast.Program) {
 	l.preregisterTopLevel(prog.Statements)
+	l.computeEntryHoist(prog.Statements)
 	l.recordEmptyCollectionRefinements(prog.Statements)
 	for _, stmt := range prog.Statements {
 		l.lowerTopLevelStatement(stmt)
 	}
+}
+
+// computeEntryHoist marks entry-module top-level let/const that a sibling function
+// reads, plus the transitive closure of module-level bindings their initializers
+// reference. Those bindings become package vars so the package-level functions can
+// see them. A hoisted binding whose initializer is not a constant expression would
+// reorder relative to top-level code, so it diagnoses rather than miscompile.
+func (l *Lowerer) computeEntryHoist(stmts []ast.Statement) {
+	l.entryHoist = map[string]bool{}
+	if !l.IsEntry {
+		return
+	}
+	lets := map[string]*ast.DeclarationStatement{}
+	var funcs []*ast.FunctionStatement
+	for _, stmt := range stmts {
+		s := stmt
+		if exp, ok := s.(*ast.ExportStatement); ok {
+			s = exp.Statement
+		}
+		switch n := s.(type) {
+		case *ast.DeclarationStatement:
+			lets[n.Name.Value] = n
+		case *ast.FunctionStatement:
+			funcs = append(funcs, n)
+		}
+	}
+
+	var queue []string
+	for name := range lets {
+		for _, fn := range funcs {
+			if functionReadsFree(fn, name) {
+				l.entryHoist[name] = true
+				queue = append(queue, name)
+				break
+			}
+		}
+	}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		decl := lets[cur]
+		if decl.Value == nil {
+			continue
+		}
+		for other := range lets {
+			if l.entryHoist[other] || other == cur {
+				continue
+			}
+			if referencesFree(decl.Value, other) {
+				l.entryHoist[other] = true
+				queue = append(queue, other)
+			}
+		}
+	}
+
+	for name := range l.entryHoist {
+		decl := lets[name]
+		if decl.Value != nil && !isHoistableInitializer(decl.Value) {
+			l.errAt(decl.Token.Line, decl.Token.Column,
+				fmt.Sprintf("module-level %q is read by a function but its initializer is not a constant expression", name),
+				"native compilation hoists function-referenced module-level bindings to package scope; give it a side-effect-free initializer")
+		}
+	}
+}
+
+// isHoistableInitializer reports whether a module-level binding's initializer is a
+// constant expression safe to evaluate at package-init time: literals, collection
+// literals of such, references to other module-level bindings, and operators over
+// them. Calls, selectors, and indexing may have side effects or read local state.
+func isHoistableInitializer(expr ast.Expression) bool {
+	switch e := expr.(type) {
+	case nil:
+		return true
+	case *ast.Literal, *ast.IntegerLiteral, *ast.FloatLiteral, *ast.DecimalLiteral, *ast.StringLiteral, *ast.Identifier:
+		return true
+	case *ast.ListLiteral:
+		for _, el := range e.Elements {
+			if !isHoistableInitializer(el) {
+				return false
+			}
+		}
+		return true
+	case *ast.SetLiteral:
+		for _, el := range e.Elements {
+			if !isHoistableInitializer(el) {
+				return false
+			}
+		}
+		return true
+	case *ast.DictLiteral:
+		for _, entry := range e.Entries {
+			if !isHoistableInitializer(entry.Key) || !isHoistableInitializer(entry.Value) {
+				return false
+			}
+		}
+		return true
+	case *ast.InfixExpression:
+		return isHoistableInitializer(e.Left) && isHoistableInitializer(e.Right)
+	case *ast.PrefixExpression:
+		return isHoistableInitializer(e.Right)
+	case *ast.TernaryExpression:
+		return isHoistableInitializer(e.Condition) && isHoistableInitializer(e.ThenExpr) && isHoistableInitializer(e.ElseExpr)
+	case *ast.InterpolatedString:
+		for _, p := range e.Parts {
+			if !isHoistableInitializer(p) {
+				return false
+			}
+		}
+		return true
+	case *ast.CastExpression:
+		return isHoistableInitializer(e.Value)
+	}
+	return false
 }
 
 // PreregisterClasses records class names, parents, and decls so cross-module
@@ -176,6 +313,9 @@ func (l *Lowerer) PreregisterModuleReturns(prog *ast.Program, prefix string) {
 }
 
 func (l *Lowerer) preregisterTopLevel(stmts []ast.Statement) {
+	if l.moduleTopLevel == nil {
+		l.moduleTopLevel = map[string]bool{}
+	}
 	for _, stmt := range stmts {
 		s := stmt
 		if exp, ok := s.(*ast.ExportStatement); ok {
@@ -190,6 +330,10 @@ func (l *Lowerer) preregisterTopLevel(stmts []ast.Statement) {
 			key := l.NamePrefix + emit.MangleIdent(fn.Name.Value)
 			l.Module.RegisterCalleeParams(key, paramNames(fn.Parameters))
 			l.Module.RegisterCalleeSignature(key, paramDefaults(fn.Parameters), lastVariadic(fn.Parameters))
+			l.moduleTopLevel[fn.Name.Value] = true
+		}
+		if decl, ok := s.(*ast.DeclarationStatement); ok {
+			l.moduleTopLevel[decl.Name.Value] = true
 		}
 		if cls, ok := s.(*ast.ClassStatement); ok {
 			l.Module.RegisterClass(cls.Name.Value)
@@ -228,6 +372,19 @@ func (l *Lowerer) lowerTopLevelStatement(stmt ast.Statement) {
 		l.lowerInterface(s)
 	case *ast.TypeAliasStatement:
 		l.Module.RegisterTypeAlias(s.Name.Value, s.Type) // resolve-at-use; no Go decl
+	case *ast.DeclarationStatement:
+		if !l.IsEntry {
+			l.lowerModuleVar(s)
+			return
+		}
+		if l.entryHoist[s.Name.Value] {
+			saved := l.w
+			l.w = l.Module.TopDecls()
+			l.lowerModuleVar(s)
+			l.w = saved
+			return
+		}
+		l.lowerStatement(stmt)
 	default:
 		if !l.IsEntry {
 			l.errAt(0, 0, fmt.Sprintf("non-function top-level statement %T in non-entry module", stmt),
@@ -393,7 +550,7 @@ func (l *Lowerer) lowerExpression(expr ast.Expression) {
 			}
 			return
 		}
-		l.w.WriteString(emit.MangleIdent(e.Value))
+		l.w.WriteString(l.qualifiedTopLevelName(e.Value))
 	case *ast.CallExpression:
 		l.lowerCall(e)
 	case *ast.SelectorExpression:

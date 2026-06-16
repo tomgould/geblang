@@ -144,6 +144,31 @@ func lowerListReversed(l *Lowerer, sel *ast.SelectorExpression, ty *types.Type, 
 	return true
 }
 
+// lowerListJoin lowers list.join(sep). A list<string> joins directly with
+// strings.Join; any other element type renders each with Show (matching the
+// interpreter's "concatenate as strings").
+func lowerListJoin(l *Lowerer, sel *ast.SelectorExpression, ty *types.Type, args []ast.CallArgument) bool {
+	if len(args) != 1 {
+		return false
+	}
+	if ty.Elem != nil && ty.Elem.Kind == types.KindString {
+		l.Module.AddImport("strings")
+		l.w.WriteString("strings.Join(")
+		l.lowerExpression(sel.Object)
+		l.w.WriteString(", ")
+		l.lowerExpression(args[0].Value)
+		l.w.WriteString(")")
+		return true
+	}
+	l.Module.AddImport(types.OrderedDictImport)
+	l.w.WriteString("transpilert.Join(")
+	l.lowerExpression(sel.Object)
+	l.w.WriteString(", ")
+	l.lowerExpression(args[0].Value)
+	l.w.WriteString(")")
+	return true
+}
+
 // lowerListSortCmp lowers sort(comparator)/sortBy(selector). Both mutate in
 // place and return the receiver, so they reuse the addressable-slot guard the
 // other list mutators use; an opaque or parameter receiver hard-fails.

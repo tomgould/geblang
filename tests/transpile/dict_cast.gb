@@ -1,0 +1,21 @@
+import io;
+
+/* Unwrapping ?dict<string,any> to dict<string,any> after a null check is a
+   no-op cast (same Go type). Pinned identical across VM == eval == native. */
+
+func lookup(bool present): ?dict<string, any> {
+    if (present) {
+        return {"name": "widget", "qty": 12};
+    }
+    return null;
+}
+
+let maybe = lookup(true);
+if (maybe != null) {
+    let d = maybe as dict<string, any>;
+    io.println(d["name"]);
+    io.println(d["qty"]);
+}
+let missing = lookup(false);
+io.println(missing == null);
+io.println(maybe != null);

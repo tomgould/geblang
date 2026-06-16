@@ -1,5 +1,22 @@
 # Release Notes
 
+## 1.23.0
+
+### Native compilation (experimental)
+
+- Module-level `let` / `const` read by a function now compiles natively, in both
+  imported modules and the entry module: the binding lowers to a package-level
+  value so the function can see it. A module's functions can also call each other.
+  These previously reported as unsupported or failed to build with an
+  undefined-symbol error.
+- `list.join(sep)` compiles natively for lists of any element type.
+- Comparing a list, dict, set, or bytes value to `null` compiles natively (a nil
+  check), matching the interpreter; structural `==` between two collections
+  remains deferred.
+- Unwrapping a nullable dict with `as` (e.g. `value as dict<string, any>` after a
+  null check) compiles natively.
+- `io.mkdir` compiles natively.
+
 ## 1.22.0
 
 ### Language

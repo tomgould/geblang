@@ -258,7 +258,10 @@ func (l *Lowerer) lowerInfix(e *ast.InfixExpression) {
 		}
 	}
 	if e.Operator == "==" || e.Operator == "!=" {
-		if l.isCollectionOperand(e.Left) || l.isCollectionOperand(e.Right) {
+		// Comparing a collection to the null literal is a nil check, not
+		// structural equality; collections lower to nilable Go types.
+		nullCmp := isNullLiteral(e.Left) || isNullLiteral(e.Right)
+		if !nullCmp && (l.isCollectionOperand(e.Left) || l.isCollectionOperand(e.Right)) {
 			l.errAt(e.Token.Line, e.Token.Column,
 				"the transpiler does not yet support == / != on lists, sets, dicts, or bytes",
 				"structural equality needs runtime support deferred to a later phase")
@@ -693,7 +696,7 @@ func (l *Lowerer) lowerCall(e *ast.CallExpression) {
 	l.emitTypeArguments(e.TypeArguments)
 	calleeKey := ""
 	if id, ok := e.Callee.(*ast.Identifier); ok {
-		calleeKey = emit.MangleIdent(id.Value)
+		calleeKey = l.qualifiedTopLevelName(id.Value)
 	}
 	if sel, ok := e.Callee.(*ast.SelectorExpression); ok && !sel.Optional {
 		if recv := l.inferExpressionType(sel.Object); recv != nil {
@@ -1307,6 +1310,12 @@ func (l *Lowerer) lowerCast(e *ast.CastExpression) {
 			l.emitAsHelper("AsDict", e.Value)
 			return
 		}
+		// Same dict shape (e.g. unwrapping ?dict<string,any> to dict<string,any>):
+		// identical Go type, so the cast is a no-op on the value.
+		if source != nil && source.Kind == types.KindDict && sameDictShape(source, target) {
+			l.lowerExpression(e.Value)
+			return
+		}
 		l.errAt(e.Token.Line, e.Token.Column,
 			fmt.Sprintf("cast to %s is not yet supported", e.Type.String()),
 			"")
@@ -1317,6 +1326,22 @@ func (l *Lowerer) lowerCast(e *ast.CastExpression) {
 			"")
 		l.w.WriteString("nil")
 	}
+}
+
+// sameDictShape reports whether two dict types have the same key and value
+// shape (ignoring nullability), so a cast between them is a Go no-op.
+func sameDictShape(a, b *types.Type) bool {
+	return sameTypeShape(a.Key, b.Key) && sameTypeShape(a.Value, b.Value)
+}
+
+func sameTypeShape(a, b *types.Type) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if a.Kind != b.Kind {
+		return false
+	}
+	return sameTypeShape(a.Elem, b.Elem) && sameTypeShape(a.Key, b.Key) && sameTypeShape(a.Value, b.Value)
 }
 
 // emitAsHelper emits transpilert.<name>(value) for an any -> concrete cast.

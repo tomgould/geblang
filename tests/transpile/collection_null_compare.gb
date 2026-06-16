@@ -1,0 +1,28 @@
+import io;
+
+/* Comparing a list/dict to null is a nil check, not structural equality.
+   A present collection is never null; an absent one is. Pinned identical across
+   VM == eval == native. */
+
+func maybeList(bool present): ?list<int> {
+    if (present) {
+        return [1, 2, 3];
+    }
+    return null;
+}
+
+func maybeDict(bool present): ?dict<string, int> {
+    if (present) {
+        return {"a": 1};
+    }
+    return null;
+}
+
+io.println(maybeList(true) != null);
+io.println(maybeList(false) == null);
+io.println(maybeDict(true) != null);
+io.println(maybeDict(false) == null);
+
+let list<int> empty = [];
+io.println(empty == null);
+io.println(empty != null);

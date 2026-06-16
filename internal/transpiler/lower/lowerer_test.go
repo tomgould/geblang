@@ -989,14 +989,73 @@ func TestLowererNonEntryFunctionUsesPrefixedName(t *testing.T) {
 
 func TestLowererNonEntryRejectsTopLevelStatement(t *testing.T) {
 	mod := lower.NewModule("main", true, types.IntModeFast)
-	src := "let x = 5;\n"
+	src := "while (true) { }\n"
 	p := parser.New(lexer.New(src))
 	prog := p.ParseProgram()
 	l := lower.NewModuleLowerer(mod, lower.NewNativeBridge(), "helper.gb", "helper_")
 	l.LowerProgram(prog)
 
 	if len(l.Errors()) == 0 {
-		t.Errorf("expected non-function statement in non-entry module to be rejected")
+		t.Errorf("expected executable top-level statement in non-entry module to be rejected")
+	}
+}
+
+func TestLowererNonEntryModuleVarIsPrefixedPackageVar(t *testing.T) {
+	mod := lower.NewModule("main", true, types.IntModeFast)
+	src := "let netName = \"appnet\";\n" +
+		"export func name(): string { return netName; }\n"
+	p := parser.New(lexer.New(src))
+	prog := p.ParseProgram()
+	l := lower.NewModuleLowerer(mod, lower.NewNativeBridge(), "helper.gb", "helper_")
+	l.LowerProgram(prog)
+
+	if len(l.Errors()) != 0 {
+		t.Fatalf("module-level let should lower without error, got: %v", l.Errors())
+	}
+	decls := mod.TopDecls().String()
+	if !strings.Contains(decls, "var helper_netName string = \"appnet\"") {
+		t.Errorf("expected prefixed package var, got:\n%s", decls)
+	}
+	if !strings.Contains(decls, "return helper_netName") {
+		t.Errorf("expected same-module reference to use the prefixed name, got:\n%s", decls)
+	}
+}
+
+func TestLowererEntryHoistsFunctionReferencedConst(t *testing.T) {
+	mod := lower.NewModule("main", true, types.IntModeFast)
+	src := "let greeting = \"hi\";\n" +
+		"func shout(): string { return greeting; }\n" +
+		"export func main() { }\n"
+	p := parser.New(lexer.New(src))
+	prog := p.ParseProgram()
+	l := lower.NewLowerer(mod, lower.NewNativeBridge(), "main.gb")
+	l.LowerProgram(prog)
+
+	if len(l.Errors()) != 0 {
+		t.Fatalf("hoistable const should lower without error, got: %v", l.Errors())
+	}
+	decls := mod.TopDecls().String()
+	if !strings.Contains(decls, "var greeting string = \"hi\"") {
+		t.Errorf("expected hoisted package var, got:\n%s", decls)
+	}
+	if strings.Contains(mod.MainBody().String(), "greeting :=") {
+		t.Errorf("hoisted const must not also declare a main() local:\n%s", mod.MainBody().String())
+	}
+}
+
+func TestLowererEntryHoistDiagnosesNonConstantInitializer(t *testing.T) {
+	mod := lower.NewModule("main", true, types.IntModeFast)
+	src := "let cached = compute();\n" +
+		"func compute(): int { return 5; }\n" +
+		"func usesIt(): int { return cached; }\n" +
+		"export func main() { }\n"
+	p := parser.New(lexer.New(src))
+	prog := p.ParseProgram()
+	l := lower.NewLowerer(mod, lower.NewNativeBridge(), "main.gb")
+	l.LowerProgram(prog)
+
+	if len(l.Errors()) == 0 {
+		t.Errorf("a function-referenced let with a call initializer should diagnose")
 	}
 }
 

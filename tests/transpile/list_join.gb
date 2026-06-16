@@ -1,0 +1,18 @@
+import io;
+
+/* list.join(sep): list<string> joins directly; other element types render
+   each with the same renderer the interpreter uses. Pinned identical across
+   VM == evaluator == native. */
+
+let words = ["alpha", "beta", "gamma"];
+io.println(words.join(", "));
+io.println(words.join(""));
+
+let one = ["only"];
+io.println(one.join("-"));
+
+let nums = [10, 20, 30];
+io.println(nums.join("-"));
+
+let flags = [true, false, true];
+io.println(flags.join("|"));

@@ -1,0 +1,10 @@
+import io;
+
+/* io.mkdir creates the directory and any missing parents; self-contained so
+   each backend run leaves no trace. Pinned identical across VM == eval == native. */
+
+io.mkdir("geb-mkdir-corpus/a/b", 493);
+io.println(io.exists("geb-mkdir-corpus/a/b"));
+io.println(io.exists("geb-mkdir-corpus"));
+io.remove("geb-mkdir-corpus");
+io.println(io.exists("geb-mkdir-corpus"));

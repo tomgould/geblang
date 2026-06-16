@@ -1,7 +1,7 @@
 # Geblang
 
 Geblang is a statically-typed scripting language implemented in Go.
-Current version: **1.22.0**. It combines the ergonomics of PHP and
+Current version: **1.23.0**. It combines the ergonomics of PHP and
 Python with strong static typing, generics, decorators, async, and
 runtime reflection.
 
