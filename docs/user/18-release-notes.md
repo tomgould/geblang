@@ -2,6 +2,20 @@
 
 ## 1.23.0
 
+### Standard library
+
+- `io` file handles gained random access: `io.seek(handle, offset, whence)`
+  (whence `"start"` / `"current"` / `"end"`), `io.tell`, `io.truncate`, and
+  `io.atEnd`. Open modes now include `r+`, `w+`, `a+`, and the exclusive-create
+  `x` / `x+`.
+- New filesystem helpers: `io.copy`, `io.copyTree`, `io.move` (rename with a
+  cross-device copy fallback), `io.lstat`, `io.scanDir`, `io.touch`, and
+  `io.writeTextAtomic`. The `io.stat` / `io.lstat` dictionaries gained `isFile`
+  and `isSymlink`.
+- New `file` module: a `File` object (`file.open(path, mode)`) wraps a handle
+  with method-style read / write / seek, `with`-block auto-close, and line
+  iteration. `streams.IOStream` gained `seek` / `tell` / `truncate` / `atEnd`.
+
 ### Native compilation (experimental)
 
 - Module-level `let` / `const` read by a function now compiles natively, in both

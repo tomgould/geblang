@@ -950,12 +950,97 @@ while (ev != null) {
 `, "startArray\nvalue\nerror\n")
 }
 
+func TestParityIOSeekTruncate(t *testing.T) {
+	runParityStateful(t, `import io;
+let dir = io.tempDir("geb-parity-seek-*");
+let p = dir + "/d.txt";
+io.writeText(p, "Hello, World!");
+let f = io.open(p, "r+");
+io.println(io.read(f, 5));
+io.println("${io.tell(f)}");
+io.seek(f, 7, "start");
+io.println(io.read(f, 5));
+io.seek(f, -1, "end");
+io.println(io.read(f, 1));
+io.truncate(f, 5);
+io.close(f);
+io.println(io.readText(p));
+let g = io.open(p, "r");
+io.println(io.readAll(g));
+io.println("${io.atEnd(g)}");
+io.close(g);
+io.remove(dir);
+`, "Hello\n5\nWorld\n!\nHello\nHello\ntrue\n")
+}
+
+func TestParityIOCopyMove(t *testing.T) {
+	runParityStateful(t, `import io;
+let dir = io.tempDir("geb-parity-copy-*");
+io.writeText(dir + "/a.txt", "data");
+io.copy(dir + "/a.txt", dir + "/b.txt");
+io.println(io.readText(dir + "/b.txt"));
+io.move(dir + "/b.txt", dir + "/c.txt");
+io.println("${io.exists(dir + "/b.txt")}");
+io.println(io.readText(dir + "/c.txt"));
+io.mkdir(dir + "/tree/sub", 0o755);
+io.writeText(dir + "/tree/sub/x.txt", "deep");
+io.copyTree(dir + "/tree", dir + "/tree2");
+io.println(io.readText(dir + "/tree2/sub/x.txt"));
+io.remove(dir);
+`, "data\nfalse\ndata\ndeep\n")
+}
+
+func TestParityIOStatScanDir(t *testing.T) {
+	runParityStateful(t, `import io;
+let dir = io.tempDir("geb-parity-stat-*");
+io.writeText(dir + "/f.txt", "hi");
+io.symlink(dir + "/f.txt", dir + "/lnk");
+io.println("${io.stat(dir + "/f.txt")["isFile"]}");
+io.println("${io.lstat(dir + "/lnk")["isSymlink"]}");
+io.println("${io.stat(dir + "/lnk")["isSymlink"]}");
+io.touch(dir + "/t");
+io.writeTextAtomic(dir + "/atomic", "ok");
+io.println(io.readText(dir + "/atomic"));
+let names = [];
+for (entry in io.scanDir(dir)) { names = names.push(entry["name"]); }
+io.println(names.sorted().join(","));
+io.remove(dir);
+`, "true\ntrue\nfalse\nok\natomic,f.txt,lnk,t\n")
+}
+
 func TestParityIOExistsThroughFilePath(t *testing.T) {
 	runParityStatefulWithFile(t, `import io;
 io.println(io.exists("TMPFILE"));
 io.println(io.exists("TMPFILE/child.html"));
 io.println(io.exists("TMPFILE/a/b"));
 `, "content", "true\nfalse\nfalse\n")
+}
+
+// TestParityFileObject pins the file.File wrapper (open/write/seek/truncate,
+// line iteration, and the with-statement auto-close) on both backends.
+func TestParityFileObject(t *testing.T) {
+	runParityWithStdlib(t, `import file;
+import io;
+let dir = io.tempDir("geb-parity-file-*");
+let p = dir + "/log.txt";
+let w = file.open(p, "w");
+w.writeln("one");
+w.writeln("two");
+w.close();
+let r = file.open(p, "r+");
+io.println(r.read(3));
+io.println("${r.tell()}");
+r.seek(0, "start");
+with (g = file.open(p, "r")) {
+    for (line in g) {
+        io.println("> " + line);
+    }
+}
+r.truncate(3);
+r.close();
+io.println(io.readText(p));
+io.remove(dir);
+`, "one\n3\n> one\n> two\none\n")
 }
 
 // TestParitySysRunListArgs pins sys.run's list<string> argument form on

@@ -1,0 +1,151 @@
+module file;
+
+import io;
+
+/**
+ * File is an object wrapper over an io file handle. Open one with
+ * `file.open(path, mode)`, then call methods for positioning, reading,
+ * writing, flushing, and locking. It implements the context-manager
+ * protocol, so `with (f = file.open(path, "r+")) { ... }` closes the
+ * handle automatically on exit, and `__iter` so `for (line in f)` walks
+ * the file line by line. The raw `io.*` free functions remain available
+ * when a low-level handle is more convenient.
+ */
+export class File {
+    int handle;
+    bool _closed;
+
+    func File(string path, string mode = "r") {
+        this.handle = io.open(path, mode);
+        this._closed = false;
+    }
+
+    ## Reads up to `n` bytes; empty string at EOF.
+    func read(int n): string {
+        return io.read(this.handle, n);
+    }
+
+    ## Reads up to `n` bytes as a bytes value.
+    func readBytes(int n): bytes {
+        return io.readBytes(this.handle, n);
+    }
+
+    ## Reads all remaining content as a string.
+    func readAll(): string {
+        return io.readAll(this.handle);
+    }
+
+    ## Reads one line (newline stripped); null at EOF.
+    func readLine(): ?string {
+        return io.readLine(this.handle);
+    }
+
+    ## Reads all remaining lines.
+    func readLines(): list<string> {
+        return io.readLines(this.handle);
+    }
+
+    ## Lazy generator yielding each line until EOF.
+    func lines(): generator<string> {
+        while (true) {
+            let line = io.readLine(this.handle);
+            if (line == null) {
+                break;
+            }
+            yield line as string;
+        }
+    }
+
+    ## Writes text; returns bytes written.
+    func write(string text): int {
+        return io.write(this.handle, text);
+    }
+
+    ## Writes text followed by a newline; returns bytes written.
+    func writeln(string text): int {
+        return io.writeln(this.handle, text);
+    }
+
+    ## Writes bytes; returns bytes written.
+    func writeBytes(bytes data): int {
+        return io.writeBytes(this.handle, data);
+    }
+
+    ## Repositions the handle; whence is "start", "current", or "end".
+    ## Returns the new absolute offset.
+    func seek(int offset, string whence = "start"): int {
+        return io.seek(this.handle, offset, whence);
+    }
+
+    ## Current byte offset.
+    func tell(): int {
+        return io.tell(this.handle);
+    }
+
+    ## Resizes the file to `size` bytes.
+    func truncate(int size): void {
+        io.truncate(this.handle, size);
+    }
+
+    ## Whether the handle is at end-of-file.
+    func atEnd(): bool {
+        return io.atEnd(this.handle);
+    }
+
+    ## Flushes buffered data.
+    func flush(): void {
+        io.flush(this.handle);
+    }
+
+    ## Flushes file data and metadata to storage.
+    func sync(): void {
+        io.sync(this.handle);
+    }
+
+    ## Acquires an exclusive advisory lock, blocking if needed.
+    func lock(): void {
+        io.lock(this.handle);
+    }
+
+    ## Attempts an exclusive advisory lock without blocking.
+    func tryLock(): bool {
+        return io.tryLock(this.handle);
+    }
+
+    ## Releases an advisory lock.
+    func unlock(): void {
+        io.unlock(this.handle);
+    }
+
+    ## Closes the handle. Safe to call more than once.
+    func close(): void {
+        if (this._closed) {
+            return;
+        }
+        io.close(this.handle);
+        this._closed = true;
+    }
+
+    ## True after `close()` has been called.
+    func isClosed(): bool {
+        return this._closed;
+    }
+
+    func __enter(): File {
+        return this;
+    }
+
+    func __exit(): void {
+        this.close();
+    }
+
+    func __iter(): any {
+        return this.lines();
+    }
+}
+
+## Opens a file and returns a File object. `mode` accepts the same strings
+## as `io.open` (r, w, a, r+, w+, a+, x, x+).
+export func open(string path, string mode = "r"): File {
+    return File(path, mode);
+}

@@ -184,6 +184,28 @@ export class IOStream {
         return io.writeln(this.handle, buf);
     }
 
+    ## Repositions a seekable (file-backed) stream; whence is "start",
+    ## "current", or "end". Returns the new offset. Raises on memory and
+    ## standard streams.
+    func seek(int offset, string whence = "start"): int {
+        return io.seek(this.handle, offset, whence);
+    }
+
+    ## Current byte offset of a seekable (file-backed) stream.
+    func tell(): int {
+        return io.tell(this.handle);
+    }
+
+    ## Resizes a file-backed stream to `size` bytes.
+    func truncate(int size): void {
+        io.truncate(this.handle, size);
+    }
+
+    ## Whether a file-backed stream is at end-of-file.
+    func atEnd(): bool {
+        return io.atEnd(this.handle);
+    }
+
     ## Flushes any buffered output.
     func flush(): void {
         io.flush(this.handle);

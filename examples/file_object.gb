@@ -1,0 +1,48 @@
+/**
+ * @title File Object And Random Access
+ * @summary The `file` module wraps an io handle in a File object with
+ * `seek` / `tell` / `truncate`, line iteration, and a `with` block that
+ * closes the handle automatically. Pairs it with the io copy / move /
+ * scanDir helpers for whole-file work.
+ * @category Standard Library
+ */
+import file;
+import io;
+import path;
+
+let dir = io.tempDir("geb-file-example-*");
+defer io.remove(dir);
+
+let logPath = path.join(dir, "app.log");
+
+/* Write three lines through the File object. */
+let out = file.open(logPath, "w");
+out.writeln("boot");
+out.writeln("ready");
+out.writeln("serving");
+out.close();
+
+/* Random access: read a slice, report the offset, then reposition. */
+let f = file.open(logPath, "r+");
+io.println(f.read(4));          /* boot */
+io.println("offset=${f.tell()}");
+f.seek(-8, "end");
+io.println(f.readLine());       /* serving */
+f.close();
+
+/* `with` closes the handle on block exit; iterate the file by line. */
+with (lines = file.open(logPath, "r")) {
+    for (line in lines) {
+        io.println("> " + line);
+    }
+}
+
+/* Whole-file helpers: copy, then move across the directory. */
+io.copy(logPath, path.join(dir, "app.log.bak"));
+io.move(path.join(dir, "app.log.bak"), path.join(dir, "archive.log"));
+
+for (entry in io.scanDir(dir)) {
+    let kind = "file";
+    if (entry["isDir"] as bool) { kind = "dir"; }
+    io.println("${entry["name"]} (${kind})");
+}

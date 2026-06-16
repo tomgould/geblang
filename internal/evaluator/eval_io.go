@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 type memoryStream struct {
@@ -1161,6 +1162,18 @@ func (e *Evaluator) ioReadLines(call *ast.CallExpression, args []runtime.Value) 
 	return &runtime.List{Elements: lines}, nil
 }
 
+func fileInfoDict(name string, info os.FileInfo) runtime.Dict {
+	entries := map[string]runtime.DictEntry{}
+	putDict(entries, "name", runtime.String{Value: name})
+	putDict(entries, "size", runtime.NewInt64(info.Size()))
+	putDict(entries, "mode", runtime.NewInt64(int64(info.Mode().Perm())))
+	putDict(entries, "isDir", runtime.Bool{Value: info.IsDir()})
+	putDict(entries, "isFile", runtime.Bool{Value: info.Mode().IsRegular()})
+	putDict(entries, "isSymlink", runtime.Bool{Value: info.Mode()&os.ModeSymlink != 0})
+	putDict(entries, "modUnix", runtime.NewInt64(info.ModTime().Unix()))
+	return runtime.Dict{Entries: entries}
+}
+
 func ioStat(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	path, err := singleStringValue(call, args)
 	if err != nil {
@@ -1170,13 +1183,40 @@ func ioStat(call *ast.CallExpression, args []runtime.Value) (runtime.Value, erro
 	if err != nil {
 		return nil, err
 	}
-	entries := map[string]runtime.DictEntry{}
-	putDict(entries, "name", runtime.String{Value: info.Name()})
-	putDict(entries, "size", runtime.NewInt64(info.Size()))
-	putDict(entries, "mode", runtime.NewInt64(int64(info.Mode().Perm())))
-	putDict(entries, "isDir", runtime.Bool{Value: info.IsDir()})
-	putDict(entries, "modUnix", runtime.NewInt64(info.ModTime().Unix()))
-	return runtime.Dict{Entries: entries}, nil
+	return fileInfoDict(info.Name(), info), nil
+}
+
+func ioLstat(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	path, err := singleStringValue(call, args)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	return fileInfoDict(info.Name(), info), nil
+}
+
+func ioScanDir(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	path, err := singleStringValue(call, args)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]runtime.Value, 0, len(entries))
+	for _, entry := range entries {
+		d := map[string]runtime.DictEntry{}
+		putDict(d, "name", runtime.String{Value: entry.Name()})
+		putDict(d, "isDir", runtime.Bool{Value: entry.IsDir()})
+		putDict(d, "isFile", runtime.Bool{Value: entry.Type().IsRegular()})
+		putDict(d, "isSymlink", runtime.Bool{Value: entry.Type()&os.ModeSymlink != 0})
+		values = append(values, runtime.Dict{Entries: d})
+	}
+	return &runtime.List{Elements: values}, nil
 }
 
 func ioChmod(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -1246,6 +1286,171 @@ func ioRename(call *ast.CallExpression, args []runtime.Value) (runtime.Value, er
 		return nil, fmt.Errorf("%s new path must be string", call.Callee.String())
 	}
 	return runtime.Null{}, os.Rename(oldPath.Value, newPath.Value)
+}
+
+func twoStringArgs(call *ast.CallExpression, args []runtime.Value) (string, string, error) {
+	if len(args) != 2 {
+		return "", "", fmt.Errorf("%s expects exactly two arguments", call.Callee.String())
+	}
+	a, ok := args[0].(runtime.String)
+	if !ok {
+		return "", "", fmt.Errorf("%s first argument must be string", call.Callee.String())
+	}
+	b, ok := args[1].(runtime.String)
+	if !ok {
+		return "", "", fmt.Errorf("%s second argument must be string", call.Callee.String())
+	}
+	return a.Value, b.Value, nil
+}
+
+// copyFileContents streams src to dst (truncating dst), preserving src's mode.
+func copyFileContents(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(dst, info.Mode().Perm())
+}
+
+// copyTreeContents copies a file or directory tree, recreating symlinks as links.
+func copyTreeContents(src, dst string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(src)
+		if err != nil {
+			return err
+		}
+		return os.Symlink(target, dst)
+	}
+	if !info.IsDir() {
+		return copyFileContents(src, dst)
+	}
+	if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := copyTreeContents(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ioCopy(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	src, dst, err := twoStringArgs(call, args)
+	if err != nil {
+		return nil, err
+	}
+	if err := copyFileContents(src, dst); err != nil {
+		return nil, err
+	}
+	return runtime.Null{}, nil
+}
+
+func ioCopyTree(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	src, dst, err := twoStringArgs(call, args)
+	if err != nil {
+		return nil, err
+	}
+	if err := copyTreeContents(src, dst); err != nil {
+		return nil, err
+	}
+	return runtime.Null{}, nil
+}
+
+func ioMove(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	src, dst, err := twoStringArgs(call, args)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Rename(src, dst); err == nil {
+		return runtime.Null{}, nil
+	} else if !errors.Is(err, syscall.EXDEV) {
+		return nil, err
+	}
+	// Different filesystems: rename cannot cross devices, so copy then delete.
+	if err := copyTreeContents(src, dst); err != nil {
+		return nil, err
+	}
+	if err := os.RemoveAll(src); err != nil {
+		return nil, err
+	}
+	return runtime.Null{}, nil
+}
+
+func ioTouch(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	path, err := singleStringValue(call, args)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	if err := os.Chtimes(path, now, now); err == nil {
+		return runtime.Null{}, nil
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o666)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.Null{}, f.Close()
+}
+
+func ioWriteTextAtomic(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	path, text, err := twoStringArgs(call, args)
+	if err != nil {
+		return nil, err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".geb-atomic-*")
+	if err != nil {
+		return nil, err
+	}
+	tmpName := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.WriteString(text); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return nil, err
+	}
+	committed = true
+	return runtime.Null{}, nil
 }
 
 func ioSymlink(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -1331,6 +1536,126 @@ func (e *Evaluator) fileHandle(value runtime.Value) (*os.File, error) {
 		return nil, fmt.Errorf("unknown file handle %d", handle)
 	}
 	return file, nil
+}
+
+// invalidateBufReader drops the cached line reader for a handle (across the
+// parent chain) so a reposition or content change re-syncs the next readLine.
+func (e *Evaluator) invalidateBufReader(value runtime.Value) {
+	handle, err := fileHandleID(value)
+	if err != nil {
+		return
+	}
+	for cur := e; cur != nil; cur = cur.parent {
+		cur.fileMu.Lock()
+		delete(cur.bufReaders, handle)
+		cur.fileMu.Unlock()
+	}
+}
+
+// bufferedCount returns the bytes a cached line reader has read ahead but not yet
+// yielded, so tell/atEnd can report the logical position rather than the file's.
+func (e *Evaluator) bufferedCount(value runtime.Value) int {
+	handle, err := fileHandleID(value)
+	if err != nil {
+		return 0
+	}
+	for cur := e; cur != nil; cur = cur.parent {
+		cur.fileMu.Lock()
+		r, ok := cur.bufReaders[handle]
+		cur.fileMu.Unlock()
+		if ok {
+			return r.Buffered()
+		}
+	}
+	return 0
+}
+
+func (e *Evaluator) ioSeek(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects a handle, offset, and optional whence", call.Callee.String())
+	}
+	offset, ok := toInt64(args[1])
+	if !ok {
+		return nil, fmt.Errorf("%s offset must be int", call.Callee.String())
+	}
+	whence := io.SeekStart
+	if len(args) == 3 {
+		mode, ok := args[2].(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s whence must be a string", call.Callee.String())
+		}
+		w, err := seekWhence(mode.Value)
+		if err != nil {
+			return nil, err
+		}
+		whence = w
+	}
+	file, err := e.fileHandle(args[0])
+	if err != nil {
+		return nil, err
+	}
+	pos, err := file.Seek(offset, whence)
+	if err != nil {
+		return nil, err
+	}
+	e.invalidateBufReader(args[0])
+	return runtime.NewInt64(pos), nil
+}
+
+func (e *Evaluator) ioTell(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
+	}
+	file, err := e.fileHandle(args[0])
+	if err != nil {
+		return nil, err
+	}
+	pos, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.NewInt64(pos - int64(e.bufferedCount(args[0]))), nil
+}
+
+func (e *Evaluator) ioTruncate(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects a handle and a size", call.Callee.String())
+	}
+	size, ok := toInt64(args[1])
+	if !ok || size < 0 {
+		return nil, fmt.Errorf("%s size must be a non-negative int", call.Callee.String())
+	}
+	file, err := e.fileHandle(args[0])
+	if err != nil {
+		return nil, err
+	}
+	if err := file.Truncate(size); err != nil {
+		return nil, err
+	}
+	e.invalidateBufReader(args[0])
+	return runtime.Null{}, nil
+}
+
+func (e *Evaluator) ioAtEnd(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
+	}
+	if e.bufferedCount(args[0]) > 0 {
+		return runtime.Bool{Value: false}, nil
+	}
+	file, err := e.fileHandle(args[0])
+	if err != nil {
+		return nil, err
+	}
+	pos, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	return runtime.Bool{Value: pos >= info.Size()}, nil
 }
 
 type streamSource struct {
@@ -1598,11 +1923,35 @@ func fileOpenFlags(mode string) (int, error) {
 		return os.O_CREATE | os.O_WRONLY | os.O_TRUNC, nil
 	case "a":
 		return os.O_CREATE | os.O_WRONLY | os.O_APPEND, nil
-	case "rw":
+	case "r+":
+		return os.O_RDWR, nil
+	case "w+":
+		return os.O_CREATE | os.O_RDWR | os.O_TRUNC, nil
+	case "a+":
+		return os.O_CREATE | os.O_RDWR | os.O_APPEND, nil
+	case "x":
+		return os.O_CREATE | os.O_EXCL | os.O_WRONLY, nil
+	case "x+":
+		return os.O_CREATE | os.O_EXCL | os.O_RDWR, nil
+	case "rw": // alias of r+ with create
 		return os.O_CREATE | os.O_RDWR, nil
-	case "rw_trunc":
+	case "rw_trunc": // alias of w+
 		return os.O_CREATE | os.O_RDWR | os.O_TRUNC, nil
 	default:
 		return 0, fmt.Errorf("unsupported file mode %q", mode)
+	}
+}
+
+// seekWhence maps the string whence to an io.Seek* origin.
+func seekWhence(whence string) (int, error) {
+	switch whence {
+	case "start":
+		return io.SeekStart, nil
+	case "current":
+		return io.SeekCurrent, nil
+	case "end":
+		return io.SeekEnd, nil
+	default:
+		return 0, fmt.Errorf("invalid whence %q (want \"start\", \"current\", or \"end\")", whence)
 	}
 }

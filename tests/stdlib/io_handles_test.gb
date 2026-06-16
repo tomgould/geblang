@@ -1,0 +1,122 @@
+/**
+ * @title io file-handle positioning + filesystem helpers
+ * @summary Covers seek/tell/truncate/atEnd on r+ handles, the r+/w+/x open
+ * modes, copy/move/copyTree, lstat/scanDir and the stat isFile/isSymlink keys,
+ * touch, and writeTextAtomic.
+ */
+import test;
+import io;
+import path;
+
+class IoHandlesTest extends test.Test {
+
+    func workDir(): string {
+        return io.tempDir("geb-io-handles-*");
+    }
+
+    @test
+    func seekTellTruncate(): void {
+        let dir = this.workDir();
+        let p = path.join(dir, "d.txt");
+        io.writeText(p, "Hello, World!");
+        let f = io.open(p, "r+");
+        this.assertEquals("Hello", io.read(f, 5));
+        this.assertEquals(5, io.tell(f));
+        io.seek(f, 7, "start");
+        this.assertEquals("World", io.read(f, 5));
+        io.seek(f, -1, "end");
+        this.assertEquals("!", io.read(f, 1));
+        io.seek(f, 0, "start");
+        io.truncate(f, 5);
+        io.close(f);
+        this.assertEquals("Hello", io.readText(p));
+        io.remove(dir);
+    }
+
+    @test
+    func atEndAndCurrentWhence(): void {
+        let dir = this.workDir();
+        let p = path.join(dir, "d.txt");
+        io.writeText(p, "abcdef");
+        let f = io.open(p, "r");
+        this.assertFalse(io.atEnd(f));
+        io.read(f, 3);
+        io.seek(f, 1, "current");
+        this.assertEquals("ef", io.read(f, 2));
+        this.assertTrue(io.atEnd(f));
+        io.close(f);
+        io.remove(dir);
+    }
+
+    @test
+    func exclusiveModeRejectsExisting(): void {
+        let dir = this.workDir();
+        let p = path.join(dir, "x.txt");
+        let f = io.open(p, "x");
+        io.writeln(f, "first");
+        io.close(f);
+        this.assertThrows(func(): void {
+            io.open(p, "x");
+        });
+        io.remove(dir);
+    }
+
+    @test
+    func copyMoveTree(): void {
+        let dir = this.workDir();
+        io.writeText(path.join(dir, "a.txt"), "data");
+        io.copy(path.join(dir, "a.txt"), path.join(dir, "b.txt"));
+        this.assertEquals("data", io.readText(path.join(dir, "b.txt")));
+        io.move(path.join(dir, "b.txt"), path.join(dir, "c.txt"));
+        this.assertFalse(io.exists(path.join(dir, "b.txt")));
+        this.assertEquals("data", io.readText(path.join(dir, "c.txt")));
+        io.mkdir(path.join(dir, "tree/sub"), 0o755);
+        io.writeText(path.join(dir, "tree/sub/x.txt"), "deep");
+        io.copyTree(path.join(dir, "tree"), path.join(dir, "tree2"));
+        this.assertEquals("deep", io.readText(path.join(dir, "tree2/sub/x.txt")));
+        io.remove(dir);
+    }
+
+    @test
+    func statKeysAndLstat(): void {
+        let dir = this.workDir();
+        let p = path.join(dir, "f.txt");
+        io.writeText(p, "hi");
+        io.symlink(p, path.join(dir, "lnk"));
+        this.assertTrue(io.stat(p)["isFile"] as bool);
+        this.assertFalse(io.stat(p)["isSymlink"] as bool);
+        this.assertTrue(io.lstat(path.join(dir, "lnk"))["isSymlink"] as bool);
+        this.assertFalse(io.stat(path.join(dir, "lnk"))["isSymlink"] as bool);
+        io.remove(dir);
+    }
+
+    @test
+    func scanDirEntries(): void {
+        let dir = this.workDir();
+        io.writeText(path.join(dir, "a.txt"), "x");
+        io.mkdir(path.join(dir, "sub"), 0o755);
+        let names = [];
+        let dirs = 0;
+        for (entry in io.scanDir(dir)) {
+            names = names.push(entry["name"]);
+            if (entry["isDir"] as bool) { dirs = dirs + 1; }
+        }
+        this.assertEquals("a.txt,sub", names.sorted().join(","));
+        this.assertEquals(1, dirs);
+        io.remove(dir);
+    }
+
+    @test
+    func touchAndAtomicWrite(): void {
+        let dir = this.workDir();
+        let t = path.join(dir, "touched");
+        io.touch(t);
+        this.assertTrue(io.exists(t));
+        let a = path.join(dir, "atomic.txt");
+        io.writeTextAtomic(a, "atomic-data");
+        this.assertEquals("atomic-data", io.readText(a));
+        io.writeTextAtomic(a, "replaced");
+        this.assertEquals("replaced", io.readText(a));
+        io.remove(dir);
+    }
+}

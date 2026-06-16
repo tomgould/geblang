@@ -1,0 +1,78 @@
+/**
+ * @title file.File object
+ * @summary Covers the File wrapper: open/read/write, seek/tell/truncate,
+ * line iteration, and the `with` context manager that auto-closes the handle.
+ */
+import test;
+import file;
+import io;
+import path;
+
+class FileObjectTest extends test.Test {
+
+    func workDir(): string {
+        return io.tempDir("geb-file-obj-*");
+    }
+
+    @test
+    func writeThenRead(): void {
+        let dir = this.workDir();
+        let p = path.join(dir, "log.txt");
+        let w = file.open(p, "w");
+        w.writeln("alpha");
+        w.writeln("beta");
+        w.close();
+        this.assertTrue(w.isClosed());
+
+        let r = file.open(p, "r");
+        this.assertEquals("alpha", r.readLine());
+        this.assertEquals("beta", r.readLine());
+        this.assertNull(r.readLine());
+        r.close();
+        io.remove(dir);
+    }
+
+    @test
+    func seekTellTruncate(): void {
+        let dir = this.workDir();
+        let p = path.join(dir, "d.txt");
+        io.writeText(p, "Hello, World!");
+        let f = file.open(p, "r+");
+        this.assertEquals("Hello", f.read(5));
+        this.assertEquals(5, f.tell());
+        f.seek(7, "start");
+        this.assertEquals("World", f.read(5));
+        f.truncate(5);
+        f.close();
+        this.assertEquals("Hello", io.readText(p));
+        io.remove(dir);
+    }
+
+    @test
+    func lineIteration(): void {
+        let dir = this.workDir();
+        let p = path.join(dir, "lines.txt");
+        io.writeText(p, "one\ntwo\nthree\n");
+        let collected = [];
+        let f = file.open(p, "r");
+        for (line in f) {
+            collected = collected.push(line);
+        }
+        f.close();
+        this.assertEquals("one,two,three", collected.join(","));
+        io.remove(dir);
+    }
+
+    @test
+    func withAutoCloses(): void {
+        let dir = this.workDir();
+        let p = path.join(dir, "w.txt");
+        io.writeText(p, "data");
+        let captured = "";
+        with (f = file.open(p, "r")) {
+            captured = f.readAll();
+        }
+        this.assertEquals("data", captured);
+        io.remove(dir);
+    }
+}
