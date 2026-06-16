@@ -402,7 +402,7 @@ func (e *Evaluator) cliPrompt(call *ast.CallExpression, args []runtime.Value) (r
 		}
 		defaultValue = value.Value
 	}
-	_, _ = io.WriteString(e.stdout, prompt.Value)
+	_, _ = io.WriteString(e.promptWriter(), prompt.Value)
 	line, err := readConsoleLine()
 	if err != nil {
 		return nil, err
@@ -425,12 +425,12 @@ func (e *Evaluator) cliPassword(call *ast.CallExpression, args []runtime.Value) 
 		}
 		prompt = value.Value
 	}
-	_, _ = io.WriteString(e.stdout, prompt)
+	_, _ = io.WriteString(e.promptWriter(), prompt)
 	line, err := readConsoleSecret()
 	if err != nil {
 		return nil, err
 	}
-	_, _ = fmt.Fprintln(e.stdout)
+	_, _ = fmt.Fprintln(e.promptWriter())
 	return runtime.String{Value: line}, nil
 }
 
@@ -452,7 +452,7 @@ func (e *Evaluator) cliConfirm(call *ast.CallExpression, args []runtime.Value) (
 		defaultValue = value.Value
 		hasDefault = true
 	}
-	_, _ = io.WriteString(e.stdout, prompt.Value)
+	_, _ = io.WriteString(e.promptWriter(), prompt.Value)
 	line, err := readConsoleLine()
 	if err != nil {
 		return nil, err
@@ -496,20 +496,20 @@ func (e *Evaluator) cliChoose(call *ast.CallExpression, args []runtime.Value) (r
 	}
 	defaultIndex := int64(-1)
 	if len(args) == 3 {
-		value, ok := args[2].(runtime.Int)
-		if !ok || !value.Value.IsInt64() {
+		bi, ok := native.IntValueToBigInt(args[2])
+		if !ok || !bi.IsInt64() {
 			return nil, fmt.Errorf("%s default index must be int", call.Callee.String())
 		}
-		defaultIndex = value.Value.Int64()
+		defaultIndex = bi.Int64()
 		if defaultIndex < 0 || defaultIndex >= int64(len(choices)) {
 			return nil, fmt.Errorf("%s default index out of range", call.Callee.String())
 		}
 	}
-	_, _ = io.WriteString(e.stdout, prompt.Value)
+	_, _ = io.WriteString(e.promptWriter(), prompt.Value)
 	for i, choice := range choices {
-		_, _ = fmt.Fprintf(e.stdout, "\n  %d) %s", i+1, choice)
+		_, _ = fmt.Fprintf(e.promptWriter(), "\n  %d) %s", i+1, choice)
 	}
-	_, _ = io.WriteString(e.stdout, "\n> ")
+	_, _ = io.WriteString(e.promptWriter(), "\n> ")
 	line, err := readConsoleLine()
 	if err != nil {
 		return nil, err
@@ -530,8 +530,291 @@ func (e *Evaluator) cliChoose(call *ast.CallExpression, args []runtime.Value) (r
 	return nil, fmt.Errorf("%s invalid choice %q", call.Callee.String(), line)
 }
 
+// cliMultiChoose presents a checkbox list and returns the selected
+// options. On a TTY it runs an arrow-key UI (up/down or j/k move, space
+// toggles, a toggles all, enter confirms, ctrl-c/q cancels); otherwise
+// it falls back to numbered comma-separated input so piped / non-
+// interactive use still works.
+func (e *Evaluator) cliMultiChoose(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, fmt.Errorf("%s expects prompt, options list, and optional preselected index list", call.Callee.String())
+	}
+	prompt, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s prompt must be string", call.Callee.String())
+	}
+	options, ok := args[1].(*runtime.List)
+	if !ok {
+		return nil, fmt.Errorf("%s options must be list<string>", call.Callee.String())
+	}
+	choices := make([]string, 0, len(options.Elements))
+	for _, option := range options.Elements {
+		value, ok := option.(runtime.String)
+		if !ok {
+			return nil, fmt.Errorf("%s options must be list<string>", call.Callee.String())
+		}
+		choices = append(choices, value.Value)
+	}
+	if len(choices) == 0 {
+		return nil, fmt.Errorf("%s options must not be empty", call.Callee.String())
+	}
+	checked := make([]bool, len(choices))
+	if len(args) == 3 {
+		pre, ok := args[2].(*runtime.List)
+		if !ok {
+			return nil, fmt.Errorf("%s preselected must be list<int>", call.Callee.String())
+		}
+		for _, p := range pre.Elements {
+			bi, ok := native.IntValueToBigInt(p)
+			if !ok || !bi.IsInt64() {
+				return nil, fmt.Errorf("%s preselected must be list<int>", call.Callee.String())
+			}
+			if i := bi.Int64(); i >= 0 && i < int64(len(checked)) {
+				checked[i] = true
+			}
+		}
+	}
+	selected, err := e.runMultiChoose(prompt.Value, choices, checked)
+	if err != nil {
+		return nil, err
+	}
+	elements := make([]runtime.Value, 0, len(selected))
+	for _, s := range selected {
+		elements = append(elements, runtime.String{Value: s})
+	}
+	return &runtime.List{Elements: elements, ElementTypes: []string{"string"}}, nil
+}
+
+type tuiKey int
+
+const (
+	keyNone tuiKey = iota
+	keyUp
+	keyDown
+	keyToggle
+	keyToggleAll
+	keyConfirm
+	keyCancel
+)
+
+type multiChooseState struct {
+	cursor  int
+	checked []bool
+	done    bool
+	cancel  bool
+}
+
+func (s *multiChooseState) apply(k tuiKey) {
+	n := len(s.checked)
+	if n == 0 {
+		return
+	}
+	switch k {
+	case keyUp:
+		s.cursor = (s.cursor - 1 + n) % n
+	case keyDown:
+		s.cursor = (s.cursor + 1) % n
+	case keyToggle:
+		s.checked[s.cursor] = !s.checked[s.cursor]
+	case keyToggleAll:
+		all := true
+		for _, c := range s.checked {
+			if !c {
+				all = false
+				break
+			}
+		}
+		for i := range s.checked {
+			s.checked[i] = !all
+		}
+	case keyConfirm:
+		s.done = true
+	case keyCancel:
+		s.cancel = true
+	}
+}
+
+func selectedChoices(choices []string, checked []bool) []string {
+	out := []string{}
+	for i, c := range checked {
+		if c {
+			out = append(out, choices[i])
+		}
+	}
+	return out
+}
+
+func (e *Evaluator) runMultiChoose(label string, choices []string, checked []bool) ([]string, error) {
+	// Injected input (io.withStdin) drives the key loop directly, no termios.
+	if override := consoleInputOverride(); override != nil {
+		return e.multiChooseLoop(label, choices, checked, override)
+	}
+	fd := int(os.Stdin.Fd())
+	original, err := unix.IoctlGetTermios(fd, unix.TCGETS)
+	if err != nil {
+		return e.multiChooseFallback(label, choices, checked)
+	}
+	raw := *original
+	raw.Lflag &^= (unix.ICANON | unix.ECHO | unix.ISIG)
+	raw.Cc[unix.VMIN] = 1
+	raw.Cc[unix.VTIME] = 0
+	if err := unix.IoctlSetTermios(fd, unix.TCSETS, &raw); err != nil {
+		return e.multiChooseFallback(label, choices, checked)
+	}
+	defer func() { _ = unix.IoctlSetTermios(fd, unix.TCSETS, original) }()
+	return e.multiChooseLoop(label, choices, checked, bufio.NewReader(os.Stdin))
+}
+
+func (e *Evaluator) multiChooseLoop(label string, choices []string, checked []bool, in *bufio.Reader) ([]string, error) {
+	state := &multiChooseState{checked: checked}
+	e.renderMultiChoose(label, choices, state, false)
+	for {
+		key, err := readTUIKey(in)
+		if err == io.EOF {
+			// Input exhausted (ctrl-d or end of injected stream): confirm.
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		state.apply(key)
+		if state.cancel {
+			_, _ = fmt.Fprintln(e.promptWriter())
+			return nil, fmt.Errorf("cli.multiChoose: cancelled")
+		}
+		if state.done {
+			break
+		}
+		e.renderMultiChoose(label, choices, state, true)
+	}
+	_, _ = fmt.Fprintln(e.promptWriter())
+	return selectedChoices(choices, state.checked), nil
+}
+
+func readTUIKey(in *bufio.Reader) (tuiKey, error) {
+	b, err := in.ReadByte()
+	if err != nil {
+		return keyNone, err
+	}
+	switch b {
+	case 0x03, 'q', 'Q':
+		return keyCancel, nil
+	case '\r', '\n':
+		return keyConfirm, nil
+	case ' ':
+		return keyToggle, nil
+	case 'a', 'A':
+		return keyToggleAll, nil
+	case 'k', 'K':
+		return keyUp, nil
+	case 'j', 'J':
+		return keyDown, nil
+	case 0x1b:
+		if b2, err := in.ReadByte(); err == nil && b2 == '[' {
+			if b3, err := in.ReadByte(); err == nil {
+				switch b3 {
+				case 'A':
+					return keyUp, nil
+				case 'B':
+					return keyDown, nil
+				}
+			}
+		}
+	}
+	return keyNone, nil
+}
+
+func (e *Evaluator) renderMultiChoose(label string, choices []string, s *multiChooseState, redraw bool) {
+	if redraw {
+		// Move the cursor back up to the first option row to repaint.
+		_, _ = fmt.Fprintf(e.promptWriter(), "\x1b[%dA", len(choices))
+	} else {
+		_, _ = fmt.Fprintf(e.promptWriter(), "%s (up/down move, space toggles, enter confirms)\n", label)
+	}
+	for i, choice := range choices {
+		box := "[ ]"
+		if s.checked[i] {
+			box = "[x]"
+		}
+		if i == s.cursor {
+			_, _ = fmt.Fprintf(e.promptWriter(), "\x1b[2K\x1b[7m> %s %s\x1b[0m\n", box, choice)
+		} else {
+			_, _ = fmt.Fprintf(e.promptWriter(), "\x1b[2K  %s %s\n", box, choice)
+		}
+	}
+}
+
+func (e *Evaluator) multiChooseFallback(label string, choices []string, checked []bool) ([]string, error) {
+	_, _ = io.WriteString(e.promptWriter(), label)
+	for i, choice := range choices {
+		mark := " "
+		if checked[i] {
+			mark = "x"
+		}
+		_, _ = fmt.Fprintf(e.promptWriter(), "\n  %d) [%s] %s", i+1, mark, choice)
+	}
+	_, _ = io.WriteString(e.promptWriter(), "\nSelect (comma-separated numbers; blank keeps current): ")
+	line, err := readConsoleLine()
+	if err != nil {
+		return nil, err
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return selectedChoices(choices, checked), nil
+	}
+	result := make([]bool, len(choices))
+	for _, part := range strings.Split(line, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if idx, err := strconv.ParseInt(part, 10, 64); err == nil && idx >= 1 && idx <= int64(len(choices)) {
+			result[idx-1] = true
+			continue
+		}
+		for i, choice := range choices {
+			if strings.EqualFold(choice, part) {
+				result[i] = true
+			}
+		}
+	}
+	return selectedChoices(choices, result), nil
+}
+
+// ioWithStdin runs the body callable with console input served from the
+// given string instead of real stdin, restoring the previous source
+// afterwards. Lets tests drive interactive prompts (line input or raw
+// key sequences) deterministically.
+func (e *Evaluator) ioWithStdin(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects an input string and a callable body", call.Callee.String())
+	}
+	input, ok := args[0].(runtime.String)
+	if !ok {
+		return nil, fmt.Errorf("%s input must be string", call.Callee.String())
+	}
+	prev := setConsoleInputOverride(bufio.NewReader(strings.NewReader(input.Value)))
+	defer setConsoleInputOverride(prev)
+	return e.callValue(args[1], []runtime.Value{})
+}
+
+// promptWriter is where interactive prompt / UI rendering goes. With
+// injected input (io.withStdin) it is discarded so scripted prompts do
+// not pollute output; this runs on the evaluator on both backends, so
+// io.println (which does not use it) is unaffected and parity holds.
+func (e *Evaluator) promptWriter() io.Writer {
+	if consoleInputOverride() != nil {
+		return io.Discard
+	}
+	return e.stdout
+}
+
 func readConsoleLine() (string, error) {
-	line, err := consoleLineReader().ReadString('\n')
+	reader := consoleLineReader()
+	if override := consoleInputOverride(); override != nil {
+		reader = override
+	}
+	line, err := reader.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return "", err
 	}
@@ -540,6 +823,28 @@ func readConsoleLine() (string, error) {
 		return "", nil
 	}
 	return line, nil
+}
+
+// consoleInputState holds an optional injected input stream. When set
+// (via io.withStdin), the cli readers consume it instead of the real
+// stdin and skip raw-mode termios, so interactive prompts are testable.
+var consoleInputState struct {
+	sync.Mutex
+	reader *bufio.Reader
+}
+
+func consoleInputOverride() *bufio.Reader {
+	consoleInputState.Lock()
+	defer consoleInputState.Unlock()
+	return consoleInputState.reader
+}
+
+func setConsoleInputOverride(r *bufio.Reader) *bufio.Reader {
+	consoleInputState.Lock()
+	defer consoleInputState.Unlock()
+	prev := consoleInputState.reader
+	consoleInputState.reader = r
+	return prev
 }
 
 var consoleReaderState struct {
@@ -559,6 +864,9 @@ func consoleLineReader() *bufio.Reader {
 }
 
 func readConsoleSecret() (string, error) {
+	if consoleInputOverride() != nil {
+		return readConsoleLine()
+	}
 	fd := int(os.Stdin.Fd())
 	original, err := unix.IoctlGetTermios(fd, unix.TCGETS)
 	if err != nil {

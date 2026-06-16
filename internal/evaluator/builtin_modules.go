@@ -105,6 +105,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"stdinReadLine": e.ioStdinReadLine,
 			"readLine":      e.ioReadLine,
 			"readLines":     e.ioReadLines,
+			"withStdin":     e.ioWithStdin,
 		},
 		"sys": {
 			"exit": func(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -702,6 +703,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"secret":         e.cliPassword,
 			"confirm":        e.cliConfirm,
 			"choose":         e.cliChoose,
+			"multiChoose":    e.cliMultiChoose,
 			"style":          cliStyle,
 			"stripAnsi":      cliStripANSI,
 			"table":          cliTable,

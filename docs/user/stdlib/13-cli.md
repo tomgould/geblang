@@ -37,10 +37,24 @@ let pass  = cli.password("Password: ");        # input hidden
 let pass2 = cli.secret("Confirm password: ");  # same as password
 let ok    = cli.confirm("Continue? [y/N] ");   # returns bool
 let lang  = cli.choose("Language: ", ["gb", "py", "js"]);  # returns chosen string
+let langs = cli.multiChoose("Languages:", ["gb", "py", "js"]);  # returns list<string>
 ```
 
 `confirm` returns `true` when the user types `y` or `Y`. `choose` displays the
 options and validates the input, re-prompting on invalid choices.
+
+`multiChoose` selects several options at once. On an interactive terminal it
+shows an arrow-key checkbox list (up/down or `j`/`k` move, space toggles, `a`
+toggles all, enter confirms, `q` or ctrl-c cancels). When stdin is not a
+terminal (piped input, CI) it falls back to a numbered list and reads
+comma-separated choices, so scripts and tests keep working. An optional third
+argument pre-checks options by index:
+
+```gb
+let picked = cli.multiChoose("Pick services:",
+    ["web", "db", "cache", "queue"],
+    [0, 1]);   # web and db checked to start
+```
 
 ## Text styling
 

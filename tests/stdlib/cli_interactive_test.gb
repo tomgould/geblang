@@ -1,0 +1,67 @@
+/**
+ * @title Interactive CLI prompts driven by io.withStdin
+ * @summary io.withStdin injects console input so the interactive cli
+ * functions test unattended: line input for prompt / confirm / choose,
+ * and key sequences for the multiChoose checkbox UI. Assertions read the
+ * returned value (stdout carries the UI's ANSI redraw codes). Arrow-byte
+ * decoding (ESC [ A/B) is covered by the Go unit test; here j / k move.
+ */
+import test;
+import io;
+import cli;
+
+class CliInteractiveTest extends test.Test {
+    @test
+    func promptReturnsInjectedLine(): void {
+        let name = io.withStdin("Ada\n", func(): any { return cli.prompt("Name: "); });
+        this.assertEquals("Ada", name);
+    }
+
+    @test
+    func confirmReadsYesNo(): void {
+        let yes = io.withStdin("y\n", func(): any { return cli.confirm("OK? "); });
+        let no = io.withStdin("n\n", func(): any { return cli.confirm("OK? "); });
+        this.assertTrue(yes as bool);
+        this.assertTrue(!(no as bool));
+    }
+
+    @test
+    func chooseByNumber(): void {
+        let picked = io.withStdin("2\n",
+            func(): any { return cli.choose("C:", ["alpha", "beta", "gamma"]); });
+        this.assertEquals("beta", picked);
+    }
+
+    @test
+    func chooseUsesLiteralDefaultIndexOnBlank(): void {
+        /* Regression: a literal default index (SmallInt) was rejected. */
+        let picked = io.withStdin("\n",
+            func(): any { return cli.choose("C:", ["alpha", "beta", "gamma"], 1); });
+        this.assertEquals("beta", picked);
+    }
+
+    @test
+    func multiChooseToggleViaKeys(): void {
+        /* j = down (to beta), space toggles, enter confirms -> ["beta"] */
+        let picked = io.withStdin("j \r",
+            func(): any { return cli.multiChoose("L:", ["alpha", "beta", "gamma"]); }) as list<string>;
+        this.assertEquals(1, picked.length());
+        this.assertEquals("beta", picked[0]);
+    }
+
+    @test
+    func multiChooseToggleAll(): void {
+        let picked = io.withStdin("a\r",
+            func(): any { return cli.multiChoose("L:", ["alpha", "beta", "gamma"]); }) as list<string>;
+        this.assertEquals(3, picked.length());
+    }
+
+    @test
+    func multiChoosePreselectedConfirmsOnEnter(): void {
+        let picked = io.withStdin("\r",
+            func(): any { return cli.multiChoose("L:", ["alpha", "beta", "gamma"], [0, 2]); }) as list<string>;
+        this.assertEquals(2, picked.length());
+        this.assertEquals("alpha", picked[0]);
+        this.assertEquals("gamma", picked[1]);
+    }
+}

@@ -50,6 +50,8 @@
   `reflect.function`) argument identically on both backends. Previously the
   bytecode backend rejected the nested form with a non-literal argument,
   requiring the class to be bound to a variable first.
+- `cli.choose(label, options, default)` accepts a literal default index again; a
+  small integer literal was wrongly rejected as "default index must be int".
 
 ### Standard library
 
@@ -65,6 +67,14 @@
   primitive fields keep their raw parsed value, a class with `__deserialize`
   still controls its own nesting, and a value whose shape does not match the
   declared field is left as-is. Identical on both backends.
+- `cli.multiChoose(label, options)` selects several options at once: an arrow-key
+  checkbox UI on a terminal (up/down or j/k move, space toggles, `a` toggles all,
+  enter confirms, q/ctrl-c cancels) with a numbered comma-separated fallback when
+  stdin is not a terminal. An optional third argument pre-checks options by index.
+- `io.withStdin(input, body)` runs `body` with the console readers consuming
+  `input` (line input or raw key sequences) instead of stdin, then restores it.
+  The interactive UI is suppressed while it runs, so it makes prompts (including
+  `cli.multiChoose`) testable. Returns the body's value.
 
 ### Native compilation (experimental)
 

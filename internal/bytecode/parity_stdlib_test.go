@@ -813,6 +813,18 @@ io.println(typeof(o.extra));
 `, "Inner\nL\nItem\n5\nInner\nT\ndict\n")
 }
 
+// TestParityWithStdinAndChoose pins io.withStdin feeding an interactive
+// cli prompt: both backends consume the injected input identically. Uses
+// the stateful harness since io / cli route through the native bridge.
+func TestParityWithStdinAndChoose(t *testing.T) {
+	runParityStateful(t, `import io;
+import cli;
+io.withStdin("2\n", func(): void {
+    io.println("picked " + cli.choose("Pick:", ["a", "b", "c"]));
+});
+`, "picked b\n")
+}
+
 func TestParityMathStats(t *testing.T) {
 	runParity(t, `import io;
 import math;
