@@ -19,6 +19,38 @@ const cmrMainGb = "import base;\n" +
 
 const cmrExpected = "from-base\n"
 
+// An entry-file class instantiated + invoked reflectively from an imported module must resolve entry-file globals on both backends.
+func TestEntryClassReflectDispatchResolvesEntryGlobals(t *testing.T) {
+	bin := buildCMBinary(t)
+	run := func(args ...string) string {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, "di.gb"),
+			[]byte("module di;\nimport reflect;\n"+
+				"export func makeAndCall(any classRef): string {\n"+
+				"    let instance = classRef();\n"+
+				"    let handler = reflect.method(instance, \"label\");\n"+
+				"    return handler();\n"+
+				"}\n"), 0644)
+		os.WriteFile(filepath.Join(dir, "main.gb"), []byte(
+			"import io;\nimport di;\nimport reflect;\n"+
+				"let salutation = \"TAG\";\n"+
+				"class Widget { func Widget() {} func label(): string { return salutation; } }\n"+
+				"io.println(di.makeAndCall(reflect.class(Widget())));\n"), 0644)
+		cmd := exec.Command(bin, append(args, "main.gb")...)
+		cmd.Dir = dir
+		out, _ := cmd.CombinedOutput()
+		return string(out)
+	}
+	vmOut := run("--vm-strict")
+	evalOut := run("--disable-vm")
+	if vmOut != evalOut {
+		t.Fatalf("entry-class globals diverge across backends:\n  vm:   %q\n  eval: %q", vmOut, evalOut)
+	}
+	if vmOut != "TAG\n" {
+		t.Fatalf("expected %q, got %q", "TAG\n", vmOut)
+	}
+}
+
 // TestCrossModuleCacheHitIdenticalOutput runs main.gb twice from the same dir,
 // ensuring the .gbc cache-hit path produces identical output to the cold run.
 func TestCrossModuleCacheHitIdenticalOutput(t *testing.T) {

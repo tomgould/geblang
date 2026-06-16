@@ -442,7 +442,7 @@ func (l *stdlibModuleLoader) UnimplementedAbstractMethods(module, className stri
 
 func (l *stdlibModuleLoader) ListAllClasses() []runtime.Value {
 	out := []runtime.Value{}
-	for module, chunk := range l.chunks {
+	appendChunkClasses := func(module string, chunk bytecode.Chunk) {
 		for i, classInfo := range chunk.Classes {
 			out = append(out, runtime.BytecodeClass{
 				Name: classInfo.Name, Index: int64(i), Module: module,
@@ -450,6 +450,12 @@ func (l *stdlibModuleLoader) ListAllClasses() []runtime.Value {
 				MethodDecorators: classInfo.MethodDecorators,
 			})
 		}
+	}
+	for module, chunk := range l.chunks {
+		appendChunkClasses(module, chunk)
+	}
+	if l.hasMainChunk {
+		appendChunkClasses("", l.mainChunk)
 	}
 	return out
 }
@@ -811,6 +817,61 @@ func (s *sshTestServer) port() string {
 func (s *sshTestServer) stop() {
 	_ = s.listener.Close()
 	s.wg.Wait()
+}
+
+// reflect.classes() from an imported module must see entry-file classes on both backends.
+func TestParityReflectClassesCrossModule(t *testing.T) {
+	dir := t.TempDir()
+	scan := "module scan;\n" +
+		"import reflect;\n" +
+		"export func sawEntry(string name): bool {\n" +
+		"    for (c in reflect.classes()) {\n" +
+		"        if (reflect.className(c) == name) { return true; }\n" +
+		"    }\n" +
+		"    return false;\n" +
+		"}\n"
+	if err := os.WriteFile(filepath.Join(dir, "scan.gb"), []byte(scan), 0o644); err != nil {
+		t.Fatalf("write scan module: %v", err)
+	}
+	source := "import io;\n" +
+		"import scan;\n" +
+		"class EntryWidget { func EntryWidget() {} }\n" +
+		"io.println(scan.sawEntry(\"EntryWidget\"));\n"
+
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator error: %v", err)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newStdlibModuleLoader(&vmOut, stateful)
+	loader.modulePaths = []string{dir}
+	loader.registerMainChunk(chunk)
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm error: %v", err)
+	}
+
+	if evOut.String() != vmOut.String() {
+		t.Errorf("reflect.classes() cross-module divergence:\n  evaluator: %q\n  vm:        %q", evOut.String(), vmOut.String())
+	}
+	if evOut.String() != "true\n" {
+		t.Errorf("entry class should be visible from an imported module; got eval=%q vm=%q", evOut.String(), vmOut.String())
+	}
 }
 
 // assertImportedModuleRejected writes moduleBody as module `lib`, imports it

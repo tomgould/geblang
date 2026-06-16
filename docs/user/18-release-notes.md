@@ -16,6 +16,16 @@
   with method-style read / write / seek, `with`-block auto-close, and line
   iteration. `streams.IOStream` gained `seek` / `tell` / `truncate` / `atEnd`.
 
+### Fixes
+
+- `reflect.classes()` called from inside an imported module now returns the
+  entry module's classes on the bytecode VM, matching the evaluator (the VM
+  previously omitted them), so whole-program class scans behave identically on
+  both backends.
+- A class declared in the entry file now resolves the entry file's top-level
+  bindings (imports and module-level `let` / `const`) when its methods are
+  dispatched from another module on the bytecode VM, matching the evaluator.
+
 ### Native compilation (experimental)
 
 - Module-level `let` / `const` read by a function now compiles natively, in both

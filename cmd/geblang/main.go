@@ -1866,6 +1866,14 @@ func (l *bytecodeModuleLoader) ifaceFallbackStateFor(module string) bytecode.Int
 	return l.ifaceFallbacks[module]
 }
 
+// Entry-chunk globals come live from the main VM so a cross-module dispatch sees its imports.
+func (l *bytecodeModuleLoader) globalsFor(module string) []runtime.Value {
+	if module == "" && l.mainVM != nil {
+		return l.mainVM.GlobalsSnapshot()
+	}
+	return l.globals[module]
+}
+
 func newBytecodeModuleLoader(stdout io.Writer, modulePaths []string) *bytecodeModuleLoader {
 	return &bytecodeModuleLoader{
 		stdout:         stdout,
@@ -1900,7 +1908,7 @@ func (l *bytecodeModuleLoader) moduleVM(module string, chunk bytecode.Chunk) (*b
 	vm.SetModuleName(module)
 	vm.SetModulePaths(l.modulePaths)
 	vm.SetStatefulNativeCaller(l.stateful)
-	vm.RestoreGlobals(l.globals[module])
+	vm.RestoreGlobals(l.globalsFor(module))
 	vm.RestoreFunctionDecoratorState(l.decorators[module])
 	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(module))
 	return vm, pool
@@ -2369,7 +2377,7 @@ func (l *bytecodeModuleLoader) CallModuleMethod(module string, className string,
 
 func (l *bytecodeModuleLoader) ListAllClasses() []runtime.Value {
 	out := []runtime.Value{}
-	for module, chunk := range l.chunks {
+	appendChunkClasses := func(module string, chunk bytecode.Chunk) {
 		for i, classInfo := range chunk.Classes {
 			out = append(out, runtime.BytecodeClass{
 				Name:             classInfo.Name,
@@ -2384,6 +2392,13 @@ func (l *bytecodeModuleLoader) ListAllClasses() []runtime.Value {
 				StaticDecorators: classInfo.StaticDecorators,
 			})
 		}
+	}
+	for module, chunk := range l.chunks {
+		appendChunkClasses(module, chunk)
+	}
+	// Entry chunk too, so reflect.classes() from an imported module sees it.
+	if l.hasMainChunk {
+		appendChunkClasses("", l.mainChunk)
 	}
 	return out
 }
