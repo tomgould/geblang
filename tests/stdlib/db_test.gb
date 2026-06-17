@@ -7,6 +7,8 @@ import test;
 import db;
 import binary;
 import async;
+import io;
+import path;
 
 class DbTest extends test.Test {
 
@@ -58,5 +60,45 @@ class DbTest extends test.Test {
         let back = binary.unpack("<3f", rows[0]["v"] as bytes);
         this.assertEquals(3, back.length());
         this.assertEquals(2.5f, back[1] as float);
+    }
+}
+
+class SqliteTuningTest extends test.Test {
+    func walConn(): any {
+        let file = path.join(io.tempDir("geb-db-wal-"), "app.sqlite");
+        return db.Connection({
+            "driver": "sqlite",
+            "dsn": file,
+            "wal": true,
+            "synchronous": "NORMAL",
+            "foreignKeys": true,
+            "busyTimeoutMs": 8000,
+            "tempStoreMemory": true,
+        });
+    }
+
+    @test
+    func tuningOptionsApplyToConnection(): void {
+        let c = this.walConn();
+        this.assertEquals("wal", c.query("PRAGMA journal_mode;").all()[0]["journal_mode"]);
+        this.assertEquals(1, c.query("PRAGMA foreign_keys;").all()[0]["foreign_keys"]);
+        this.assertEquals(1, c.query("PRAGMA synchronous;").all()[0]["synchronous"]);
+        c.close();
+    }
+
+    @test
+    func optimizeRunsWithoutError(): void {
+        let c = this.walConn();
+        c.exec("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+        c.optimize();
+        c.close();
+    }
+
+    @test
+    func rejectsInvalidSynchronous(): void {
+        let file = path.join(io.tempDir("geb-db-bad-"), "x.sqlite");
+        this.assertThrows(func(): void {
+            db.Connection({"driver": "sqlite", "dsn": file, "synchronous": "SOMETIMES"});
+        });
     }
 }

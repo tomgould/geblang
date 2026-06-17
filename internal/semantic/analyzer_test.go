@@ -789,6 +789,43 @@ Container<Sub> c = Container();
 	}
 }
 
+// TestAnalyzerInfersDivisionAsDecimal pins that `/` is true division, so int x = a / b is rejected.
+func TestAnalyzerInfersDivisionAsDecimal(t *testing.T) {
+	prelude := "let a = 7;\nlet b = 2;\nlet fv = 1.5f;\n"
+	rejects := []string{
+		"int n = a / b;",
+		"int n = (a / b) * a;",
+		"int n = a / fv;",
+	}
+	for _, line := range rejects {
+		diags := analyzeInput(t, prelude+line+"\n")
+		found := false
+		for _, d := range diags {
+			if strings.Contains(d.Message, "cannot assign decimal to int") ||
+				strings.Contains(d.Message, "cannot assign float to int") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected numeric-narrowing diagnostic for %q, got: %v", line, diags)
+		}
+	}
+	accepts := []string{
+		"int n = a + b;",
+		"int n = a * b;",
+		"int n = a // b;",
+		"int n = a % b;",
+		"decimal d = a / b;",
+		"float f = a / fv;",
+	}
+	for _, line := range accepts {
+		diags := analyzeInput(t, prelude+line+"\n")
+		if len(diags) != 0 {
+			t.Errorf("expected no diagnostics for %q, got: %v", line, diags)
+		}
+	}
+}
+
 // TestAnalyzerRejectsUnknownLowercaseTypeName guards the "aaa bbb;"
 // typo case. Two bare identifiers parse as a typed declaration with
 // the first as the type. Lower-case unknown type names error out.

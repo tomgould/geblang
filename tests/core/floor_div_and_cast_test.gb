@@ -71,9 +71,43 @@ class CastTruncateTest extends test.Test {
 
     @test
     func chainedDecimalIntCast(): void {
-        /* `3.99 as decimal as int` exercises the decimal-path
-         * truncation independently of the float path. */
+        /* `3.99 as decimal as int` exercises the decimal-path truncation independently of the float path. */
         this.assertEquals(3, (3.99 as decimal) as int);
         this.assertEquals(-3, ((-3.99) as decimal) as int);
+    }
+
+    @test
+    func castBindsTighterThanComparison(): void {
+        /* `7.9 as int < 8` is `(7.9 as int) < 8`; int is not a generic type. */
+        let y = 8;
+        this.assertTrue(7.9 as int < y);
+        this.assertFalse(10 as int < y);
+        /* generic casts still parse */
+        this.assertEquals(2, ([1, 2] as list<int>).length());
+    }
+}
+
+class TrueDivisionTypingTest extends test.Test {
+    @test
+    func intDivisionIsDecimal(): void {
+        /* `/` is true division: int / int is a decimal even when it divides evenly. */
+        decimal q = 7 / 2;
+        this.assertEquals("3.5000000000", q as string);
+        decimal exact = 50000 / 1000;
+        this.assertEquals("50.0000000000", exact as string);
+    }
+
+    @test
+    func floorDivisionStaysInt(): void {
+        int n = 50000 // 1000;
+        this.assertEquals(50, n);
+        int ceil = (1500 + 999) // 1000;
+        this.assertEquals(2, ceil);
+    }
+
+    @test
+    func divisionPromotesWithFloat(): void {
+        float f = 6 / 2.0f;
+        this.assertEquals("3", f as string);
     }
 }

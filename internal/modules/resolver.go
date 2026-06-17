@@ -338,7 +338,7 @@ func (r *Resolver) collectPackageModuleRoots(manifest *Manifest, seenManifests m
 			}
 			dependencyRoot = vendorPath
 		} else if dependency.Path != "" {
-			dependencyRoot = filepath.Clean(filepath.Join(manifest.Root, dependency.Path))
+			dependencyRoot = resolveDependencyPath(manifest.Root, dependency.Path)
 		} else {
 			return fmt.Errorf("package %s dependency %s has no path or git URL", manifestName(manifest), name)
 		}
@@ -423,8 +423,37 @@ func (r *Resolver) LoadManifest(path string) (*Manifest, error) {
 	if manifest.Dependencies == nil {
 		manifest.Dependencies = map[string]Dependency{}
 	}
+	for name, dep := range manifest.Dependencies {
+		if dep.Git != "" {
+			dep.Git = normalizeGitURL(dep.Git)
+			manifest.Dependencies[name] = dep
+		}
+	}
 	r.Manifests[path] = manifest
 	return manifest, nil
+}
+
+// resolveDependencyPath expands ~ and $VAR, then uses an absolute path as-is or joins it to root.
+func resolveDependencyPath(root, p string) string {
+	p = expandManifestPath(p)
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	return filepath.Clean(filepath.Join(root, p))
+}
+
+func expandManifestPath(p string) string {
+	p = os.ExpandEnv(p)
+	if p == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	} else if rest, ok := strings.CutPrefix(p, "~/"); ok {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, rest)
+		}
+	}
+	return p
 }
 
 func (m *Manifest) ModuleRoots() []string {

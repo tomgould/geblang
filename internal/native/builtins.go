@@ -57,6 +57,7 @@ func registerAllBuiltins(r *Registry) {
 	registerYAML(r)
 	registerCrypt(r)
 	registerCryptPKI(r)
+	registerCryptX509(r)
 	registerCryptJWK(r)
 	registerDatetime(r)
 	registerSecrets(r)

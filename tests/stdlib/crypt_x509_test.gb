@@ -1,0 +1,58 @@
+/**
+ * @title crypt X.509 chain verification, public key, extensions (1.23.1)
+ * @summary verifyCertChain checks signatures up to a trusted root (throwing on
+ * an untrusted or broken chain), parseCert exposes the public key and raw
+ * extensions, and asn1Decode walks DER.
+ */
+import test;
+import crypt;
+
+class CryptX509Test extends test.Test {
+    func chain(): dict<string, any> {
+        let caKey = crypt.generateEcKey("P-256");
+        let ca = crypt.generateSelfSignedCert({"subject": {"commonName": "Test Root CA"}, "key": caKey, "validDays": 365});
+        let leafKey = crypt.generateEcKey("P-256");
+        let csr = crypt.generateCsr({"key": leafKey, "subject": {"commonName": "leaf.example"}});
+        let leaf = crypt.signCertificate({"csr": csr, "caCert": ca["cert"], "caKey": caKey, "validDays": 90});
+        return {"ca": ca["cert"], "leaf": leaf};
+    }
+
+    @test
+    func verifiesTrustedChain(): void {
+        let c = this.chain();
+        let result = crypt.verifyCertChain({"leaf": c["leaf"], "roots": [c["ca"]]});
+        this.assertEquals(2, result.length());
+        this.assertEquals("leaf.example", result[0]["commonName"]);
+    }
+
+    @test
+    func rejectsUntrustedRoot(): void {
+        let c = this.chain();
+        let otherKey = crypt.generateEcKey("P-256");
+        let other = crypt.generateSelfSignedCert({"subject": {"commonName": "Other CA"}, "key": otherKey});
+        this.assertThrows(func(): void {
+            crypt.verifyCertChain({"leaf": c["leaf"], "roots": [other["cert"]]});
+        });
+    }
+
+    @test
+    func parseCertExposesPublicKeyAndExtensions(): void {
+        let c = this.chain();
+        let info = crypt.parseCert(c["leaf"]);
+        this.assertTrue((info["publicKey"] as string).startsWith("-----BEGIN PUBLIC KEY-----"));
+        this.assertTrue((info["extensions"] as list<any>).length() > 0);
+        let ext = info["extensions"][0];
+        this.assertTrue(ext.contains("oid"));
+        this.assertTrue(ext.contains("critical"));
+        this.assertTrue(ext.contains("value"));
+    }
+
+    @test
+    func asn1DecodeWalksDer(): void {
+        let c = this.chain();
+        let der = crypt.parseCert(c["leaf"])["extensions"][0]["value"] as bytes;
+        let decoded = crypt.asn1Decode(der);
+        /* decoding succeeds for a primitive (bytes) or a constructed (list) value */
+        this.assertTrue(decoded != null);
+    }
+}

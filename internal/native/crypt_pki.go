@@ -273,6 +273,26 @@ func registerCryptPKI(r *Registry) {
 		setEntry("keyType", runtime.String{Value: keyType})
 		setEntry("isCA", runtime.Bool{Value: cert.IsCA})
 
+		if pubDER, perr := x509.MarshalPKIXPublicKey(cert.PublicKey); perr == nil {
+			pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
+			setEntry("publicKey", runtime.String{Value: string(pubPEM)})
+		}
+		extElems := make([]runtime.Value, 0, len(cert.Extensions))
+		for _, ext := range cert.Extensions {
+			extEntries := map[string]runtime.DictEntry{}
+			putStr := func(k, v string) {
+				key := runtime.String{Value: k}
+				extEntries[DictKey(key)] = runtime.DictEntry{Key: key, Value: runtime.String{Value: v}}
+			}
+			putStr("oid", ext.Id.String())
+			critKey := runtime.String{Value: "critical"}
+			extEntries[DictKey(critKey)] = runtime.DictEntry{Key: critKey, Value: runtime.Bool{Value: ext.Critical}}
+			valKey := runtime.String{Value: "value"}
+			extEntries[DictKey(valKey)] = runtime.DictEntry{Key: valKey, Value: runtime.Bytes{Value: append([]byte(nil), ext.Value...)}}
+			extElems = append(extElems, runtime.Dict{Entries: extEntries})
+		}
+		setEntry("extensions", &runtime.List{Elements: extElems})
+
 		return runtime.Dict{Entries: entries}, nil
 	})
 

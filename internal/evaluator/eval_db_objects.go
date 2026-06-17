@@ -225,6 +225,12 @@ func (e *Evaluator) dbObjectClasses(env *runtime.Environment) []*runtime.Class {
 		}
 		return e.dbStats(syntheticCall("db.Connection.stats"), []runtime.Value{this.Fields["handle"]})
 	}}}
+	connectionClass.Methods["optimize"] = []runtime.Function{{Name: "optimize", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 0 {
+			return nil, fmt.Errorf("Connection.optimize expects no arguments")
+		}
+		return e.dbOptimize(syntheticCall("db.Connection.optimize"), []runtime.Value{this.Fields["handle"]})
+	}}}
 	connectionClass.Methods["migrate"] = []runtime.Function{{Name: "migrate", Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 		return e.dbMigrate(syntheticCall("db.Connection.migrate"), append([]runtime.Value{this.Fields["handle"]}, args...))
 	}}}

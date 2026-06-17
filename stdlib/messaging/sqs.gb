@@ -36,7 +36,7 @@ export class SqsQueue {
     func receive(int timeoutMs): ?dict<string, any> {
         /* SQS WaitTimeSeconds is granular per-second up to 20. Round
          * the millisecond budget up so a 1500ms request waits 2s. */
-        int waitSec = (timeoutMs + 999) / 1000;
+        int waitSec = (timeoutMs + 999) // 1000;
         if (waitSec < 0) { waitSec = 0; }
         if (waitSec > 20) { waitSec = 20; }
         string params = "Action=ReceiveMessage&Version=2012-11-05&MaxNumberOfMessages=1&WaitTimeSeconds=" + (waitSec as string);

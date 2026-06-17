@@ -1,5 +1,46 @@
 # Release Notes
 
+## 1.23.1
+
+### Language
+
+- A cast to a primitive followed by `<` now parses as a comparison:
+  `x as int < y` is `(x as int) < y`. Primitive types never take type arguments,
+  so `<` after one is the less-than operator. Generic casts such as
+  `x as list<int>` are unchanged.
+
+### Standard library
+
+- `crypt` gained real X.509 chain support: `crypt.verifyCertChain` verifies a
+  certificate chain's signatures up to a trusted root (throwing on failure),
+  `crypt.parseCert` now also returns the `publicKey` PEM and raw `extensions`,
+  `crypt.asn1Decode` decodes DER into a nested structure, and
+  `crypt.parseAndroidAttestation` reads the Android Key Attestation extension.
+- SQLite connections accept tuning options on the `db.Connection({...})`
+  options-dict, applied as per-connection pragmas at connect time: `wal`,
+  `synchronous`, `foreignKeys`, `busyTimeoutMs`, `cacheSizeKb`, `mmapSizeMb`,
+  and `tempStoreMemory`. Each is explicit (`wal: true` sets only WAL). A new
+  `connection.optimize()` runs `PRAGMA optimize` for query-planner maintenance.
+
+### Type checking
+
+- Division `/` is true division and its result type is `decimal` (or `float`),
+  even when the operands divide evenly. Assigning a division result to an `int`
+  (`int n = a / b`) is now a compile-time error on every path
+  (`check` / `test` / `run` / `build`), reported as `cannot assign decimal to
+  int`. Use `//` for an integer (floor) result, or `(a / b) as int` to truncate.
+  This closes a case where the bytecode VM crashed at runtime while the evaluator
+  produced a decimal.
+
+### Modules and packages
+
+- Path dependencies in `geblang.yaml` now accept absolute paths, a leading `~`
+  for the home directory, and `$VAR` / `${VAR}` environment references. Relative
+  paths are still resolved against the manifest.
+- A scheme-less `git` dependency value (for example `github.com/acme/httplib`)
+  is now resolved as `https://...`. Explicit schemes and the scp-like
+  `git@host:path` form are left untouched.
+
 ## 1.23.0
 
 ### Standard library

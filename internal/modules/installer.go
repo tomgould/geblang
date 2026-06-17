@@ -111,6 +111,20 @@ func InstallOne(manifestPath, lockPath, gitURL, version, name string) error {
 	return Install(manifestPath, lockPath)
 }
 
+// normalizeGitURL adds https:// to a scheme-less host/path, leaving explicit schemes and scp-like git@host:path alone.
+func normalizeGitURL(u string) string {
+	u = strings.TrimSpace(u)
+	if u == "" || strings.Contains(u, "://") {
+		return u
+	}
+	if colon := strings.IndexByte(u, ':'); colon >= 0 {
+		if slash := strings.IndexByte(u, '/'); slash < 0 || colon < slash {
+			return u
+		}
+	}
+	return "https://" + u
+}
+
 // nameFromURL derives a package name from the last segment of a git URL.
 func nameFromURL(url string) string {
 	url = strings.TrimSuffix(strings.TrimRight(url, "/"), ".git")
@@ -221,7 +235,7 @@ func addDependency(manifestPath, name, gitURL, version string) error {
 	if mf.Dependencies == nil {
 		mf.Dependencies = map[string]Dependency{}
 	}
-	mf.Dependencies[name] = Dependency{Git: gitURL, Version: version}
+	mf.Dependencies[name] = Dependency{Git: normalizeGitURL(gitURL), Version: version}
 	out, err := yamllib.Marshal(&mf)
 	if err != nil {
 		return err

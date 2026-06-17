@@ -30,6 +30,55 @@ import (
 // dicts, lists, and sets across both backends. Strings inside a
 // container are JSON-quoted; top-level strings stay unquoted to
 // match the existing io.println contract. Dict entries appear in
+// TestParitySqliteTuningOptions pins identical WAL/foreign-keys/optimize output on both backends.
+func TestParitySqliteTuningOptions(t *testing.T) {
+	runParityStatefulWithFile(t, `import db;
+import io;
+let c = db.Connection({"driver": "sqlite", "dsn": "TMPFILE", "wal": true, "foreignKeys": true});
+io.println(c.query("PRAGMA journal_mode;").all()[0]["journal_mode"]);
+io.println(c.query("PRAGMA foreign_keys;").all()[0]["foreign_keys"]);
+c.optimize();
+io.println("optimized");
+c.close();
+`, "", `wal
+1
+optimized
+`)
+}
+
+// TestParityCastThenCompare pins that `as int` binds tighter than `<` (not a generic) on both backends.
+func TestParityCastThenCompare(t *testing.T) {
+	runParity(t, `import io;
+let y = 8;
+io.println(7.9 as int < y);
+io.println(10 as int < y);
+io.println(([1, 2] as list<int>).length());
+`, `true
+false
+2
+`)
+}
+
+// TestParityTrueDivisionTyping pins identical `/` (decimal) vs `//` (int) output on both backends.
+func TestParityTrueDivisionTyping(t *testing.T) {
+	runParity(t, `import io;
+let a = 7;
+let b = 2;
+decimal q = a / b;
+int n = a // b;
+io.println(q as string);
+io.println(n as string);
+io.println((50000 / 1000) as string);
+io.println((50000 // 1000) as string);
+io.println((6 / 2.0f) as string);
+`, `3.5000000000
+3
+50.0000000000
+50
+3
+`)
+}
+
 // insertion order (since 1.5.1).
 func TestParityContainerInspectIsJSONLike(t *testing.T) {
 	runParity(t, `import io;

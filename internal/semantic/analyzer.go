@@ -2373,9 +2373,57 @@ func (a *Analyzer) expressionTypeName(expr ast.Expression) typeInfo {
 			return typeInfo{}
 		}
 		return a.typeInfoFromRef(ref)
+	case *ast.InfixExpression:
+		return a.infixNumericResult(expr)
 	default:
 		return typeInfo{}
 	}
+}
+
+const (
+	rankInt     = 1
+	rankDecimal = 2
+	rankFloat   = 3
+)
+
+func numericRank(t typeInfo) int {
+	if !t.known || t.nullable {
+		return 0
+	}
+	switch t.name {
+	case "int":
+		return rankInt
+	case "decimal":
+		return rankDecimal
+	case "float":
+		return rankFloat
+	}
+	return 0
+}
+
+// infixNumericResult infers an arithmetic result type so assignability catches e.g. int x = a / b (decimal).
+func (a *Analyzer) infixNumericResult(expr *ast.InfixExpression) typeInfo {
+	switch expr.Operator {
+	case "+", "-", "*", "/", "//", "%":
+	default:
+		return typeInfo{}
+	}
+	lk := numericRank(a.expressionTypeName(expr.Left))
+	rk := numericRank(a.expressionTypeName(expr.Right))
+	if lk == 0 || rk == 0 {
+		return typeInfo{}
+	}
+	// decimal and float never mix at runtime; leave that to the runtime error.
+	if (lk == rankDecimal && rk == rankFloat) || (lk == rankFloat && rk == rankDecimal) {
+		return typeInfo{}
+	}
+	name := "int"
+	if lk == rankFloat || rk == rankFloat {
+		name = "float"
+	} else if lk == rankDecimal || rk == rankDecimal || expr.Operator == "/" {
+		name = "decimal"
+	}
+	return typeInfo{name: name, known: true}
 }
 
 func (a *Analyzer) isAssignableType(target, actual string) bool {

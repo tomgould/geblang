@@ -137,6 +137,11 @@ exact types from silent precision loss:
   A `decimal` is exact and a `float` is not, so the result type would be
   ambiguous and lossy; convert one explicitly (`(2.5 as float) + 2.5f`).
 
+Because `/` is true division, its result is a `decimal` (or `float`) even when it
+divides evenly, so `int n = a / b` is a compile-time error. Use `//` (floor
+division) for an integer result, `int n = a // b`, or truncate explicitly with
+`int n = (a / b) as int`.
+
 Comparisons (`== != < > <= >=`) and membership (`in`, `.contains()`) work across
 *all* numeric types and compare by exact value - they never error and never lose
 precision. This means they tell the truth: `3 == 3.0f` is `true`, `2.5 == 2.5f`

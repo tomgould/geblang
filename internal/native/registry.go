@@ -209,6 +209,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"jwtSign": {}, "jwtVerify": {}, "jwtDecode": {}, "jwk": {}, "jwks": {},
 		"generateRsaKey": {}, "generateEcKey": {}, "generateEd25519Key": {},
 		"publicKey": {}, "generateSelfSignedCert": {}, "generateCsr": {}, "parseCert": {}, "signCertificate": {}, "pkcs12Decode": {},
+		"verifyCertChain": {}, "asn1Decode": {}, "parseAndroidAttestation": {},
 		"jweEncrypt": {}, "jweDecrypt": {},
 		"jwtSignRS256": {}, "jwtVerifyRS256": {}, "jwtSignES256": {}, "jwtVerifyES256": {},
 		"aesEncrypt": {}, "aesDecrypt": {},

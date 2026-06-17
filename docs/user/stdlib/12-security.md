@@ -468,6 +468,8 @@ io.println(info["notAfter"]);      # RFC3339 string
 io.println(info["serialNumber"]);  # hex string
 io.println(info["keyType"]);       # "RSA", "EC", or "Ed25519"
 io.println(info["isCA"]);          # bool
+io.println(info["publicKey"]);     # SPKI public-key PEM
+io.println(info["extensions"]);    # list of {oid, critical, value (bytes)}
 ```
 
 Validate a certificate's expiry:
@@ -479,6 +481,41 @@ if (expiry < datetime.nowUnix()) {
     io.println("certificate has expired");
 }
 ```
+
+#### Verifying a certificate chain
+
+`crypt.verifyCertChain(options)` checks a chain's signatures up to a trusted
+root and **throws** on any failure (untrusted anchor, broken signature, or
+expiry), so a verified result cannot be silently ignored. Options: `leaf`
+(PEM), `roots` (list of trusted-anchor PEM, required), `intermediates` (list of
+PEM), `time` (RFC3339, default now), and `skipExpiry` (verify as of the leaf's
+issuance). On success it returns the validated chain, leaf to root, as subject
+dicts. There is no hostname check; these are not assumed to be TLS certificates.
+
+```gb
+let chain = crypt.verifyCertChain({
+    "leaf":          leafPem,
+    "intermediates": [intermediatePem],
+    "roots":         [trustedRootPem],
+});
+io.println(chain[0]["commonName"]);   # the leaf's subject
+```
+
+#### Decoding ASN.1 and Android Key Attestation
+
+`crypt.asn1Decode(der)` walks a DER-encoded value into a nested structure:
+sequences and sets become lists, integers become ints, octet strings and bit
+strings become bytes, OIDs become dotted strings, and context-tagged values
+become `{tag, constructed, value}` dicts. Read raw extensions from
+`parseCert(...)["extensions"]` and decode the ones you need.
+
+`crypt.parseAndroidAttestation(pem)` parses the Android Key Attestation
+extension (OID `1.3.6.1.4.1.11129.2.1.17`) into `attestationVersion`,
+`attestationSecurityLevel` / `keymasterSecurityLevel`
+(`Software` / `TrustedEnvironment` / `StrongBox`), `attestationChallenge`,
+`uniqueId`, and `keyOrigin`. Verify the certificate chain up to the Google
+hardware-attestation root with `verifyCertChain` first; the parsed extension is
+only trustworthy once the chain is verified.
 
 #### Decoding PKCS#12 / PFX archives
 

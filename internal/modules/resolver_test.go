@@ -68,6 +68,41 @@ dependencies:
 	}
 }
 
+func TestResolverResolvesAbsolutePathDependency(t *testing.T) {
+	depRoot := t.TempDir()
+	depSrc := filepath.Join(depRoot, "lib")
+	if err := os.MkdirAll(depSrc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	modulePath := filepath.Join(depSrc, "util.gb")
+	if err := os.WriteFile(modulePath, []byte("module dep.util;"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depRoot, "geblang.yaml"), []byte("name: dep\nsource: lib\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	t.Setenv("GEBLANG_DEP_DIR", depRoot)
+	for label, depPath := range map[string]string{
+		"absolute": depRoot,
+		"env":      "$GEBLANG_DEP_DIR",
+	} {
+		manifest := []byte("name: app\ndependencies:\n  dep:\n    path: " + depPath + "\n")
+		if err := os.WriteFile(filepath.Join(root, "geblang.yaml"), manifest, 0o644); err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+		resolver := modules.NewResolver([]string{root})
+		resolved, err := resolver.Resolve("dep.util")
+		if err != nil {
+			t.Fatalf("%s: resolve: %v", label, err)
+		}
+		if resolved != filepath.Clean(modulePath) {
+			t.Fatalf("%s: got %q, want %q", label, resolved, filepath.Clean(modulePath))
+		}
+	}
+}
+
 func TestResolverReservedNamesResolveToStdlib(t *testing.T) {
 	root := t.TempDir()
 	appRoot := filepath.Join(root, "app")
@@ -87,8 +122,8 @@ func TestResolverReservedNamesResolveToStdlib(t *testing.T) {
 	stdlibModule := filepath.Join(stdlibRoot, "pkg", "tool.gb")
 	for path, source := range map[string]string{
 		filepath.Join(appRoot, "pkg", "tool.gb"): "module pkg.tool; # app",
-		stdlibModule:                              "module pkg.tool; # stdlib",
-		filepath.Join(envRoot, "pkg", "tool.gb"):  "module pkg.tool; # env",
+		stdlibModule:                             "module pkg.tool; # stdlib",
+		filepath.Join(envRoot, "pkg", "tool.gb"): "module pkg.tool; # env",
 	} {
 		if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 			t.Fatalf("write %s: %v", path, err)

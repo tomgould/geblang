@@ -2304,7 +2304,7 @@ func (p *Parser) parseTypeRefFromCurrent() *ast.TypeRef {
 		}
 		left.Name += "." + p.curToken.Literal
 	}
-	if p.peekTokenIs(token.LT) {
+	if p.peekTokenIs(token.LT) && !isNonGenericTypeName(left.Name) {
 		left.Arguments = p.parseTypeArguments()
 	}
 	if p.peekTokenIs(token.LBracket) {
@@ -2321,6 +2321,15 @@ func (p *Parser) parseTypeRefFromCurrent() *ast.TypeRef {
 		left = &ast.TypeRef{Token: left.Token, Left: left, Operator: op, Right: right}
 	}
 	return left
+}
+
+// isNonGenericTypeName reports whether name is a primitive that never takes type arguments, so a following `<` is a comparison.
+func isNonGenericTypeName(name string) bool {
+	switch name {
+	case "int", "string", "bool", "float", "decimal", "bytes", "void", "any", "null":
+		return true
+	}
+	return false
 }
 
 func (p *Parser) parseTypeArguments() []*ast.TypeRef {

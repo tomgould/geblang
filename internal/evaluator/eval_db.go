@@ -27,7 +27,10 @@ func (e *Evaluator) dbOpen(call *ast.CallExpression, args []runtime.Value) (runt
 		return nil, err
 	}
 	if driverName == "sqlite" {
-		dsn = sqliteDSNWithBusyTimeout(dsn)
+		dsn, err = e.sqliteDSNWithOptions(call, dsn, args)
+		if err != nil {
+			return nil, err
+		}
 	}
 	db, err := sql.Open(driverName, dsn)
 	if err != nil {
@@ -528,6 +531,31 @@ func (e *Evaluator) dbConfigure(call *ast.CallExpression, args []runtime.Value) 
 	return runtime.Null{}, nil
 }
 
+func (e *Evaluator) dbOptimize(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
+	}
+	handle, err := dbHandleID(args[0])
+	if err != nil {
+		return nil, err
+	}
+	driver, err := e.dbDriver(handle)
+	if err != nil {
+		return nil, err
+	}
+	if driver != "sqlite" {
+		return nil, fmt.Errorf("optimize is only supported for sqlite connections")
+	}
+	db, err := e.dbHandle(args[0])
+	if err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec("PRAGMA optimize"); err != nil {
+		return nil, err
+	}
+	return runtime.Null{}, nil
+}
+
 func (e *Evaluator) dbStats(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
@@ -844,8 +872,81 @@ func sqliteDSNWithBusyTimeout(dsn string) string {
 	return out + "?" + pragma
 }
 
-// sqliteIsPrivateMemory reports whether a sqlite DSN names a private in-memory
-// database (distinct per connection). A shared cache makes it process-wide.
+// sqliteDSNWithOptions turns the sqlite tuning options into `_pragma=` DSN params.
+func (e *Evaluator) sqliteDSNWithOptions(call *ast.CallExpression, dsn string, args []runtime.Value) (string, error) {
+	var options runtime.Dict
+	hasOptions := false
+	if len(args) == 1 {
+		if d, ok := args[0].(runtime.Dict); ok {
+			options, hasOptions = d, true
+		}
+	}
+	if !hasOptions || dsn == ":memory:" || sqliteIsPrivateMemory(dsn) {
+		return sqliteDSNWithBusyTimeout(dsn), nil
+	}
+	pragmas := []string{}
+	if !strings.Contains(dsn, "busy_timeout") && !strings.Contains(dsn, "_pragma") {
+		busyMs := int64(5000)
+		if v, ok := dictField(options, "busyTimeoutMs"); ok {
+			n, err := intOption(call, v, "busyTimeoutMs")
+			if err != nil {
+				return "", err
+			}
+			busyMs = int64(n)
+		}
+		pragmas = append(pragmas, fmt.Sprintf("busy_timeout(%d)", busyMs))
+	}
+	if b, ok := dictBoolField(options, "wal"); ok && b {
+		pragmas = append(pragmas, "journal_mode(WAL)")
+	}
+	if s, ok := dictStringField(options, "synchronous"); ok {
+		up := strings.ToUpper(s)
+		switch up {
+		case "OFF", "NORMAL", "FULL", "EXTRA":
+		default:
+			return "", fmt.Errorf("%s synchronous must be OFF, NORMAL, FULL, or EXTRA", call.Callee.String())
+		}
+		pragmas = append(pragmas, "synchronous("+up+")")
+	}
+	if b, ok := dictBoolField(options, "foreignKeys"); ok && b {
+		pragmas = append(pragmas, "foreign_keys(ON)")
+	}
+	if v, ok := dictField(options, "cacheSizeKb"); ok {
+		n, err := intOption(call, v, "cacheSizeKb")
+		if err != nil {
+			return "", err
+		}
+		pragmas = append(pragmas, fmt.Sprintf("cache_size(-%d)", n))
+	}
+	if v, ok := dictField(options, "mmapSizeMb"); ok {
+		n, err := intOption(call, v, "mmapSizeMb")
+		if err != nil {
+			return "", err
+		}
+		pragmas = append(pragmas, fmt.Sprintf("mmap_size(%d)", int64(n)*1024*1024))
+	}
+	if b, ok := dictBoolField(options, "tempStoreMemory"); ok && b {
+		pragmas = append(pragmas, "temp_store(MEMORY)")
+	}
+	if len(pragmas) == 0 {
+		return sqliteDSNWithBusyTimeout(dsn), nil
+	}
+	out := dsn
+	if !strings.HasPrefix(out, "file:") {
+		out = "file:" + out
+	}
+	sep := "?"
+	if strings.Contains(out, "?") {
+		sep = "&"
+	}
+	for _, p := range pragmas {
+		out += sep + "_pragma=" + p
+		sep = "&"
+	}
+	return out, nil
+}
+
+// sqliteIsPrivateMemory reports whether a sqlite DSN names a private in-memory database.
 func sqliteIsPrivateMemory(dsn string) bool {
 	if !strings.Contains(dsn, ":memory:") && !strings.Contains(dsn, "mode=memory") {
 		return false

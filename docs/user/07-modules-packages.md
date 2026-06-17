@@ -364,14 +364,20 @@ the bytecode VM.
 Each dependency is keyed by the name it is mounted under and is either a path or
 a git source.
 
-**Path dependencies** point at another package on disk, relative to the
-manifest. A bare string is shorthand for a path; the mapping form is equivalent:
+**Path dependencies** point at another package on disk. A relative path is
+resolved against the manifest; an absolute path is used as-is. A leading `~`
+expands to the home directory and `$VAR` / `${VAR}` expand from the environment.
+A bare string is shorthand for a path; the mapping form is equivalent:
 
 ```yaml
 dependencies:
   shared: ../shared
   widgets:
     path: ../packages/widgets
+  vendored:
+    path: /opt/geblang/packages/vendored
+  tooling:
+    path: ~/src/tooling
 ```
 
 The target must itself be a package (have its own `geblang.yaml`); its `source`,
@@ -386,6 +392,10 @@ dependencies:
     git: https://github.com/acme/httplib
     version: v1.4.0      # tag or branch; `latest` for the newest semver tag; omit for the default branch
 ```
+
+A scheme-less `git` value such as `github.com/acme/httplib` is treated as
+`https://github.com/acme/httplib`. Explicit schemes (`https://`, `ssh://`) and
+the scp-like `git@github.com:acme/httplib.git` form are used unchanged.
 
 `geblang install` clones every git dependency into `vendor/<name>` beside the
 manifest and pins the resolved commit in `geblang.lock`:

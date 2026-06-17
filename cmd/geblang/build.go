@@ -164,6 +164,13 @@ func runBuild(args []string) {
 		p := parser.New(lexer.New(string(src)))
 		prog := p.ParseProgram()
 		if len(p.Errors()) == 0 {
+			// Fail the build on a user-module semantic error rather than emit a binary that rejects at launch.
+			if !isStdlib {
+				if err := analyzeCrossModule(absPath, prog, resolver); err != nil {
+					fmt.Fprintf(os.Stderr, "geblang build: %v\n", err)
+					os.Exit(1)
+				}
+			}
 			chunk, err := bytecode.CompileWithOptions(prog, src, version, bytecode.CompileOptions{NativeSymbols: evaluator.CachedNativeModuleSymbols()})
 			if err == nil {
 				encoded, err := bytecode.Encode(chunk)

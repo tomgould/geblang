@@ -77,6 +77,36 @@ connection so concurrent access waits instead of failing with
 `database is locked`; pass your own `busy_timeout` or `_pragma` DSN parameter
 to override.
 
+For a file-backed SQLite database, the options-dict form accepts tuning keys
+that map to per-connection pragmas applied at connect time:
+
+| Option | Pragma | Purpose |
+|--------|--------|---------|
+| `wal: true` | `journal_mode(WAL)` | Write-ahead logging: concurrent readers with one writer. |
+| `synchronous: "NORMAL"` | `synchronous(NORMAL)` | Sync level (`OFF` / `NORMAL` / `FULL` / `EXTRA`); `NORMAL` is the safe, fast pairing with WAL. |
+| `foreignKeys: true` | `foreign_keys(ON)` | Enforce foreign-key constraints. |
+| `busyTimeoutMs: N` | `busy_timeout(N)` | Override the default five-second busy timeout. |
+| `cacheSizeKb: N` | `cache_size(-N)` | Page-cache size in KiB. |
+| `mmapSizeMb: N` | `mmap_size(N MiB)` | Memory-mapped I/O size. |
+| `tempStoreMemory: true` | `temp_store(MEMORY)` | Keep temp tables and indices in memory. |
+
+Each option is explicit; `wal: true` sets only `journal_mode`, so pair it with
+`synchronous: "NORMAL"` yourself. These keys are ignored for `:memory:`
+databases (the pragmas only matter for a file). Run `connection.optimize()`
+(`PRAGMA optimize`) periodically, or before closing a long-lived connection, to
+let SQLite refresh its query-planner statistics.
+
+```gb
+let db = db.Connection({
+    "driver": "sqlite",
+    "dsn": "/var/lib/app/app.sqlite",
+    "wal": true,
+    "synchronous": "NORMAL",
+    "foreignKeys": true,
+});
+db.optimize();
+```
+
 A private in-memory database (`:memory:`) is distinct per connection, so its
 pool is pinned to a single connection; concurrent access shares one database
 rather than each connection seeing a separate empty one. Use a shared cache
@@ -181,6 +211,7 @@ SQL connection pool and returns a connection object.
 | `prepare(sql)` | `db.Statement` | Prepare a reusable statement |
 | `configure(options)` | `void` | Set pool options such as `maxOpenConns`, `maxIdleConns`, `connMaxLifetimeMs`, `connMaxIdleTimeMs` |
 | `stats()` | `dict` | Return pool statistics |
+| `optimize()` | `void` | Run `PRAGMA optimize` (SQLite maintenance) |
 | `migrate(migrations)` | `dict` | Apply idempotent migrations |
 | `close()` | `void` | Close the connection pool |
 
