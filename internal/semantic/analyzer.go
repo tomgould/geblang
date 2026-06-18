@@ -1326,6 +1326,12 @@ func (a *Analyzer) checkTypedCollectionMethodCall(call *ast.CallExpression) {
 		case "push", "prepend", "append", "unshift":
 			a.validateArgs(call.Arguments, []typeInfo{receiverType.args[0]},
 				fmt.Sprintf("list<%s>.%s element", receiverType.args[0].display(), selector.Name.Value), receiver.Value)
+			case "fill":
+				// fill(value, count) - first arg is the element.
+				if len(call.Arguments) >= 1 {
+					a.validateArgAt(call.Arguments[0], receiverType.args[0],
+						fmt.Sprintf("list<%s>.fill element", receiverType.args[0].display()), receiver.Value)
+				}
 		case "insert":
 			// insert(index, value) - second arg is the element.
 			if len(call.Arguments) >= 2 {

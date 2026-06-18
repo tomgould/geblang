@@ -30,6 +30,22 @@ import (
 // dicts, lists, and sets across both backends. Strings inside a
 // container are JSON-quoted; top-level strings stay unquoted to
 // match the existing io.println contract. Dict entries appear in
+// TestParityListFill pins list.fill (append count copies, return receiver) on both backends.
+func TestParityListFill(t *testing.T) {
+	runParity(t, `import io;
+let a = [];
+io.println("${a.fill('x', 5)}");
+let b = ['a', 'b', 'c'];
+io.println("${b.fill('x', 2)}");
+io.println("${[1, 2].fill(9, 3).length()}");
+io.println("${[1].fill(0, 0)}");
+`, `["x", "x", "x", "x", "x"]
+["a", "b", "c", "x", "x"]
+5
+[1]
+`)
+}
+
 // TestParitySqliteTuningOptions pins identical WAL/foreign-keys/optimize output on both backends.
 func TestParitySqliteTuningOptions(t *testing.T) {
 	runParityStatefulWithFile(t, `import db;

@@ -619,6 +619,27 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			value.Elements = append(value.Elements, args[0])
 			return value, nil
+		case "fill":
+			if len(args) != 2 {
+				return nil, fmt.Errorf("list.fill expects two arguments (value, count)")
+			}
+			count, err := indexInt(args[1])
+			if err != nil {
+				return nil, err
+			}
+			if value.Frozen {
+				return nil, thrownError{value: runtime.Error{Class: "ImmutableError", Message: "cannot modify frozen list"}}
+			}
+			if count < 0 {
+				return nil, thrownError{value: runtime.Error{Class: "ValueError", Message: "list.fill count must be >= 0"}}
+			}
+			if count > 0 && len(value.ElementTypes) > 0 && !valueSatisfiesElementTag(args[0], value.ElementTypes[0]) {
+				return nil, thrownError{value: runtime.Error{Class: "TypeError", Message: fmt.Sprintf("cannot fill list<%s> with %s", value.ElementTypes[0], args[0].TypeName())}}
+			}
+			for i := 0; i < count; i++ {
+				value.Elements = append(value.Elements, args[0])
+			}
+			return value, nil
 		case "append":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("list.append expects one argument")

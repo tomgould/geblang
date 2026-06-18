@@ -274,6 +274,7 @@ var primitiveMethods = map[string]map[string]functionDoc{
 		"contains":       fn([]string{"any value"}, "bool", "Linear-scan membership check."),
 		"push":           fn([]string{"any value"}, "list<any>", "Appends value in place and returns the list, so pushes chain. Honours the declared element type (TypeError); raises ImmutableError on frozen lists."),
 		"prepend":        fn([]string{"any value"}, "list<any>", "Inserts value at the front in place; returns the list."),
+		"fill":           fn([]string{"any value", "int count"}, "list<any>", "Appends count copies of value in place and returns the list. Honours the declared element type (TypeError); count must be >= 0; raises ImmutableError on frozen lists."),
 		"unshift":        fn([]string{"any value"}, "list<any>", "Alias for prepend."),
 		"pop":            fn([]string{}, "list<any>", "Removes the last element in place (no-op when empty); returns the list."),
 		"remove":         fn([]string{"any value"}, "list<any>", "Removes the first occurrence of value in place (no-op if absent); returns the list."),

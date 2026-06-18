@@ -1,5 +1,13 @@
 # Release Notes
 
+## 1.23.2
+
+### Standard library
+
+- Lists gained `fill(value, count)`: it appends `count` copies of `value` in
+  place and returns the list, so it chains. `count` must be `>= 0`; a typed
+  list rejects a value of the wrong element type.
+
 ## 1.23.1
 
 ### Language

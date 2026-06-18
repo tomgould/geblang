@@ -152,4 +152,52 @@ class ListInPlaceMethodsTest extends test.Test {
         this.assertEquals(0, xs[0]);
         this.assertEquals(999, xs[999]);
     }
+
+    @test
+    func fillAppendsCopiesAndReturnsReceiver(): void {
+        let xs = [];
+        let result = xs.fill("x", 5);
+        this.assertEquals(5, xs.length());
+        this.assertEquals(5, result.length());
+        this.assertEquals("x", xs[0]);
+        this.assertEquals("x", xs[4]);
+    }
+
+    @test
+    func fillAppendsToExistingList(): void {
+        let xs = ["a", "b", "c"];
+        xs.fill("x", 2);
+        this.assertEquals(5, xs.length());
+        this.assertEquals("c", xs[2]);
+        this.assertEquals("x", xs[3]);
+        this.assertEquals("x", xs[4]);
+    }
+
+    @test
+    func fillChainsAndIsVisibleThroughAliases(): void {
+        let xs = [1];
+        let ys = xs;
+        xs.fill(9, 3).fill(7, 1);
+        this.assertEquals(5, ys.length());
+        this.assertEquals(7, ys[4]);
+    }
+
+    @test
+    func fillZeroCountIsNoOp(): void {
+        let xs = [1, 2];
+        xs.fill(9, 0);
+        this.assertEquals(2, xs.length());
+    }
+
+    @test
+    func fillRejectsNegativeCount(): void {
+        let xs = [1];
+        this.assertThrows(func(): void { xs.fill(9, -1); });
+    }
+
+    @test
+    func fillOnFrozenListThrows(): void {
+        let xs = freeze.shallow([1, 2]);
+        this.assertThrows(func(): void { xs.fill(3, 2); });
+    }
 }

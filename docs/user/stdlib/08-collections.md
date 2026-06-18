@@ -49,9 +49,9 @@ Mutation methods work in place (1.16.0):
 
 - **In-place methods returning the receiver** mutate the list and return it,
   so calls chain and aliases see the change. These are `push`, `pop`,
-  `prepend`, `unshift`, `insert`, `removeAt`, `remove`, `reverse`, `sort`,
-  and `sortBy`. Growth methods amortise like a dynamic array: a `push` loop
-  is O(1) per element.
+  `prepend`, `unshift`, `insert`, `fill`, `removeAt`, `remove`, `reverse`,
+  `sort`, and `sortBy`. Growth methods amortise like a dynamic array: a `push`
+  loop is O(1) per element.
 - **In-place methods returning `null`**: `set`, `append`, `extend`, and
   `clear`, plus index assignment (`xs[0] = v`).
 - **Copy-and-return methods** allocate a new list and leave the receiver
@@ -149,6 +149,7 @@ io.println("geblang"[::-1]); # gnalbeg
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `push(value)` | `list<T>` | Append `value`; returns the same list |
+| `fill(value, count)` | `list<T>` | Append `count` copies of `value`; returns the same list (`count` must be `>= 0`) |
 | `pop()` | `list<T>` | Remove the last element (no-op when empty) |
 | `prepend(value)` | `list<T>` | Insert `value` at the front |
 | `unshift(value)` | `list<T>` | Alias for `prepend` |

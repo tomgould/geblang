@@ -1187,6 +1187,31 @@ func primitiveMethod(receiver runtime.Value, name string, args []runtime.Value) 
 		}
 		list.Elements = append(list.Elements, args[0])
 		return list, nil
+	case "fill":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("list.fill expects two arguments (value, count)")
+		}
+		list, ok := receiver.(*runtime.List)
+		if !ok {
+			return nil, fmt.Errorf("%s has no method fill", receiver.TypeName())
+		}
+		count, err := indexInt(args[1])
+		if err != nil {
+			return nil, err
+		}
+		if list.Frozen {
+			return nil, vmTypedError{class: "ImmutableError", message: "cannot modify frozen list"}
+		}
+		if count < 0 {
+			return nil, vmTypedError{class: "ValueError", message: "list.fill count must be >= 0"}
+		}
+		if count > 0 && len(list.ElementTypes) > 0 && !vmValueSatisfiesElementTag(args[0], list.ElementTypes[0]) {
+			return nil, vmTypedError{class: "TypeError", message: fmt.Sprintf("cannot fill list<%s> with %s", list.ElementTypes[0], args[0].TypeName())}
+		}
+		for i := 0; i < count; i++ {
+			list.Elements = append(list.Elements, args[0])
+		}
+		return list, nil
 	case "append":
 		if len(args) != 1 {
 			return nil, fmt.Errorf("list.append expects one argument")

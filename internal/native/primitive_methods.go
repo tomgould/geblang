@@ -27,7 +27,7 @@ var PrimitiveMethods = map[string][]string{
 	"list": {
 		"all", "any", "append", "averageBy", "binarySearch", "binarySearchBy", "bottomK", "chunk",
 		"clear", "concat", "contains", "containsBy", "copy", "deepCopy", "count", "difference",
-		"differenceBy", "extend", "filter", "find", "findLast", "first", "flatten",
+		"differenceBy", "extend", "fill", "filter", "find", "findLast", "first", "flatten",
 		"frequencies", "get", "groupBy", "indexBy", "indexOf", "insert",
 		"intersection", "intersectionBy", "isEmpty", "join", "last", "length",
 		"lowerBound", "map", "maxBy", "minBy", "mode", "partition", "pop",
