@@ -92,6 +92,130 @@ func registerVecmath(r *Registry) {
 		}
 		return &runtime.List{Elements: out}, nil
 	})
+
+	r.Register("vecmath", "normalize", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("vecmath.normalize expects (vector) or (list of vectors)")
+		}
+		// A list whose elements are themselves vectors is a batch; otherwise one vector.
+		if lst, ok := args[0].(*runtime.List); ok && len(lst.Elements) > 0 && isVectorValue(lst.Elements[0]) {
+			out := make([]runtime.Value, len(lst.Elements))
+			for i, el := range lst.Elements {
+				v, err := vecToFloat32(el)
+				if err != nil {
+					return nil, err
+				}
+				out[i] = normalizedList(v)
+			}
+			return &runtime.List{Elements: out}, nil
+		}
+		v, err := vecToFloat32(args[0])
+		if err != nil {
+			return nil, err
+		}
+		return normalizedList(v), nil
+	})
+
+	r.Register("vecmath", "semanticSearch", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) < 3 || len(args) > 4 {
+			return nil, fmt.Errorf("vecmath.semanticSearch expects (queries, corpus, k[, metric])")
+		}
+		queries, ok := args[0].(*runtime.List)
+		if !ok {
+			return nil, fmt.Errorf("vecmath.semanticSearch: queries must be a list of vectors")
+		}
+		corpus, ok := args[1].(*runtime.List)
+		if !ok {
+			return nil, fmt.Errorf("vecmath.semanticSearch: corpus must be a list of vectors")
+		}
+		k, ok := vecToInt(args[2])
+		if !ok {
+			return nil, fmt.Errorf("vecmath.semanticSearch: k must be an integer")
+		}
+		metric := "cosine"
+		if len(args) == 4 {
+			m, ok := args[3].(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("vecmath.semanticSearch: metric must be a string")
+			}
+			metric = m.Value
+		}
+		corpusVecs := make([][]float32, len(corpus.Elements))
+		for i, el := range corpus.Elements {
+			v, err := vecToFloat32(el)
+			if err != nil {
+				return nil, err
+			}
+			corpusVecs[i] = v
+		}
+		results := make([]runtime.Value, len(queries.Elements))
+		for qi, qel := range queries.Elements {
+			q, err := vecToFloat32(qel)
+			if err != nil {
+				return nil, err
+			}
+			hits, err := vecTopKHits(corpusVecs, q, k, metric)
+			if err != nil {
+				return nil, err
+			}
+			results[qi] = &runtime.List{Elements: hits}
+		}
+		return &runtime.List{Elements: results}, nil
+	})
+}
+
+func isVectorValue(v runtime.Value) bool {
+	switch v.(type) {
+	case *runtime.List, runtime.Bytes:
+		return true
+	}
+	return false
+}
+
+func normalizedList(v []float32) *runtime.List {
+	norm := math.Sqrt(dotF32(v, v))
+	out := make([]runtime.Value, len(v))
+	for i := range v {
+		if norm == 0 {
+			out[i] = runtime.Float{Value: 0}
+		} else {
+			out[i] = runtime.Float{Value: float64(v[i]) / norm}
+		}
+	}
+	return &runtime.List{Elements: out}
+}
+
+func vecTopKHits(corpusVecs [][]float32, q []float32, k int, metric string) ([]runtime.Value, error) {
+	qNorm := math.Sqrt(dotF32(q, q))
+	type hit struct {
+		idx   int
+		score float64
+	}
+	hits := make([]hit, 0, len(corpusVecs))
+	for i, v := range corpusVecs {
+		s, err := vecScore(metric, q, v, qNorm)
+		if err != nil {
+			return nil, err
+		}
+		hits = append(hits, hit{i, s})
+	}
+	sort.SliceStable(hits, func(a, b int) bool { return hits[a].score > hits[b].score })
+	if k < 0 {
+		k = 0
+	}
+	if k > len(hits) {
+		k = len(hits)
+	}
+	out := make([]runtime.Value, k)
+	for i := 0; i < k; i++ {
+		d := runtime.NewDictHint(2)
+		idxKey := runtime.String{Value: "index"}
+		scoreKey := runtime.String{Value: "score"}
+		d.PutEntry(DictKey(idxKey), runtime.DictEntry{Key: idxKey, Value: runtime.SmallInt{Value: int64(hits[i].idx)}})
+		d.PutEntry(DictKey(scoreKey), runtime.DictEntry{Key: scoreKey, Value: runtime.Float{Value: hits[i].score}})
+		out[i] = d
+	}
+	return out, nil
 }
 
 func vecScore(metric string, q, v []float32, qNorm float64) (float64, error) {

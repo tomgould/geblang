@@ -157,6 +157,103 @@ class OpenaiClientTest extends test.Test {
         this.assertTrue(seen.contains("401"));
         this.assertTrue(seen.contains("invalid_api_key"));
     }
+
+    @test
+    func modelsListsAvailable(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"data\":[{\"id\":\"gpt-5\",\"owned_by\":\"openai\"},{\"id\":\"text-embedding-3-small\",\"owned_by\":\"openai\"}]}"};
+        });
+        let c = llm.client({"provider": "openai", "apiKey": "sk-test",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let models = c.models();
+        http.shutdown(mock["server"]);
+        this.assertEquals(2, models.length());
+        this.assertEquals("gpt-5", models[0]["id"] as string);
+        this.assertEquals("/v1/models", io.readText(path.join(mock["dir"] as string, "path")));
+    }
+
+    @test
+    func embedBatchPostsInputArray(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"model\":\"text-embedding-3-small\",\"data\":[{\"embedding\":[0.1,0.2]},{\"embedding\":[0.3,0.4]}]," +
+                "\"usage\":{\"prompt_tokens\":8,\"total_tokens\":8}}"};
+        });
+        let c = llm.client({"provider": "openai", "apiKey": "sk-test",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let resp = c.embedBatch(["a", "b"], {"model": "text-embedding-3-small"});
+        http.shutdown(mock["server"]);
+        let vectors = resp["vectors"] as list<any>;
+        this.assertEquals(2, vectors.length());
+        this.assertEquals(2, (vectors[0] as list<any>).length());
+        let bodyDict = json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>;
+        this.assertEquals(2, (bodyDict["input"] as list<any>).length());
+    }
+
+    @test
+    func toolCallRequestedAndToolsSent(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"model\":\"gpt-5\",\"choices\":[{\"finish_reason\":\"tool_calls\",\"message\":{\"role\":\"assistant\",\"content\":null," +
+                "\"tool_calls\":[{\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"}}]}}]}"};
+        });
+        let c = llm.client({"provider": "openai", "apiKey": "sk",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let tools = [{"name": "get_weather", "description": "Get weather", "parameters": {"type": "object"}}];
+        let r = c.chat([{"role": "user", "content": "weather?"}], {"model": "gpt-5", "tools": tools});
+        http.shutdown(mock["server"]);
+        this.assertEquals("tool_calls", r["stopReason"] as string);
+        let tc = (r["toolCalls"] as list<any>)[0] as dict<string, any>;
+        this.assertEquals("get_weather", tc["name"] as string);
+        this.assertEquals("Paris", (tc["arguments"] as dict<string, any>)["city"] as string);
+        let body = json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>;
+        let sentTool = (body["tools"] as list<any>)[0] as dict<string, any>;
+        this.assertEquals("function", sentTool["type"] as string);
+        this.assertEquals("get_weather", (sentTool["function"] as dict<string, any>)["name"] as string);
+    }
+
+    @test
+    func toolResultMessageTranslated(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"Sunny.\"}}]}"};
+        });
+        let c = llm.client({"provider": "openai", "apiKey": "sk",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let r = c.chat([
+            {"role": "user", "content": "weather?"},
+            {"role": "assistant", "content": "", "toolCalls": [{"id": "c1", "name": "get_weather", "arguments": {"city": "Paris"}}]},
+            {"role": "tool", "toolCallId": "c1", "content": "sunny"}
+        ], {"model": "gpt-5"});
+        http.shutdown(mock["server"]);
+        this.assertEquals("Sunny.", r["content"] as string);
+        let msgs = (json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>)["messages"] as list<any>;
+        this.assertTrue((msgs[1] as dict<string, any>).contains("tool_calls"));
+        this.assertEquals("c1", (msgs[2] as dict<string, any>)["tool_call_id"] as string);
+    }
+
+    @test
+    func chatStreamCollectsDeltas(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {"Content-Type": "text/event-stream"}, "body":
+                "data: {\"model\":\"gpt-5\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n" +
+                "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n" +
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n" +
+                "data: [DONE]\n"};
+        });
+        let c = llm.client({"provider": "openai", "apiKey": "sk",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let pieces = [];
+        let r = c.chatStream([{"role": "user", "content": "hi"}], {"model": "gpt-5"}, func(string delta): void {
+            pieces = pieces.push(delta);
+        });
+        http.shutdown(mock["server"]);
+        this.assertEquals(2, pieces.length());
+        this.assertEquals("Hello", pieces[0] as string);
+        this.assertEquals("Hello world", r["content"] as string);
+        this.assertEquals("stop", r["stopReason"] as string);
+    }
 }
 
 class AnthropicClientTest extends test.Test {
@@ -205,6 +302,88 @@ class AnthropicClientTest extends test.Test {
         this.assertThrows(func(): void {
             c.generateImage("a cat", {"model": "claude-opus-4-8"});
         });
+    }
+
+    @test
+    func embedBatchThrowsNotSupported(): void {
+        let c = llm.client({"provider": "anthropic", "apiKey": "x"});
+        this.assertThrows(func(): void {
+            c.embedBatch(["a", "b"], {"model": "claude-opus-4-8"});
+        });
+    }
+
+    @test
+    func modelsListsAvailable(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"data\":[{\"id\":\"claude-opus-4-8\",\"display_name\":\"Claude Opus\"}]}"};
+        });
+        let c = llm.client({"provider": "anthropic", "apiKey": "x",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let models = c.models();
+        http.shutdown(mock["server"]);
+        this.assertEquals(1, models.length());
+        this.assertEquals("claude-opus-4-8", models[0]["id"] as string);
+        this.assertEquals("/v1/models", io.readText(path.join(mock["dir"] as string, "path")));
+    }
+
+    @test
+    func toolUseParsedAndToolsSent(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"stop_reason\":\"tool_use\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tu1\",\"name\":\"get_weather\",\"input\":{\"city\":\"Paris\"}}]}"};
+        });
+        let c = llm.client({"provider": "anthropic", "apiKey": "x",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let tools = [{"name": "get_weather", "description": "Get weather", "parameters": {"type": "object"}}];
+        let r = c.chat([{"role": "user", "content": "weather?"}], {"model": "claude-opus-4-8", "tools": tools});
+        http.shutdown(mock["server"]);
+        let tc = (r["toolCalls"] as list<any>)[0] as dict<string, any>;
+        this.assertEquals("get_weather", tc["name"] as string);
+        this.assertEquals("Paris", (tc["arguments"] as dict<string, any>)["city"] as string);
+        let body = json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>;
+        this.assertTrue(((body["tools"] as list<any>)[0] as dict<string, any>).contains("input_schema"));
+    }
+
+    @test
+    func toolResultTranslatedToContentBlock(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"Sunny.\"}]}"};
+        });
+        let c = llm.client({"provider": "anthropic", "apiKey": "x",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let r = c.chat([
+            {"role": "user", "content": "weather?"},
+            {"role": "assistant", "content": "", "toolCalls": [{"id": "tu1", "name": "get_weather", "arguments": {"city": "Paris"}}]},
+            {"role": "tool", "toolCallId": "tu1", "content": "sunny"}
+        ], {"model": "claude-opus-4-8"});
+        http.shutdown(mock["server"]);
+        this.assertEquals("Sunny.", r["content"] as string);
+        let msgs = (json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>)["messages"] as list<any>;
+        let block = ((msgs[2] as dict<string, any>)["content"] as list<any>)[0] as dict<string, any>;
+        this.assertEquals("tool_result", block["type"] as string);
+        this.assertEquals("tu1", block["tool_use_id"] as string);
+    }
+
+    @test
+    func chatStreamCollectsDeltas(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {"Content-Type": "text/event-stream"}, "body":
+                "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n" +
+                "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\" world\"}}\n" +
+                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n"};
+        });
+        let c = llm.client({"provider": "anthropic", "apiKey": "x",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let pieces = [];
+        let r = c.chatStream([{"role": "user", "content": "hi"}], {"model": "claude-opus-4-8"}, func(string delta): void {
+            pieces = pieces.push(delta);
+        });
+        http.shutdown(mock["server"]);
+        this.assertEquals(2, pieces.length());
+        this.assertEquals("Hello world", r["content"] as string);
+        this.assertEquals("end_turn", r["stopReason"] as string);
     }
 }
 
@@ -385,6 +564,63 @@ class BedrockClientTest extends test.Test {
         }
         this.assertTrue(caught);
         this.assertTrue(seen.contains("invoke()"));
+    }
+
+    @test
+    func embedBatchLoopsPerText(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"embedding\":[0.1,0.2,0.3],\"inputTextTokenCount\":3}"};
+        });
+        let c = llm.client({"provider": "bedrock", "region": "us-east-1",
+            "accessKey": "AK", "secretKey": "SK",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let resp = c.embedBatch(["a", "b"], {"model": "amazon.titan-embed-text-v2:0"});
+        http.shutdown(mock["server"]);
+        let vectors = resp["vectors"] as list<any>;
+        this.assertEquals(2, vectors.length());
+        this.assertEquals(3, (vectors[0] as list<any>).length());
+    }
+
+    @test
+    func modelsListsFoundationModels(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"modelSummaries\":[{\"modelId\":\"amazon.titan-embed-text-v2:0\",\"modelName\":\"Titan\",\"providerName\":\"Amazon\"}]}"};
+        });
+        let c = llm.client({"provider": "bedrock", "region": "us-east-1",
+            "accessKey": "AK", "secretKey": "SK",
+            "controlEndpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let models = c.models();
+        http.shutdown(mock["server"]);
+        this.assertEquals(1, models.length());
+        this.assertEquals("amazon.titan-embed-text-v2:0", models[0]["id"] as string);
+        this.assertEquals("/foundation-models", io.readText(path.join(mock["dir"] as string, "path")));
+    }
+
+    @test
+    func toolUseParsedAndToolsSent(): void {
+        let mock = startMockServer(func(dict<string, any> _): dict<string, any> {
+            return {"status": 200, "headers": {}, "body":
+                "{\"stop_reason\":\"tool_use\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tu1\",\"name\":\"get_weather\",\"input\":{\"city\":\"Paris\"}}]}"};
+        });
+        let c = llm.client({"provider": "bedrock", "region": "us-east-1", "accessKey": "AK", "secretKey": "SK",
+            "endpoint": "http://127.0.0.1:" + ((mock["port"] as int) as string)});
+        let tools = [{"name": "get_weather", "description": "Get weather", "parameters": {"type": "object"}}];
+        let r = c.chat([{"role": "user", "content": "weather?"}], {"model": "anthropic.claude-3-5-sonnet-20241022-v2:0", "tools": tools});
+        http.shutdown(mock["server"]);
+        let tc = (r["toolCalls"] as list<any>)[0] as dict<string, any>;
+        this.assertEquals("get_weather", tc["name"] as string);
+        let body = json.parse(io.readText(path.join(mock["dir"] as string, "body"))) as dict<string, any>;
+        this.assertTrue(((body["tools"] as list<any>)[0] as dict<string, any>).contains("input_schema"));
+    }
+
+    @test
+    func chatStreamThrowsNotSupported(): void {
+        let c = llm.client({"provider": "bedrock", "region": "us-east-1", "accessKey": "AK", "secretKey": "SK"});
+        this.assertThrows(func(): void {
+            c.chatStream([{"role": "user", "content": "hi"}], {"model": "anthropic.claude-3-5-sonnet-20241022-v2:0"}, func(string _): void {});
+        });
     }
 }
 

@@ -26,9 +26,13 @@ export class OpenaiClient {
             body = body.push({"role": "system", "content": opts["system"]});
         }
         for (m in messages) {
-            body = body.push(m);
+            body = body.push(openaiToolMessage(m));
         }
         dict<string, any> payload = {"model": model, "messages": body};
+        if (opts.contains("tools")) {
+            payload["tools"] = openaiTools(opts["tools"] as list<any>);
+        }
+        copyOpt(opts, payload, "toolChoice", "tool_choice");
         copyOpt(opts, payload, "maxTokens", "max_tokens");
         copyOpt(opts, payload, "temperature", "temperature");
         copyOpt(opts, payload, "topP", "top_p");
@@ -40,12 +44,78 @@ export class OpenaiClient {
         let choice = choices[0] as dict<string, any>;
         let message = choice["message"] as dict<string, any>;
         let usage = (resp["usage"] ?? {}) as dict<string, any>;
-        return {
+        dict<string, any> result = {
             "content":    (message["content"] ?? "") as string,
             "model":      (resp["model"] ?? model) as string,
             "stopReason": (choice["finish_reason"] ?? "") as string,
             "usage":      usageDict(usage, "prompt_tokens", "completion_tokens", "total_tokens")
         };
+        if (message.contains("tool_calls") && message["tool_calls"] != null) {
+            result["toolCalls"] = parseOpenaiToolCalls(message["tool_calls"] as list<any>);
+        }
+        return result;
+    }
+
+    func chatStream(list<dict<string, any>> messages, dict<string, any> opts, callable callback): dict<string, any> {
+        string model = requireString(opts, "model", "llm.openai.chatStream");
+        list<dict<string, any>> body = [];
+        if (opts.contains("system")) {
+            body = body.push({"role": "system", "content": opts["system"]});
+        }
+        for (m in messages) {
+            body = body.push(openaiToolMessage(m));
+        }
+        dict<string, any> payload = {"model": model, "messages": body, "stream": true};
+        if (opts.contains("tools")) {
+            payload["tools"] = openaiTools(opts["tools"] as list<any>);
+        }
+        copyOpt(opts, payload, "maxTokens", "max_tokens");
+        copyOpt(opts, payload, "temperature", "temperature");
+        copyOpt(opts, payload, "topP", "top_p");
+        let stream = http.requestStream({
+            "method":  "POST",
+            "url":     this.endpoint + "/v1/chat/completions",
+            "headers": {"Content-Type": "application/json", "Authorization": "Bearer " + this.apiKey},
+            "body":    json.stringify(payload)
+        });
+        let status = stream.status();
+        if (status < 200 || status >= 300) {
+            stream.close();
+            throw RuntimeError("llm.openai.chatStream: request failed with status " + (status as string));
+        }
+        string content = "";
+        string finishReason = "";
+        string respModel = model;
+        let line = stream.read();
+        while (line != null) {
+            string l = line as string;
+            if (l.startsWith("data: ")) {
+                string data = l.substring(6);
+                if (data == "[DONE]") {
+                    break;
+                }
+                let chunk = json.parse(data) as dict<string, any>;
+                if (chunk.contains("model")) {
+                    respModel = chunk["model"] as string;
+                }
+                let choices = (chunk["choices"] ?? []) as list<any>;
+                if (choices.length() > 0) {
+                    let choice = choices[0] as dict<string, any>;
+                    let delta = (choice["delta"] ?? {}) as dict<string, any>;
+                    if (delta.contains("content") && delta["content"] != null) {
+                        string piece = delta["content"] as string;
+                        content = content + piece;
+                        callback(piece);
+                    }
+                    if (choice.contains("finish_reason") && choice["finish_reason"] != null) {
+                        finishReason = choice["finish_reason"] as string;
+                    }
+                }
+            }
+            line = stream.read();
+        }
+        stream.close();
+        return {"content": content, "model": respModel, "stopReason": finishReason, "usage": usageDict({}, "", "", "")};
     }
 
     func embed(string text, dict<string, any> opts): dict<string, any> {
@@ -63,6 +133,24 @@ export class OpenaiClient {
             "vector": first["embedding"],
             "model":  (resp["model"] ?? model) as string,
             "usage":  usageDict(usage, "prompt_tokens", "", "total_tokens")
+        };
+    }
+
+    func embedBatch(list<string> texts, dict<string, any> opts): dict<string, any> {
+        string model = requireString(opts, "model", "llm.openai.embedBatch");
+        dict<string, any> payload = {"model": model, "input": texts};
+        copyOpt(opts, payload, "dimensions", "dimensions");
+        let resp = this.post("/v1/embeddings", payload);
+        let data = (resp["data"] ?? []) as list<any>;
+        list<any> vectors = [];
+        for (entry in data) {
+            vectors = vectors.push((entry as dict<string, any>)["embedding"]);
+        }
+        let usage = (resp["usage"] ?? {}) as dict<string, any>;
+        return {
+            "vectors": vectors,
+            "model":   (resp["model"] ?? model) as string,
+            "usage":   usageDict(usage, "prompt_tokens", "", "total_tokens")
         };
     }
 
@@ -141,6 +229,35 @@ export class OpenaiClient {
         }
         return json.parse(resp["body"] as string) as dict<string, any>;
     }
+
+    func models(): list<dict<string, any>> {
+        let resp = this.get("/v1/models");
+        let data = (resp["data"] ?? []) as list<any>;
+        list<dict<string, any>> out = [];
+        for (entry in data) {
+            let item = entry as dict<string, any>;
+            out = out.push({
+                "id":      (item["id"] ?? "") as string,
+                "ownedBy": (item["owned_by"] ?? "") as string,
+                "created": item["created"] ?? 0
+            });
+        }
+        return out;
+    }
+
+    func get(string path): dict<string, any> {
+        dict<string, any> headers = {"Authorization": "Bearer " + this.apiKey};
+        if (this.organization != null) {
+            headers["OpenAI-Organization"] = this.organization as string;
+        }
+        let resp = http.requestWithOptions({"method": "GET", "url": this.endpoint + path, "headers": headers});
+        let status = resp["status"] as int;
+        if (status < 200 || status >= 300) {
+            throw RuntimeError("llm.openai GET " + path + " failed: " +
+                (status as string) + " " + (resp["body"] as string));
+        }
+        return json.parse(resp["body"] as string) as dict<string, any>;
+    }
 }
 
 /**
@@ -189,4 +306,46 @@ func usageDict(dict<string, any> raw, string inKey, string outKey, string totalK
         "outputTokens": outputTokens,
         "totalTokens":  totalTokens
     };
+}
+
+func openaiTools(list<any> tools): list<any> {
+    list<any> out = [];
+    for (t in tools) {
+        let tool = t as dict<string, any>;
+        out = out.push({"type": "function", "function": {
+            "name":        tool["name"],
+            "description": (tool["description"] ?? "") as string,
+            "parameters":  tool["parameters"] ?? {}
+        }});
+    }
+    return out;
+}
+
+func openaiToolMessage(dict<string, any> m): dict<string, any> {
+    if (m.contains("toolCalls")) {
+        list<any> calls = [];
+        for (tc in m["toolCalls"] as list<any>) {
+            let call = tc as dict<string, any>;
+            calls = calls.push({"id": call["id"], "type": "function", "function": {
+                "name":      call["name"],
+                "arguments": json.stringify(call["arguments"])
+            }});
+        }
+        return {"role": (m["role"] ?? "assistant") as string, "content": (m["content"] ?? "") as string, "tool_calls": calls};
+    }
+    if (((m["role"] ?? "") as string) == "tool") {
+        return {"role": "tool", "tool_call_id": m["toolCallId"], "content": (m["content"] ?? "") as string};
+    }
+    return m;
+}
+
+func parseOpenaiToolCalls(list<any> tcs): list<any> {
+    list<any> out = [];
+    for (tc in tcs) {
+        let call = tc as dict<string, any>;
+        let fn = call["function"] as dict<string, any>;
+        string argsStr = (fn["arguments"] ?? "{}") as string;
+        out = out.push({"id": call["id"], "name": fn["name"], "arguments": json.parse(argsStr)});
+    }
+    return out;
 }

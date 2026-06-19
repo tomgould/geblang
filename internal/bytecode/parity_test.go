@@ -30,6 +30,18 @@ import (
 // dicts, lists, and sets across both backends. Strings inside a
 // container are JSON-quoted; top-level strings stay unquoted to
 // match the existing io.println contract. Dict entries appear in
+// TestParityVecmathNormalizeSearch pins vecmath.normalize + semanticSearch output on both backends.
+func TestParityVecmathNormalizeSearch(t *testing.T) {
+	runParity(t, `import vecmath;
+import io;
+io.println("${vecmath.normalize([3.0, 4.0])}");
+let r = vecmath.semanticSearch([[1.0, 0.0], [0.0, 1.0]], [[1.0, 0.0], [0.0, 1.0], [0.7, 0.7]], 1);
+io.println("${r[0][0]["index"]} ${r[1][0]["index"]}");
+`, `[0.6, 0.8]
+0 1
+`)
+}
+
 // TestParitySearch pins search/searchPattern across list/dict/string and value/predicate/regex on both backends.
 func TestParitySearch(t *testing.T) {
 	runParity(t, `import io;

@@ -144,7 +144,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"epsilon": {}, "sqrt2Pi": {}, "log2Pi": {},
 	},
 	"vecmath": {
-		"score": {}, "topK": {},
+		"score": {}, "topK": {}, "normalize": {}, "semanticSearch": {},
 	},
 	"hnsw": {
 		"new": {}, "add": {}, "get": {}, "delete": {}, "count": {}, "clear": {}, "search": {},

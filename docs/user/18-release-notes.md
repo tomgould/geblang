@@ -1,5 +1,30 @@
 # Release Notes
 
+## 1.24.0
+
+### Standard library
+
+- `vecmath` gained `normalize` (L2-normalize a vector, or each vector in a list)
+  and `semanticSearch(queries, corpus, k, metric)`, the multi-query form of
+  `topK` that returns the top-k corpus matches per query as `{index, score}`.
+- The `llm` client gained `models()` (list the models available to the account)
+  and `embedBatch(texts, opts)` (embed many strings in one call, returning
+  `{vectors, model, usage}`), across the OpenAI, Anthropic, and Bedrock
+  providers (Anthropic has no embeddings API, so `embedBatch` throws there).
+- The `llm` `chat` method now supports tool / function calling. Pass
+  `opts.tools` (provider-neutral `{name, description, parameters}` schemas); when
+  the model calls a tool the result carries `toolCalls` (`{id, name, arguments}`),
+  and you continue the conversation with a `{role: "tool", toolCallId, content}`
+  message. One portable shape across OpenAI, Anthropic, and Bedrock Claude models.
+- New `http.requestStream(options)` performs a request and returns a
+  `StreamResponse` whose `read()` yields the body line-by-line as it arrives
+  (`null` at end), the client-side analog of server-sent events. `status()`,
+  `headers()`, `done()`, and `close()` round it out.
+- The `llm` client gained `chatStream(messages, opts, callback)`: streaming chat
+  that invokes `callback` with each content delta and returns the assembled
+  result. Supported for OpenAI and Anthropic (server-sent events); Bedrock uses a
+  binary event-stream protocol and throws there.
+
 ## 1.23.3
 
 ### Standard library

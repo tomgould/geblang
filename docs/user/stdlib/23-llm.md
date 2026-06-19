@@ -35,6 +35,8 @@ interface:
 | `embed(text, opts)` | Single-string text embedding. Returns `{vector, model, usage}`. |
 | `analyzeImage(image, prompt, opts)` | Multimodal vision call. `image` is the raw bytes; returns the same shape as `chat`. |
 | `generateImage(prompt, opts)` | Image generation. Returns `{images, model}` where `images` is a list of `{bytes, format}`. |
+| `models()` | List the models available to this account. Returns a list of dicts, each with at least `id`. |
+| `embedBatch(texts, opts)` | Embed many strings in one call. Returns `{vectors, model, usage}` with `vectors` aligned to `texts`. |
 
 `usage` is a dict with `inputTokens`, `outputTokens`,
 `totalTokens` (zeros when the provider does not report a number).
@@ -79,6 +81,9 @@ the missing operation, so failures are immediate.
 | `embed` | yes | throws | yes (Titan / Cohere model families) |
 | `analyzeImage` | yes (gpt-4o, etc.) | yes (claude vision) | yes (Claude models) |
 | `generateImage` | yes (dall-e-*) | throws | yes (Titan / Stability model families) |
+| `models` | yes (`GET /v1/models`) | yes (`GET /v1/models`) | yes (ListFoundationModels) |
+| `embedBatch` | yes (input array) | throws | yes (per-text loop) |
+| `chatStream` | yes (SSE) | yes (SSE) | throws (binary event-stream) |
 
 Bedrock dispatches by model id prefix:
 
@@ -131,6 +136,72 @@ for (img in images) {
 
 OpenAI is the only provider that supports image generation in
 v1; calls on the other clients throw.
+
+## Streaming
+
+`chatStream(messages, opts, callback)` streams a chat completion. The callback
+is invoked with each incremental content delta (a string) as it arrives, and
+the method returns the assembled `{content, model, stopReason, usage}` once the
+stream ends. Same `opts` as `chat` (including `tools`).
+
+```gb
+let full = c.chatStream([{"role": "user", "content": "Write a haiku."}],
+                        {"model": "gpt-5"},
+                        func(string delta): void {
+    io.print(delta);   /* render tokens as they arrive */
+});
+io.println("");
+io.println("done: " + (full["stopReason"] as string));
+```
+
+Streaming is supported for OpenAI and Anthropic (both speak server-sent events).
+Bedrock uses a different binary event-stream protocol and `chatStream` throws
+there; use `chat` for a single Bedrock response.
+
+## Tool / function calling
+
+Pass `opts.tools` to `chat` to let the model request a function
+call. Tools are provider-neutral; each backend translates them to
+its native format (OpenAI `tools`, Anthropic / Bedrock `input_schema`).
+Each tool is `{name, description, parameters}` where `parameters`
+is a JSON Schema object describing the arguments.
+
+When the model decides to call a tool, the result gains a
+`toolCalls` list of `{id, name, arguments}` (arguments already
+parsed into a dict) and `stopReason` flags it (`"tool_calls"` /
+`"tool_use"`). Run the tool yourself, then continue the
+conversation: echo the assistant's call as a message with
+`toolCalls`, and supply the result as a `{role: "tool",
+toolCallId, content}` message. The same neutral shape works on
+every provider.
+
+```gb
+let tools = [{
+    "name":        "get_weather",
+    "description": "Get the current weather for a city",
+    "parameters":  {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}
+}];
+
+let first = c.chat([{"role": "user", "content": "Weather in Paris?"}],
+                   {"model": "gpt-5", "tools": tools});
+
+if (first.contains("toolCalls")) {
+    let call = (first["toolCalls"] as list<any>)[0] as dict<string, any>;
+    let city = (call["arguments"] as dict<string, any>)["city"] as string;
+    let result = lookupWeather(city);   /* your function */
+
+    let final = c.chat([
+        {"role": "user",      "content": "Weather in Paris?"},
+        {"role": "assistant", "content": "", "toolCalls": first["toolCalls"]},
+        {"role": "tool",      "toolCallId": call["id"], "content": result}
+    ], {"model": "gpt-5", "tools": tools});
+    io.println(final["content"]);
+}
+```
+
+Tool calling works on `chat` for every provider that backs `chat`
+(OpenAI, Anthropic, and Claude models on Bedrock). `opts.toolChoice`
+(OpenAI) forces or restricts which tool the model may call.
 
 ## Errors
 

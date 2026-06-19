@@ -224,6 +224,8 @@ numbers or a packed little-endian float32 BLOB (the stored form).
 |----------|-------------|
 | `score(metric, a, b)` | Similarity (higher = closer) between two vectors for `"cosine"` / `"dot"` / `"euclidean"`. |
 | `topK(vectors, query, k, metric)` | Ranks `vectors` (a list of lists or float32 blobs) against `query`, returns up to `k` `{index, score}` dicts in descending order. |
+| `normalize(vector)` | L2-normalized copy of a vector; pass a list of vectors to normalize each. A zero vector stays zero. |
+| `semanticSearch(queries, corpus, k, metric = "cosine")` | The multi-query form of `topK`: for each query vector, the top-`k` corpus matches as `{index, score}`. One ranked list per query. |
 
 ```gb
 import vecmath;
@@ -231,7 +233,18 @@ import vecmath;
 vecmath.score("cosine", [1.0, 0.0], [1.0, 0.0]);   # 1.0
 let hits = vecmath.topK([[1.0, 0.0], [0.0, 1.0]], [1.0, 0.0], 1, "cosine");
 hits[0]["index"];                                   # 0
+
+vecmath.normalize([3.0, 4.0]);                      # [0.6, 0.8]
+
+# One brute-force search over a corpus for several queries at once:
+let corpus  = [[1.0, 0.0], [0.0, 1.0], [0.7, 0.7]];
+let queries = [[1.0, 0.0], [0.0, 1.0]];
+let results = vecmath.semanticSearch(queries, corpus, 2);
+results[0][0]["index"];                             # 0  (best match for query 0)
 ```
+
+`semanticSearch` is exact brute-force, a good fit for small to medium corpora;
+use an HNSW `vectorstore` for large ones.
 
 `vectorstore.score(metric, a, b)` delegates to `vecmath.score`; you rarely call
 `vecmath` directly unless building your own ranking.

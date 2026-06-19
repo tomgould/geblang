@@ -26,9 +26,14 @@ export class BedrockClient {
     string accessKey;
     string secretKey;
     string endpoint;
+    string controlEndpoint;
 
     func chat(list<dict<string, any>> messages, dict<string, any> opts): dict<string, any> {
         return this.runMessages(filterSystem(messages), opts);
+    }
+
+    func chatStream(list<dict<string, any>> messages, dict<string, any> opts, callable callback): dict<string, any> {
+        throw RuntimeError("llm.bedrock.chatStream: streaming is not supported for Bedrock yet (its event-stream protocol differs from SSE); use chat for a single response.");
     }
 
     func embed(string text, dict<string, any> opts): dict<string, any> {
@@ -41,6 +46,23 @@ export class BedrockClient {
         }
         throw RuntimeError("llm.bedrock.embed: model '" + model
             + "' does not match a known embedding family (amazon.titan-embed*, cohere.embed*); use invoke() with the provider-specific payload for other models.");
+    }
+
+    func embedBatch(list<string> texts, dict<string, any> opts): dict<string, any> {
+        string model = requireString(opts, "model", "llm.bedrock.embedBatch");
+        list<any> vectors = [];
+        int totalIn = 0;
+        for (t in texts) {
+            let r = this.embed(t, opts);
+            vectors = vectors.push(r["vector"]);
+            let u = r["usage"] as dict<string, any>;
+            totalIn = totalIn + ((u["inputTokens"] ?? 0) as int);
+        }
+        return {
+            "vectors": vectors,
+            "model":   model,
+            "usage":   {"inputTokens": totalIn, "outputTokens": 0, "totalTokens": totalIn}
+        };
     }
 
     /* Amazon Titan Text Embeddings v1/v2. Request takes a single
@@ -180,19 +202,27 @@ export class BedrockClient {
         if (opts.contains("topP")) {
             payload["top_p"] = opts["topP"];
         }
+        if (opts.contains("tools")) {
+            payload["tools"] = bedrockTools(opts["tools"] as list<any>);
+        }
         let resp = this.invoke(model, payload);
         let blocks = (resp["content"] ?? []) as list<any>;
         string text = "";
+        list<any> toolCalls = [];
         for (b in blocks) {
             let block = b as dict<string, any>;
-            if ((block["type"] as string) == "text") {
+            let bt = (block["type"] ?? "") as string;
+            if (bt == "text") {
                 text = text + ((block["text"] ?? "") as string);
+            }
+            if (bt == "tool_use") {
+                toolCalls = toolCalls.push({"id": block["id"], "name": block["name"], "arguments": block["input"] ?? {}});
             }
         }
         let usage = (resp["usage"] ?? {}) as dict<string, any>;
         int inTok = (usage["input_tokens"] ?? 0) as int;
         int outTok = (usage["output_tokens"] ?? 0) as int;
-        return {
+        dict<string, any> result = {
             "content":    text,
             "model":      model,
             "stopReason": (resp["stop_reason"] ?? "") as string,
@@ -202,6 +232,10 @@ export class BedrockClient {
                 "totalTokens":  inTok + outTok
             }
         };
+        if (toolCalls.length() > 0) {
+            result["toolCalls"] = toolCalls;
+        }
+        return result;
     }
 
     /** Escape hatch: send any payload to InvokeModel directly.
@@ -253,6 +287,59 @@ export class BedrockClient {
         }
         return json.parse(resp["body"] as string) as dict<string, any>;
     }
+
+    func models(): list<dict<string, any>> {
+        let resp = this.controlRequest("GET", "/foundation-models");
+        let summaries = (resp["modelSummaries"] ?? []) as list<any>;
+        list<dict<string, any>> out = [];
+        for (entry in summaries) {
+            let item = entry as dict<string, any>;
+            out = out.push({
+                "id":       (item["modelId"] ?? "") as string,
+                "name":     (item["modelName"] ?? "") as string,
+                "provider": (item["providerName"] ?? "") as string
+            });
+        }
+        return out;
+    }
+
+    /* ListFoundationModels is on the bedrock control plane, not bedrock-runtime, so it signs a GET against that host. */
+    func controlRequest(string method, string path): dict<string, any> {
+        string host = "bedrock." + this.region + ".amazonaws.com";
+        let now = datetime.nowUnix();
+        string amzDate = datetime.format(now, "20060102T150405Z");
+        string dateStamp = amzDate.substring(0, 8);
+        string payloadHash = crypt.sha256("");
+        dict<string, string> headers = {
+            "host":                 host,
+            "x-amz-content-sha256": payloadHash,
+            "x-amz-date":           amzDate
+        };
+        let canonical = canonicalRequest(method, path, "", headers, payloadHash);
+        let scope = dateStamp + "/" + this.region + "/bedrock/aws4_request";
+        let stringToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + crypt.sha256(canonical);
+        let key = signingKey(this.secretKey, dateStamp, this.region, "bedrock");
+        let signature = crypt.hmacSha256(bytes.toString(key), stringToSign);
+        string signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+        string authHeader = "AWS4-HMAC-SHA256 Credential=" + this.accessKey + "/" + scope +
+            ",SignedHeaders=" + signedHeaders + ",Signature=" + signature;
+        let resp = http.requestWithOptions({
+            "method":  method,
+            "url":     this.controlEndpoint + path,
+            "headers": {
+                "Host":                 host,
+                "X-Amz-Content-Sha256": payloadHash,
+                "X-Amz-Date":           amzDate,
+                "Authorization":        authHeader
+            }
+        });
+        let status = resp["status"] as int;
+        if (status < 200 || status >= 300) {
+            throw RuntimeError("llm.bedrock " + method + " " + path + " failed: " +
+                (status as string) + " " + (resp["body"] as string));
+        }
+        return json.parse(resp["body"] as string) as dict<string, any>;
+    }
 }
 
 /**
@@ -277,6 +364,9 @@ export func connect(dict<string, any> opts): BedrockClient {
     c.endpoint = opts.contains("endpoint")
         ? (opts["endpoint"] as string)
         : ("https://bedrock-runtime." + c.region + ".amazonaws.com");
+    c.controlEndpoint = opts.contains("controlEndpoint")
+        ? (opts["controlEndpoint"] as string)
+        : ("https://bedrock." + c.region + ".amazonaws.com");
     return c;
 }
 
@@ -309,10 +399,38 @@ func filterSystem(list<dict<string, any>> messages): list<dict<string, any>> {
     list<dict<string, any>> out = [];
     for (m in messages) {
         if ((m["role"] as string) != "system") {
-            out = out.push(m);
+            out = out.push(bedrockToolMessage(m));
         }
     }
     return out;
+}
+
+func bedrockTools(list<any> tools): list<any> {
+    list<any> out = [];
+    for (t in tools) {
+        let tool = t as dict<string, any>;
+        out = out.push({"name": tool["name"], "description": (tool["description"] ?? "") as string, "input_schema": tool["parameters"] ?? {}});
+    }
+    return out;
+}
+
+func bedrockToolMessage(dict<string, any> m): dict<string, any> {
+    if (m.contains("toolCalls")) {
+        list<any> content = [];
+        string text = (m["content"] ?? "") as string;
+        if (!text.isEmpty()) {
+            content = content.push({"type": "text", "text": text});
+        }
+        for (tc in m["toolCalls"] as list<any>) {
+            let call = tc as dict<string, any>;
+            content = content.push({"type": "tool_use", "id": call["id"], "name": call["name"], "input": call["arguments"] ?? {}});
+        }
+        return {"role": "assistant", "content": content};
+    }
+    if (((m["role"] ?? "") as string) == "tool") {
+        return {"role": "user", "content": [{"type": "tool_result", "tool_use_id": m["toolCallId"], "content": (m["content"] ?? "") as string}]};
+    }
+    return m;
 }
 
 func signingKey(string secretKey, string dateStamp, string region, string service): bytes {

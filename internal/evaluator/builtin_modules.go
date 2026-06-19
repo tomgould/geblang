@@ -747,6 +747,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"parseJson":          httpParseJSON,
 			"request":            e.httpRequest,
 			"requestWithOptions": e.httpRequestWithOptions,
+			"requestStream":      e.httpRequestStream,
 			"Headers":            httpHeadersObject,
 			"Cookie":             httpCookieObject,
 			"response":           e.httpResponseObject,
@@ -941,8 +942,10 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"log2Pi":     e.registryBuiltin("math", "log2Pi"),
 		},
 		"vecmath": {
-			"score": e.registryBuiltin("vecmath", "score"),
-			"topK":  e.registryBuiltin("vecmath", "topK"),
+			"score":          e.registryBuiltin("vecmath", "score"),
+			"topK":           e.registryBuiltin("vecmath", "topK"),
+			"normalize":      e.registryBuiltin("vecmath", "normalize"),
+			"semanticSearch": e.registryBuiltin("vecmath", "semanticSearch"),
 		},
 		"hnsw": {
 			"new":    e.registryBuiltin("hnsw", "new"),

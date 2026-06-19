@@ -5,8 +5,8 @@
 Import `http` for client calls and simple servers.
 
 - server: `serve`, `listen`, `close`, `shutdown`, `serverAddr`, `serverCert`
-- client: `get`, `post`, `postJson`, `request`, `requestWithOptions`
-- streaming: `stream`, `streamWrite`, `streamFlush`, `streamClose`
+- client: `get`, `post`, `postJson`, `request`, `requestWithOptions`, `requestStream`
+- streaming: `stream`, `streamWrite`, `streamFlush`, `streamClose` (server); `requestStream` (client)
 - helpers: `parseJson`, `Headers`, `Cookie`, `response`, `jsonResponse`
 - classes exported by import: `Request`, `Response`
 
@@ -189,6 +189,41 @@ The batch never throws because one request failed, so a single bad entry
 does not lose the others; check `response.isError()` first, as above.
 
 A configured client exposes the same `fetchAll` for connection-pool reuse.
+
+### Client-side response streaming (1.24.0)
+
+`http.requestStream(options)` performs a request like `requestWithOptions`, but
+instead of buffering the whole body it returns a `StreamResponse` you read
+line-by-line as data arrives. This is the client-side analog of server-sent
+events: long-polling feeds, chunked logs, and LLM token streams.
+
+| Method | Description |
+|--------|-------------|
+| `read()` | The next line of the body (trailing newline stripped), or `null` at end of stream. |
+| `status()` | The HTTP status code. |
+| `headers()` | The response headers as a `dict<string, string>`. |
+| `done()` | `true` once the stream has been fully read or closed. |
+| `close()` | Closes the underlying connection (call it when you stop early). |
+
+```gb
+let stream = http.requestStream({
+    "method":  "GET",
+    "url":     "https://example.com/events",
+    "headers": {"Accept": "text/event-stream"}
+});
+if (stream.status() != 200) {
+    stream.close();
+    throw RuntimeError("stream failed: " + (stream.status() as string));
+}
+let line = stream.read();
+while (line != null) {
+    if ((line as string).startsWith("data: ")) {
+        io.println("event: " + (line as string).substring(6));
+    }
+    line = stream.read();
+}
+stream.close();
+```
 
 ### Client configuration
 

@@ -1053,3 +1053,45 @@ io.println(r["code"]);
 io.println((r["stdout"] as string).trim());
 `, "0\nhello world\n")
 }
+
+func TestParityHTTPRequestStream(t *testing.T) {
+	runParityStateful(t, `import io;
+import http;
+import sys;
+let server = http.listen("127.0.0.1:0", func(dict<string, any> _): dict<string, any> {
+    return {"status": 200, "headers": {}, "body": "one\ntwo\nthree\n"};
+});
+let port = (http.serverAddr(server).split(":")[1] as string) as int;
+sys.sleep(20);
+let stream = http.requestStream({"method": "GET", "url": "http://127.0.0.1:" + (port as string) + "/"});
+io.println(stream.status());
+let n = 0;
+let line = stream.read();
+while (line != null) {
+    n = n + 1;
+    line = stream.read();
+}
+stream.close();
+http.shutdown(server);
+io.println(n);
+`, "200\n3\n")
+}
+
+func TestParityLLMCrossModuleDispatch(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import llm;
+let c = llm.client({"provider": "openai", "apiKey": "sk"});
+try {
+    c.chat([{"role": "user", "content": "x"}], {});
+    io.println("no-throw");
+} catch (RuntimeError e) {
+    io.println("threw");
+}
+try {
+    c.models();
+    io.println("no-throw");
+} catch (RuntimeError e) {
+    io.println("default-threw");
+}
+`, "threw\ndefault-threw\n")
+}
