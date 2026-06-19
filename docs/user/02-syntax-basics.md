@@ -122,8 +122,9 @@ string raw = 'Hello ${name}\n';  # literal: Hello ${name}\n
 Multiline strings use triple quotes:
 
 ```gb
+let user = {"name": "Ada"};
 string html = """
-<h1>${name}</h1>
+<h1>${user["name"]}</h1>
 """;
 ```
 
@@ -131,13 +132,17 @@ Choose single-quoted strings for regex patterns, shell fragments, or examples
 where backslashes should stay literal. Choose triple-quoted strings for HTML,
 SQL, Markdown, and larger fixture text.
 
-**Limitation:** double-quoted string literals inside `${...}` are not supported.
-Use single-quoted strings or variables instead:
+An interpolation expression can itself contain string literals, so a dictionary
+key works directly with double quotes in any interpolated string, regular or
+triple-quoted: the parser skips nested string literals when it scans for the
+closing `}`. Single-quoted keys are equivalent, and the expression can be
+anything:
 
 ```gb
-let label = "items";
-io.println("${label}: ${count}");   # ok
-io.println("${'items'}: ${count}"); # ok - single-quoted inside expression
+let foo = {"bar": 1};
+io.println("${foo["bar"]}");        # 1   (double-quoted key)
+io.println("${foo['bar']}");        # 1   (single-quoted key, equivalent)
+io.println("${foo["bar"] + 10}");   # 11  (any expression, nesting allowed)
 ```
 
 ### Format specifiers
