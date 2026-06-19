@@ -179,25 +179,32 @@ func Write(w io.Writer, manifest Manifest, files map[string][]byte) error {
 	return err
 }
 
-// ExtractTo extracts the bundle's zip contents into dir, pre-populates the
-// bytecode cache under cacheDir, and returns the bundle hash.
-// If dir already exists, extraction is skipped (cached).
+// ExtractTo atomically extracts the bundle into dir (temp dir + rename, so an interrupt leaves no partial dir to be reused) and pre-populates the bytecode cache; skips if dir exists.
 func (b *Bundle) ExtractTo(dir string, version string, cacheDir string) error {
 	if _, err := os.Stat(dir); err == nil {
 		return nil // already extracted
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("bundle extract: create dir: %w", err)
+	parent := filepath.Dir(dir)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return fmt.Errorf("bundle extract: create parent: %w", err)
 	}
+	tmpDir, err := os.MkdirTemp(parent, ".geblang-extract-*")
+	if err != nil {
+		return fmt.Errorf("bundle extract: temp dir: %w", err)
+	}
+	published := false
+	defer func() {
+		if !published {
+			os.RemoveAll(tmpDir)
+		}
+	}()
 
 	zr, err := zip.NewReader(bytes.NewReader(b.data), int64(len(b.data)))
 	if err != nil {
 		return fmt.Errorf("bundle extract: open zip: %w", err)
 	}
 
-	// Collect source bytes and bytecode bytes during extraction so we can
-	// compute the exact bytecode cache key (which requires the source bytes,
-	// not just their hash).
+	// Collect source + bytecode bytes so we can compute the exact bytecode cache key.
 	sourceBytesMap := map[string][]byte{}   // zip path -> source bytes
 	bytecodeBytesMap := map[string][]byte{} // zip path -> bytecode bytes
 
@@ -205,7 +212,7 @@ func (b *Bundle) ExtractTo(dir string, version string, cacheDir string) error {
 		if f.Name == "BUNDLE.json" {
 			continue
 		}
-		destPath := filepath.Join(dir, filepath.FromSlash(f.Name))
+		destPath := filepath.Join(tmpDir, filepath.FromSlash(f.Name))
 		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 			return fmt.Errorf("bundle extract: mkdir %s: %w", destPath, err)
 		}
@@ -229,20 +236,26 @@ func (b *Bundle) ExtractTo(dir string, version string, cacheDir string) error {
 		}
 	}
 
-	// Populate the bytecode cache with the exact key that loadOrCompileBytecode
-	// would compute: SHA-256(compiler + NUL + sourcePath + NUL + source).
+	// Cache keys use the final dir path (where the source resolves at runtime), not the temp dir.
 	for gbcZipPath, bytecodeData := range bytecodeBytesMap {
 		gbZipPath := strings.TrimSuffix(gbcZipPath, ".gbc") + ".gb"
 		srcBytes, ok := sourceBytesMap[gbZipPath]
 		if !ok {
 			continue
 		}
-		extractedSrcPath := filepath.Join(dir, filepath.FromSlash(gbZipPath))
-		cachePath := bytecodeCachePath(cacheDir, extractedSrcPath, srcBytes, version)
+		finalSrcPath := filepath.Join(dir, filepath.FromSlash(gbZipPath))
+		cachePath := bytecodeCachePath(cacheDir, finalSrcPath, srcBytes, version)
 		_ = os.MkdirAll(filepath.Dir(cachePath), 0o755)
 		_ = os.WriteFile(cachePath, bytecodeData, 0o644)
 	}
 
+	if err := os.Rename(tmpDir, dir); err != nil {
+		if _, statErr := os.Stat(dir); statErr == nil {
+			return nil // another process published it first
+		}
+		return fmt.Errorf("bundle extract: publish: %w", err)
+	}
+	published = true
 	return nil
 }
 

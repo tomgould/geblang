@@ -9,6 +9,47 @@ They build on the embedding vectors produced by the [`llm`](llm.html) module
 (`client.embed(text, opts)`), but `vectorstore` is independent of any provider
 and `rag` accepts any embedder you supply.
 
+## End-to-end: create, store, search
+
+Embed a corpus with a cloud LLM, persist the vectors, and search them. The
+embeddings come straight from `llm` (`embedBatch` for the corpus, `embed` for
+the query); everything downstream is provider-agnostic.
+
+```gb
+import llm;
+import vectorstore;
+import io;
+
+let client = llm.client({"provider": "openai", "apiKey": apiKey});
+let model  = "text-embedding-3-small";
+
+# 1. Embed a corpus in one batched request
+let docs = [
+    "Cats are small carnivorous mammals.",
+    "Cars are wheeled motor vehicles.",
+    "Python is a high-level programming language."
+];
+let vectors = client.embedBatch(docs, {"model": model})["vectors"] as list<any>;
+
+# 2. Store the vectors with metadata
+let store = vectorstore.MemoryVectorStore();
+for (let i = 0; i < docs.length(); i = i + 1) {
+    store.add("doc-" + (i as string), vectors[i], {"text": docs[i]});
+}
+
+# 3. Embed a query and retrieve the nearest documents
+let q    = client.embed("Tell me about felines", {"model": model})["vector"];
+let hits = store.search(q, 2);
+for (hit in hits) {
+    io.println((hit.score as string) + "  " + (hit.record.metadata["text"] as string));
+}
+```
+
+Swap `MemoryVectorStore()` for `SqliteVectorStore(conn)` or `PgVectorStore(...)`
+to persist, with no other changes. To turn retrieved documents into a grounded
+answer, hand the same embedder to `rag` (next section) and feed the assembled
+context to `client.chat`.
+
 ## `vectorstore`
 
 A vector store keeps `(id, vector, metadata)` records and answers

@@ -102,6 +102,40 @@ Calls with an unrecognised Bedrock model id throw a clear
 `bedrock.invoke(model, payload)` escape hatch for model families
 the v1 common shape does not cover (e.g. Llama, Mistral).
 
+## Embeddings
+
+`embed(text, opts)` returns a single dense vector; `embedBatch(texts,
+opts)` embeds many strings in one request and returns `vectors`
+aligned to the input. The embedding model is chosen per call via
+`opts.model` (e.g. `"text-embedding-3-small"`); list what the
+provider exposes with `models()`.
+
+```gb
+import llm;
+
+let client = llm.client({"provider": "openai", "apiKey": apiKey});
+
+# Pick or discover a model
+let available = client.models();          # [{id, ...}, ...]
+
+# One text
+let one = client.embed("hello world", {"model": "text-embedding-3-small"});
+one["vector"];                            # list<float>
+
+# Many texts in a single call (preferred when indexing a corpus)
+let batch = client.embedBatch(
+    ["first chunk", "second chunk", "third chunk"],
+    {"model": "text-embedding-3-small"}
+);
+batch["vectors"];                         # list<list<float>>, aligned to input
+```
+
+The returned vectors feed directly into `vectorstore` (to persist
+and search) and `rag` (to build retrieval context). See
+[Vector stores and RAG](24-vectorstore-rag.md) for the end-to-end
+create / store / search / RAG flow. For local, offline embeddings
+without an API call, see the `transformers` encoder.
+
 ## Image analysis
 
 `analyzeImage` takes bytes plus a prompt. The provider request is

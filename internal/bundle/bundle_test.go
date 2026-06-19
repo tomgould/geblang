@@ -5,8 +5,50 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func bundleFrom(t *testing.T, files map[string][]byte) *Bundle {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := Write(&buf, Manifest{Version: "test", Entry: "main"}, files); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	raw := buf.Bytes()
+	zipSize := int64(binary.LittleEndian.Uint64(raw[len(raw)-TrailerSize : len(raw)-TrailerSize+8]))
+	zipData := raw[int64(len(raw))-int64(TrailerSize)-zipSize : int64(len(raw))-int64(TrailerSize)]
+	b, err := parseZip(zipData)
+	if err != nil {
+		t.Fatalf("parseZip: %v", err)
+	}
+	return b
+}
+
+// TestExtractAtomicPublish: ExtractTo publishes a complete dir, leaves no temp dirs, and skips on a second call.
+func TestExtractAtomicPublish(t *testing.T) {
+	b := bundleFrom(t, map[string][]byte{
+		"src/main.gb": []byte("func main() {}"),
+		"stdlib/a.gb": []byte("module a;"),
+	})
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "extract")
+	if err := b.ExtractTo(dir, "test", ""); err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "stdlib", "a.gb")); err != nil {
+		t.Fatalf("extracted file missing: %v", err)
+	}
+	entries, _ := os.ReadDir(parent)
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), ".geblang-extract-") {
+			t.Errorf("leftover temp extract dir: %s", e.Name())
+		}
+	}
+	if err := b.ExtractTo(dir, "test", ""); err != nil {
+		t.Fatalf("second extract (idempotent skip): %v", err)
+	}
+}
 
 // TestResourceRoundTrip embeds a non-.gb resource at a project-relative path and
 // confirms ExtractTo writes it back at the same relative path under the extract
