@@ -841,6 +841,19 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		vm.push(result)
 		return ip, nil
 	}
+	if str, ok := receiver.(runtime.String); ok {
+		if handled, result, err := vm.stringSearchMethod(str, nameValue.Value, args); handled {
+			if err != nil {
+				var typed vmTypedError
+				if errors.As(err, &typed) {
+					return vm.throwTyped(instruction, ip, typed.class, typed.message)
+				}
+				return 0, vm.runtimeError(instruction, "%s", err.Error())
+			}
+			vm.push(result)
+			return ip, nil
+		}
+	}
 	value, err := primitiveMethod(receiver, nameValue.Value, args)
 	if err != nil {
 		var typed vmTypedError

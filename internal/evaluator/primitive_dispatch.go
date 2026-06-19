@@ -121,6 +121,61 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return true
 			})
 			return &runtime.List{Elements: values}, nil
+		case "search":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("dict.search expects one argument")
+			}
+			matches := []runtime.Value{}
+			var cbErr error
+			if runtime.IsCallableValue(args[0]) {
+				value.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
+					keep, err := e.callValue(args[0], []runtime.Value{entry.Value})
+					if err != nil {
+						cbErr = err
+						return false
+					}
+					if isTruthy(keep) {
+						matches = append(matches, entry.Key)
+					}
+					return true
+				})
+			} else {
+				value.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
+					eq, err := e.valuesEqual(entry.Value, args[0])
+					if err != nil {
+						cbErr = err
+						return false
+					}
+					if eq {
+						matches = append(matches, entry.Key)
+					}
+					return true
+				})
+			}
+			if cbErr != nil {
+				return nil, cbErr
+			}
+			return &runtime.List{Elements: matches}, nil
+		case "searchPattern":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("dict.searchPattern expects one argument (regex)")
+			}
+			pat, ok := args[0].(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("dict.searchPattern expects a string pattern")
+			}
+			re, err := native.CompileSearchRegex(pat.Value)
+			if err != nil {
+				return nil, thrownError{value: runtime.Error{Class: "ValueError", Message: fmt.Sprintf("invalid regex: %v", err)}}
+			}
+			matches := []runtime.Value{}
+			value.ForEachEntry(func(_ string, entry runtime.DictEntry) bool {
+				if s, ok := entry.Value.(runtime.String); ok && re.MatchString(s.Value) {
+					matches = append(matches, entry.Key)
+				}
+				return true
+			})
+			return &runtime.List{Elements: matches}, nil
 		case "items", "entries":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("dict.%s expects no arguments", name)
@@ -540,6 +595,52 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				}
 			}
 			return runtime.NewInt64(-1), nil
+		case "search":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("list.search expects one argument")
+			}
+			matches := []runtime.Value{}
+			if runtime.IsCallableValue(args[0]) {
+				for i, el := range value.Elements {
+					keep, err := e.callValue(args[0], []runtime.Value{el})
+					if err != nil {
+						return nil, err
+					}
+					if isTruthy(keep) {
+						matches = append(matches, runtime.NewInt64(int64(i)))
+					}
+				}
+			} else {
+				for i, el := range value.Elements {
+					eq, err := e.valuesEqual(el, args[0])
+					if err != nil {
+						return nil, err
+					}
+					if eq {
+						matches = append(matches, runtime.NewInt64(int64(i)))
+					}
+				}
+			}
+			return &runtime.List{Elements: matches}, nil
+		case "searchPattern":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("list.searchPattern expects one argument (regex)")
+			}
+			pat, ok := args[0].(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("list.searchPattern expects a string pattern")
+			}
+			re, err := native.CompileSearchRegex(pat.Value)
+			if err != nil {
+				return nil, thrownError{value: runtime.Error{Class: "ValueError", Message: fmt.Sprintf("invalid regex: %v", err)}}
+			}
+			matches := []runtime.Value{}
+			for i, el := range value.Elements {
+				if s, ok := el.(runtime.String); ok && re.MatchString(s.Value) {
+					matches = append(matches, runtime.NewInt64(int64(i)))
+				}
+			}
+			return &runtime.List{Elements: matches}, nil
 		case "slice":
 			if len(args) < 1 || len(args) > 2 {
 				return nil, fmt.Errorf("list.slice expects (start[, end])")
@@ -1836,6 +1937,48 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 				return nil, fmt.Errorf("string.contains expects string")
 			}
 			return runtime.Bool{Value: strings.Contains(value.Value, needle.Value)}, nil
+		case "search":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("string.search expects one argument")
+			}
+			matches := []runtime.Value{}
+			if runtime.IsCallableValue(args[0]) {
+				for i, r := range []rune(value.Value) {
+					keep, err := e.callValue(args[0], []runtime.Value{runtime.String{Value: string(r)}})
+					if err != nil {
+						return nil, err
+					}
+					if isTruthy(keep) {
+						matches = append(matches, runtime.NewInt64(int64(i)))
+					}
+				}
+				return &runtime.List{Elements: matches}, nil
+			}
+			sub, ok := args[0].(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("string.search expects a string or callable")
+			}
+			for _, pos := range native.StringMatchRunePositions(value.Value, sub.Value) {
+				matches = append(matches, runtime.NewInt64(int64(pos)))
+			}
+			return &runtime.List{Elements: matches}, nil
+		case "searchPattern":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("string.searchPattern expects one argument (regex)")
+			}
+			pat, ok := args[0].(runtime.String)
+			if !ok {
+				return nil, fmt.Errorf("string.searchPattern expects a string pattern")
+			}
+			re, err := native.CompileSearchRegex(pat.Value)
+			if err != nil {
+				return nil, thrownError{value: runtime.Error{Class: "ValueError", Message: fmt.Sprintf("invalid regex: %v", err)}}
+			}
+			matches := []runtime.Value{}
+			for _, pos := range native.RegexMatchRunePositions(re, value.Value) {
+				matches = append(matches, runtime.NewInt64(int64(pos)))
+			}
+			return &runtime.List{Elements: matches}, nil
 		case "startsWith":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("string.startsWith expects one argument")

@@ -18,7 +18,7 @@ var PrimitiveMethods = map[string][]string{
 		"graphemes", "graphemeLength", "truncateGraphemes",
 		"indexOf", "isEmpty", "lastIndexOf", "length", "lower", "matchesRegex",
 		"padEnd", "padStart", "repeat", "replace", "replaceRegex", "reverse",
-		"slice", "split", "splitRegex", "startsWith", "substring", "toBool",
+		"search", "searchPattern", "slice", "split", "splitRegex", "startsWith", "substring", "toBool",
 		"toDecimal", "toFloat", "toInt", "toString", "trim", "trimEnd",
 		"trimStart", "upper",
 		"capitalize", "title", "isBlank", "lines", "removePrefix", "removeSuffix",
@@ -32,6 +32,7 @@ var PrimitiveMethods = map[string][]string{
 		"intersection", "intersectionBy", "isEmpty", "join", "last", "length",
 		"lowerBound", "map", "maxBy", "minBy", "mode", "partition", "pop",
 		"prepend", "push", "reduce", "remove", "removeAt", "reverse", "reversed",
+		"search", "searchPattern",
 		"set", "slice", "sort", "sortBy", "sorted", "sumBy", "toList", "topBy",
 		"topK", "unique", "unshift", "upperBound", "zip", "zipWith",
 		"flatMap", "uniqueBy", "takeWhile", "dropWhile", "windowed", "unzip", "scan",
@@ -40,7 +41,7 @@ var PrimitiveMethods = map[string][]string{
 	"dict": {
 		"bfs", "clear", "contains", "copy", "delete", "dfs", "entries", "get",
 		"deepCopy", "hasKey", "insert", "isEmpty", "items", "keys", "length", "merge",
-		"remove", "set", "shortestPath", "topologicalSort", "values",
+		"remove", "search", "searchPattern", "set", "shortestPath", "topologicalSort", "values",
 	},
 	"set": {
 		"add", "contains", "copy", "deepCopy", "difference", "intersection", "isEmpty",

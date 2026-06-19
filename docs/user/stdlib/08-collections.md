@@ -80,6 +80,8 @@ Validate before mutation when accepting dynamic data.
 | `last()` | `T\|null` | Last element, or `null` if empty |
 | `contains(value)` | `bool` | `true` when `value` is in the list |
 | `indexOf(value)` | `int` | First index of `value`, or `-1` if absent |
+| `search(value)` | `list<int>` | Every index whose element equals `value`, or where the callable `value` returns true |
+| `searchPattern(regex)` | `list<int>` | Every index whose string element matches `regex` |
 
 ```gb
 import io;
@@ -93,6 +95,15 @@ io.println(a.first());      # 10
 io.println(a.last());       # 50
 io.println(a.contains(30)); # true
 io.println(a.indexOf(30));  # 2
+```
+
+`search` returns *all* matching indices (the "find every" counterpart to
+`indexOf`), and accepts a predicate as well as a value:
+
+```gb
+io.println([1, 0, 1, 0, 1].search(1));                      # [0, 2, 4]
+io.println([3, 8, 1, 9].search(func(int n): bool { return n > 4; }));  # [1, 3]
+io.println(["foo", "bar", "baz"].searchPattern("^ba"));     # [1, 2]
 ```
 
 ### Slicing
@@ -442,6 +453,8 @@ Dictionaries are mutable, key-value stores.  Keys must be primitive values
 | `values()` | `list<V>` | All values as a list |
 | `items()` | `list<list<any>>` | All entries as `[key, value]` pairs |
 | `entries()` | `list<list<any>>` | Alias for `items` |
+| `search(value)` | `list<K>` | Keys whose value equals `value`, or where the callable `value` (over the value) returns true |
+| `searchPattern(regex)` | `list<K>` | Keys whose string value matches `regex` |
 | `copy()` | `dict<K, V>` | New dict with the same entries (shallow copy; preserves insertion order) |
 | `deepCopy()` | `dict<K, V>` | New dict with nested containers and objects cloned recursively |
 

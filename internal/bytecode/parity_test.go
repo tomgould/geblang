@@ -30,6 +30,30 @@ import (
 // dicts, lists, and sets across both backends. Strings inside a
 // container are JSON-quoted; top-level strings stay unquoted to
 // match the existing io.println contract. Dict entries appear in
+// TestParitySearch pins search/searchPattern across list/dict/string and value/predicate/regex on both backends.
+func TestParitySearch(t *testing.T) {
+	runParity(t, `import io;
+let xs = ["a", "b", "a", "c"];
+io.println("${xs.search("a")}");
+let pr = xs.search(func(string s): bool { return s == "c"; });
+io.println("${pr}");
+io.println("${["foo", "bar", "baz"].searchPattern("^ba")}");
+let d = {"x": 1, "y": 2, "z": 1};
+io.println("${d.search(1)}");
+let words = {"a": "cat", "b": "dog", "c": "cow"};
+io.println("${words.searchPattern("^c")}");
+io.println("${"hello".search("l")}");
+io.println("${"a1b2c3".searchPattern("[0-9]")}");
+`, `[0, 2]
+[3]
+[1, 2]
+["x", "z"]
+["a", "c"]
+[2, 3]
+[1, 3, 5]
+`)
+}
+
 // TestParityListFill pins list.fill (append count copies, return receiver) on both backends.
 func TestParityListFill(t *testing.T) {
 	runParity(t, `import io;

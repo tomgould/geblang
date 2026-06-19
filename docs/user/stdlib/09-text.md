@@ -64,6 +64,8 @@ io.println("geblang".graphemes().reverse().join("")); # reverse by grapheme
 | `endsWith(suffix)` | `bool` | `true` when the string ends with `suffix` |
 | `indexOf(needle)` | `int` | First index of `needle`, or `-1` if not found |
 | `lastIndexOf(needle)` | `int` | Last index of `needle`, or `-1` if not found |
+| `search(needle)` | `list<int>` | Every (rune) start position of `needle`, or every character index where the callable `needle` returns true |
+| `searchPattern(regex)` | `list<int>` | Every match start position (rune index) for `regex` |
 | `count(needle)` | `int` | Number of non-overlapping occurrences of `needle` |
 | `equalsIgnoreCase(other)` | `bool` | Case-insensitive equality |
 | `containsIgnoreCase(needle)` | `bool` | Case-insensitive substring test |

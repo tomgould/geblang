@@ -1,5 +1,15 @@
 # Release Notes
 
+## 1.23.3
+
+### Standard library
+
+- New `search` / `searchPattern` methods on lists, dicts, and strings return
+  every matching locator (not just the first): list indices, dict keys (matched
+  on their values), or string positions. `search(value)` matches by equality,
+  `search(callable)` by a predicate, and `searchPattern(regex)` by regular
+  expression. Each returns an empty list when nothing matches.
+
 ## 1.23.2
 
 ### Standard library
