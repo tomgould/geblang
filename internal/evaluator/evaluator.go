@@ -2300,6 +2300,8 @@ func errorTypeMatches(class string, target string) bool {
 
 func errorParent(class string) string {
 	switch class {
+	case "TimeoutError", "TlsError":
+		return "IOError"
 	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError":
 		return "Error"
 	default:
@@ -2312,6 +2314,8 @@ func (e *Evaluator) errorParent(class string) string {
 		return parent
 	}
 	switch class {
+	case "TimeoutError", "TlsError":
+		return "IOError"
 	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError":
 		return "Error"
 	default:
@@ -3849,7 +3853,7 @@ func valueToTOML(value runtime.Value) (any, error) {
 
 func isBuiltinErrorClass(name string) bool {
 	switch name {
-	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError", "FatalError":
+	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError", "FatalError", "TimeoutError", "TlsError":
 		return true
 	default:
 		return false

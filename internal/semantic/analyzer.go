@@ -988,6 +988,7 @@ var ambientErrorClasses = map[string]struct{}{
 	"Error": {}, "RuntimeError": {}, "TypeError": {}, "ValueError": {},
 	"IOError": {}, "ParseError": {}, "MatchError": {}, "ImmutableError": {},
 	"PermissionError": {}, "AssertionError": {}, "FatalError": {},
+	"TimeoutError": {}, "TlsError": {},
 }
 
 // IsAmbientTypeName reports whether name is a primitive, pseudo-type,

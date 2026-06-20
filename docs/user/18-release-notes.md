@@ -37,6 +37,13 @@
   embeddings that feed straight into `vecmath` / `vectorstore` / `rag`.
   `rag.LocalEmbedder(modelDir)` wraps that pipeline as a drop-in `Embedder`, for
   a fully on-device index/retrieve loop with no API calls.
+- HTTP client failures now carry a precise, catchable class: a timeout raises
+  `TimeoutError` and a TLS/certificate failure raises `TlsError`, both new
+  `IOError` subclasses (so `catch (IOError e)` still catches them) - so callers
+  can retry on a timeout but fail fast on a bad certificate. The same
+  classification applies engine-wide to any timeout/TLS failure. A mid-stream
+  read failure on `http.requestStream` now surfaces as a catchable error rather
+  than looking like a clean end of stream.
 
 ## 1.23.3
 

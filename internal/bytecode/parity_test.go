@@ -55,6 +55,27 @@ io.println("${(r["input_ids"] as list<any>)[1]}");
 `)
 }
 
+// TestParityNetworkErrorClasses pins TimeoutError/TlsError catching + the IOError subclass hierarchy on both backends.
+func TestParityNetworkErrorClasses(t *testing.T) {
+	runParity(t, `import errors;
+import io;
+func exact(string cls): string {
+    try { throw errors.new(cls, "x"); }
+    catch (TimeoutError e) { return "Timeout"; }
+    catch (TlsError e) { return "Tls"; }
+    catch (IOError e) { return "IO"; }
+    catch (Error e) { return "Error"; }
+}
+func asIO(string cls): string {
+    try { throw errors.new(cls, "x"); }
+    catch (IOError e) { return "IO"; }
+    catch (Error e) { return "Error"; }
+}
+io.println(exact("TimeoutError") + " " + exact("TlsError") + " " + exact("IOError"));
+io.println(asIO("TimeoutError") + " " + asIO("TlsError"));
+`, "Timeout Tls IO\nIO IO\n")
+}
+
 // TestParityTransformersPool pins transformers.pool mask-weighted mean pooling on both backends.
 func TestParityTransformersPool(t *testing.T) {
 	runParity(t, `import transformers;

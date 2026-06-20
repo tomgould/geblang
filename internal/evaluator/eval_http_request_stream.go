@@ -2,6 +2,7 @@ package evaluator
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -115,9 +116,13 @@ func (e *Evaluator) responseStreamClass() *runtime.Class {
 			return runtime.Null{}, nil
 		}
 		line, rerr := h.reader.ReadString('\n')
-		if len(line) == 0 && rerr != nil {
+		if len(line) == 0 {
 			h.closeBody()
-			return runtime.Null{}, nil
+			if rerr == nil || errors.Is(rerr, io.EOF) {
+				return runtime.Null{}, nil
+			}
+			// A non-EOF read error (connection drop mid-stream) must surface, not look like a clean end.
+			return nil, fmt.Errorf("http stream read: %w", rerr)
 		}
 		return runtime.String{Value: strings.TrimRight(line, "\r\n")}, nil
 	}}}

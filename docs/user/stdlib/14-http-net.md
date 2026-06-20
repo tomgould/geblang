@@ -43,10 +43,12 @@ r.isNotFound();     # 404
 ```
 
 For a single call like `http.get`, a request that never reaches the server
-(DNS failure, connection refused, timeout) is raised as an `IOError` (catch
-it with `try { ... } catch (IOError e) { ... }`). In a parallel batch
-(`getAll` / `fetchAll`) the same failure is reported on the Response instead,
-so one bad request does not abort the batch:
+(DNS failure, connection refused, reset) is raised as an `IOError` (catch it
+with `try { ... } catch (IOError e) { ... }`). A timeout is the `IOError`
+subclass `TimeoutError`, and a TLS/certificate failure is `TlsError`, so you can
+retry on a timeout but fail fast on a bad cert; `catch (IOError e)` still catches
+all three. In a parallel batch (`getAll` / `fetchAll`) the same failure is
+reported on the Response instead, so one bad request does not abort the batch:
 
 ```gb
 r.isError();   # true only for a transport-level failure

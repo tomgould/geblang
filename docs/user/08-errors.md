@@ -40,6 +40,24 @@ as `IOError` and can be caught. Unrecoverable interpreter and bytecode integrity
 failures still abort execution because they indicate an implementation or
 corrupt-program problem rather than an application error.
 
+Two `IOError` subclasses let you branch on the kind of network failure:
+`TimeoutError` (a request or dial deadline was exceeded) and `TlsError` (TLS
+handshake or certificate verification failed). Because they extend `IOError`,
+`catch (IOError e)` still catches both; catch them specifically to, for example,
+retry on a timeout but fail fast on a bad certificate:
+
+```gb
+try {
+    let r = http.get(url);
+} catch (TimeoutError e) {
+    /* the request timed out - retry */
+} catch (TlsError e) {
+    /* untrusted endpoint - do not retry */
+} catch (IOError e) {
+    /* other connection failure (refused, DNS, reset) */
+}
+```
+
 ```gb
 import io;
 import net;

@@ -987,7 +987,7 @@ func isEvaluatorOnlyBuiltinModule(name string) bool {
 
 func isBuiltinErrorClass(name string) bool {
 	switch name {
-	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError", "FatalError":
+	case "Error", "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError", "PermissionError", "AssertionError", "FatalError", "TimeoutError", "TlsError":
 		return true
 	default:
 		return false

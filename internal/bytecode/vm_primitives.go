@@ -2071,6 +2071,8 @@ func (vm *VM) errorParent(class string) string {
 		return info.ParentName
 	}
 	switch class {
+	case "TimeoutError", "TlsError":
+		return "IOError"
 	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError":
 		return "Error"
 	default:

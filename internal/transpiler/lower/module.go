@@ -114,11 +114,18 @@ func (m *Module) InClassHierarchy(name string) bool {
 	return hasParent
 }
 
-// builtinErrorClasses are the engine's error hierarchy; each parents to Error.
+// builtinErrorClasses are the engine's error hierarchy; each parents to Error unless listed in builtinErrorParents.
 var builtinErrorClasses = map[string]struct{}{
 	"RuntimeError": {}, "TypeError": {}, "ValueError": {}, "IOError": {},
 	"ParseError": {}, "MatchError": {}, "ImmutableError": {},
 	"PermissionError": {}, "AssertionError": {},
+	"TimeoutError": {}, "TlsError": {},
+}
+
+// builtinErrorParents records builtin error classes that parent to another builtin (not Error directly).
+var builtinErrorParents = map[string]string{
+	"TimeoutError": "IOError",
+	"TlsError":     "IOError",
 }
 
 func (m *Module) RegisterClassParent(name, parent string) {
@@ -217,6 +224,10 @@ func (m *Module) ErrorParentChain(name string) []string {
 		if cur == m.classParents[cur] {
 			break
 		}
+	}
+	if parent, ok := builtinErrorParents[name]; ok {
+		chain = append(chain, parent, "Error")
+		return chain
 	}
 	if _, ok := builtinErrorClasses[name]; ok {
 		chain = append(chain, "Error")

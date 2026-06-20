@@ -5232,6 +5232,8 @@ func (vm *VM) errorParentChain(classInfo ClassInfo) []string {
 // has no static parent.
 func isBuiltinErrorChainParent(class string) string {
 	switch class {
+	case "TimeoutError", "TlsError":
+		return "IOError"
 	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError":
 		return "Error"
 	}

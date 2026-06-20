@@ -318,6 +318,8 @@ func errorStackFrameDict(frame runtime.ErrorStackFrame) runtime.Dict {
 
 func builtinErrorParent(class string) string {
 	switch class {
+	case "TimeoutError", "TlsError":
+		return "IOError"
 	case "RuntimeError", "TypeError", "ValueError", "IOError", "ParseError", "MatchError", "ImmutableError":
 		return "Error"
 	default:
