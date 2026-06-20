@@ -161,6 +161,9 @@ geblang build --entry <module.name> --out <output-path> [<package-dir>]
 | `--entry` | yes | Canonical name of the entry module (must export `main`) |
 | `--out` | yes | Path for the output binary |
 | `--resource` | no | Extra resource to embed, in addition to the manifest `resources:`. Repeatable. `--resource <path>` keeps the project-relative path; `--resource <path>=<bundlePath>` remaps it (a directory's contents mirror under `<bundlePath>`), so a build step can embed processed copies without altering the source tree |
+| `--allow-ffi` | no | Bake an FFI allow-list entry (path or glob) into the binary. Repeatable. Adds to the manifest `permissions.ffi`. See Capabilities below |
+| `--allow-onnx` | no | Bake the local ONNX inference capability into the binary |
+| `--allow-process-control` | no | Bake the privileged process-control capability into the binary |
 | `--docker` | no | Also write a `Dockerfile` next to the binary (see below) |
 | `--docker-port` | no | Add `EXPOSE <port>` to the generated Dockerfile |
 | `--force` | no | Overwrite an existing generated Dockerfile |
@@ -185,6 +188,40 @@ directly:
 ```sh
 ./dist/myapp
 ```
+
+### Capabilities in built binaries
+
+Privileged capabilities - FFI, local ONNX inference, and process control - are
+off by default and are normally turned on with a launch flag (`--allow-ffi`,
+`--allow-onnx`, `--allow-process-control`). A built binary has no launch-flag
+step, so it carries its capabilities baked in at build time and just runs.
+
+Declare them in `geblang.yaml`, the reproducible source of truth:
+
+```yaml
+permissions:
+  ffi:
+    enabled: true
+    libraries:
+      - glob: /opt/torch/lib/*.so
+  onnx: true
+  processControl: true
+```
+
+This same block also enables those capabilities for `geblang run` / `geblang
+test` in the project, so dev and the built binary behave identically.
+
+Alternatively, pass them to `geblang build` for an ad-hoc build; the flags add to
+whatever the manifest already declares:
+
+```sh
+geblang build --entry app.main --out ./dist/app \
+  --allow-ffi '/opt/torch/lib/*.so' --allow-onnx --allow-process-control
+```
+
+The resolved capability set is recorded in the bundle, so the end user runs the
+binary with no flags. A binary built without any of these stays locked down: a
+gated call throws `PermissionError`, exactly as an unflagged `geblang run` would.
 
 ### Third-party notices
 

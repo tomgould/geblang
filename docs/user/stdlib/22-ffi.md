@@ -42,6 +42,11 @@ paths are exact-match. Either form works in the manifest or on
 the CLI; the CLI overlay additively extends what the manifest
 declared.
 
+When you `geblang build` a project, the resolved FFI policy is
+baked into the binary (along with `--allow-ffi` build flags), so
+the binary runs without re-declaring the allow-list. See
+[Bundling](13-bundling.html).
+
 `geblang doctor` surfaces the active policy:
 
 ```text

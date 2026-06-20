@@ -1170,9 +1170,23 @@ func discoverGeblangFiles(path string) ([]string, error) {
 	return files, err
 }
 
+// applyManifestCapabilities enables onnx / process-control when the project's geblang.yaml permissions block grants them (dev-time parity with the FFI policy).
+func applyManifestCapabilities(dir string) {
+	m, err := modules.NewResolver([]string{dir}).FindManifest(dir)
+	if err != nil || m == nil {
+		return
+	}
+	if m.Permissions.Onnx {
+		native.SetOnnxEnabled(true)
+	}
+	if m.Permissions.ProcessControl {
+		native.SetProcessControlEnabled(true)
+	}
+}
+
 func runScript(sourcePath string, scriptArgs []string, source []byte, program *ast.Program, mode executionMode, allowFFI []string, stdout io.Writer, trace io.Writer) (int, error) {
-	// Analysis warnings are advisory diagnostics; keep them off the program's
-	// stdout (the entry path historically wrote them to stderr).
+	applyManifestCapabilities(filepath.Dir(sourcePath))
+	// Keep advisory analysis warnings off the program's stdout (stderr instead).
 	analyze := crossModuleAnalyzer(sourcePath, program, modules.NewResolver([]string{filepath.Dir(sourcePath)}), os.Stderr, "warning: ")
 	// On the VM path the cross-module analysis runs inside the compile
 	// (cache-miss) step; track whether it ran so the eval fallback does
@@ -1578,6 +1592,7 @@ func runTestFile(path string, tags []string, classFilter string, methodFilters [
 	// can walk up to find a project's geblang.yaml when the test
 	// lives inside a non-stdlib package (e.g. gebweb/tests/).
 	ev := evaluator.NewWithArgsAndModulePaths(&out, nil, []string{filepath.Dir(path)})
+	applyManifestCapabilities(filepath.Dir(path))
 	if policy, perr := ev.BuildFFIPolicy(filepath.Dir(path), allowFFI); perr == nil {
 		ev.SetFFIPolicy(policy)
 	} else {

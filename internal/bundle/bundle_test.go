@@ -5,14 +5,20 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 func bundleFrom(t *testing.T, files map[string][]byte) *Bundle {
 	t.Helper()
+	return bundleFromManifest(t, Manifest{Version: "test", Entry: "main"}, files)
+}
+
+func bundleFromManifest(t *testing.T, manifest Manifest, files map[string][]byte) *Bundle {
+	t.Helper()
 	var buf bytes.Buffer
-	if err := Write(&buf, Manifest{Version: "test", Entry: "main"}, files); err != nil {
+	if err := Write(&buf, manifest, files); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	raw := buf.Bytes()
@@ -23,6 +29,21 @@ func bundleFrom(t *testing.T, files map[string][]byte) *Bundle {
 		t.Fatalf("parseZip: %v", err)
 	}
 	return b
+}
+
+func TestPermissionsRoundTrip(t *testing.T) {
+	files := map[string][]byte{"src/main.gb": []byte("func main() {}")}
+	want := &Permissions{FFI: []string{"/usr/lib/a.so", "/opt/*.so"}, Onnx: true, ProcessControl: true}
+
+	b := bundleFromManifest(t, Manifest{Version: "test", Entry: "main", Permissions: want}, files)
+	if !reflect.DeepEqual(b.Manifest.Permissions, want) {
+		t.Fatalf("round-trip: got %+v, want %+v", b.Manifest.Permissions, want)
+	}
+
+	plain := bundleFromManifest(t, Manifest{Version: "test", Entry: "main"}, files)
+	if plain.Manifest.Permissions != nil {
+		t.Fatalf("a manifest with no permissions must decode as nil, got %+v", plain.Manifest.Permissions)
+	}
 }
 
 // TestExtractAtomicPublish: ExtractTo publishes a complete dir, leaves no temp dirs, and skips on a second call.

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"geblang/internal/ast"
+	"geblang/internal/ffi"
 	"geblang/internal/native"
 
 	yamllib "gopkg.in/yaml.v3"
@@ -34,6 +35,14 @@ type Manifest struct {
 	Paths        []string
 	Resources    []string
 	Dependencies map[string]Dependency
+	Permissions  ManifestPermissions
+}
+
+// ManifestPermissions is the geblang.yaml permissions block.
+type ManifestPermissions struct {
+	FFI            *ffi.PolicyConfig
+	Onnx           bool
+	ProcessControl bool
 }
 
 type Dependency struct {
@@ -72,6 +81,11 @@ type manifestFile struct {
 		Name    string `yaml:"name"`
 		Version string `yaml:"version"`
 	} `yaml:"package"`
+	Permissions struct {
+		FFI            *ffi.PolicyConfig `yaml:"ffi"`
+		Onnx           bool              `yaml:"onnx"`
+		ProcessControl bool              `yaml:"processControl"`
+	} `yaml:"permissions"`
 }
 
 type moduleRoot struct {
@@ -419,6 +433,11 @@ func (r *Resolver) LoadManifest(path string) (*Manifest, error) {
 		Paths:        paths,
 		Resources:    append([]string(nil), parsed.Resources...),
 		Dependencies: parsed.Dependencies,
+		Permissions: ManifestPermissions{
+			FFI:            parsed.Permissions.FFI,
+			Onnx:           parsed.Permissions.Onnx,
+			ProcessControl: parsed.Permissions.ProcessControl,
+		},
 	}
 	if manifest.Dependencies == nil {
 		manifest.Dependencies = map[string]Dependency{}

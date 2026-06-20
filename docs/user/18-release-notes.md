@@ -1,5 +1,19 @@
 # Release Notes
 
+## 1.24.1
+
+### Bundling
+
+- Built binaries (`geblang build`) can now carry privileged capabilities baked in
+  at build time, so they run with no launch flags. Declare them in `geblang.yaml`
+  under `permissions:` - `ffi` (existing), `onnx: true`, `processControl: true` -
+  and/or pass `geblang build --allow-ffi <path-or-glob>` / `--allow-onnx` /
+  `--allow-process-control`; build flags add to what the manifest declares.
+- The `onnx` and `processControl` permissions also enable those capabilities for
+  `geblang run` / `geblang test` in the project, matching how `permissions.ffi`
+  already behaved. A binary (or run) without them stays locked down: a gated call
+  throws `PermissionError`.
+
 ## 1.24.0
 
 ### Standard library

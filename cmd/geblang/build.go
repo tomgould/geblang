@@ -14,6 +14,7 @@ import (
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
 	"geblang/internal/modules"
+	"geblang/internal/native"
 	"geblang/internal/notices"
 	"geblang/internal/parser"
 )
@@ -25,12 +26,26 @@ func runBuild(args []string) {
 	withDocker := false
 	dockerForce := false
 	dockerPort := 0
-	native := false
+	emitNative := false
+	var cliAllowFFI []string
+	cliAllowOnnx := false
+	cliAllowProcessControl := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--native":
-			native = true
+			emitNative = true
+		case "--allow-ffi":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "geblang build: --allow-ffi requires a path or glob")
+				os.Exit(2)
+			}
+			i++
+			cliAllowFFI = append(cliAllowFFI, args[i])
+		case "--allow-onnx":
+			cliAllowOnnx = true
+		case "--allow-process-control":
+			cliAllowProcessControl = true
 		case "--entry":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "geblang build: --entry requires a value")
@@ -81,12 +96,12 @@ func runBuild(args []string) {
 
 	if entry == "" {
 		fmt.Fprintln(os.Stderr, "geblang build: --entry is required")
-		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--docker [--docker-port N] [--force]] [<package-dir>]")
+		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--allow-ffi <path-or-glob>] [--allow-onnx] [--allow-process-control] [--docker [--docker-port N] [--force]] [<package-dir>]")
 		os.Exit(2)
 	}
 	if outPath == "" {
 		fmt.Fprintln(os.Stderr, "geblang build: --out is required")
-		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--docker [--docker-port N] [--force]] [<package-dir>]")
+		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--allow-ffi <path-or-glob>] [--allow-onnx] [--allow-process-control] [--docker [--docker-port N] [--force]] [<package-dir>]")
 		os.Exit(2)
 	}
 
@@ -121,7 +136,7 @@ func runBuild(args []string) {
 		os.Exit(1)
 	}
 
-	if native {
+	if emitNative {
 		runBuildNative(entry, outPath, absPkgDir, entrySig)
 		return
 	}
@@ -196,6 +211,7 @@ func runBuild(args []string) {
 	resourceRoot := absPkgDir
 	appName := entry
 	appVersion := ""
+	var manifestPerm modules.ManifestPermissions
 	if pkgManifest, err := resolver.FindManifest(absPkgDir); err == nil && pkgManifest != nil {
 		resourceRoot = pkgManifest.Root
 		for _, pattern := range pkgManifest.Resources {
@@ -205,6 +221,7 @@ func runBuild(args []string) {
 			appName = pkgManifest.Name
 		}
 		appVersion = pkgManifest.Version
+		manifestPerm = pkgManifest.Permissions
 	}
 	if len(specs) > 0 {
 		resources, err := collectResources(resourceRoot, specs)
@@ -224,6 +241,7 @@ func runBuild(args []string) {
 		AppVersion:    appVersion,
 		EntryMainArgs: entrySig.WantsArgs,
 		Modules:       records,
+		Permissions:   resolveBundlePermissions(manifestPerm, cliAllowFFI, cliAllowOnnx, cliAllowProcessControl),
 	}
 
 	exe, err := os.Executable()
@@ -389,6 +407,14 @@ func writeBuildDockerfile(absOut string, port int, force bool) error {
 }
 
 func runBundled(b *bundle.Bundle) int {
+	if p := b.Manifest.Permissions; p != nil {
+		if p.Onnx {
+			native.SetOnnxEnabled(true)
+		}
+		if p.ProcessControl {
+			native.SetProcessControlEnabled(true)
+		}
+	}
 	args := os.Args[1:]
 	if len(args) > 0 {
 		switch args[0] {
@@ -462,10 +488,14 @@ func runBundledWithArgs(b *bundle.Bundle, args []string) int {
 		return 1
 	}
 
-	return runBundledEntry(b.Manifest.Entry, b.Manifest.EntryMainArgs, args, filepath.Join(tempDir, "src"))
+	var allowFFI []string
+	if p := b.Manifest.Permissions; p != nil {
+		allowFFI = p.FFI
+	}
+	return runBundledEntry(b.Manifest.Entry, b.Manifest.EntryMainArgs, args, filepath.Join(tempDir, "src"), allowFFI)
 }
 
-func runBundledEntry(entry string, wantsArgs bool, args []string, srcDir string) int {
+func runBundledEntry(entry string, wantsArgs bool, args []string, srcDir string, allowFFI []string) int {
 	mainCall := "__geb_module.main()"
 	if wantsArgs {
 		mainCall = "__geb_module.main(sys.args())"
@@ -486,7 +516,7 @@ if (__geb_result != null) {
 		return 1
 	}
 
-	exitCode, err := runScript(sourcePath, args, source, program, executionAuto, nil, os.Stdout, nil)
+	exitCode, err := runScript(sourcePath, args, source, program, executionAuto, allowFFI, os.Stdout, nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -511,6 +541,27 @@ func parseResourceSpec(arg string) resourceSpec {
 		return resourceSpec{src: arg[:i], dest: filepath.ToSlash(arg[i+1:])}
 	}
 	return resourceSpec{src: arg}
+}
+
+// resolveBundlePermissions folds the manifest permissions block and --allow-* flags into the baked capability set (nil when empty).
+func resolveBundlePermissions(m modules.ManifestPermissions, cliFFI []string, cliOnnx, cliProcessControl bool) *bundle.Permissions {
+	var ffiPatterns []string
+	if m.FFI != nil && m.FFI.Enabled {
+		for _, lib := range m.FFI.Libraries {
+			if lib.Path != "" {
+				ffiPatterns = append(ffiPatterns, lib.Path)
+			} else if lib.Glob != "" {
+				ffiPatterns = append(ffiPatterns, lib.Glob)
+			}
+		}
+	}
+	ffiPatterns = append(ffiPatterns, cliFFI...)
+	onnx := m.Onnx || cliOnnx
+	proc := m.ProcessControl || cliProcessControl
+	if len(ffiPatterns) == 0 && !onnx && !proc {
+		return nil
+	}
+	return &bundle.Permissions{FFI: ffiPatterns, Onnx: onnx, ProcessControl: proc}
 }
 
 // collectResources resolves resource specs into bundle ZIP entries keyed by

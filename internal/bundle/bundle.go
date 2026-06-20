@@ -36,10 +36,17 @@ type Manifest struct {
 	Entry      string `json:"entry"`
 	Name       string `json:"name,omitempty"`
 	AppVersion string `json:"appVersion,omitempty"`
-	// EntryMainArgs records that the entry's main takes the list<string> args,
-	// so the launcher calls main(sys.args()) rather than main().
+	// EntryMainArgs: entry main takes args, so the launcher calls main(sys.args()).
 	EntryMainArgs bool           `json:"entryMainArgs,omitempty"`
 	Modules       []ModuleRecord `json:"modules"`
+	Permissions   *Permissions   `json:"permissions,omitempty"`
+}
+
+// Capabilities baked into a built binary so it runs without launch flags; nil = default-deny.
+type Permissions struct {
+	FFI            []string `json:"ffi,omitempty"`
+	Onnx           bool     `json:"onnx,omitempty"`
+	ProcessControl bool     `json:"processControl,omitempty"`
 }
 
 // Bundle holds the decoded bundle data and its raw zip bytes.
