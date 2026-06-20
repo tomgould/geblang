@@ -116,6 +116,9 @@ Operations, introspection, and extension:
 - [Vector Search and RAG](vectorstore-rag.html): in-memory and SQLite-backed
   vector stores with similarity search, plus retrieval-augmented-generation
   helpers (chunking, indexing, retrieval, prompt-context assembly).
+- [Local Models](onnx-transformers.html): offline WordPiece tokenization, ONNX
+  model inference, and on-device sentence-transformer embeddings (experimental;
+  needs ONNX Runtime and the `--allow-onnx` flag).
 - [Zstd Compression](clib-zstd.html): fast Zstandard compression and
   decompression via libzstd, with FFI capability gating.
 - [systemd Integration](clib-systemd.html): sd_notify readiness protocol

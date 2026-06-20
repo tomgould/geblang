@@ -1,13 +1,89 @@
 # Local Models (`transformers`, `onnx`)
 
-> Experimental (1.24.0). Local, offline AI/ML: tokenization today; ONNX model
-> inference and sentence-transformer embedding are landing in this chapter as
-> they ship. The surface may change.
+> Experimental (1.24.0). Local, offline AI/ML: WordPiece tokenization, ONNX model
+> inference, and sentence-transformer embedding. The surface may change.
 
 These modules run models on the local machine with no network call, complementing
-the API-backed [`llm`](23-llm.md) module. Tokenization is pure Geblang-native and
-needs nothing external; model inference (coming) loads the ONNX Runtime shared
-library and is gated behind the `--allow-onnx` launch flag.
+the API-backed [`llm`](23-llm.md) module. Tokenization (`transformers.tokenize`)
+is pure Geblang-native and needs nothing external. Model inference
+(`onnx.session`, `transformers.pool`, `rag.LocalEmbedder`) loads the ONNX Runtime
+shared library, is gated behind the `--allow-onnx` launch flag, and needs the
+one-time **[Setup](#setup)** below.
+
+## Setup
+
+Model inference needs two things that are not bundled: the ONNX Runtime shared
+library, and an ONNX model with its tokenizer. (Tokenization alone needs neither.)
+
+### 1. Install ONNX Runtime
+
+Download a prebuilt ONNX Runtime for your platform from the official releases
+(<https://github.com/microsoft/onnxruntime/releases>) and extract it. Geblang
+pins the ONNX Runtime C API to version 27, so use **ONNX Runtime 1.27.0 or
+newer**; an older runtime fails at load with a clear "does not support ORT API
+version 27" message.
+
+```sh
+# Linux x64 (pick the matching asset for macOS / Windows / arm64)
+curl -LO https://github.com/microsoft/onnxruntime/releases/download/v1.27.0/onnxruntime-linux-x64-1.27.0.tgz
+tar xzf onnxruntime-linux-x64-1.27.0.tgz
+```
+
+The library is `lib/libonnxruntime.so` (`.dylib` on macOS, `onnxruntime.dll` on
+Windows). Geblang locates it, in order of precedence:
+
+1. `opts.libPath` passed to `onnx.session(modelPath, {"libPath": "..."})`,
+2. the `GEBLANG_ONNXRUNTIME` environment variable,
+3. the system loader path (e.g. after copying the library into `/usr/local/lib`
+   and running `ldconfig`).
+
+```sh
+export GEBLANG_ONNXRUNTIME="$PWD/onnxruntime-linux-x64-1.27.0/lib/libonnxruntime.so"
+```
+
+### 2. Get a model
+
+You need an ONNX model file plus its `tokenizer.json`. Any BERT-family WordPiece
+sentence encoder works (`all-MiniLM-L6-v2`, `bge-small-en`, `e5-small`);
+HuggingFace publishes ONNX exports under each model's `onnx/` folder.
+
+```sh
+mkdir -p models/all-MiniLM-L6-v2 && cd models/all-MiniLM-L6-v2
+BASE=https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main
+curl -L -o model.onnx     "$BASE/onnx/model.onnx"
+curl -L -o tokenizer.json "$BASE/tokenizer.json"
+```
+
+`onnx.session` and `rag.LocalEmbedder` expect `model.onnx` and `tokenizer.json`
+side by side in the model directory:
+
+```
+models/all-MiniLM-L6-v2/
+  model.onnx
+  tokenizer.json
+```
+
+### 3. Run
+
+Pass `--allow-onnx` (model inference loads a native shared library). A minimal
+first run:
+
+```gb
+/* embed.gb */
+import rag;
+import io;
+
+let embedder = rag.LocalEmbedder("./models/all-MiniLM-L6-v2");
+io.println(embedder.embed("hello world").length());   # 384 for all-MiniLM
+embedder.close();
+```
+
+```sh
+geblang --allow-onnx embed.gb
+```
+
+Without `--allow-onnx` the call raises a `PermissionError`; a missing library or
+an incompatible ONNX Runtime version raises a clear load error.
 
 ## `transformers.tokenize`
 
