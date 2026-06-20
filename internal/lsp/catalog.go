@@ -1478,6 +1478,22 @@ var stdlibCatalog = map[string]moduleDoc{
 		"normalize":      fn([]string{"list<any> vector"}, "list<float>", "L2-normalized copy of a vector, or of each vector when given a list of vectors (1.24.0)."),
 		"semanticSearch": fn([]string{"list<any> queries", "list<any> corpus", "int k", "string metric = \"cosine\""}, "list<list<dict<string, any>>>", "For each query vector, the top-k corpus matches as {index, score} (1.24.0)."),
 	}},
+	"transformers": {functions: map[string]functionDoc{
+		"tokenize": fn([]string{"string tokenizerJson", "list<string> texts", "dict<string, any> opts = {}"}, "dict<string, any>", "WordPiece-tokenizes texts with a HuggingFace tokenizer.json; returns {input_ids, attention_mask, token_type_ids} as padded int lists. opts: maxLength, addSpecialTokens, padding (1.24.0)."),
+		"pool":     fn([]string{"ndarray hidden", "ndarray attentionMask", "dict<string, any> opts = {}"}, "ndarray", "Pools a [batch, seq, dim] hidden state + [batch, seq] mask into [batch, dim] sentence embeddings. opts: pooling (mean/cls/max), normalize (default true) (1.24.0)."),
+	}},
+	"onnx": {functions: map[string]functionDoc{
+		"session": fn([]string{"string modelPath", "dict<string, any> opts = {}"}, "Session", "Loads an ONNX model for local inference (experimental; requires --allow-onnx). opts: libPath, intraOpThreads (1.24.0)."),
+	}, classes: map[string]string{
+		"Session": "A loaded ONNX model for local inference (1.24.0).",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Session": {
+			"run":         fn([]string{"dict<string, any> inputs"}, "dict<string, any>", "Runs the model; inputs maps tensor name to an int64 ndarray, returns name to a float64 ndarray."),
+			"inputNames":  fn([]string{}, "list<string>", "The model's input tensor names."),
+			"outputNames": fn([]string{}, "list<string>", "The model's output tensor names."),
+			"close":       fn([]string{}, "void", "Releases the session and ONNX Runtime resources."),
+		},
+	}},
 	"vectorstore": {functions: map[string]functionDoc{
 		"score": fn([]string{"string metric", "list<any> a", "list<any> b"}, "float", "Similarity score (higher = closer) for metric cosine/dot/euclidean (1.9.0)."),
 	}, classes: map[string]string{
@@ -1540,11 +1556,16 @@ var stdlibCatalog = map[string]moduleDoc{
 		"retrieve": fn([]string{"VectorStore store", "Embedder embedder", "string query", "int k"}, "list<SearchHit>", "Embeds the query and returns the k most similar chunks (1.9.0)."),
 		"context":  fn([]string{"list<SearchHit> hits", "dict<string, any> opts"}, "string", "Assembles hits into a prompt block. opts: withSources, separator (1.9.0)."),
 	}, classes: map[string]string{
-		"Embedder":    "Interface turning text into an embedding vector (1.9.0).",
-		"LlmEmbedder": "Embedder backed by an llm client; opts carries the embedding model (1.9.0).",
+		"Embedder":      "Interface turning text into an embedding vector (1.9.0).",
+		"LlmEmbedder":   "Embedder backed by an llm client; opts carries the embedding model (1.9.0).",
+		"LocalEmbedder": "Embedder backed by a local ONNX sentence-transformer model directory; offline, requires --allow-onnx (1.24.0).",
 	}, classMethods: map[string]map[string]functionDoc{
 		"LlmEmbedder": {
 			"embed": fn([]string{"string text"}, "list<any>", "Returns the embedding vector for text via the wrapped llm client."),
+		},
+		"LocalEmbedder": {
+			"embed": fn([]string{"string text"}, "list<any>", "Returns the embedding vector for text from the local ONNX model."),
+			"close": fn([]string{}, "void", "Releases the underlying ONNX session."),
 		},
 	}},
 	"async.sync": {functions: map[string]functionDoc{

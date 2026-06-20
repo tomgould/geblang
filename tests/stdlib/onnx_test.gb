@@ -1,0 +1,18 @@
+/**
+ * @title onnx (1.24.0)
+ * @summary Local ONNX model inference is gated behind the --allow-onnx launch
+ * flag. Running a model end-to-end needs ONNX Runtime + a model, so the suite
+ * (which runs without the flag) only pins the capability gate here.
+ */
+import test;
+import onnx;
+
+class OnnxTest extends test.Test {
+
+    @test
+    func sessionGatedWithoutAllowOnnx(): void {
+        this.assertThrows(func(): void {
+            onnx.session("/no/such/model.onnx");
+        });
+    }
+}

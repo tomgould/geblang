@@ -947,6 +947,13 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"normalize":      e.registryBuiltin("vecmath", "normalize"),
 			"semanticSearch": e.registryBuiltin("vecmath", "semanticSearch"),
 		},
+		"transformers": {
+			"tokenize": e.registryBuiltin("transformers", "tokenize"),
+			"pool":     e.registryBuiltin("transformers", "pool"),
+		},
+		"onnx": {
+			"session": e.onnxSession,
+		},
 		"hnsw": {
 			"new":    e.registryBuiltin("hnsw", "new"),
 			"add":    e.registryBuiltin("hnsw", "add"),

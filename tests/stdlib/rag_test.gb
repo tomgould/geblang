@@ -93,4 +93,12 @@ class RagTest extends test.Test {
         this.assertEquals("[1] (d1): the cat sat", rag.context(hits, {}));
         this.assertEquals("the cat sat", rag.context(hits, {"withSources": false}));
     }
+
+    @test
+    func localEmbedderNeedsAModel(): void {
+        /* No model dir + the suite runs without --allow-onnx, so construction fails. */
+        this.assertThrows(func(): void {
+            rag.LocalEmbedder("/no/such/model/dir");
+        });
+    }
 }

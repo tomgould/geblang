@@ -24,6 +24,19 @@
   that invokes `callback` with each content delta and returns the assembled
   result. Supported for OpenAI and Anthropic (server-sent events); Bedrock uses a
   binary event-stream protocol and throws there.
+- New experimental local-model modules. `transformers.tokenize` runs WordPiece
+  tokenization from a HuggingFace `tokenizer.json` (BERT-family encoders),
+  returning padded `input_ids` / `attention_mask` / `token_type_ids`.
+  `onnx.session(modelPath)` loads an ONNX model for cgo-free local inference via
+  ONNX Runtime; `Session.run` maps int64 input ndarrays to float64 output
+  ndarrays. Both are gated behind the new `--allow-onnx` launch flag, and ONNX
+  Runtime is located via `opts.libPath` / `$GEBLANG_ONNXRUNTIME`.
+  `transformers.pool` reduces a `[batch, seq, dim]` hidden state + mask to
+  `[batch, dim]` sentence embeddings (mean / cls / max, L2-normalized), so
+  tokenize -> `onnx.session` -> pool gives fully local, offline sentence
+  embeddings that feed straight into `vecmath` / `vectorstore` / `rag`.
+  `rag.LocalEmbedder(modelDir)` wraps that pipeline as a drop-in `Embedder`, for
+  a fully on-device index/retrieve loop with no API calls.
 
 ## 1.23.3
 

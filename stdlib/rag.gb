@@ -2,6 +2,10 @@ module rag;
 
 import vectorstore as vs;
 import re;
+import onnx;
+import transformers;
+import ndarray;
+import io;
 
 /**
  * Retrieval-augmented generation helpers built on the `vectorstore` module and
@@ -38,6 +42,43 @@ export class LlmEmbedder implements Embedder {
 
     func embed(string text): list<any> {
         return this._client.embed(text, this._opts)["vector"] as list<any>;
+    }
+}
+
+/** Embedder backed by a local ONNX sentence-transformer model directory
+ *  (model.onnx + tokenizer.json). Fully offline; requires --allow-onnx.
+ *  opts pass through to onnx.session (libPath, intraOpThreads) and
+ *  transformers.pool (pooling, normalize). */
+export class LocalEmbedder implements Embedder {
+    any _session;
+    string _tokenizerJson;
+    dict<string, any> _opts;
+
+    func LocalEmbedder(string modelDir, dict<string, any> opts = {}) {
+        this._tokenizerJson = io.readText(modelDir + "/tokenizer.json");
+        this._session = onnx.session(modelDir + "/model.onnx", opts);
+        this._opts = opts;
+    }
+
+    func embed(string text): list<any> {
+        let tok = transformers.tokenize(this._tokenizerJson, [text]);
+        let mask = ndarray.array(tok["attention_mask"]);
+        let available = {
+            "input_ids": ndarray.array(tok["input_ids"]),
+            "attention_mask": mask,
+            "token_type_ids": ndarray.array(tok["token_type_ids"])
+        };
+        let feed = {};
+        for (name in this._session.inputNames()) {
+            feed[name as string] = available[name as string];
+        }
+        let out = this._session.run(feed);
+        let hidden = out[(this._session.outputNames()[0]) as string];
+        return transformers.pool(hidden, mask, this._opts).toList()[0] as list<any>;
+    }
+
+    func close(): void {
+        this._session.close();
     }
 }
 

@@ -1648,7 +1648,7 @@ func isStatefulNativeModule(module string) bool {
 	case "io", "sys", "secrets", "process", "procnative", "sshnative",
 		"http", "websocket", "smtp", "web", "db", "ext", "ffinative", "net", "test", "log", "watch",
 		"csv", "schema", "serde", "metrics", "trace", "profile", "path", "async", "dotenv", "cli",
-		"dataframe":
+		"dataframe", "onnx":
 		return true
 	default:
 		return false

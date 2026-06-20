@@ -212,6 +212,22 @@ let answer = llm.client({"provider": "openai", "apiKey": key})
     .chat([{"role": "user", "content": prompt}], {"model": "gpt-4o-mini"})["content"];
 ```
 
+`LocalEmbedder` is the offline alternative: it embeds with a local ONNX
+sentence-transformer model (see [Local Models](25-onnx-transformers.md)) instead
+of an API, so the whole index/retrieve loop runs on-device. It is a drop-in
+`Embedder`, so nothing else changes:
+
+```gb
+import rag;
+import vectorstore;
+
+let embedder = rag.LocalEmbedder("./models/all-MiniLM-L6-v2");   # geblang --allow-onnx
+let store    = vectorstore.MemoryVectorStore();
+rag.index(store, embedder, "handbook", longText, {}, {});
+let hits = rag.retrieve(store, embedder, "how do I reset my password?", 4);
+embedder.close();
+```
+
 ### Functions
 
 | Function | Description |

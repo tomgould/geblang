@@ -49,6 +49,8 @@ func NewBuiltinRegistry() *Registry {
 func registerAllBuiltins(r *Registry) {
 	registerMath(r)
 	registerVecmath(r)
+	registerTokenizer(r)
+	registerPooling(r)
 	registerHnsw(r)
 	registerJSON(r)
 	registerCSV(r)

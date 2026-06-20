@@ -215,6 +215,9 @@ func main() {
 		case "--allow-process-control":
 			native.SetProcessControlEnabled(true)
 			args = args[1:]
+		case "--allow-onnx":
+			native.SetOnnxEnabled(true)
+			args = args[1:]
 		case "-m", "--module":
 			if len(args) < 2 {
 				fmt.Fprintln(os.Stderr, "usage: geblang -m <module> [args...]")
@@ -290,6 +293,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  geblang --trace-exec <script.gb>   print which engine handled the script")
 	fmt.Fprintln(writer, "  geblang --no-assert <script.gb>    elide assert(...) calls (arguments are not evaluated)")
 	fmt.Fprintln(writer, "  geblang --allow-process-control <script.gb>  enable privileged process ops (setuid/setgid, kill/signal by pid)")
+	fmt.Fprintln(writer, "  geblang --allow-onnx <script.gb>   enable local ONNX model inference (loads a native shared library)")
 	fmt.Fprintln(writer, "  geblang -m <module> [args...]      run the named module's exported main()")
 	fmt.Fprintln(writer, "  geblang repl                       start the interactive REPL")
 	fmt.Fprintln(writer)
@@ -1453,6 +1457,8 @@ func runTests(args []string) {
 			i++
 		case "--allow-process-control":
 			native.SetProcessControlEnabled(true)
+		case "--allow-onnx":
+			native.SetOnnxEnabled(true)
 		default:
 			paths = append(paths, args[i])
 		}

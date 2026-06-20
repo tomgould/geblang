@@ -1054,6 +1054,18 @@ io.println((r["stdout"] as string).trim());
 `, "0\nhello world\n")
 }
 
+func TestParityOnnxGate(t *testing.T) {
+	runParityStateful(t, `import onnx;
+import io;
+try {
+    onnx.session("/no/such/model.onnx");
+    io.println("no-throw");
+} catch (PermissionError e) {
+    io.println("gated");
+}
+`, "gated\n")
+}
+
 func TestParityHTTPRequestStream(t *testing.T) {
 	runParityStateful(t, `import io;
 import http;

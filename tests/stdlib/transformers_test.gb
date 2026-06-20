@@ -1,0 +1,88 @@
+/**
+ * @title transformers.tokenize (1.24.0)
+ * @summary WordPiece tokenization of texts using a HuggingFace tokenizer.json:
+ * lowercase / accent stripping, ## continuations, special tokens, batch padding.
+ */
+import test;
+import transformers;
+import ndarray;
+
+class TransformersTest extends test.Test {
+
+    @test
+    func poolMeanWithMask(): void {
+        let hidden = ndarray.array([[[1.0, 2.0], [3.0, 4.0]]]);
+        let mask = ndarray.array([[1, 1]]);
+        let row = transformers.pool(hidden, mask, {"normalize": false}).toList()[0] as list<any>;
+        this.assertEquals(2.0f, row[0] as float);
+        this.assertEquals(3.0f, row[1] as float);
+    }
+
+    @test
+    func poolMaskExcludesPadding(): void {
+        let hidden = ndarray.array([[[1.0, 1.0], [9.0, 9.0]]]);
+        let mask = ndarray.array([[1, 0]]);
+        let row = transformers.pool(hidden, mask, {"normalize": false}).toList()[0] as list<any>;
+        this.assertEquals(1.0f, row[0] as float);
+    }
+
+    @test
+    func poolClsTakesFirstToken(): void {
+        let hidden = ndarray.array([[[5.0, 6.0], [7.0, 8.0]]]);
+        let mask = ndarray.array([[1, 1]]);
+        let row = transformers.pool(hidden, mask, {"pooling": "cls", "normalize": false}).toList()[0] as list<any>;
+        this.assertEquals(5.0f, row[0] as float);
+    }
+
+    @test
+    func poolNormalizesToUnitLength(): void {
+        let hidden = ndarray.array([[[3.0, 4.0]]]);
+        let mask = ndarray.array([[1]]);
+        let row = transformers.pool(hidden, mask).toList()[0] as list<any>;
+        this.assertEquals(0.6f, row[0] as float);
+        this.assertEquals(0.8f, row[1] as float);
+    }
+
+    func vocab(): string {
+        return "{\"normalizer\":{\"type\":\"BertNormalizer\",\"lowercase\":true,\"strip_accents\":true},\"model\":{\"type\":\"WordPiece\",\"unk_token\":\"[UNK]\",\"continuing_subword_prefix\":\"##\",\"vocab\":{\"[PAD]\":0,\"[UNK]\":1,\"[CLS]\":2,\"[SEP]\":3,\"hello\":4,\"world\":5,\"play\":6,\"##ing\":7,\"!\":8,\"cafe\":9}}}";
+    }
+
+    @test
+    func tokenizesWithSpecialAndContinuation(): void {
+        let r = transformers.tokenize(this.vocab(), ["Hello, World!", "playing"]);
+        let ids = r["input_ids"] as list<any>;
+        this.assertEquals(2, ids.length());
+        let row0 = ids[0] as list<any>;
+        this.assertEquals(2, row0[0] as int);   /* [CLS] */
+        this.assertEquals(4, row0[1] as int);   /* hello */
+        this.assertEquals(1, row0[2] as int);   /* , -> UNK */
+        let row1 = ids[1] as list<any>;
+        this.assertEquals(6, row1[1] as int);   /* play */
+        this.assertEquals(7, row1[2] as int);   /* ##ing */
+    }
+
+    @test
+    func padsBatchAndMasks(): void {
+        let r = transformers.tokenize(this.vocab(), ["hello", "hello world play"]);
+        let ids = r["input_ids"] as list<any>;
+        let mask = r["attention_mask"] as list<any>;
+        this.assertEquals((ids[0] as list<any>).length(), (ids[1] as list<any>).length());
+        let m0 = mask[0] as list<any>;
+        this.assertEquals(0, m0[m0.length() - 1] as int);
+    }
+
+    @test
+    func stripsAccentsAndLowercases(): void {
+        let r = transformers.tokenize(this.vocab(), ["CAFÉ"]);
+        let row = (r["input_ids"] as list<any>)[0] as list<any>;
+        this.assertEquals(9, row[1] as int);   /* cafe */
+    }
+
+    @test
+    func honoursMaxLengthTruncation(): void {
+        let r = transformers.tokenize(this.vocab(), ["hello world play"], {"maxLength": 4});
+        let row = (r["input_ids"] as list<any>)[0] as list<any>;
+        this.assertEquals(4, row.length());
+        this.assertEquals(3, row[3] as int);   /* [SEP] still terminates */
+    }
+}

@@ -42,6 +42,30 @@ io.println("${r[0][0]["index"]} ${r[1][0]["index"]}");
 `)
 }
 
+// TestParityTransformersTokenize pins transformers.tokenize WordPiece output on both backends.
+func TestParityTransformersTokenize(t *testing.T) {
+	runParity(t, `import transformers;
+import io;
+let tjson = "{\"model\":{\"unk_token\":\"[UNK]\",\"continuing_subword_prefix\":\"##\",\"vocab\":{\"[PAD]\":0,\"[UNK]\":1,\"[CLS]\":2,\"[SEP]\":3,\"hi\":4}}}";
+let r = transformers.tokenize(tjson, ["hi", "hi hi"]);
+io.println("${(r["input_ids"] as list<any>)[0]}");
+io.println("${(r["input_ids"] as list<any>)[1]}");
+`, `[2, 4, 3, 0]
+[2, 4, 4, 3]
+`)
+}
+
+// TestParityTransformersPool pins transformers.pool mask-weighted mean pooling on both backends.
+func TestParityTransformersPool(t *testing.T) {
+	runParity(t, `import transformers;
+import ndarray;
+import io;
+let hidden = ndarray.array([[[1.0, 2.0], [3.0, 4.0]]]);
+let mask = ndarray.array([[1, 1]]);
+io.println("${transformers.pool(hidden, mask, {"normalize": false}).toList()}");
+`, "[[2, 3]]\n")
+}
+
 // TestParitySearch pins search/searchPattern across list/dict/string and value/predicate/regex on both backends.
 func TestParitySearch(t *testing.T) {
 	runParity(t, `import io;
