@@ -1,0 +1,79 @@
+/**
+ * @title Local Sentence Embeddings
+ * @summary Embeds sentences with a local ONNX sentence-transformer and ranks
+ *   every pair by cosine similarity - fully offline, no API calls.
+ * @category Standard Library
+ *
+ * Setup (one time):
+ *   1. Install ONNX Runtime 1.27.0+ from
+ *        https://github.com/microsoft/onnxruntime/releases
+ *      extract it, and point GEBLANG_ONNXRUNTIME at its lib/libonnxruntime.so.
+ *   2. Download an ONNX sentence-transformer and its tokenizer.json into a folder:
+ *        mkdir -p models/all-MiniLM-L6-v2 && cd models/all-MiniLM-L6-v2
+ *        B=https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main
+ *        curl -L -o model.onnx     "$B/onnx/model.onnx"
+ *        curl -L -o tokenizer.json "$B/tokenizer.json"
+ *
+ * Run (model inference is gated behind --allow-onnx):
+ *        export GEBLANG_ONNXRUNTIME=/path/to/onnxruntime/lib/libonnxruntime.so
+ *        geblang --allow-onnx examples/local_embeddings.gb
+ *   Point ONNX_MODEL_DIR at the model folder if it is not ./models/all-MiniLM-L6-v2.
+ *
+ * See the "Local Models" stdlib chapter for the full reference.
+ */
+import io;
+import sys;
+import rag;
+import vecmath;
+
+let modelDir = "./models/all-MiniLM-L6-v2";
+let envDir = sys.getenv("ONNX_MODEL_DIR");
+if (envDir != null) {
+    modelDir = envDir as string;
+}
+
+if (!io.exists(modelDir + "/model.onnx") || !io.exists(modelDir + "/tokenizer.json")) {
+    io.println("skip: no ONNX model at " + modelDir);
+    io.println("      install ONNX Runtime + a model (see this file's header), or set");
+    io.println("      ONNX_MODEL_DIR to a folder holding model.onnx + tokenizer.json.");
+    sys.exit(0);
+}
+
+let sentences = [
+    "The cat curled up and slept on the warm windowsill.",
+    "A kitten dozed in the afternoon sun.",
+    "Quantum entanglement connects particles across vast distances.",
+    "Physicists describe spooky action at a distance.",
+    "She poured a fresh cup of coffee before the meeting."
+];
+
+/* Embed each sentence into a 384-dim vector with the local model. */
+let embedder = rag.LocalEmbedder(modelDir);
+let vectors = [];
+for (s in sentences) {
+    vectors.push(embedder.embed(s));
+}
+embedder.close();
+
+let n = sentences.length();
+
+/* Every unique sentence pair with its cosine similarity. */
+let pairs = [];
+for (let i = 0; i < n; i = i + 1) {
+    for (let j = i + 1; j < n; j = j + 1) {
+        let sim = vecmath.score("cosine", vectors[i] as list<any>, vectors[j] as list<any>);
+        pairs.push({"a": sentences[i], "b": sentences[j], "score": sim});
+    }
+}
+
+pairs.sortBy(func(dict<string, any> p): float { return p["score"] as float; }, true);
+
+io.println("Sentence pairs ranked by cosine similarity (most similar first):");
+io.println("");
+for (p in pairs) {
+    let sc = p["score"] as float;
+    io.println(" ${sc:+.2f}");
+    io.println("    A: ${p["a"] as string}");
+    io.println("    B: ${p["b"] as string}");
+    io.println("");
+}
