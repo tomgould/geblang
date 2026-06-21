@@ -14,6 +14,14 @@
   already behaved. A binary (or run) without them stays locked down: a gated call
   throws `PermissionError`.
 
+### Tooling
+
+- The `geblang` binary now embeds the source standard library, so a standalone
+  binary - copied anywhere, with no `GEBLANG_STDLIB` and no stdlib directory
+  beside it - resolves source stdlib modules (`llm`, `rag`, `vectorstore`, ...)
+  with no setup. An on-disk stdlib (a repo checkout or `GEBLANG_STDLIB`) still
+  takes precedence, so developing against a working copy is unchanged.
+
 ## 1.24.0
 
 ### Standard library

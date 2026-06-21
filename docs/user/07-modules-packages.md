@@ -431,8 +431,11 @@ source modules include:
 - `web.router`
 - `redis`
 
-Set `GEBLANG_STDLIB` to add or override bundled stdlib roots in custom
-installations.
+The binary embeds these source modules and falls back to that embedded copy
+when no stdlib is found on disk, so a standalone `geblang` resolves them with no
+setup. Set `GEBLANG_STDLIB` to add or override stdlib roots - for example, to
+develop against a working-copy `stdlib/` rather than the embedded one. An
+on-disk stdlib root always takes precedence over the embedded copy.
 
 ## Reserved built-in module names
 

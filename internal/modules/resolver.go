@@ -2,13 +2,16 @@ package modules
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
+	rootembed "geblang"
 	"geblang/internal/ast"
 	"geblang/internal/ffi"
 	"geblang/internal/native"
+	"geblang/internal/version"
 
 	yamllib "gopkg.in/yaml.v3"
 )
@@ -233,6 +236,18 @@ func (r *Resolver) searchPaths() []string {
 }
 
 func DefaultStdlibPaths() []string {
+	disk := cleanExistingSearchPaths(gatherStdlibDiskPaths())
+	if len(disk) > 0 {
+		return disk
+	}
+	// No stdlib on disk (e.g. a bare global install): fall back to the copy embedded in the binary.
+	if dir := ensureEmbeddedStdlib(); dir != "" {
+		return []string{dir}
+	}
+	return disk
+}
+
+func gatherStdlibDiskPaths() []string {
 	paths := []string{}
 	if env := os.Getenv("GEBLANG_STDLIB"); env != "" {
 		paths = append(paths, filepath.SplitList(env)...)
@@ -245,11 +260,58 @@ func DefaultStdlibPaths() []string {
 		)
 	}
 	if wd, err := os.Getwd(); err == nil {
-		for _, root := range ancestorStdlibPaths(wd) {
-			paths = append(paths, root)
-		}
+		paths = append(paths, ancestorStdlibPaths(wd)...)
 	}
-	return cleanExistingSearchPaths(paths)
+	return paths
+}
+
+// ensureEmbeddedStdlib extracts the embedded stdlib to a per-version cache dir once and returns its path (empty on failure).
+func ensureEmbeddedStdlib() string {
+	cache, err := os.UserCacheDir()
+	if err != nil || cache == "" {
+		cache = os.TempDir()
+	}
+	root := filepath.Join(cache, "geblang")
+	dir := filepath.Join(root, "stdlib-"+version.Geblang)
+	if hasManifest(dir) {
+		return dir
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return ""
+	}
+	tmp, err := os.MkdirTemp(root, "stdlib-tmp-")
+	if err != nil {
+		return ""
+	}
+	defer os.RemoveAll(tmp)
+	if err := extractEmbeddedStdlib(tmp); err != nil {
+		return ""
+	}
+	if err := os.Rename(tmp, dir); err != nil {
+		if hasManifest(dir) {
+			return dir
+		}
+		return ""
+	}
+	return dir
+}
+
+func extractEmbeddedStdlib(dst string) error {
+	return fs.WalkDir(rootembed.StdlibFS, "stdlib", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel := strings.TrimPrefix(strings.TrimPrefix(p, "stdlib"), "/")
+		target := filepath.Join(dst, filepath.FromSlash(rel))
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := rootembed.StdlibFS.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
 }
 
 func ancestorStdlibPaths(start string) []string {
