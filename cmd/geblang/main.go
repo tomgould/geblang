@@ -219,6 +219,9 @@ func main() {
 		case "--allow-onnx":
 			native.SetOnnxEnabled(true)
 			args = args[1:]
+		case "--allow-browser":
+			native.SetBrowserEnabled(true)
+			args = args[1:]
 		case "-m", "--module":
 			if len(args) < 2 {
 				fmt.Fprintln(os.Stderr, "usage: geblang -m <module> [args...]")
@@ -295,6 +298,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  geblang --no-assert <script.gb>    elide assert(...) calls (arguments are not evaluated)")
 	fmt.Fprintln(writer, "  geblang --allow-process-control <script.gb>  enable privileged process ops (setuid/setgid, kill/signal by pid)")
 	fmt.Fprintln(writer, "  geblang --allow-onnx <script.gb>   enable local ONNX model inference (loads a native shared library)")
+	fmt.Fprintln(writer, "  geblang --allow-browser <script.gb>  enable headless-browser automation (launches a browser subprocess)")
 	fmt.Fprintln(writer, "  geblang -m <module> [args...]      run the named module's exported main()")
 	fmt.Fprintln(writer, "  geblang repl                       start the interactive REPL")
 	fmt.Fprintln(writer)
@@ -1183,6 +1187,9 @@ func applyManifestCapabilities(dir string) {
 	if m.Permissions.ProcessControl {
 		native.SetProcessControlEnabled(true)
 	}
+	if m.Permissions.Browser {
+		native.SetBrowserEnabled(true)
+	}
 }
 
 func runScript(sourcePath string, scriptArgs []string, source []byte, program *ast.Program, mode executionMode, allowFFI []string, stdout io.Writer, trace io.Writer) (int, error) {
@@ -1475,6 +1482,8 @@ func runTests(args []string) {
 			native.SetProcessControlEnabled(true)
 		case "--allow-onnx":
 			native.SetOnnxEnabled(true)
+		case "--allow-browser":
+			native.SetBrowserEnabled(true)
 		default:
 			paths = append(paths, args[i])
 		}

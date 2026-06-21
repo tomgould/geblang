@@ -55,6 +55,15 @@ io.println("${(r["input_ids"] as list<any>)[1]}");
 `)
 }
 
+// TestParityBrowserGate pins the --allow-browser gate (PermissionError when absent) on both backends.
+func TestParityBrowserGate(t *testing.T) {
+	runParityStateful(t, `import browser;
+import io;
+try { browser.launch(); io.println("opened"); }
+catch (PermissionError e) { io.println("denied"); }
+`, "denied\n")
+}
+
 // TestParityNetworkErrorClasses pins TimeoutError/TlsError catching + the IOError subclass hierarchy on both backends.
 func TestParityNetworkErrorClasses(t *testing.T) {
 	runParity(t, `import errors;

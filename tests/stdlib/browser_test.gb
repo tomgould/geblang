@@ -1,0 +1,23 @@
+/**
+ * @title browser module capability gate
+ * @summary browser.launch is gated behind --allow-browser; without the flag it
+ * throws a catchable PermissionError. Live automation is covered by Go tests
+ * that run against a real headless Chrome.
+ */
+import test;
+import browser;
+
+class BrowserGateTest extends test.Test {
+    @test
+    func launchWithoutFlagThrowsPermissionError(): void {
+        string kind = "none";
+        try {
+            browser.launch();
+        } catch (PermissionError e) {
+            kind = "permission";
+        } catch (Error e) {
+            kind = "other";
+        }
+        this.assertEquals("permission", kind);
+    }
+}

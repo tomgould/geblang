@@ -164,6 +164,7 @@ geblang build --entry <module.name> --out <output-path> [<package-dir>]
 | `--allow-ffi` | no | Bake an FFI allow-list entry (path or glob) into the binary. Repeatable. Adds to the manifest `permissions.ffi`. See Capabilities below |
 | `--allow-onnx` | no | Bake the local ONNX inference capability into the binary |
 | `--allow-process-control` | no | Bake the privileged process-control capability into the binary |
+| `--allow-browser` | no | Bake the headless-browser automation capability into the binary |
 | `--docker` | no | Also write a `Dockerfile` next to the binary (see below) |
 | `--docker-port` | no | Add `EXPOSE <port>` to the generated Dockerfile |
 | `--force` | no | Overwrite an existing generated Dockerfile |
@@ -193,7 +194,7 @@ directly:
 
 Privileged capabilities - FFI, local ONNX inference, and process control - are
 off by default and are normally turned on with a launch flag (`--allow-ffi`,
-`--allow-onnx`, `--allow-process-control`). A built binary has no launch-flag
+`--allow-onnx`, `--allow-process-control`, `--allow-browser`). A built binary has no launch-flag
 step, so it carries its capabilities baked in at build time and just runs.
 
 Declare them in `geblang.yaml`, the reproducible source of truth:
@@ -206,6 +207,7 @@ permissions:
       - glob: /opt/torch/lib/*.so
   onnx: true
   processControl: true
+  browser: true
 ```
 
 This same block also enables those capabilities for `geblang run` / `geblang
@@ -216,7 +218,7 @@ whatever the manifest already declares:
 
 ```sh
 geblang build --entry app.main --out ./dist/app \
-  --allow-ffi '/opt/torch/lib/*.so' --allow-onnx --allow-process-control
+  --allow-ffi '/opt/torch/lib/*.so' --allow-onnx --allow-process-control --allow-browser
 ```
 
 The resolved capability set is recorded in the bundle, so the end user runs the

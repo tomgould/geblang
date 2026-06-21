@@ -3094,7 +3094,7 @@ func intToFloatVal(v runtime.Value) runtime.Float {
 // decimalFloatArithError reports the precision wall: arithmetic mixing decimal
 // and float, which would silently lose decimal exactness. Comparisons are fine.
 func (vm *VM) decimalFloatArithError(instruction Instruction, left, right runtime.Value) error {
-	return vm.runtimeError(instruction, "cannot mix decimal and float in %s: convert explicitly (got %s and %s)", binaryOpSymbol(instruction.Op), left.TypeName(), right.TypeName())
+	return vm.runtimeError(instruction, "cannot mix decimal and float in %s (got %s and %s): cast one side - 'as float' drops decimal exactness, 'as decimal' adopts the float's imprecision", binaryOpSymbol(instruction.Op), left.TypeName(), right.TypeName())
 }
 
 // compareJumpIntFallback handles the fused integer compare-and-branch opcodes

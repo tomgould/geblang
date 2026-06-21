@@ -30,6 +30,7 @@ func runBuild(args []string) {
 	var cliAllowFFI []string
 	cliAllowOnnx := false
 	cliAllowProcessControl := false
+	cliAllowBrowser := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -46,6 +47,8 @@ func runBuild(args []string) {
 			cliAllowOnnx = true
 		case "--allow-process-control":
 			cliAllowProcessControl = true
+		case "--allow-browser":
+			cliAllowBrowser = true
 		case "--entry":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "geblang build: --entry requires a value")
@@ -96,12 +99,12 @@ func runBuild(args []string) {
 
 	if entry == "" {
 		fmt.Fprintln(os.Stderr, "geblang build: --entry is required")
-		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--allow-ffi <path-or-glob>] [--allow-onnx] [--allow-process-control] [--docker [--docker-port N] [--force]] [<package-dir>]")
+		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--allow-ffi <path-or-glob>] [--allow-onnx] [--allow-process-control] [--allow-browser] [--docker [--docker-port N] [--force]] [<package-dir>]")
 		os.Exit(2)
 	}
 	if outPath == "" {
 		fmt.Fprintln(os.Stderr, "geblang build: --out is required")
-		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--allow-ffi <path-or-glob>] [--allow-onnx] [--allow-process-control] [--docker [--docker-port N] [--force]] [<package-dir>]")
+		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--allow-ffi <path-or-glob>] [--allow-onnx] [--allow-process-control] [--allow-browser] [--docker [--docker-port N] [--force]] [<package-dir>]")
 		os.Exit(2)
 	}
 
@@ -241,7 +244,7 @@ func runBuild(args []string) {
 		AppVersion:    appVersion,
 		EntryMainArgs: entrySig.WantsArgs,
 		Modules:       records,
-		Permissions:   resolveBundlePermissions(manifestPerm, cliAllowFFI, cliAllowOnnx, cliAllowProcessControl),
+		Permissions:   resolveBundlePermissions(manifestPerm, cliAllowFFI, cliAllowOnnx, cliAllowProcessControl, cliAllowBrowser),
 	}
 
 	exe, err := os.Executable()
@@ -414,6 +417,9 @@ func runBundled(b *bundle.Bundle) int {
 		if p.ProcessControl {
 			native.SetProcessControlEnabled(true)
 		}
+		if p.Browser {
+			native.SetBrowserEnabled(true)
+		}
 	}
 	args := os.Args[1:]
 	if len(args) > 0 {
@@ -544,7 +550,7 @@ func parseResourceSpec(arg string) resourceSpec {
 }
 
 // resolveBundlePermissions folds the manifest permissions block and --allow-* flags into the baked capability set (nil when empty).
-func resolveBundlePermissions(m modules.ManifestPermissions, cliFFI []string, cliOnnx, cliProcessControl bool) *bundle.Permissions {
+func resolveBundlePermissions(m modules.ManifestPermissions, cliFFI []string, cliOnnx, cliProcessControl, cliBrowser bool) *bundle.Permissions {
 	var ffiPatterns []string
 	if m.FFI != nil && m.FFI.Enabled {
 		for _, lib := range m.FFI.Libraries {
@@ -558,10 +564,11 @@ func resolveBundlePermissions(m modules.ManifestPermissions, cliFFI []string, cl
 	ffiPatterns = append(ffiPatterns, cliFFI...)
 	onnx := m.Onnx || cliOnnx
 	proc := m.ProcessControl || cliProcessControl
-	if len(ffiPatterns) == 0 && !onnx && !proc {
+	browser := m.Browser || cliBrowser
+	if len(ffiPatterns) == 0 && !onnx && !proc && !browser {
 		return nil
 	}
-	return &bundle.Permissions{FFI: ffiPatterns, Onnx: onnx, ProcessControl: proc}
+	return &bundle.Permissions{FFI: ffiPatterns, Onnx: onnx, ProcessControl: proc, Browser: browser}
 }
 
 // collectResources resolves resource specs into bundle ZIP entries keyed by

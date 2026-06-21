@@ -133,9 +133,12 @@ exact types from silent precision loss:
   `1 / 2` is the exact `decimal` `0.5` (not truncated).
 - `int` and `float` mix in arithmetic by promoting the `int` to `float`:
   `3 + 2.5f` is the `float` `5.5`.
-- `decimal` and `float` do **not** mix in arithmetic - `2.5 + 2.5f` is an error.
-  A `decimal` is exact and a `float` is not, so the result type would be
-  ambiguous and lossy; convert one explicitly (`(2.5 as float) + 2.5f`).
+- `decimal` and `float` do **not** mix in arithmetic - `2.5 + 2.5f` is an error,
+  reported by `geblang check` when both operand types are known and at runtime
+  otherwise. A `decimal` is exact and a `float` is not, so the result type would
+  be ambiguous and lossy. Cast one side, choosing the tradeoff: `as float` is
+  fast but drops the decimal's exactness; `as decimal` keeps an exact type but
+  adopts the float's binary imprecision.
 
 Because `/` is true division, its result is a `decimal` (or `float`) even when it
 divides evenly, so `int n = a / b` is a compile-time error. Use `//` (floor

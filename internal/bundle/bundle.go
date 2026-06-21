@@ -47,6 +47,7 @@ type Permissions struct {
 	FFI            []string `json:"ffi,omitempty"`
 	Onnx           bool     `json:"onnx,omitempty"`
 	ProcessControl bool     `json:"processControl,omitempty"`
+	Browser        bool     `json:"browser,omitempty"`
 }
 
 // Bundle holds the decoded bundle data and its raw zip bytes.

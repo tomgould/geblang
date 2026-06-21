@@ -1,5 +1,28 @@
 # Release Notes
 
+## 1.25.0
+
+### Language
+
+- Mixing `decimal` and `float` in arithmetic - the deliberate precision wall that
+  keeps a `decimal`'s exactness from silently leaking into a `float` - is now
+  reported by `geblang check` when both operand types are statically known, not
+  only at runtime. The error names both fixes and their tradeoff: cast with
+  `as float` (fast, drops the decimal's exactness) or `as decimal` (keeps an
+  exact type, adopts the float's binary imprecision).
+
+### Standard library
+
+- New experimental `browser` module: drive a headless Chrome/Chromium over the
+  DevTools Protocol for functional testing and scripted control. `browser.launch`
+  opens a browser; pages can `goto`, `waitFor`, `click`, `type`/`fill`,
+  `evaluate` JavaScript, read `text`/`content`/`title`, `screenshot`/`pdf`,
+  manage `cookies`, list tabs, and intercept requests with `route` (continue,
+  block, or fulfill a mock response). It speaks the protocol directly with no
+  external driver, is gated behind `--allow-browser`, and always terminates the
+  browser on close. Needs Chrome installed (located via `$GEBLANG_CHROME` or an
+  `executable` option).
+
 ## 1.24.1
 
 ### Bundling

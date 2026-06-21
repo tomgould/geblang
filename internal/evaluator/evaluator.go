@@ -29,6 +29,7 @@ import (
 
 	"geblang/internal/ast"
 	"geblang/internal/binding"
+	"geblang/internal/cdp"
 	"geblang/internal/concurrent"
 	"geblang/internal/desugar"
 	"geblang/internal/native"
@@ -216,6 +217,14 @@ type Evaluator struct {
 	nextOnnxID            int64
 	onnxSessions          map[int64]*native.ONNXSession
 	onnxClass             *runtime.Class
+	browserMu             sync.Mutex
+	nextBrowserID         int64
+	nextPageID            int64
+	browsers              map[int64]*cdp.Browser
+	pages                 map[int64]*cdp.Page
+	browserRoutes         map[string][]browserRoute
+	browserClassCache     *runtime.Class
+	pageClassCache        *runtime.Class
 	jsonMu                sync.Mutex
 	nextJSONID            int64
 	jsonReaders           map[int64]*jsonStreamReader
@@ -534,7 +543,7 @@ func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []st
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, httpResponseStreams: map[int64]*httpResponseStreamHandle{}, onnxSessions: map[int64]*native.ONNXSession{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
+	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, httpResponseStreams: map[int64]*httpResponseStreamHandle{}, onnxSessions: map[int64]*native.ONNXSession{}, browsers: map[int64]*cdp.Browser{}, pages: map[int64]*cdp.Page{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
 	e.builtins = e.builtinModules()
 	// Register an InstanceInvoker so native code (e.g.
 	// convert.go's __serialize__ dispatch) can call class
@@ -1010,6 +1019,16 @@ func (e *Evaluator) Cleanup() error {
 		if h.client != nil {
 			h.client.CloseIdleConnections()
 		}
+	}
+
+	e.browserMu.Lock()
+	browsers := e.browsers
+	e.browsers = map[int64]*cdp.Browser{}
+	e.pages = map[int64]*cdp.Page{}
+	e.browserRoutes = nil
+	e.browserMu.Unlock()
+	for _, b := range browsers {
+		b.Close()
 	}
 
 	e.wsMu.Lock()
@@ -6469,7 +6488,7 @@ func intToFloatValue(v runtime.Int) runtime.Float {
 // decimalFloatArithError reports the one remaining precision wall: arithmetic
 // mixing decimal and float, which would silently lose decimal exactness.
 func decimalFloatArithError(operator string, left, right runtime.Value) error {
-	return fmt.Errorf("cannot mix decimal and float in %s: convert explicitly (got %s and %s)", operator, left.TypeName(), right.TypeName())
+	return fmt.Errorf("cannot mix decimal and float in %s (got %s and %s): cast one side - 'as float' drops decimal exactness, 'as decimal' adopts the float's imprecision", operator, left.TypeName(), right.TypeName())
 }
 
 // evalSmallIntInfix is the allocation-free integer fast path, mirroring

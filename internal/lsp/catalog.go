@@ -1494,6 +1494,42 @@ var stdlibCatalog = map[string]moduleDoc{
 			"close":       fn([]string{}, "void", "Releases the session and ONNX Runtime resources."),
 		},
 	}},
+	"browser": {functions: map[string]functionDoc{
+		"launch": fn([]string{"dict<string, any> opts = {}"}, "Browser", "Launches a headless Chrome for automation (experimental; requires --allow-browser). opts: executable, headless, args, timeoutMs (1.25.0)."),
+	}, classes: map[string]string{
+		"Browser": "A launched headless browser (1.25.0).",
+		"Page":    "A browser page/tab (1.25.0).",
+	}, classMethods: map[string]map[string]functionDoc{
+		"Browser": {
+			"newPage": fn([]string{}, "Page", "Opens a new page/tab."),
+			"pages":   fn([]string{}, "list<Page>", "All open pages/tabs."),
+			"version": fn([]string{}, "string", "The browser product version string."),
+			"close":   fn([]string{}, "void", "Closes the browser and terminates the process."),
+		},
+		"Page": {
+			"goto":       fn([]string{"string url"}, "void", "Navigates to url and waits for load."),
+			"evaluate":   fn([]string{"string jsExpression"}, "any", "Runs JavaScript in the page and returns the JSON-serializable result."),
+			"waitFor":    fn([]string{"string selector", "int timeoutMs = 30000"}, "void", "Waits until a selector matches an element."),
+			"click":      fn([]string{"string selector"}, "void", "Scrolls to and clicks the element with real mouse events."),
+			"type":       fn([]string{"string selector", "string text"}, "void", "Focuses the element and types text."),
+			"fill":       fn([]string{"string selector", "string value"}, "void", "Sets a form field's value and fires input/change."),
+			"press":      fn([]string{"string key"}, "void", "Presses a key (e.g. \"Enter\", \"Tab\")."),
+			"select":     fn([]string{"string selector", "string value"}, "void", "Selects a dropdown option by value."),
+			"text":       fn([]string{"string selector"}, "?string", "The element's textContent, or null."),
+			"attribute":  fn([]string{"string selector", "string name"}, "?string", "An element attribute value, or null."),
+			"content":    fn([]string{}, "string", "The page's full HTML."),
+			"title":      fn([]string{}, "string", "The document title."),
+			"url":        fn([]string{}, "string", "The current URL."),
+			"reload":     fn([]string{}, "void", "Reloads the page and waits for load."),
+			"screenshot": fn([]string{"string path"}, "void", "Writes a PNG screenshot to path."),
+			"pdf":        fn([]string{"string path"}, "void", "Writes the page as a PDF to path."),
+			"cookies":    fn([]string{}, "list<dict<string, any>>", "The page's cookies."),
+			"setCookie":  fn([]string{"dict<string, any> cookie"}, "void", "Sets a cookie (name, value, and url or domain)."),
+			"clearCookies": fn([]string{}, "void", "Clears all browser cookies."),
+			"route":      fn([]string{"string urlPattern", "func handler"}, "void", "Intercepts matching requests; handler(request) returns null to continue, {abort:true} to block, or {status,headers,body} to fulfill a mock response."),
+			"close":      fn([]string{}, "void", "Closes the page."),
+		},
+	}},
 	"vectorstore": {functions: map[string]functionDoc{
 		"score": fn([]string{"string metric", "list<any> a", "list<any> b"}, "float", "Similarity score (higher = closer) for metric cosine/dot/euclidean (1.9.0)."),
 	}, classes: map[string]string{

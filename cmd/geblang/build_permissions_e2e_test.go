@@ -35,6 +35,16 @@ export func main(): int {
     return 0;
 }
 `
+	browserApp := `module app;
+import browser;
+import io;
+export func main(): int {
+    try { browser.launch({"executable": "/no/such/chrome"}); io.println("opened"); }
+    catch (PermissionError e) { io.println("GATE-CLOSED"); }
+    catch (Error e) { io.println("GATE-OPEN"); }
+    return 0;
+}
+`
 	buildAndRun := func(t *testing.T, yaml, app string, buildFlags ...string) string {
 		t.Helper()
 		dir := t.TempDir()
@@ -63,6 +73,9 @@ export func main(): int {
 		{"ffi denied by default", "name: app\n", ffiApp, nil, "GATE-CLOSED"},
 		{"ffi via build flag", "name: app\n", ffiApp, []string{"--allow-ffi", "/no/such/*.so"}, "GATE-OPEN"},
 		{"ffi via manifest", "name: app\npermissions:\n  ffi:\n    enabled: true\n    libraries:\n      - glob: /no/such/*.so\n", ffiApp, nil, "GATE-OPEN"},
+		{"browser denied by default", "name: app\n", browserApp, nil, "GATE-CLOSED"},
+		{"browser via build flag", "name: app\n", browserApp, []string{"--allow-browser"}, "GATE-OPEN"},
+		{"browser via manifest", "name: app\npermissions:\n  browser: true\n", browserApp, nil, "GATE-OPEN"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

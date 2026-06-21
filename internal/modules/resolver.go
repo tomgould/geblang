@@ -46,6 +46,7 @@ type ManifestPermissions struct {
 	FFI            *ffi.PolicyConfig
 	Onnx           bool
 	ProcessControl bool
+	Browser        bool
 }
 
 type Dependency struct {
@@ -88,6 +89,7 @@ type manifestFile struct {
 		FFI            *ffi.PolicyConfig `yaml:"ffi"`
 		Onnx           bool              `yaml:"onnx"`
 		ProcessControl bool              `yaml:"processControl"`
+		Browser        bool              `yaml:"browser"`
 	} `yaml:"permissions"`
 }
 
@@ -499,6 +501,7 @@ func (r *Resolver) LoadManifest(path string) (*Manifest, error) {
 			FFI:            parsed.Permissions.FFI,
 			Onnx:           parsed.Permissions.Onnx,
 			ProcessControl: parsed.Permissions.ProcessControl,
+			Browser:        parsed.Permissions.Browser,
 		},
 	}
 	if manifest.Dependencies == nil {

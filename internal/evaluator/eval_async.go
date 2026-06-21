@@ -91,11 +91,13 @@ func asyncTimeout(call *ast.CallExpression, args []runtime.Value) (runtime.Value
 	}
 	out := runtime.NewTask()
 	go func() {
+		timer := time.NewTimer(duration)
+		defer timer.Stop()
 		select {
 		case <-inner.DoneChan():
 			result := inner.Await()
 			out.Complete(result.Value, result.Err)
-		case <-time.After(duration):
+		case <-timer.C:
 			inner.Cancel()
 			out.Complete(runtime.Null{}, fmt.Errorf("async.timeout: task did not complete within %v", duration))
 		}

@@ -119,6 +119,10 @@ Operations, introspection, and extension:
 - [Local Models](onnx-transformers.html): offline WordPiece tokenization, ONNX
   model inference, and on-device sentence-transformer embeddings (experimental;
   needs ONNX Runtime and the `--allow-onnx` flag).
+- [Headless Browser](browser.html): drive a headless Chrome over the DevTools
+  Protocol for functional testing and scripted control - navigate, interact,
+  read, screenshot, cookies, request interception (experimental; needs Chrome
+  and the `--allow-browser` flag).
 - [Zstd Compression](clib-zstd.html): fast Zstandard compression and
   decompression via libzstd, with FFI capability gating.
 - [systemd Integration](clib-systemd.html): sd_notify readiness protocol

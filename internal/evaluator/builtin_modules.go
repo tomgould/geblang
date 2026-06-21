@@ -954,6 +954,9 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 		"onnx": {
 			"session": e.onnxSession,
 		},
+		"browser": {
+			"launch": e.browserLaunch,
+		},
 		"hnsw": {
 			"new":    e.registryBuiltin("hnsw", "new"),
 			"add":    e.registryBuiltin("hnsw", "add"),

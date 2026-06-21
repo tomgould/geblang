@@ -1868,6 +1868,23 @@ func (a *Analyzer) returnTypeCompatible(expected, actual typeInfo) bool {
 	return a.isAssignable(expected, actual)
 }
 
+// checkDecimalFloatMix statically flags decimal+float arithmetic (the runtime precision wall) when both operand types are known.
+func (a *Analyzer) checkDecimalFloatMix(expr *ast.InfixExpression) {
+	switch expr.Operator {
+	case "+", "-", "*", "/", "//", "%", "**":
+	default:
+		return
+	}
+	lt := a.expressionTypeName(expr.Left)
+	rt := a.expressionTypeName(expr.Right)
+	if !lt.known || !rt.known {
+		return
+	}
+	if (lt.name == "decimal" && rt.name == "float") || (lt.name == "float" && rt.name == "decimal") {
+		a.errorAt(expr.Token, "cannot mix decimal and float in %s (got %s and %s): cast one side - 'as float' drops decimal exactness, 'as decimal' adopts the float's imprecision", expr.Operator, lt.name, rt.name)
+	}
+}
+
 func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 	if a.exprTypes != nil && expr != nil {
 		a.recordExprType(expr)
@@ -1884,6 +1901,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 	case *ast.InfixExpression:
 		a.analyzeExpression(expr.Left)
 		a.analyzeExpression(expr.Right)
+		a.checkDecimalFloatMix(expr)
 		if expr.Operator == "//" || expr.Operator == "%" || expr.Operator == "/" {
 			if lit, ok := expr.Right.(*ast.IntegerLiteral); ok && strings.Trim(lit.Value, "0_") == "" {
 				a.ruleWarningAt(expr.Token, "div-by-zero", "%q by literal zero always throws at runtime", expr.Operator)

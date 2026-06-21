@@ -954,7 +954,7 @@ func isStatefulBytecodeBuiltinModule(name string) bool {
 	case "io", "sys", "secrets", "process", "procnative", "sshnative",
 		"http", "websocket", "smtp", "web", "db", "ext", "ffinative", "net", "test", "log", "watch",
 		"csv", "schema", "serde", "metrics", "trace", "profile", "path", "async", "dotenv", "cli",
-		"amqp", "kafka", "dataframe", "onnx":
+		"amqp", "kafka", "dataframe", "onnx", "browser":
 		return true
 	default:
 		return false
