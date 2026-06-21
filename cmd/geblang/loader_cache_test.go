@@ -4,12 +4,18 @@ import (
 	"io"
 	"testing"
 
+	"geblang/internal/bcloader"
 	"geblang/internal/evaluator"
+	"geblang/internal/runtime"
 )
 
 func TestLoaderCachesNativeModuleValue(t *testing.T) {
-	loader := newBytecodeModuleLoader(io.Discard, nil)
-	loader.stateful = evaluator.New(io.Discard)
+	ev := evaluator.New(io.Discard)
+	loader := bcloader.New(io.Discard, nil, ev, bcloader.Options{
+		LookupBuiltin: func(canonical, alias string) *runtime.Module {
+			return ev.BuiltinModule(canonical, alias)
+		},
+	})
 
 	first, err := loader.LoadModule("math", "")
 	if err != nil {

@@ -715,11 +715,11 @@ io.println("after try");
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
-	loader.mainChunk = chunk
-	loader.hasMainChunk = true
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
+	loader.SetMainChunk(chunk)
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	loader.SetMainVM(vm)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
 	stateful.SetMethodDispatcher(vm)
@@ -789,8 +789,8 @@ Sub().go();
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)

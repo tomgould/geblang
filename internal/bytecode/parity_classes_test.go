@@ -394,8 +394,8 @@ io.println(l.name);
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
@@ -460,8 +460,8 @@ io.println(Loud("bo", 4).greet());
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
@@ -527,8 +527,8 @@ io.println(BigToken().label());
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
@@ -688,8 +688,8 @@ io.println(Leaf(5).value());
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
@@ -1395,8 +1395,8 @@ io.println(m as int);
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
@@ -1449,8 +1449,8 @@ try { s.id = "tampered"; io.println("MUTATED"); } catch (Error e) { io.println("
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)

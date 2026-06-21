@@ -1107,3 +1107,31 @@ try {
 }
 `, "threw\ndefault-threw\n")
 }
+
+// TestParityLLMStreamingCallback is the dividend of the bcloader extraction: a source-stdlib llm.chatStream re-enters an entry-script callback that mutates an entry global, needing the loader's live entry-chunk globals (mainVM); the pre-extraction harness lacked mainVM and this failed on the VM.
+func TestParityLLMStreamingCallback(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import http;
+import sys;
+import llm;
+let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+    return {"status": 200, "headers": {"Content-Type": "text/event-stream"}, "body":
+        "data: {\"model\":\"gpt-5\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n" +
+        "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n" +
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n" +
+        "data: [DONE]\n"};
+});
+sys.sleep(20);
+let port = http.serverAddr(server).split(":")[1] as string;
+let c = llm.client({"provider": "openai", "apiKey": "sk", "endpoint": "http://127.0.0.1:" + port});
+let pieces = [];
+let r = c.chatStream([{"role": "user", "content": "hi"}], {"model": "gpt-5"}, func(string delta): void {
+    pieces = pieces.push(delta);
+});
+http.shutdown(server);
+io.println(pieces.length() as string);
+io.println(pieces[0] as string);
+io.println(r["content"] as string);
+io.println(r["stopReason"] as string);
+`, "2\nHello\nHello world\nstop\n")
+}

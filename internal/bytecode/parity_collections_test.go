@@ -1449,8 +1449,8 @@ io.println(b.describe(...{"width": 1, "height": 2, "label": "tiny", "ignored": t
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)

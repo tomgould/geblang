@@ -17,11 +17,11 @@ import (
 	"sync"
 	"testing"
 
+	"geblang/internal/ast"
+	"geblang/internal/bcloader"
 	"geblang/internal/bytecode"
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
-	"geblang/internal/modules"
-	"geblang/internal/native"
 	"geblang/internal/parser"
 	"geblang/internal/runtime"
 	"geblang/internal/semantic"
@@ -29,497 +29,28 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// stdlibModuleLoader is a minimal bytecode-side module loader used by
-// parity tests for source-distributed stdlib modules (time.scheduler,
-// async.rate, etc.). It resolves canonical module paths via the standard
-// resolver (which walks ancestors to find stdlib/), compiles each
-// imported source module to bytecode on demand, and caches the result
-// inside the loader struct.
-
-type stdlibModuleLoader struct {
-	stdout      io.Writer
-	stateful    bytecode.StatefulNativeCaller
-	modulePaths []string
-	modules     map[string]*runtime.Module
-	chunks      map[string]bytecode.Chunk
-	globals     map[string][]runtime.Value
-	decorators  map[string]bytecode.FunctionDecoratorState
-	loading     map[string]bool
-	// mainChunk lets sub-VMs (stdlib modules) call back into the
-	// entry chunk when a foreign instance's method needs dispatch,
-	// e.g. streams.copy invoking __read on a user-defined class.
-	mainChunk    bytecode.Chunk
-	hasMainChunk bool
-}
-
-func newStdlibModuleLoader(stdout io.Writer, stateful bytecode.StatefulNativeCaller) *stdlibModuleLoader {
-	return &stdlibModuleLoader{
-		stdout:     stdout,
-		stateful:   stateful,
-		modules:    map[string]*runtime.Module{},
-		chunks:     map[string]bytecode.Chunk{},
-		globals:    map[string][]runtime.Value{},
-		decorators: map[string]bytecode.FunctionDecoratorState{},
-		loading:    map[string]bool{},
-	}
-}
-
-func (l *stdlibModuleLoader) lookupBuiltin(canonical, alias string) *runtime.Module {
-	if e, ok := l.stateful.(*evaluator.Evaluator); ok {
-		return e.BuiltinModule(canonical, alias)
-	}
-	return nil
-}
-
-func (l *stdlibModuleLoader) LoadModule(canonical, alias string) (*runtime.Module, error) {
-	if module, ok := l.modules[canonical]; ok {
-		return module, nil
-	}
-	resolver := modules.NewResolver(l.modulePaths)
-	path, err := resolver.Resolve(canonical)
-	if err != nil {
-		if native := l.lookupBuiltin(canonical, alias); native != nil {
-			return native, nil
-		}
-		return nil, err
-	}
-	if l.loading[path] {
-		if native := l.lookupBuiltin(canonical, alias); native != nil {
-			return native, nil
-		}
-		return nil, fmt.Errorf("circular import detected for %s", canonical)
-	}
-	l.loading[path] = true
-	defer delete(l.loading, path)
-
-	source, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read module %s: %w", canonical, err)
-	}
-	p := parser.New(lexer.New(string(source)))
-	program := p.ParseProgram()
-	if len(p.Errors()) > 0 {
-		return nil, fmt.Errorf("parse module %s: %s", canonical, strings.Join(p.Errors(), "\n"))
-	}
-	if diagnostics := semantic.New().Analyze(program); len(diagnostics) > 0 {
-		messages := make([]string, 0, len(diagnostics))
-		for _, d := range diagnostics {
-			messages = append(messages, d.Message)
-		}
-		return nil, fmt.Errorf("analyze module %s: %s", canonical, strings.Join(messages, "\n"))
-	}
-	chunk, err := bytecode.Compile(program, source, canonical)
-	if err != nil {
-		return nil, fmt.Errorf("compile module %s: %w", canonical, err)
-	}
-	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-	vm.SetModuleName(canonical)
-	vm.SetModulePaths(l.modulePaths)
-	if l.stateful != nil {
-		vm.SetStatefulNativeCaller(l.stateful)
-	}
-	if err := vm.Run(); err != nil {
-		return nil, fmt.Errorf("evaluate module %s: %w", canonical, err)
-	}
-	exports, err := vm.Exports()
-	if err != nil {
-		return nil, fmt.Errorf("export module %s: %w", canonical, err)
-	}
-	module := &runtime.Module{Name: alias, Canonical: canonical, Exports: exports}
-	for name, value := range module.Exports {
-		if function, ok := value.(runtime.BytecodeFunction); ok {
-			function.Module = canonical
-			module.Exports[name] = function
-		}
-		if class, ok := value.(runtime.BytecodeClass); ok {
-			class.Module = canonical
-			module.Exports[name] = class
-		}
-	}
-	l.modules[canonical] = module
-	l.chunks[canonical] = chunk
-	l.globals[canonical] = vm.GlobalsSnapshot()
-	l.decorators[canonical] = vm.FunctionDecoratorState()
-	return module, nil
-}
-
-// newSubVM returns a VM bound to either a stdlib module's chunk or
-// the main chunk (when moduleName == "" and mainChunk is registered).
-// Errors when no matching chunk exists.
-func (l *stdlibModuleLoader) newSubVM(moduleName string) (*bytecode.VM, error) {
-	var chunk bytecode.Chunk
-	if moduleName == "" {
-		if !l.hasMainChunk {
-			return nil, fmt.Errorf("entry-script chunk not registered with loader")
-		}
-		chunk = l.mainChunk
-	} else {
-		c, ok := l.chunks[moduleName]
-		if !ok {
-			return nil, fmt.Errorf("module %s is not loaded", moduleName)
-		}
-		chunk = c
-	}
-	vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-	vm.SetModuleName(moduleName)
-	vm.SetModulePaths(l.modulePaths)
-	if l.stateful != nil {
-		vm.SetStatefulNativeCaller(l.stateful)
-	}
-	vm.RestoreGlobals(l.globals[moduleName])
-	vm.RestoreFunctionDecoratorState(l.decorators[moduleName])
-	return vm, nil
-}
-
-func (l *stdlibModuleLoader) CallModuleFunction(function runtime.BytecodeFunction, args []runtime.Value) (runtime.Value, error) {
-	vm, err := l.newSubVM(function.Module)
-	if err != nil {
-		return nil, err
-	}
-	return vm.CallFunction(function.Index, args)
-}
-
-func (l *stdlibModuleLoader) CallModuleClosure(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
-	vm, err := l.newSubVM(closure.Module)
-	if err != nil {
-		return nil, err
-	}
-	return vm.CallClosure(closure, args)
-}
-
-func (l *stdlibModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value, typeArgs []string) (runtime.Value, error) {
-	vm, err := l.newSubVM(class.Module)
-	if err != nil {
-		return nil, err
-	}
-	return vm.ConstructClassWithTypeArgs(class.Index, args, typeArgs)
-}
-
-func (l *stdlibModuleLoader) DeserializeModuleClass(class runtime.BytecodeClass, value runtime.Value) (runtime.Value, error) {
-	vm, err := l.newSubVM(class.Module)
-	if err != nil {
-		return nil, err
-	}
-	return vm.DeserializeIntoChunkClass(class, value)
-}
-
-func (l *stdlibModuleLoader) ConstructorsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error) {
-	vm, err := l.newSubVM(class.Module)
-	if err != nil {
-		return nil, err
-	}
-	return vm.ReflectConstructorsForChunkClass(class)
-}
-
-func (l *stdlibModuleLoader) FieldsForModuleClass(class runtime.BytecodeClass) (runtime.Value, error) {
-	if class.Module == "" || class.Module == "parity" {
-		if !l.hasMainChunk {
-			return nil, fmt.Errorf("reflect.fields %s: main chunk not registered in test loader", class.Name)
-		}
-		vm := bytecode.NewVMWithModuleLoader(l.mainChunk, l.stdout, l)
-		vm.SetModuleName(class.Module)
-		vm.SetModulePaths(l.modulePaths)
-		if l.stateful != nil {
-			vm.SetStatefulNativeCaller(l.stateful)
-		}
-		return vm.ReflectFieldsForChunkClass(class)
-	}
-	vm, err := l.newSubVM(class.Module)
-	if err != nil {
-		return nil, err
-	}
-	return vm.ReflectFieldsForChunkClass(class)
-}
-
-func (l *stdlibModuleLoader) registerMainChunk(chunk bytecode.Chunk) {
-	l.mainChunk = chunk
-	l.hasMainChunk = true
-}
-
-func (l *stdlibModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value) (runtime.Value, error) {
-	vm, err := l.newSubVM(class.Module)
-	if err != nil {
-		return nil, err
-	}
-	return vm.CallStaticMethod(class.Index, methodName, args)
-}
-
-func (l *stdlibModuleLoader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-	if _, ok := l.chunks[module]; !ok && module != "" && native.IsNativeModule(module) {
-		return nil, &runtime.MethodNotFoundError{Class: className, Method: methodName}
-	}
-	vm, err := l.newSubVM(module)
-	if err != nil {
-		return nil, err
-	}
-	return vm.CallInstanceMethod(instance, methodName, args)
-}
-
-func (l *stdlibModuleLoader) ModuleMethodParamNames(module string, className string, methodName string) ([]string, error) {
-	chunk, ok := l.chunks[module]
-	if !ok {
-		return nil, fmt.Errorf("module %s is not loaded", module)
-	}
-	return chunk.MethodParamNames(className, methodName)
-}
-
-func (l *stdlibModuleLoader) CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-	vm, err := l.newSubVM(module)
-	if err != nil {
-		return nil, err
-	}
-	return vm.CallMethodAs(className, instance, methodName, args)
-}
-
-func (l *stdlibModuleLoader) ImmutableFieldsForModuleClass(module string, className string) []string {
-	chunk, ok := l.chunks[module]
-	if !ok {
-		return nil
-	}
-	for i := range chunk.Classes {
-		if chunk.Classes[i].Name == className {
-			return chunk.Classes[i].ImmutableFields
-		}
-	}
-	return nil
-}
-
-func (l *stdlibModuleLoader) ModuleClassDescendsFrom(module, className, targetSimpleName string) bool {
-	var chunk bytecode.Chunk
-	if module == "" {
-		if !l.hasMainChunk {
-			return false
-		}
-		chunk = l.mainChunk
-	} else {
-		c, ok := l.chunks[module]
-		if !ok {
-			return false
-		}
-		chunk = c
-	}
-	for i := range chunk.Classes {
-		if !strings.EqualFold(chunk.Classes[i].Name, className) {
-			continue
-		}
-		for ci := chunk.Classes[i]; ; {
-			if strings.EqualFold(ci.Name, targetSimpleName) {
-				return true
-			}
-			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
-				ci = chunk.Classes[ci.ParentIndex]
-				continue
-			}
-			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
-				return l.ModuleClassDescendsFrom(ci.ParentName[:dot], ci.ParentName[dot+1:], targetSimpleName)
-			}
-			return false
-		}
-	}
-	return false
-}
-
-func (l *stdlibModuleLoader) chunkForTest(module string) (bytecode.Chunk, bool) {
-	if module == "" {
-		if !l.hasMainChunk {
-			return bytecode.Chunk{}, false
-		}
-		return l.mainChunk, true
-	}
-	c, ok := l.chunks[module]
-	return c, ok
-}
-
-func (l *stdlibModuleLoader) StaticValueForModuleClass(module, className, name string) (runtime.Value, bool) {
-	chunk, ok := l.chunkForTest(module)
-	if !ok {
-		return nil, false
-	}
-	for i := range chunk.Classes {
-		if !strings.EqualFold(chunk.Classes[i].Name, className) {
-			continue
-		}
-		for ci := chunk.Classes[i]; ; {
-			if idx, present := ci.StaticValues[name]; present && idx >= 0 && int(idx) < len(chunk.Constants) {
-				return chunk.Constants[idx], true
-			}
-			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
-				ci = chunk.Classes[ci.ParentIndex]
-				continue
-			}
-			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
-				return l.StaticValueForModuleClass(ci.ParentName[:dot], ci.ParentName[dot+1:], name)
-			}
-			return nil, false
-		}
-	}
-	return nil, false
-}
-
-func (l *stdlibModuleLoader) CallModuleStaticMethodByName(module, className, methodName string, args []runtime.Value) (runtime.Value, bool, error) {
-	chunk, ok := l.chunkForTest(module)
-	if !ok {
-		return nil, false, nil
-	}
-	for i := range chunk.Classes {
-		if !strings.EqualFold(chunk.Classes[i].Name, className) {
-			continue
-		}
-		for ci := chunk.Classes[i]; ; {
-			if _, present := ci.StaticMethods[strings.ToLower(methodName)]; present {
-				vm := bytecode.NewVMWithModuleLoader(chunk, l.stdout, l)
-				vm.SetModuleName(module)
-				vm.SetModulePaths(l.modulePaths)
-				vm.SetStatefulNativeCaller(l.stateful)
-				vm.RestoreGlobals(l.globals[module])
-				vm.RestoreFunctionDecoratorState(l.decorators[module])
-				result, err := vm.CallStaticMethod(int64(i), methodName, args)
-				return result, true, err
-			}
-			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
-				ci = chunk.Classes[ci.ParentIndex]
-				continue
-			}
-			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
-				return l.CallModuleStaticMethodByName(ci.ParentName[:dot], ci.ParentName[dot+1:], methodName, args)
-			}
-			return nil, false, nil
-		}
-	}
-	return nil, false, nil
-}
-
-func (l *stdlibModuleLoader) UnimplementedAbstractMethods(module, className string) map[string]string {
-	chunk, ok := l.chunkForTest(module)
-	if !ok {
-		return nil
-	}
-	for i := range chunk.Classes {
-		if !strings.EqualFold(chunk.Classes[i].Name, className) {
-			continue
-		}
-		overridden := map[string]bool{}
-		abstractDecl := map[string]string{}
-		for ci := chunk.Classes[i]; ; {
-			for method := range ci.Methods {
-				isAbstract := false
-				for _, dec := range ci.MethodDecorators[method] {
-					if strings.EqualFold(dec.Name, "abstract") {
-						isAbstract = true
-						break
-					}
+// newHarnessLoader builds a bcloader.Loader for parity tests: analyze-then-compile each module (no .gbc cache), resolving native modules via the evaluator.
+func newHarnessLoader(stdout io.Writer, stateful bytecode.StatefulNativeCaller) *bcloader.Loader {
+	return bcloader.New(stdout, nil, stateful, bcloader.Options{
+		Compile: func(canonical, sourcePath string, source []byte, program *ast.Program, modulePaths []string) (bytecode.Chunk, error) {
+			if diagnostics := semantic.New().Analyze(program); len(diagnostics) > 0 {
+				messages := make([]string, 0, len(diagnostics))
+				for _, d := range diagnostics {
+					messages = append(messages, d.Message)
 				}
-				if isAbstract {
-					if !overridden[method] {
-						if _, seen := abstractDecl[method]; !seen {
-							abstractDecl[method] = ci.Name
-						}
-					}
-				} else {
-					overridden[method] = true
-					delete(abstractDecl, method)
-				}
+				return bytecode.Chunk{}, fmt.Errorf("analyze module %s: %s", canonical, strings.Join(messages, "\n"))
 			}
-			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
-				ci = chunk.Classes[ci.ParentIndex]
-				continue
+			return bytecode.Compile(program, source, canonical)
+		},
+		LookupBuiltin: func(canonical, alias string) *runtime.Module {
+			if e, ok := stateful.(*evaluator.Evaluator); ok {
+				return e.BuiltinModule(canonical, alias)
 			}
-			if dot := strings.LastIndex(ci.ParentName, "."); dot >= 0 {
-				for method, owner := range l.UnimplementedAbstractMethods(ci.ParentName[:dot], ci.ParentName[dot+1:]) {
-					if !overridden[method] {
-						if _, seen := abstractDecl[method]; !seen {
-							abstractDecl[method] = owner
-						}
-					}
-				}
-			}
-			break
-		}
-		return abstractDecl
-	}
-	return nil
+			return nil
+		},
+	})
 }
 
-func (l *stdlibModuleLoader) ListAllClasses() []runtime.Value {
-	out := []runtime.Value{}
-	appendChunkClasses := func(module string, chunk bytecode.Chunk) {
-		for i, classInfo := range chunk.Classes {
-			out = append(out, runtime.BytecodeClass{
-				Name: classInfo.Name, Index: int64(i), Module: module,
-				Decorators:       classInfo.Decorators,
-				MethodDecorators: classInfo.MethodDecorators,
-			})
-		}
-	}
-	for module, chunk := range l.chunks {
-		appendChunkClasses(module, chunk)
-	}
-	if l.hasMainChunk {
-		appendChunkClasses("", l.mainChunk)
-	}
-	return out
-}
-
-func (l *stdlibModuleLoader) LookupModuleInterface(module, name string) (bytecode.InterfaceInfo, bool) {
-	chunk, ok := l.chunks[module]
-	if !ok {
-		return bytecode.InterfaceInfo{}, false
-	}
-	for _, iface := range chunk.Interfaces {
-		if strings.EqualFold(iface.Name, name) {
-			return iface, true
-		}
-	}
-	return bytecode.InterfaceInfo{}, false
-}
-
-func (l *stdlibModuleLoader) FindFunctionByName(name string) (runtime.Value, bool) {
-	for _, module := range l.modules {
-		if module == nil {
-			continue
-		}
-		if v, ok := module.Exports[name]; ok {
-			switch v := v.(type) {
-			case runtime.Function, runtime.OverloadedFunction, runtime.BytecodeFunction, runtime.DecoratorTarget:
-				return v, true
-			default:
-				_ = v
-			}
-		}
-	}
-	return nil, false
-}
-
-func (l *stdlibModuleLoader) FindClassByName(name string) (runtime.Value, bool) {
-	chunks := map[string]bytecode.Chunk{}
-	for module, chunk := range l.chunks {
-		chunks[module] = chunk
-	}
-	// Mirror the production loader: the main program's classes are also
-	// resolvable by name (a sub-module reflecting a main-chunk class).
-	if l.hasMainChunk {
-		chunks[""] = l.mainChunk
-	}
-	for module, chunk := range chunks {
-		for idx, classInfo := range chunk.Classes {
-			if classInfo.Name == name {
-				return runtime.BytecodeClass{
-					Name:             classInfo.Name,
-					Doc:              classInfo.Doc,
-					Index:            int64(idx),
-					Module:           module,
-					Parent:           classInfo.ParentName,
-					Fields:           append([]string(nil), classInfo.FieldNames...),
-					Interfaces:       append([]string(nil), classInfo.Implements...),
-					Decorators:       classInfo.Decorators,
-					MethodDecorators: classInfo.MethodDecorators,
-					StaticDecorators: classInfo.StaticDecorators,
-				}, true
-			}
-		}
-	}
-	return nil, false
-}
 
 // runParityWithStdlib is like runParityStateful but additionally wires
 // a bytecode-side module loader so source-distributed stdlib modules
@@ -545,10 +76,10 @@ func runParityWithStdlib(t *testing.T, source string, want string) {
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.New(&vmOut)
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.mainChunk = chunk
-	loader.hasMainChunk = true
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetMainChunk(chunk)
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	loader.SetMainVM(vm)
 	vm.SetStatefulNativeCaller(stateful)
 	/* Without the dispatcher wiring, the evaluator can't reach
 	 * back into the VM for test.mock + RunTestClass. Production
@@ -856,10 +387,11 @@ func TestParityReflectClassesCrossModule(t *testing.T) {
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
-	loader.registerMainChunk(chunk)
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
+	loader.SetMainChunk(chunk)
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	loader.SetMainVM(vm)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
 	if err := vm.Run(); err != nil {
@@ -899,8 +431,8 @@ func assertImportedModuleRejected(t *testing.T, moduleBody string) {
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)

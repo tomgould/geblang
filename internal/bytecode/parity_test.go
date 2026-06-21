@@ -19,13 +19,6 @@ import (
 	"geblang/internal/parser"
 )
 
-// stdlibModuleLoader is a minimal bytecode-side module loader used by
-// parity tests for source-distributed stdlib modules (time.scheduler,
-// async.rate, etc.). It resolves canonical module paths via the standard
-// resolver (which walks ancestors to find stdlib/), compiles each
-// imported source module to bytecode on demand, and caches the result
-// inside the loader struct.
-
 // TestParityContainerInspectIsJSONLike pins the Inspect output for
 // dicts, lists, and sets across both backends. Strings inside a
 // container are JSON-quoted; top-level strings stay unquoted to
@@ -1865,8 +1858,8 @@ io.println("ran at import time");
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
@@ -1923,8 +1916,8 @@ io.println(quiet.loaded);
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
@@ -1985,11 +1978,11 @@ io.println(Leaf().describe());
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
-	loader.mainChunk = chunk
-	loader.hasMainChunk = true
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
+	loader.SetMainChunk(chunk)
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	loader.SetMainVM(vm)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
 	stateful.SetMethodDispatcher(vm)
@@ -2450,8 +2443,8 @@ io.println(local.contains("websocket"));
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
@@ -2538,8 +2531,8 @@ io.println(t instanceof donor.Countable);
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
@@ -2999,8 +2992,8 @@ io.println(u.label);
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
@@ -3745,11 +3738,11 @@ io.println(b.tag("x", "+", "y", "z"));
 	}
 	var vmOut bytes.Buffer
 	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
-	loader := newStdlibModuleLoader(&vmOut, stateful)
-	loader.modulePaths = []string{dir}
-	loader.mainChunk = chunk
-	loader.hasMainChunk = true
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
+	loader.SetMainChunk(chunk)
 	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	loader.SetMainVM(vm)
 	vm.SetModulePaths([]string{dir})
 	vm.SetStatefulNativeCaller(stateful)
 	stateful.SetMethodDispatcher(vm)
