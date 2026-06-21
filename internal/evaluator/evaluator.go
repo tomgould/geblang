@@ -990,6 +990,28 @@ func (e *Evaluator) Cleanup() error {
 	e.httpStreams = map[int64]*httpStreamHandle{}
 	e.httpStreamMu.Unlock()
 
+	e.httpResponseStreamMu.Lock()
+	respStreams := e.httpResponseStreams
+	e.httpResponseStreams = map[int64]*httpResponseStreamHandle{}
+	e.httpResponseStreamMu.Unlock()
+	for _, h := range respStreams {
+		h.closeBody()
+	}
+
+	e.httpFetchStreamMu.Lock()
+	e.httpFetchStreams = map[int64]*httpFetchStreamHandle{}
+	e.httpFetchStreamMu.Unlock()
+
+	e.httpClientMu.Lock()
+	clientHandles := e.httpClientHandles
+	e.httpClientHandles = map[int64]*httpClientHandle{}
+	e.httpClientMu.Unlock()
+	for _, h := range clientHandles {
+		if h.client != nil {
+			h.client.CloseIdleConnections()
+		}
+	}
+
 	e.wsMu.Lock()
 	websockets := e.websockets
 	e.websockets = map[int64]*wsHandle{}

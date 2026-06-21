@@ -28,6 +28,14 @@ func (h *httpResponseStreamHandle) closeBody() {
 	}
 }
 
+// closeResponseStream closes the body and drops the handle so it is not retained for the program's life. Caller holds httpResponseStreamMu.
+func (e *Evaluator) closeResponseStream(this *runtime.Instance, h *httpResponseStreamHandle) {
+	h.closeBody()
+	if id, ok := this.Fields["handle"].(runtime.Int); ok {
+		delete(e.httpResponseStreams, id.Value.Int64())
+	}
+}
+
 func (e *Evaluator) httpRequestStream(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects exactly one argument", call.Callee.String())
@@ -108,7 +116,7 @@ func (e *Evaluator) responseStreamClass() *runtime.Class {
 	cls.Methods["read"] = []runtime.Function{{Name: "read", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
 		h, err := get(this)
 		if err != nil {
-			return nil, err
+			return runtime.Null{}, nil
 		}
 		e.httpResponseStreamMu.Lock()
 		defer e.httpResponseStreamMu.Unlock()
@@ -117,7 +125,7 @@ func (e *Evaluator) responseStreamClass() *runtime.Class {
 		}
 		line, rerr := h.reader.ReadString('\n')
 		if len(line) == 0 {
-			h.closeBody()
+			e.closeResponseStream(this, h)
 			if rerr == nil || errors.Is(rerr, io.EOF) {
 				return runtime.Null{}, nil
 			}
@@ -148,7 +156,7 @@ func (e *Evaluator) responseStreamClass() *runtime.Class {
 	cls.Methods["done"] = []runtime.Function{{Name: "done", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
 		h, err := get(this)
 		if err != nil {
-			return nil, err
+			return runtime.Bool{Value: true}, nil
 		}
 		e.httpResponseStreamMu.Lock()
 		defer e.httpResponseStreamMu.Unlock()
@@ -157,11 +165,11 @@ func (e *Evaluator) responseStreamClass() *runtime.Class {
 	cls.Methods["close"] = []runtime.Function{{Name: "close", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
 		h, err := get(this)
 		if err != nil {
-			return nil, err
+			return runtime.Null{}, nil
 		}
 		e.httpResponseStreamMu.Lock()
 		defer e.httpResponseStreamMu.Unlock()
-		h.closeBody()
+		e.closeResponseStream(this, h)
 		return runtime.Null{}, nil
 	}}}
 	e.httpStreamRespClass = cls

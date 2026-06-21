@@ -514,10 +514,17 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		return sh, nil
 	}
 
+	releaseFetchStream := func(this *runtime.Instance) {
+		if id, ok := this.Fields["handle"].(runtime.Int); ok {
+			e.httpFetchStreamMu.Lock()
+			delete(e.httpFetchStreams, id.Value.Int64())
+			e.httpFetchStreamMu.Unlock()
+		}
+	}
 	nextFn := func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
 		sh, err := getFetchStreamHandle(this)
 		if err != nil {
-			return nil, err
+			return runtime.Null{}, nil
 		}
 		sh.mu.Lock()
 		if sh.read >= sh.total {
@@ -528,7 +535,11 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 		result := <-sh.ch
 		sh.mu.Lock()
 		sh.read++
+		done := sh.read >= sh.total
 		sh.mu.Unlock()
+		if done {
+			releaseFetchStream(this)
+		}
 		return result, nil
 	}
 	fetchStreamClass.Methods["next"] = []runtime.Function{{Name: "next", Native: nextFn}}
@@ -543,7 +554,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 	fetchStreamClass.Methods["remaining"] = []runtime.Function{{Name: "remaining", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
 		sh, err := getFetchStreamHandle(this)
 		if err != nil {
-			return nil, err
+			return runtime.NewInt64(0), nil
 		}
 		sh.mu.Lock()
 		defer sh.mu.Unlock()
@@ -552,7 +563,7 @@ func (e *Evaluator) httpClientObjectClasses() []*runtime.Class {
 	fetchStreamClass.Methods["done"] = []runtime.Function{{Name: "done", Native: func(this *runtime.Instance, _ []runtime.Value) (runtime.Value, error) {
 		sh, err := getFetchStreamHandle(this)
 		if err != nil {
-			return nil, err
+			return runtime.Bool{Value: true}, nil
 		}
 		sh.mu.Lock()
 		defer sh.mu.Unlock()

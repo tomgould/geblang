@@ -724,6 +724,46 @@ is registered in `e.builtins` under its canonical name and provides a
 
 ---
 
+## Memory management
+
+Geblang runtime values (strings, bytes, lists, dicts, instances) are ordinary Go
+objects, so the Go garbage collector reclaims them automatically once no Geblang
+reference remains - there is no separate Geblang heap or manual `free`. Dropping
+the last reference (a variable going out of scope, overwriting it, removing it
+from a collection) is all that is needed; the collector does the rest.
+
+Two things are worth knowing for long-running servers:
+
+- **Returning memory to the OS.** After a burst of large allocations (e.g. a
+  server buffering many photo uploads), the Go runtime reclaims the heap but does
+  not immediately hand the pages back to the operating system, so RSS plateaus at
+  the burst high-water mark. A running program therefore starts a background
+  memory sweeper that, on a cadence, runs a GC and returns freed pages to the OS
+  (`runtime/debug.FreeOSMemory`) when the heap has grown notably or Go is holding
+  a notable amount of freed-but-unreturned memory. It is on by default and tuned
+  with environment variables:
+
+  | Variable | Default | Effect |
+  |---|---|---|
+  | `GEBLANG_GC` | on | Set to `off` (or `0`/`false`) to disable the sweeper |
+  | `GEBLANG_GC_INTERVAL` | `30s` | How often the sweeper checks (any Go duration) |
+  | `GEBLANG_GC_THRESHOLD_MB` | `64` | Heap growth / unreturned slack that triggers a sweep |
+
+  The sweep is a no-op for short scripts (they exit before the first tick) and
+  costs only a periodic `ReadMemStats` while idle.
+
+- **Forcing a collection.** `profile.gc()` runs a GC cycle on demand; useful right
+  after dropping a large object when you want the space reclaimed immediately
+  rather than at the next automatic cycle.
+
+Resources backed by an OS handle - open files, sockets, database connections,
+streaming response bodies - are not pure memory and should be released explicitly
+with their `close()` method (typically via `defer`) so the underlying handle is
+freed promptly rather than at program shutdown. Class destructors
+(`func ~ClassName()`) also run cleanup at teardown.
+
+---
+
 ## Native Registry: `internal/native`
 
 `native.Registry` holds pure, stateless functions shared between the evaluator

@@ -22,6 +22,19 @@
   with no setup. An on-disk stdlib (a repo checkout or `GEBLANG_STDLIB`) still
   takes precedence, so developing against a working copy is unchanged.
 
+### Runtime
+
+- A running program now starts a background memory sweeper that periodically
+  returns freed heap pages to the OS, so a long-running server's RSS no longer
+  stays pinned at its allocation high-water mark after a burst (e.g. buffering
+  large uploads). It is on by default and tuned with `GEBLANG_GC` (`off` to
+  disable), `GEBLANG_GC_INTERVAL` (default `30s`), and `GEBLANG_GC_THRESHOLD_MB`
+  (default `64`). `profile.gc()` still forces a collection on demand.
+- Streaming HTTP response handles (`http.requestStream`, `http.fetchStream`) are
+  now released as soon as the stream is fully read or closed, and any left open
+  are swept at shutdown, so a long-running server that streams many responses no
+  longer accumulates handles for the life of the program.
+
 ## 1.24.0
 
 ### Standard library

@@ -23,6 +23,7 @@ import (
 	"geblang/internal/check"
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
+	"geblang/internal/memwatch"
 	"geblang/internal/modules"
 	"geblang/internal/native"
 	"geblang/internal/parser"
@@ -1186,6 +1187,7 @@ func applyManifestCapabilities(dir string) {
 
 func runScript(sourcePath string, scriptArgs []string, source []byte, program *ast.Program, mode executionMode, allowFFI []string, stdout io.Writer, trace io.Writer) (int, error) {
 	applyManifestCapabilities(filepath.Dir(sourcePath))
+	memwatch.Start()
 	// Keep advisory analysis warnings off the program's stdout (stderr instead).
 	analyze := crossModuleAnalyzer(sourcePath, program, modules.NewResolver([]string{filepath.Dir(sourcePath)}), os.Stderr, "warning: ")
 	// On the VM path the cross-module analysis runs inside the compile
