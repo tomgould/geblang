@@ -18,9 +18,13 @@ class PathGlobTest extends test.Test {
 
     @test
     func recursiveMatch(): void {
-        # Match every .go file under the package the test harness is bundled
-        # under; we trust the repo layout to keep some present.
-        let matches = path.glob("/home/daveg/projects/geblang/internal/native/**/*.go");
+        # Self-contained tree so the test does not depend on machine paths.
+        let dir = io.tempDir("geb-glob-*");
+        io.mkdir(path.join(dir, "sub/deep"), 0o755);
+        io.writeText(path.join(dir, "sub/b.go"), "package x");
+        io.writeText(path.join(dir, "sub/deep/c.go"), "package x");
+        io.writeText(path.join(dir, "sub/note.txt"), "ignore");
+        let matches = path.glob(path.join(dir, "**/*.go"));
         this.assertTrue(matches.length > 1);
         for (m in matches) {
             this.assertTrue(m.endsWith(".go"));

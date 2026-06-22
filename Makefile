@@ -11,6 +11,7 @@ DOCKER_IMAGE ?= geblang-build
 DOCKER_CONTAINER ?= geblang-build-artifacts
 VSCODE_IMAGE ?= geblang-vscode-artifacts
 VSCODE_CONTAINER ?= geblang-vscode-build-artifacts
+CODE ?= code
 
 # Full local build: run all tests, static-check the .gb corpus, install
 # the binary, regenerate the docs site, build + install the VS Code
@@ -42,6 +43,7 @@ test-lang: build
 	  --allow-ffi 'libm.so.*' --allow-ffi 'libc.so.*' --allow-ffi 'libsqlite3*' \
 	  --allow-ffi 'libzstd*' --allow-ffi 'libsystemd*' --allow-ffi 'libmagic*' \
 	  --allow-ffi 'libncursesw*' --allow-ffi 'libncurses*' --allow-ffi 'libtinfo*' \
+	  --allow-ffi 'libc.dylib' --allow-ffi 'libm.dylib' --allow-ffi 'libSystem*' \
 	  tests/
 
 # test-pgvector spins up a pgvector Postgres container (pgvector/pgvector:pg16),
@@ -132,10 +134,13 @@ vscode-install-wsl:
 	@VSIX_SRC=build/vscode/vsix/geblang.vsix; \
 	VSIX_TMP=/mnt/c/Windows/Temp/geblang.vsix; \
 	cp "$$VSIX_SRC" "$$VSIX_TMP" && \
-	code --install-extension "$$(wslpath -w $$VSIX_TMP)"
+	$(CODE) --install-extension "$$(wslpath -w $$VSIX_TMP)"
 
 vscode-install-native:
-	code --install-extension build/vscode/vsix/geblang.vsix
+	@bin="$(CODE)"; \
+	command -v "$$bin" >/dev/null 2>&1 || bin="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"; \
+	command -v "$$bin" >/dev/null 2>&1 || { echo "error: VS Code 'code' CLI not found; install it (VS Code: Command Palette > 'Shell Command: Install code command in PATH') or run: make vscode-install CODE=/path/to/code" >&2; exit 1; }; \
+	"$$bin" --install-extension build/vscode/vsix/geblang.vsix
 
 vscode-install:
 	@if [ -n "$$WSL_DISTRO_NAME" ]; then \
