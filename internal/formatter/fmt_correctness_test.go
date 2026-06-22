@@ -38,7 +38,7 @@ func TestFormatPrecedenceParens(t *testing.T) {
 		{"let q = (a ** b) ** c;", "let q = (a ** b) ** c;"},
 		{"let s = a.b.c.d;", "let s = a.b.c.d;"},
 		{"let m = (x as Foo).bar;", "let m = (x as Foo).bar;"},
-		{"let n = (a - b) - c;", "let n = a - b - c;"},
+		{"let n = (a - b) - c;", "let n = (a - b) - c;"},
 		{"let o = a - (b - c);", "let o = a - (b - c);"},
 	}
 	for _, c := range cases {
@@ -149,5 +149,49 @@ func TestFormatLayout(t *testing.T) {
 	si, _ := formatter.Format([]byte("let x = \"a\" + \"b\" + \"c\";"))
 	if strings.Count(string(si), "\n") != 1 {
 		t.Errorf("single-line concat got broken: %q", si)
+	}
+}
+
+func TestFormatPreservesExplicitParens(t *testing.T) {
+	// Redundant grouping parentheses the author wrote are kept, not stripped.
+	cases := []struct{ in, want string }{
+		{"let c = (((a || b) && k) || (d && e && f));", "let c = (((a || b) && k) || (d && e && f));"},
+		{"let g = ((lat as float) * GRID) as int;", "let g = ((lat as float) * GRID) as int;"},
+		{"let h = (x[\"exp\"] as int) > now;", "let h = (x[\"exp\"] as int) > now;"},
+		{"let i = (a + b) * c;", "let i = (a + b) * c;"},
+		// but no parens are invented where none were written:
+		{"let m = a || b && c;", "let m = a || b && c;"},
+		{"let n = a + b * c;", "let n = a + b * c;"},
+	}
+	for _, c := range cases {
+		assertFormat(t, c.in, c.want)
+	}
+}
+
+func TestFormatMethodChain(t *testing.T) {
+	// a method chain the author split across lines stays multi-line + idempotent
+	in := "func f(): void {\nlet r = http.request(u)\n.withMethod(\"POST\")\n.withBody(b)\n.send();\n}"
+	out, _ := formatter.Format([]byte(in))
+	if !strings.Contains(string(out), "http.request(u)\n") || !strings.Contains(string(out), ".withMethod(\"POST\")") {
+		t.Errorf("method chain flattened:\n%s", out)
+	}
+	out2, _ := formatter.Format(out)
+	if string(out2) != string(out) {
+		t.Errorf("method chain not idempotent")
+	}
+	// a single-line chain stays inline
+	si, _ := formatter.Format([]byte("let x = a.b().c().d();"))
+	if strings.Count(string(si), "\n") != 1 {
+		t.Errorf("single-line chain broken: %q", si)
+	}
+}
+
+func TestFormatTrailingComments(t *testing.T) {
+	// a trailing same-line comment stays on the statement's line
+	assertFormatHas(t, "let x = 1; /* note */", "let x = 1; /* note */")
+	// a trailing comment inside a block stays inside the block (not pushed out)
+	out, _ := formatter.Format([]byte("func f(): void {\nif (a) {\nreturn; /* done */\n}\nreturn;\n}"))
+	if !strings.Contains(string(out), "return; /* done */") {
+		t.Errorf("trailing comment not kept inline / moved out of block:\n%s", out)
 	}
 }

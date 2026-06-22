@@ -1234,6 +1234,7 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 			block.Statements = append(block.Statements, stmt)
 		}
 	}
+	block.End = p.curToken // RBrace (or EOF), so endLine sees the block's closing line
 	return block
 }
 
@@ -1295,11 +1296,18 @@ func (p *Parser) parsePrefix() ast.Expression {
 		p.nextToken()
 		expr := p.parseExpression(lowest)
 		p.expectPeek(token.RParen)
-		// `(obj.x)` followed by `(args)` should call the VALUE of
-		// obj.x, not dispatch as a method on obj. Mark the selector
-		// so the call dispatcher takes the value-then-call path.
-		if sel, ok := expr.(*ast.SelectorExpression); ok {
-			sel.Parenthesized = true
+		// Selector: routes `(obj.x)(args)` through value-then-call. Others: lets the formatter keep the author's grouping parens.
+		switch e := expr.(type) {
+		case *ast.SelectorExpression:
+			e.Parenthesized = true
+		case *ast.InfixExpression:
+			e.Parenthesized = true
+		case *ast.CastExpression:
+			e.Parenthesized = true
+		case *ast.TernaryExpression:
+			e.Parenthesized = true
+		case *ast.PrefixExpression:
+			e.Parenthesized = true
 		}
 		return expr
 	case token.LBracket:

@@ -123,6 +123,7 @@ func (s *SpreadExpression) String() string       { return "..." + s.Value.String
 
 type BlockStatement struct {
 	Token      token.Token
+	End        token.Token // the closing brace, so the formatter can measure a block's true end line
 	Statements []Statement
 
 	scopeOnce  sync.Once
@@ -902,9 +903,10 @@ func (e *FloatLiteral) ParsedValue() (float64, error) {
 }
 
 type PrefixExpression struct {
-	Token    token.Token
-	Operator string
-	Right    Expression
+	Token         token.Token
+	Operator      string
+	Right         Expression
+	Parenthesized bool
 }
 
 func (*PrefixExpression) expressionNode()        {}
@@ -928,7 +930,8 @@ type InfixExpression struct {
 	Right    Expression
 	// RightType carries the parsed TypeRef for `instanceof` (Right holds
 	// its stringified form) so annotation validators can see it.
-	RightType *TypeRef
+	RightType     *TypeRef
+	Parenthesized bool
 }
 
 func (*InfixExpression) expressionNode()        {}
@@ -1215,9 +1218,10 @@ func (e *AwaitExpression) TokenLiteral() string { return e.Token.Literal }
 func (e *AwaitExpression) String() string       { return "await " + e.Value.String() }
 
 type CastExpression struct {
-	Token token.Token
-	Value Expression
-	Type  *TypeRef
+	Token         token.Token
+	Value         Expression
+	Type          *TypeRef
+	Parenthesized bool
 }
 
 func (*CastExpression) expressionNode()        {}
@@ -1225,10 +1229,11 @@ func (e *CastExpression) TokenLiteral() string { return e.Token.Literal }
 func (e *CastExpression) String() string       { return e.Value.String() + " as " + e.Type.String() }
 
 type TernaryExpression struct {
-	Token     token.Token
-	Condition Expression
-	ThenExpr  Expression
-	ElseExpr  Expression
+	Token         token.Token
+	Condition     Expression
+	ThenExpr      Expression
+	ElseExpr      Expression
+	Parenthesized bool
 }
 
 func (*TernaryExpression) expressionNode()        {}

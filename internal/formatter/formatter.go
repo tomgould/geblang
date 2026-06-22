@@ -2,6 +2,7 @@
 package formatter
 
 import (
+	"bytes"
 	"fmt"
 	"reflect"
 	"strings"
@@ -47,11 +48,23 @@ func verifyRoundTrip(input *ast.Program, out string) error {
 }
 
 type fmtr struct {
-	buf             strings.Builder
+	buf             bytes.Buffer
 	depth           int
 	prevWasTopLevel bool
 	comments        []lexer.Comment
 	ci              int
+}
+
+// flushTrailing appends a comment that sits on the same source line as the statement just written, keeping it on that line instead of moving it.
+func (f *fmtr) flushTrailing(line int) {
+	for f.ci < len(f.comments) && f.comments[f.ci].Line == line {
+		b := f.buf.Bytes()
+		if len(b) > 0 && b[len(b)-1] == '\n' {
+			f.buf.Truncate(f.buf.Len() - 1)
+		}
+		f.buf.WriteString(" " + renderComment(f.comments[f.ci]) + "\n")
+		f.ci++
+	}
 }
 
 // startLine returns a statement's first source line via its Token field, or a large sentinel for nodes without one.
@@ -104,6 +117,17 @@ func endLine(s ast.Statement) int {
 	}
 	walk(reflect.ValueOf(s))
 	return max
+}
+
+// isTopDecl reports whether a top-level statement is a declaration that is always separated by a blank line.
+func isTopDecl(s ast.Statement) bool {
+	switch x := s.(type) {
+	case *ast.FunctionStatement, *ast.ClassStatement, *ast.InterfaceStatement, *ast.EnumStatement:
+		return true
+	case *ast.ExportStatement:
+		return isTopDecl(x.Statement)
+	}
+	return false
 }
 
 // maybeBlank emits one blank line when the source had a gap (>1 line) between the previous statement's end and the next statement or its leading comment.
@@ -172,18 +196,28 @@ func (f *fmtr) program(prog *ast.Program) {
 		case *ast.ModuleStatement, *ast.ImportStatement:
 			f.flushComments(startLine(stmts[i]))
 			f.stmt(stmts[i])
+			f.flushTrailing(endLine(stmts[i]))
 			i++
 			continue
 		}
 		break
 	}
-	// remaining top-level statements with blank lines between them
+	// Top-level declarations are always blank-separated; other statements keep the author's blanks.
+	prevEnd := 0
+	var prev ast.Statement
 	for i < len(stmts) {
 		if i > 0 {
-			f.nl()
+			if isTopDecl(stmts[i]) || isTopDecl(prev) {
+				f.nl()
+			} else {
+				f.maybeBlank(prevEnd, stmts[i])
+			}
 		}
 		f.flushComments(startLine(stmts[i]))
 		f.stmt(stmts[i])
+		f.flushTrailing(endLine(stmts[i]))
+		prevEnd = endLine(stmts[i])
+		prev = stmts[i]
 		i++
 	}
 	f.flushComments(1 << 30)
@@ -445,6 +479,7 @@ func (f *fmtr) blockInline(block *ast.BlockStatement, after func()) {
 		f.maybeBlank(prevEnd, s)
 		f.flushComments(startLine(s))
 		f.stmt(s)
+		f.flushTrailing(endLine(s))
 		prevEnd = endLine(s)
 	}
 	f.depth--
@@ -582,6 +617,7 @@ func (f *fmtr) fmtClassRaw(s *ast.ClassStatement) {
 		f.maybeBlank(prevEnd, m)
 		f.flushComments(startLine(m))
 		f.stmt(m)
+		f.flushTrailing(endLine(m))
 		prevEnd = endLine(m)
 	}
 	f.depth--
@@ -919,6 +955,88 @@ func (f *fmtr) shouldBreakInfix(e *ast.InfixExpression) bool {
 	return maxL > minL
 }
 
+type chainSeg struct {
+	name     string
+	optional bool
+	call     *ast.CallExpression // nil for a bare property access
+	line     int
+}
+
+// flattenChain peels a `.method(args)` / `.prop` selector-call spine off e, returning the base object and the segments in source order.
+func flattenChain(e ast.Expression) (ast.Expression, []chainSeg) {
+	var segs []chainSeg
+	node := e
+	for {
+		if call, ok := node.(*ast.CallExpression); ok {
+			if sel, ok := call.Callee.(*ast.SelectorExpression); ok && !sel.Parenthesized {
+				segs = append(segs, chainSeg{name: sel.Name.Value, optional: sel.Optional, call: call, line: nodeLine(sel.Name)})
+				node = sel.Object
+				continue
+			}
+		}
+		if sel, ok := node.(*ast.SelectorExpression); ok && !sel.Parenthesized {
+			segs = append(segs, chainSeg{name: sel.Name.Value, optional: sel.Optional, line: nodeLine(sel.Name)})
+			node = sel.Object
+			continue
+		}
+		break
+	}
+	for i, j := 0, len(segs)-1; i < j; i, j = i+1, j-1 {
+		segs[i], segs[j] = segs[j], segs[i]
+	}
+	return node, segs
+}
+
+// shouldBreakChain reports whether a method chain has 2+ segments the author split across source lines.
+func (f *fmtr) shouldBreakChain(e ast.Expression) bool {
+	base, segs := flattenChain(e)
+	if len(segs) < 2 {
+		return false
+	}
+	minL, maxL := nodeLine(base), 0
+	if minL == 0 {
+		minL = 1 << 30
+	}
+	for _, s := range segs {
+		if s.line == 0 {
+			continue
+		}
+		if s.line < minL {
+			minL = s.line
+		}
+		if s.line > maxL {
+			maxL = s.line
+		}
+	}
+	return maxL > minL
+}
+
+// multilineChain renders a method chain keeping the author's line breaks: each segment that started on a new source line goes on its own indented line.
+func (f *fmtr) multilineChain(e ast.Expression) string {
+	base, segs := flattenChain(e)
+	indent := strings.Repeat("    ", f.depth+1)
+	var b strings.Builder
+	b.WriteString(f.exprChild(base, !fmtIsPrimary(base)))
+	prevLine := nodeLine(base)
+	for _, s := range segs {
+		dot := "."
+		if s.optional {
+			dot = "?."
+		}
+		seg := dot + s.name
+		if s.call != nil {
+			seg += f.typeArgs(s.call.TypeArguments) + "(" + f.callArgs(s.call.Arguments) + ")"
+		}
+		if prevLine > 0 && s.line > prevLine {
+			b.WriteString("\n" + indent + seg)
+		} else {
+			b.WriteString(seg)
+		}
+		prevLine = s.line
+	}
+	return b.String()
+}
+
 // multilineInfix renders a chain with each continuation operand on its own line, operator-first, indented one level past the statement.
 func (f *fmtr) multilineInfix(e *ast.InfixExpression) string {
 	op := e.Operator
@@ -931,7 +1049,7 @@ func (f *fmtr) multilineInfix(e *ast.InfixExpression) string {
 		if i == 0 {
 			wrap = fmtPrec(o) < self
 		}
-		s := parenIf(wrap, f.expr(o))
+		s := f.exprChild(o, wrap)
 		if i == 0 {
 			b.WriteString(s)
 		} else {
@@ -957,7 +1075,34 @@ func (f *fmtr) sliceIndex(r *ast.RangeExpression) string {
 	return s
 }
 
+// isParen reports whether an expression was written in explicit grouping parentheses the formatter should preserve.
+func isParen(e ast.Expression) bool {
+	switch x := e.(type) {
+	case *ast.InfixExpression:
+		return x.Parenthesized
+	case *ast.CastExpression:
+		return x.Parenthesized
+	case *ast.TernaryExpression:
+		return x.Parenthesized
+	case *ast.PrefixExpression:
+		return x.Parenthesized
+	case *ast.SelectorExpression:
+		return x.Parenthesized
+	}
+	return false
+}
+
+// expr renders an expression, keeping the author's explicit parentheses.
 func (f *fmtr) expr(e ast.Expression) string {
+	return parenIf(isParen(e), f.exprBare(e))
+}
+
+// exprChild renders a child expression, wrapping it once if precedence requires it OR the author parenthesized it.
+func (f *fmtr) exprChild(e ast.Expression, needs bool) string {
+	return parenIf(needs || isParen(e), f.exprBare(e))
+}
+
+func (f *fmtr) exprBare(e ast.Expression) string {
 	if e == nil {
 		return ""
 	}
@@ -1021,9 +1166,9 @@ func (f *fmtr) expr(e ast.Expression) string {
 		if n := len(e.Operator); n > 0 && e.Operator[n-1] >= 'a' && e.Operator[n-1] <= 'z' {
 			sep = " "
 		}
-		return e.Operator + sep + parenIf(fmtPrec(e.Right) < fpPrefix, f.expr(e.Right))
+		return e.Operator + sep + f.exprChild(e.Right, fmtPrec(e.Right) < fpPrefix)
 	case *ast.PostfixExpression:
-		return parenIf(fmtPrec(e.Left) < fpPostfix, f.expr(e.Left)) + e.Operator
+		return f.exprChild(e.Left, fmtPrec(e.Left) < fpPostfix) + e.Operator
 	case *ast.InfixExpression:
 		if f.shouldBreakInfix(e) {
 			return f.multilineInfix(e)
@@ -1038,23 +1183,29 @@ func (f *fmtr) expr(e ast.Expression) string {
 		if _, isCast := e.Left.(*ast.CastExpression); isCast && (e.Operator == "|" || e.Operator == "&") {
 			leftWrap = true // a cast's type greedily absorbs a following | / & as a union/intersection type
 		}
-		return parenIf(leftWrap, f.expr(e.Left)) + " " + e.Operator + " " + parenIf(rightWrap, f.expr(e.Right))
+		return f.exprChild(e.Left, leftWrap) + " " + e.Operator + " " + f.exprChild(e.Right, rightWrap)
 	case *ast.AssignmentExpression:
 		return f.expr(e.Left) + " = " + f.expr(e.Value)
 	case *ast.SelectorExpression:
+		if f.shouldBreakChain(e) {
+			return f.multilineChain(e)
+		}
 		dot := "."
 		if e.Optional {
 			dot = "?."
 		}
-		return parenIf(!fmtIsPrimary(e.Object), f.expr(e.Object)) + dot + e.Name.Value
+		return f.exprChild(e.Object, !fmtIsPrimary(e.Object)) + dot + e.Name.Value
 	case *ast.CallExpression:
-		return parenIf(!fmtIsPrimary(e.Callee), f.expr(e.Callee)) + f.typeArgs(e.TypeArguments) + "(" + f.callArgs(e.Arguments) + ")"
+		if f.shouldBreakChain(e) {
+			return f.multilineChain(e)
+		}
+		return f.exprChild(e.Callee, !fmtIsPrimary(e.Callee)) + f.typeArgs(e.TypeArguments) + "(" + f.callArgs(e.Arguments) + ")"
 	case *ast.IndexExpression:
 		idx := f.expr(e.Index)
 		if rng, ok := e.Index.(*ast.RangeExpression); ok {
 			idx = f.sliceIndex(rng) // a range as an index is Python-style slice syntax
 		}
-		return parenIf(!fmtIsPrimary(e.Left), f.expr(e.Left)) + "[" + idx + "]"
+		return f.exprChild(e.Left, !fmtIsPrimary(e.Left)) + "[" + idx + "]"
 	case *ast.SpreadExpression:
 		return "..." + f.expr(e.Value)
 	case *ast.RangeExpression:
@@ -1082,11 +1233,11 @@ func (f *fmtr) expr(e ast.Expression) string {
 	case *ast.AwaitExpression:
 		return "await " + f.expr(e.Value)
 	case *ast.CastExpression:
-		return parenIf(fmtPrec(e.Value) < fpCompare, f.expr(e.Value)) + " as " + e.Type.String()
+		return f.exprChild(e.Value, fmtPrec(e.Value) < fpCompare) + " as " + e.Type.String()
 	case *ast.TernaryExpression:
-		cond := parenIf(fmtPrec(e.Condition) <= fpTernary, f.expr(e.Condition))
-		then := parenIf(fmtPrec(e.ThenExpr) < fpTernary, f.expr(e.ThenExpr))
-		els := parenIf(fmtPrec(e.ElseExpr) < fpTernary, f.expr(e.ElseExpr))
+		cond := f.exprChild(e.Condition, fmtPrec(e.Condition) <= fpTernary)
+		then := f.exprChild(e.ThenExpr, fmtPrec(e.ThenExpr) < fpTernary)
+		els := f.exprChild(e.ElseExpr, fmtPrec(e.ElseExpr) < fpTernary)
 		return cond + " ? " + then + " : " + els
 	case *ast.MatchExpression:
 		return f.fmtMatchExpr(e)
@@ -1158,6 +1309,7 @@ func (f *fmtr) inlineBlock(block *ast.BlockStatement) string {
 		inner.maybeBlank(prevEnd, s)
 		inner.flushComments(startLine(s))
 		inner.stmt(s)
+		inner.flushTrailing(endLine(s))
 		prevEnd = endLine(s)
 	}
 	f.ci = inner.ci
