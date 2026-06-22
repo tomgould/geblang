@@ -147,6 +147,13 @@ func parseExtraArgs(args []string) ([]string, string) {
 			}
 			continue
 		}
+		if args[i] == "--base-url" {
+			if i+1 < len(args) {
+				canonicalBase = args[i+1]
+				i++
+			}
+			continue
+		}
 		apiSources = append(apiSources, args[i])
 	}
 	return apiSources, exampleSource
@@ -156,8 +163,9 @@ func parseExtraArgs(args []string) ([]string, string) {
 // navbar search form into every page (used by the docs website build;
 // plain static builds leave them empty).
 var (
-	searchURL   string
-	searchScope string
+	searchURL     string
+	searchScope   string
+	canonicalBase string
 )
 
 func searchFormHTML() string {
@@ -684,6 +692,19 @@ func writeRedirect(outDir, target string) error {
 	return os.WriteFile(filepath.Join(outDir, "index.html"), []byte(content), 0o644)
 }
 
+func canonicalLinkHTML(current page) string {
+	if canonicalBase == "" {
+		return ""
+	}
+	base := strings.TrimRight(canonicalBase, "/")
+	out := filepath.ToSlash(current.Output)
+	href := base + "/" + out
+	if out == "index.html" {
+		href = base + "/"
+	}
+	return "\n  <link rel=\"canonical\" href=\"" + html.EscapeString(href) + "\">"
+}
+
 func layout(pages []page, current page, prev, next *page) string {
 	var nav strings.Builder
 	for _, p := range pages {
@@ -723,7 +744,7 @@ func layout(pages []page, current page, prev, next *page) string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>` + html.EscapeString(current.Title) + ` - Geblang Manual</title>
+  <title>` + html.EscapeString(current.Title) + ` - Geblang Manual</title>` + canonicalLinkHTML(current) + `
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     body { background: #f7f8fa; }

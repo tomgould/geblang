@@ -7,6 +7,7 @@ DOCS_SRC ?= docs/user
 DOCS_OUT ?= docs/site
 DOCS_API_SRC ?= stdlib
 DOCS_EXAMPLES_SRC ?= docs/examples
+DOCS_BASE_URL ?=
 DOCKER_IMAGE ?= geblang-build
 DOCKER_CONTAINER ?= geblang-build-artifacts
 VSCODE_IMAGE ?= geblang-vscode-artifacts
@@ -97,7 +98,7 @@ bench-docker: build
 	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto GEBLANG_BIN=$(PWD)/$(BINARY) ./benchmarks/run.sh --docker
 
 docs:
-	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto $(GO) run ./cmd/docsite $(DOCS_SRC) $(DOCS_OUT) $(DOCS_API_SRC) --examples $(DOCS_EXAMPLES_SRC)
+	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto $(GO) run ./cmd/docsite $(DOCS_SRC) $(DOCS_OUT) $(DOCS_API_SRC) --examples $(DOCS_EXAMPLES_SRC) --base-url '$(DOCS_BASE_URL)'
 
 docker-build:
 	rm -rf build
