@@ -260,14 +260,15 @@ func (f *fmtr) stmt(s ast.Statement) {
 	case *ast.DestructuringStatement:
 		f.fmtDestructuring(s)
 	case *ast.ExpressionStatement:
-		f.writeln(f.pad() + f.expr(s.Expression) + ";")
+		f.writeln(f.pad() + f.renderValue(s.Expression, len(f.pad())) + ";")
 	case *ast.ReturnStatement:
 		if s.Value == nil {
 			f.writeln(f.pad() + "return;")
 		} else if lit, ok := s.Value.(*ast.ListLiteral); ok && lit.Bare {
 			f.writeln(f.pad() + "return " + f.bareElements(lit) + ";")
 		} else {
-			f.writeln(f.pad() + "return " + f.expr(s.Value) + ";")
+			prefix := f.pad() + "return "
+			f.writeln(prefix + f.renderValue(s.Value, len(prefix)) + ";")
 		}
 	case *ast.YieldStatement:
 		if s.Value == nil {
@@ -407,7 +408,8 @@ func (f *fmtr) typeArgs(args []*ast.TypeRef) string {
 func (f *fmtr) fmtDeclaration(s *ast.DeclarationStatement) {
 	line := f.pad() + strings.Join(declPrefix(s), " ")
 	if s.Value != nil {
-		line += " = " + f.expr(s.Value)
+		prefix := line + " = "
+		line = prefix + f.renderValue(s.Value, len(prefix))
 	}
 	f.writeln(line + ";")
 }
@@ -469,8 +471,8 @@ func (f *fmtr) fmtIf(s *ast.IfStatement) {
 		if s.Alternative != nil {
 			f.write(" else ")
 			f.block(s.Alternative)
-		} else {
-			f.nl()
+		} else if len(s.ElseIfs) == 0 {
+			f.nl() // a trailing else-if block already emits its own line terminator
 		}
 	})
 }
@@ -736,8 +738,8 @@ func (f *fmtr) fmtTry(s *ast.TryStatement) {
 		if s.Finally != nil && len(s.Finally.Statements) > 0 {
 			f.write(" finally ")
 			f.block(s.Finally)
-		} else {
-			f.nl()
+		} else if len(s.Catches) == 0 {
+			f.nl() // only the no-catch/no-finally form needs an explicit line terminator; a catch/finally block already emits one
 		}
 	})
 }
@@ -1355,6 +1357,201 @@ func (f *fmtr) fmtMatchExpr(e *ast.MatchExpression) string {
 }
 
 // ---- helpers ----
+
+const fmtMaxWidth = 100
+
+func isCollection(e ast.Expression) bool {
+	switch e.(type) {
+	case *ast.ListLiteral, *ast.DictLiteral, *ast.SetLiteral:
+		return true
+	}
+	return false
+}
+
+// spanMultiline reports whether the source lines span more than one line.
+func spanMultiline(lines []int) bool {
+	lo, hi := 1<<30, 0
+	for _, l := range lines {
+		if l == 0 {
+			continue
+		}
+		if l < lo {
+			lo = l
+		}
+		if l > hi {
+			hi = l
+		}
+	}
+	return hi > lo
+}
+
+// elementLines returns the source line of each element, entry, or argument of a collection or call.
+func elementLines(e ast.Expression) []int {
+	var lines []int
+	switch e := e.(type) {
+	case *ast.ListLiteral:
+		for _, el := range e.Elements {
+			lines = append(lines, nodeLine(el))
+		}
+	case *ast.SetLiteral:
+		for _, el := range e.Elements {
+			lines = append(lines, nodeLine(el))
+		}
+	case *ast.DictLiteral:
+		for _, en := range e.Entries {
+			if en.Spread || en.Key == nil {
+				lines = append(lines, nodeLine(en.Value))
+			} else {
+				lines = append(lines, nodeLine(en.Key))
+			}
+		}
+	case *ast.CallExpression:
+		for _, a := range e.Arguments {
+			lines = append(lines, nodeLine(a.Value))
+		}
+	}
+	return lines
+}
+
+// needsBreakAuthor reports whether a collection or call (or any nested one) was written across multiple source lines, so an enclosing construct must break to let the inner one expand.
+func needsBreakAuthor(e ast.Expression) bool {
+	switch e := e.(type) {
+	case *ast.ListLiteral:
+		if spanMultiline(elementLines(e)) {
+			return true
+		}
+		for _, el := range e.Elements {
+			if needsBreakAuthor(el) {
+				return true
+			}
+		}
+	case *ast.SetLiteral:
+		if spanMultiline(elementLines(e)) {
+			return true
+		}
+		for _, el := range e.Elements {
+			if needsBreakAuthor(el) {
+				return true
+			}
+		}
+	case *ast.DictLiteral:
+		if spanMultiline(elementLines(e)) {
+			return true
+		}
+		for _, en := range e.Entries {
+			if needsBreakAuthor(en.Value) {
+				return true
+			}
+		}
+	case *ast.CallExpression:
+		if spanMultiline(elementLines(e)) {
+			return true
+		}
+		for _, a := range e.Arguments {
+			if needsBreakAuthor(a.Value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// renderValue renders e starting at column col, breaking a collection or call onto multiple lines when it (or a nested one) was written multi-line or a single line would exceed fmtMaxWidth. clean mode keeps it flat.
+func (f *fmtr) renderValue(e ast.Expression, col int) string {
+	if e == nil {
+		return ""
+	}
+	flat := f.expr(e)
+	if f.clean {
+		return flat
+	}
+	switch e := e.(type) {
+	case *ast.ListLiteral, *ast.DictLiteral, *ast.SetLiteral:
+		if needsBreakAuthor(e) || col+len(flat) > fmtMaxWidth {
+			return f.renderBrokenCollection(e)
+		}
+	case *ast.CallExpression:
+		if strings.Contains(flat, "\n") { // already multi-line (a broken method chain)
+			return flat
+		}
+		if needsBreakAuthor(e) || col+len(flat) > fmtMaxWidth {
+			return f.renderBrokenCall(e, col)
+		}
+	}
+	return flat
+}
+
+// renderBrokenCollection renders a list/dict/set literal one element per line (trailing comma), recursing so nested values can break too.
+func (f *fmtr) renderBrokenCollection(e ast.Expression) string {
+	type item struct {
+		prefix string
+		value  ast.Expression
+	}
+	var open, close string
+	var items []item
+	switch e := e.(type) {
+	case *ast.ListLiteral:
+		open, close = "[", "]"
+		for _, el := range e.Elements {
+			items = append(items, item{"", el})
+		}
+	case *ast.SetLiteral:
+		open, close = "{", "}"
+		for _, el := range e.Elements {
+			items = append(items, item{"", el})
+		}
+	case *ast.DictLiteral:
+		open, close = "{", "}"
+		for _, en := range e.Entries {
+			if en.Spread {
+				items = append(items, item{"...", en.Value})
+			} else {
+				items = append(items, item{f.expr(en.Key) + ": ", en.Value})
+			}
+		}
+	}
+	indent := strings.Repeat("    ", f.depth+1)
+	var b strings.Builder
+	b.WriteString(open + "\n")
+	f.depth++
+	for _, it := range items {
+		b.WriteString(indent + it.prefix + f.renderValue(it.value, len(indent)+len(it.prefix)) + ",\n")
+	}
+	f.depth--
+	b.WriteString(strings.Repeat("    ", f.depth) + close)
+	return b.String()
+}
+
+// renderBrokenCall renders a call's arguments one per line; a single collection argument instead hugs the parens (callee([ ... ])).
+func (f *fmtr) renderBrokenCall(e *ast.CallExpression, col int) string {
+	callee := f.exprChild(e.Callee, !fmtIsPrimary(e.Callee)) + f.typeArgs(e.TypeArguments)
+	if len(e.Arguments) == 1 {
+		a := e.Arguments[0]
+		if !a.Spread && a.Name == nil && isCollection(a.Value) {
+			return callee + "(" + f.renderValue(a.Value, col+len(callee)+1) + ")"
+		}
+	}
+	indent := strings.Repeat("    ", f.depth+1)
+	var b strings.Builder
+	b.WriteString(callee + "(\n")
+	f.depth++
+	for i, a := range e.Arguments {
+		prefix := ""
+		if a.Spread {
+			prefix = "..."
+		} else if a.Name != nil {
+			prefix = a.Name.Value + ": "
+		}
+		b.WriteString(indent + prefix + f.renderValue(a.Value, len(indent)+len(prefix)))
+		if i < len(e.Arguments)-1 {
+			b.WriteString(",")
+		}
+		b.WriteString("\n")
+	}
+	f.depth--
+	b.WriteString(strings.Repeat("    ", f.depth) + ")")
+	return b.String()
+}
 
 func (f *fmtr) callArgs(args []ast.CallArgument) string {
 	parts := make([]string, 0, len(args))

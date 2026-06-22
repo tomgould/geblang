@@ -1517,6 +1517,7 @@ func (p *Parser) parseGenericCall(callee ast.Expression) ast.Expression {
 	}
 	expr := &ast.CallExpression{Token: p.curToken, Callee: callee, TypeArguments: typeArgs}
 	expr.Arguments = p.parseCallArguments()
+	expr.End = p.curToken
 	return expr
 }
 
@@ -1547,6 +1548,7 @@ func (p *Parser) parseCompoundAssignment(left ast.Expression, opType token.Type,
 func (p *Parser) parseCallExpression(callee ast.Expression) ast.Expression {
 	expr := &ast.CallExpression{Token: p.curToken, Callee: callee}
 	expr.Arguments = p.parseCallArguments()
+	expr.End = p.curToken
 	return expr
 }
 
@@ -1651,7 +1653,7 @@ func (p *Parser) parseListLiteral() ast.Expression {
 	openToken := p.curToken
 	if p.peekTokenIs(token.RBracket) {
 		p.nextToken()
-		return &ast.ListLiteral{Token: openToken}
+		return &ast.ListLiteral{Token: openToken, End: p.curToken}
 	}
 	p.nextToken()
 	var first ast.Expression
@@ -1684,15 +1686,15 @@ func (p *Parser) parseListLiteral() ast.Expression {
 		}
 	}
 	p.expectPeek(token.RBracket)
+	lit.End = p.curToken
 	return lit
 }
 
 func (p *Parser) parseDictLiteral() ast.Expression {
 	openToken := p.curToken
 	if p.peekTokenIs(token.RBrace) {
-		lit := &ast.DictLiteral{Token: openToken}
 		p.nextToken()
-		return lit
+		return &ast.DictLiteral{Token: openToken, End: p.curToken}
 	}
 	p.nextToken()
 	// Leading spread `{...src, ...}` always means dict or set spread; we
@@ -1709,10 +1711,9 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 		// can't decide here. Defer the set-vs-dict choice until we see
 		// a `: ` (dict) or a comma-then-non-colon (set).
 		if p.peekTokenIs(token.RBrace) {
-			lit := &ast.DictLiteral{Token: openToken, Entries: []ast.DictEntry{{Value: spreadValue, Spread: true}}}
 			p.nextToken()
 			_ = spreadExpr
-			return lit
+			return &ast.DictLiteral{Token: openToken, Entries: []ast.DictEntry{{Value: spreadValue, Spread: true}}, End: p.curToken}
 		}
 		return p.continueDictOrSetAfterSpread(openToken, spreadValue)
 	}
@@ -1782,12 +1783,13 @@ func (p *Parser) continueDictOrSetAfterSpread(openToken token.Token, firstSpread
 		}
 	}
 	p.expectPeek(token.RBrace)
+	end := p.curToken
 	if allSpreads {
 		dictEntries := make([]ast.DictEntry, 0, len(entries))
 		for _, buf := range entries {
 			dictEntries = append(dictEntries, ast.DictEntry{Value: buf.spread, Spread: true})
 		}
-		return &ast.DictLiteral{Token: openToken, Entries: dictEntries}
+		return &ast.DictLiteral{Token: openToken, Entries: dictEntries, End: end}
 	}
 	elements := make([]ast.Expression, 0, len(entries))
 	for _, buf := range entries {
@@ -1797,7 +1799,7 @@ func (p *Parser) continueDictOrSetAfterSpread(openToken token.Token, firstSpread
 			elements = append(elements, buf.bare)
 		}
 	}
-	return &ast.SetLiteral{Token: openToken, Elements: elements}
+	return &ast.SetLiteral{Token: openToken, Elements: elements, End: end}
 }
 
 type parseSpreadBuffer struct {
@@ -1824,6 +1826,7 @@ func (p *Parser) continueSetLiteral(openToken token.Token, first ast.Expression)
 		lit.Elements = append(lit.Elements, p.parseExpression(lowest))
 	}
 	p.expectPeek(token.RBrace)
+	lit.End = p.curToken
 	return lit
 }
 
@@ -1849,6 +1852,7 @@ func (p *Parser) continueDictLiteral(openToken token.Token, head []ast.DictEntry
 		lit.Entries = append(lit.Entries, ast.DictEntry{Key: key, Value: value})
 	}
 	p.expectPeek(token.RBrace)
+	lit.End = p.curToken
 	return lit
 }
 

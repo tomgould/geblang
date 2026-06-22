@@ -247,3 +247,27 @@ func TestFormatStripComments(t *testing.T) {
 		t.Errorf("strip-comments dropped code:\n%s", got)
 	}
 }
+
+func TestFormatCollectionLayout(t *testing.T) {
+	// an author-multiline list stays multi-line (one element per line, trailing comma)
+	out, _ := formatter.Format([]byte("let x = [\n1,\n2,\n3\n];"))
+	if !strings.Contains(string(out), "[\n    1,\n    2,\n    3,\n]") {
+		t.Errorf("author-multiline list not preserved:\n%s", out)
+	}
+	// a short single-line list stays flat
+	if flat, _ := formatter.Format([]byte("let y = [1, 2, 3];")); strings.TrimRight(string(flat), "\n") != "let y = [1, 2, 3];" {
+		t.Errorf("short list got broken: %q", flat)
+	}
+	// a single collection argument hugs the call parens
+	if hug, _ := formatter.Format([]byte("foo({\n\"a\": 1,\n\"b\": 2\n});")); !strings.Contains(string(hug), "foo({\n    \"a\": 1,") {
+		t.Errorf("collection arg did not hug:\n%s", hug)
+	}
+	// a long flat call (over the 100-col width) wraps onto one arg per line
+	if long, _ := formatter.Format([]byte("let r = call(argumentNumberOne, argumentNumberTwo, argumentNumberThree, argumentNumberFour, argumentNumberFive, argumentNumberSix);")); !strings.Contains(string(long), "call(\n    argumentNumberOne,") {
+		t.Errorf("long call did not wrap:\n%s", long)
+	}
+	// clean mode flattens collections onto one line
+	if cln, _ := formatter.FormatWithOptions([]byte("let z = [\n1,\n2,\n3\n];"), formatter.Options{Clean: true}); strings.TrimRight(string(cln), "\n") != "let z = [1, 2, 3];" {
+		t.Errorf("clean did not flatten list: %q", cln)
+	}
+}

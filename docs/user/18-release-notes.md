@@ -32,13 +32,16 @@
 - `geblang fmt` is substantially more robust. It now re-parses its own output
   and refuses to write anything that is not identical to the input at the AST
   level, so formatting can never silently change a program's meaning or break
-  its syntax. By default it preserves the author's layout: explicit grouping
-  parentheses, intentional blank lines, multi-line operator and method chains,
-  and comments (including trailing same-line comments) are all kept.
+  its syntax. By default it follows a width-aware layout standard (a 100-column
+  target): explicit grouping parentheses, intentional blank lines, comments
+  (including trailing same-line comments), and any construct the author split
+  across lines (operator and method chains, list/dict/set literals, call
+  argument lists) are kept, and a collection or argument list is wrapped onto
+  one item per line when a single line would exceed the width.
 - `geblang fmt` gained two formatting modes. `--clean` produces the minimal
-  canonical form (drops redundant parentheses, flattens multi-line chains and
-  concatenations onto one line); `--strip-comments` removes all comments. The
-  flags are independent and may be combined.
+  canonical form (drops redundant parentheses, flattens multi-line chains,
+  concatenations, and collections onto one line); `--strip-comments` removes all
+  comments. The flags are independent and may be combined.
 
 ## 1.24.1
 

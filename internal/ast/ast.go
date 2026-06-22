@@ -990,6 +990,7 @@ type CallExpression struct {
 	TypeArguments []*TypeRef
 	Callee        Expression
 	Arguments     []CallArgument
+	End           token.Token // closing paren, so the formatter can measure a multi-line call's end line
 }
 
 func (*CallExpression) expressionNode()        {}
@@ -1030,6 +1031,7 @@ type ListLiteral struct {
 	// Bare marks the bracket-less multi-value form (`return a, b`) so the
 	// formatter preserves it; semantics match `[a, b]`.
 	Bare bool
+	End  token.Token // closing bracket, for the formatter's end-line measurement
 }
 
 func (*ListLiteral) expressionNode()        {}
@@ -1051,6 +1053,7 @@ type DictEntry struct {
 type DictLiteral struct {
 	Token   token.Token
 	Entries []DictEntry
+	End     token.Token // closing brace, for the formatter's end-line measurement
 }
 
 func (*DictLiteral) expressionNode()        {}
@@ -1060,6 +1063,7 @@ func (e *DictLiteral) String() string       { return "{...}" }
 type SetLiteral struct {
 	Token    token.Token
 	Elements []Expression
+	End      token.Token // closing brace, for the formatter's end-line measurement
 }
 
 func (*SetLiteral) expressionNode()        {}

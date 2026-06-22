@@ -977,11 +977,14 @@ line arguments and delegates to one of several execution modes:
   only, reporting errors without executing.
 - **Format mode**: `geblang fmt script.gb` runs the formatter
   (`internal/formatter`), rewriting files in place (or `geblang fmt --stdin`
-  reads stdin and writes stdout). By default it preserves the author's layout:
-  explicit grouping parentheses, intentional blank lines, and multi-line
-  operator and method chains are all kept. `--clean` produces the minimal
-  canonical form instead (drops redundant parentheses, flattens multi-line
-  chains and concatenations onto one line); `--strip-comments` removes all
+  reads stdin and writes stdout). By default it follows a width-aware layout
+  standard (a 100-column target): it keeps explicit grouping parentheses,
+  intentional blank lines, and any construct the author wrote across multiple
+  lines (operator and method chains, list/dict/set literals, and call argument
+  lists), and it wraps a collection or argument list onto one item per line when
+  a single line would exceed the width. `--clean` produces the minimal canonical
+  form instead (drops redundant parentheses, flattens multi-line chains,
+  concatenations, and collections onto one line); `--strip-comments` removes all
   comments. The two flags are independent and may be combined. Every mode
   re-parses its own output and refuses to write anything that is not identical
   to the input at the AST level, so formatting can never silently change a

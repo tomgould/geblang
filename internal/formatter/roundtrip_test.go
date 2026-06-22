@@ -61,6 +61,10 @@ func TestFormatPreservesAST(t *testing.T) {
 		}
 		if before != after {
 			t.Errorf("SAFETY VIOLATION (AST changed): %s\n  before: %s\n  after:  %s", path, firstDiff(before, after, 160), firstDiff(after, before, 160))
+			continue
+		}
+		if out2, err := formatter.Format(out); err != nil || string(out2) != string(out) {
+			t.Errorf("NOT IDEMPOTENT: %s (a second format pass changed the output)", path)
 		}
 	}
 	t.Logf("corpus: %d valid files, %d formatted cleanly, %d safely refused (printer limitations to fix)", valid, valid-refused, refused)
