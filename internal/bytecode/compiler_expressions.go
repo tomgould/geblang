@@ -169,6 +169,8 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 			return fmt.Errorf("`|>` right side must be a call, identifier, or selector")
 		}
 		return c.compileExpression(call)
+	case *ast.PartialExpression:
+		return c.compileExpression(ast.LowerPartial(expr))
 	case *ast.ListComprehension:
 		return c.compileExpression(desugarListComprehension(expr))
 	case *ast.SetComprehension:

@@ -1,0 +1,119 @@
+/**
+ * @title Partial application
+ * @summary Native _ placeholder partials across every dispatch context.
+ */
+import test;
+import math;
+
+func add(int a, int b): int { return a + b; }
+func wrap(string a, string b, string c): string { return a + b + c; }
+
+func describe(int n): string { return "int:${n}"; }
+func describe(string s): string { return "str:${s}"; }
+
+class Calc {
+    int base;
+    func Calc(int base) { this.base = base; }
+    func addTo(int x, int y): int { return this.base + x + y; }
+    static func mul(int a, int b): int { return a * b; }
+}
+
+class Box {
+    int v;
+    func Box(int a, int b) { this.v = a + b; }
+}
+
+class Greeter {
+    string prefix;
+    func Greeter(string prefix) { this.prefix = prefix; }
+    func __invoke(string a, string b): string { return this.prefix + a + b; }
+}
+
+class PartialsTest extends test.Test {
+    @test
+    func positionalHole(): void {
+        let add10 = add(_, 10);
+        this.assertEquals(13, add10(3));
+        this.assertEquals(10, add(1, _)(9));
+    }
+
+    @test
+    func multipleHoles(): void {
+        let f = wrap(_, "-", _);
+        this.assertEquals("L-R", f("L", "R"));
+    }
+
+    @test
+    func namedHole(): void {
+        let f = wrap(a: "[", c: "]", b: _);
+        this.assertEquals("[mid]", f("mid"));
+    }
+
+    @test
+    func methodContext(): void {
+        let c = Calc(100);
+        let f = c.addTo(_, 1);
+        this.assertEquals(106, f(5));
+    }
+
+    @test
+    func staticMethodContext(): void {
+        let triple = Calc.mul(3, _);
+        this.assertEquals(21, triple(7));
+    }
+
+    @test
+    func constructorContext(): void {
+        let make = Box(10, _);
+        this.assertEquals(13, make(3).v);
+    }
+
+    @test
+    func invokeObjectContext(): void {
+        let g = Greeter(">");
+        let f = g(_, "!");
+        this.assertEquals(">hi!", f("hi"));
+    }
+
+    @test
+    func nativeBuiltinContext(): void {
+        let atLeast0 = math.max(0, _);
+        this.assertEquals(5, atLeast0(5));
+        this.assertEquals(0, atLeast0(-2));
+    }
+
+    /* VM rejects a partial over multiple same-arity overloads at compile; evaluator resolves at application (documented divergence). */
+    @test
+    func overloadResolvesAtApplication(): void {
+        let d = describe(_);
+        this.assertEquals("int:42", d(42));
+        this.assertEquals("str:hi", d("hi"));
+    }
+
+    @test
+    func eagerCaptureRunsOnce(): void {
+        int calls = 0;
+        let bump = func(): int { calls = calls + 1; return calls; };
+        let f = add(bump(), _);
+        this.assertEquals(1, calls);
+        f(10);
+        f(20);
+        this.assertEquals(1, calls);
+    }
+
+    @test
+    func calleeResolvedAtApplication(): void {
+        let g = add;
+        let p = g(_, 1);
+        g = func(int a, int b): int { return a * b; };   /* reassign callee var after partial created */
+        this.assertEquals(2, p(2));   /* latest g at application: 2 * 1 = 2, not add's 3 */
+    }
+
+    @test
+    func arityErrorTooFew(): void {
+        let f = wrap(_, "-", _);
+        let threw = false;
+        try { f("only"); } catch (Error e) { threw = true; }
+        this.assertTrue(threw);
+    }
+}

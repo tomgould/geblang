@@ -51,6 +51,14 @@ func (l *Lowerer) lowerPipe(e *ast.PipeExpression) {
 	l.lowerCall(call)
 }
 
+// lowerPartial diagnoses: lowered IIFE needs type-inferred closure params, not yet supported.
+func (l *Lowerer) lowerPartial(e *ast.PartialExpression) {
+	l.errAt(e.Token.Line, e.Token.Column,
+		"the transpiler does not yet support partial application",
+		"assign a typed wrapper function instead of using _ placeholders")
+	l.w.WriteString("nil")
+}
+
 // lowerRangeValue diagnoses a range used as a value. A range value is a lazy
 // object with its own string form (`1..5`) and char-range variant, distinct
 // from the eager slice `range()` produces; a faithful representation needs a

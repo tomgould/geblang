@@ -308,6 +308,54 @@ each side absorbs full expressions:
 If the right-hand side isn't a call, identifier, or selector, the
 pipe is a parse-time error - `x |> 42` is rejected.
 
+## Partial Application
+
+A call where one or more arguments are the placeholder `_` does not call the
+function; it returns a new callable with those positions left open. Supplying
+the missing arguments later fills the holes left to right.
+
+```gb
+func add(int a, int b): int { return a + b; }
+
+let add10 = add(_, 10);   # a function of one argument: add(x, 10)
+io.println(add10(3));     # 13
+
+let inc = add(1, _);      # add(1, x)
+io.println(inc(9));       # 10
+```
+
+Holes may appear in any position, more than once, and as a named argument's
+value:
+
+```gb
+func wrap(string a, string b, string c): string { return a + b + c; }
+let f = wrap(_, "-", _);  # a function of two arguments
+io.println(f("L", "R"));  # L-R
+
+let openTmp = open(dir: "/tmp", mode: _);
+```
+
+The non-hole arguments are evaluated once, when the partial is created. The
+function or method itself is resolved when the partial is applied, so a partial
+over an overloaded function selects the overload from the full argument list at
+call time. Partial application works for free functions, methods, static
+methods, constructors, native builtins, module functions, callable values, and
+objects with `__invoke`.
+
+When a function has multiple overloads of the same arity distinguished only by
+parameter type, the interpreter resolves the overload at application. A compiled
+build (`geblang build`) rejects the partial at compile time because overloads
+are resolved statically and the placeholder has no concrete type. Use a typed
+wrapper function or a non-overloaded target in that case.
+
+`_` is a hole only when it is an entire argument. Inside a larger expression
+(`_ + 1`) it is an ordinary identifier. A hole cannot be combined with a spread
+(`...`) argument in the same call.
+
+The `functools` module's `partial` helper remains available for binding leading
+arguments; the `_` syntax is the general form because holes may sit anywhere.
+See also: [functools - Functional Composition](stdlib/20-utilities.md#functools---functional-composition).
+
 ## Function Overloading
 
 Multiple functions may share the same name as long as they differ in the number

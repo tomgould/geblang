@@ -978,6 +978,7 @@ type CallArgument struct {
 	Name   *Identifier
 	Value  Expression
 	Spread bool
+	Hole   bool // true when Value is a bare _ partial-application placeholder
 }
 
 type CallExpression struct {
@@ -1176,6 +1177,77 @@ func LowerPipe(pipe *PipeExpression) (*CallExpression, bool) {
 		}, true
 	}
 	return nil, false
+}
+
+type PartialExpression struct {
+	Token         token.Token
+	TypeArguments []*TypeRef
+	Callee        Expression
+	Arguments     []CallArgument
+	End           token.Token
+}
+
+func (*PartialExpression) expressionNode()        {}
+func (e *PartialExpression) TokenLiteral() string { return e.Token.Literal }
+func (e *PartialExpression) String() string {
+	args := make([]string, 0, len(e.Arguments))
+	for _, arg := range e.Arguments {
+		switch {
+		case arg.Hole && arg.Name != nil:
+			args = append(args, arg.Name.String()+": _")
+		case arg.Hole:
+			args = append(args, "_")
+		case arg.Spread:
+			args = append(args, "..."+arg.Value.String())
+		case arg.Name != nil:
+			args = append(args, arg.Name.String()+": "+arg.Value.String())
+		default:
+			args = append(args, arg.Value.String())
+		}
+	}
+	typeArgs := ""
+	if len(e.TypeArguments) > 0 {
+		parts := make([]string, 0, len(e.TypeArguments))
+		for _, t := range e.TypeArguments {
+			parts = append(parts, t.String())
+		}
+		typeArgs = "<" + strings.Join(parts, ", ") + ">"
+	}
+	return e.Callee.String() + typeArgs + "(" + strings.Join(args, ", ") + ")"
+}
+
+// LowerPartial rewrites partial application into an immediately-invoked closure.
+func LowerPartial(p *PartialExpression) Expression {
+	tok := p.Token
+	anyType := &TypeRef{Name: "any"}
+	var boundParams, holeParams []Parameter
+	var boundArgs, innerArgs []CallArgument
+	for _, arg := range p.Arguments {
+		if arg.Hole {
+			name := fmt.Sprintf("__ph%d", len(holeParams))
+			holeParams = append(holeParams, Parameter{Name: &Identifier{Token: tok, Value: name}, Type: anyType})
+			innerArgs = append(innerArgs, CallArgument{Name: arg.Name, Value: &Identifier{Token: tok, Value: name}})
+		} else {
+			name := fmt.Sprintf("__pb%d", len(boundParams))
+			boundParams = append(boundParams, Parameter{Name: &Identifier{Token: tok, Value: name}, Type: anyType})
+			boundArgs = append(boundArgs, CallArgument{Value: arg.Value})
+			innerArgs = append(innerArgs, CallArgument{Name: arg.Name, Value: &Identifier{Token: tok, Value: name}})
+		}
+	}
+	innerFn := &FunctionLiteral{
+		Token:      tok,
+		Parameters: holeParams,
+		Body:       partialReturnBlock(tok, &CallExpression{Token: tok, Callee: p.Callee, TypeArguments: p.TypeArguments, Arguments: innerArgs}),
+	}
+	if len(boundParams) == 0 {
+		return innerFn
+	}
+	outerFn := &FunctionLiteral{Token: tok, Parameters: boundParams, Body: partialReturnBlock(tok, innerFn)}
+	return &CallExpression{Token: tok, Callee: outerFn, Arguments: boundArgs}
+}
+
+func partialReturnBlock(tok token.Token, value Expression) *BlockStatement {
+	return &BlockStatement{Token: tok, Statements: []Statement{&ReturnStatement{Token: tok, Value: value}}}
 }
 
 type RangeExpression struct {

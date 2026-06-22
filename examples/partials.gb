@@ -1,0 +1,14 @@
+import io;
+
+func add(int a, int b): int { return a + b; }
+func wrap(string a, string b, string c): string { return a + b + c; }
+
+func main(): void {
+    let add10 = add(_, 10);
+    io.println(add10(3));        /* 13 */
+    io.println(add(1, _)(9));    /* 10 */
+    let f = wrap(_, "-", _);
+    io.println(f("L", "R"));     /* L-R */
+}
+
+main();

@@ -1,5 +1,17 @@
 # Release Notes
 
+## 1.26.0
+
+### Language
+
+- Partial application: a call with one or more `_` placeholder arguments now
+  returns a new callable with those positions left open (`add(_, 10)`,
+  `wrap(_, "-", _)`, `open(mode: _)`). Non-hole arguments are captured once at
+  creation; the target resolves at application. Works across functions, methods,
+  constructors, native builtins, module functions, and callable objects.
+  (Partials over multiple same-arity overloads are resolved at application by
+  the interpreter; compiled builds reject them statically - use a typed wrapper.)
+
 ## 1.25.0
 
 ### Language

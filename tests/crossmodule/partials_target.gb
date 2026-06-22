@@ -1,0 +1,11 @@
+module partials_target;
+
+export func combine(int a, int b): int { return a * 10 + b; }
+
+export class Base {
+    func label(string p, string s): string { return p + ":" + s; }
+}
+
+export class Derived extends Base {
+    func own(int a, int b): int { return a - b; }
+}

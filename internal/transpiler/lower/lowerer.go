@@ -581,6 +581,8 @@ func (l *Lowerer) lowerExpression(expr ast.Expression) {
 		l.lowerAwait(e)
 	case *ast.PipeExpression:
 		l.lowerPipe(e)
+	case *ast.PartialExpression:
+		l.lowerPartial(e)
 	case *ast.RangeExpression:
 		l.lowerRangeValue(e)
 	case *ast.ListComprehension:
@@ -765,6 +767,8 @@ func (l *Lowerer) inferExpressionType(expr ast.Expression) *types.Type {
 		if call, ok := ast.LowerPipe(e); ok {
 			return l.inferExpressionType(call)
 		}
+	case *ast.PartialExpression:
+		return l.inferExpressionType(ast.LowerPartial(e))
 	case *ast.ListComprehension:
 		var bodyTy *types.Type
 		l.withComprehensionScope(e.Clauses, func() { bodyTy = l.inferExpressionType(e.Body) })

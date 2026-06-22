@@ -1515,10 +1515,9 @@ func (p *Parser) parseGenericCall(callee ast.Expression) ast.Expression {
 	if !p.expectPeek(token.LParen) {
 		return callee
 	}
-	expr := &ast.CallExpression{Token: p.curToken, Callee: callee, TypeArguments: typeArgs}
-	expr.Arguments = p.parseCallArguments()
-	expr.End = p.curToken
-	return expr
+	tok := p.curToken
+	args := p.parseCallArguments()
+	return p.buildCallOrPartial(callee, typeArgs, args, tok, p.curToken)
 }
 
 func (p *Parser) parseTernaryExpression(left ast.Expression) ast.Expression {
@@ -1546,10 +1545,24 @@ func (p *Parser) parseCompoundAssignment(left ast.Expression, opType token.Type,
 }
 
 func (p *Parser) parseCallExpression(callee ast.Expression) ast.Expression {
-	expr := &ast.CallExpression{Token: p.curToken, Callee: callee}
-	expr.Arguments = p.parseCallArguments()
-	expr.End = p.curToken
-	return expr
+	tok := p.curToken
+	args := p.parseCallArguments()
+	return p.buildCallOrPartial(callee, nil, args, tok, p.curToken)
+}
+
+func (p *Parser) buildCallOrPartial(callee ast.Expression, typeArgs []*ast.TypeRef, args []ast.CallArgument, tok, end token.Token) ast.Expression {
+	hasHole, hasSpread := false, false
+	for _, a := range args {
+		hasHole = hasHole || a.Hole
+		hasSpread = hasSpread || a.Spread
+	}
+	if hasHole {
+		if hasSpread {
+			p.errorf(tok, "cannot combine a partial-application hole (_) with spread (...) in the same call")
+		}
+		return &ast.PartialExpression{Token: tok, TypeArguments: typeArgs, Callee: callee, Arguments: args, End: end}
+	}
+	return &ast.CallExpression{Token: tok, TypeArguments: typeArgs, Callee: callee, Arguments: args, End: end}
 }
 
 func (p *Parser) parseCallArguments() []ast.CallArgument {
@@ -1570,6 +1583,9 @@ func (p *Parser) parseCallArguments() []ast.CallArgument {
 			p.nextToken()
 		}
 		arg.Value = p.parseExpression(lowest)
+		if id, ok := arg.Value.(*ast.Identifier); ok && id.Value == "_" {
+			arg.Hole = true
+		}
 		args = append(args, arg)
 		if !p.peekTokenIs(token.Comma) {
 			break

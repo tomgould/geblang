@@ -204,6 +204,13 @@ func (s *freeScanner) walk(node ast.Node, bound map[string]bool) {
 	case *ast.PipeExpression:
 		s.walk(n.Left, bound)
 		s.walk(n.Right, bound)
+	case *ast.PartialExpression:
+		s.walk(n.Callee, bound)
+		for _, arg := range n.Arguments {
+			if !arg.Hole {
+				s.walk(arg.Value, bound)
+			}
+		}
 	}
 }
 

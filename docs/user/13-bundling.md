@@ -561,6 +561,7 @@ to `geblang build` if it reports something unsupported.
   assigning into an `any`-typed index.
 - Arbitrary-precision integers: native arithmetic uses a fast machine-width path
   that wraps on overflow rather than promoting to big integers.
+- Partial-application `_` placeholder arguments: use a typed wrapper function instead.
 
 ### Performance note
 

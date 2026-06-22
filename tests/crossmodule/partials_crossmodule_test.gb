@@ -1,0 +1,28 @@
+/**
+ * @title Partial application across modules
+ * @summary Partials over a foreign module function and inherited methods.
+ */
+import test;
+import partials_target;
+
+class PartialsCrossModuleTest extends test.Test {
+    @test
+    func foreignModuleFunction(): void {
+        let f = partials_target.combine(_, 5);
+        this.assertEquals(35, f(3));
+    }
+
+    @test
+    func inheritedMethod(): void {
+        let d = partials_target.Derived();
+        let f = d.label("k", _);
+        this.assertEquals("k:v", f("v"));
+    }
+
+    @test
+    func subclassOwnMethod(): void {
+        let d = partials_target.Derived();
+        let g = d.own(_, 2);
+        this.assertEquals(8, g(10));
+    }
+}

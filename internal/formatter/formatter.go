@@ -1226,6 +1226,11 @@ func (f *fmtr) exprBare(e ast.Expression) string {
 			return f.multilineChain(e)
 		}
 		return f.exprChild(e.Callee, !fmtIsPrimary(e.Callee)) + f.typeArgs(e.TypeArguments) + "(" + f.callArgs(e.Arguments) + ")"
+	case *ast.PartialExpression:
+		if f.shouldBreakChain(e) {
+			return f.multilineChain(e)
+		}
+		return f.exprChild(e.Callee, !fmtIsPrimary(e.Callee)) + f.typeArgs(e.TypeArguments) + "(" + f.partialArgs(e.Arguments) + ")"
 	case *ast.IndexExpression:
 		idx := f.expr(e.Index)
 		if rng, ok := e.Index.(*ast.RangeExpression); ok {
@@ -1409,6 +1414,12 @@ func elementLines(e ast.Expression) []int {
 		for _, a := range e.Arguments {
 			lines = append(lines, nodeLine(a.Value))
 		}
+	case *ast.PartialExpression:
+		for _, a := range e.Arguments {
+			if !a.Hole {
+				lines = append(lines, nodeLine(a.Value))
+			}
+		}
 	}
 	return lines
 }
@@ -1452,6 +1463,15 @@ func needsBreakAuthor(e ast.Expression) bool {
 				return true
 			}
 		}
+	case *ast.PartialExpression:
+		if spanMultiline(elementLines(e)) {
+			return true
+		}
+		for _, a := range e.Arguments {
+			if !a.Hole && needsBreakAuthor(a.Value) {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -1476,6 +1496,13 @@ func (f *fmtr) renderValue(e ast.Expression, col int) string {
 		}
 		if needsBreakAuthor(e) || col+len(flat) > fmtMaxWidth {
 			return f.renderBrokenCall(e, col)
+		}
+	case *ast.PartialExpression:
+		if strings.Contains(flat, "\n") {
+			return flat
+		}
+		if needsBreakAuthor(e) || col+len(flat) > fmtMaxWidth {
+			return f.renderBrokenPartial(e, col)
 		}
 	}
 	return flat
@@ -1567,6 +1594,64 @@ func (f *fmtr) callArgs(args []ast.CallArgument) string {
 		parts = append(parts, s)
 	}
 	return strings.Join(parts, ", ")
+}
+
+func (f *fmtr) partialArgs(args []ast.CallArgument) string {
+	parts := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg.Hole {
+			if arg.Name != nil {
+				parts = append(parts, arg.Name.Value+": _")
+			} else {
+				parts = append(parts, "_")
+			}
+		} else if arg.Spread {
+			parts = append(parts, "..."+f.expr(arg.Value))
+		} else if arg.Name != nil {
+			parts = append(parts, arg.Name.Value+": "+f.expr(arg.Value))
+		} else {
+			parts = append(parts, f.expr(arg.Value))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (f *fmtr) renderBrokenPartial(e *ast.PartialExpression, col int) string {
+	callee := f.exprChild(e.Callee, !fmtIsPrimary(e.Callee)) + f.typeArgs(e.TypeArguments)
+	if len(e.Arguments) == 1 {
+		a := e.Arguments[0]
+		if !a.Hole && !a.Spread && a.Name == nil && isCollection(a.Value) {
+			return callee + "(" + f.renderValue(a.Value, col+len(callee)+1) + ")"
+		}
+	}
+	indent := strings.Repeat("    ", f.depth+1)
+	var b strings.Builder
+	b.WriteString(callee + "(\n")
+	f.depth++
+	for i, a := range e.Arguments {
+		if a.Hole {
+			prefix := ""
+			if a.Name != nil {
+				prefix = a.Name.Value + ": "
+			}
+			b.WriteString(indent + prefix + "_")
+		} else {
+			prefix := ""
+			if a.Spread {
+				prefix = "..."
+			} else if a.Name != nil {
+				prefix = a.Name.Value + ": "
+			}
+			b.WriteString(indent + prefix + f.renderValue(a.Value, len(indent)+len(prefix)))
+		}
+		if i < len(e.Arguments)-1 {
+			b.WriteString(",")
+		}
+		b.WriteString("\n")
+	}
+	f.depth--
+	b.WriteString(strings.Repeat("    ", f.depth) + ")")
+	return b.String()
 }
 
 func (f *fmtr) params(params []ast.Parameter) string {

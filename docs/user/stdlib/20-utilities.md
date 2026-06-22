@@ -444,3 +444,5 @@ io.println(calls);                     # 1 - only first call executed
 collection-of-primitive arguments. For non-serialisable args (instances
 of classes, generators, callables) write a thin wrapper that converts
 to a key explicitly.
+
+For binding arguments in any position (not just leading), use the native `_` placeholder syntax described in the [Functions and Callables](../05-functions-callables.md#partial-application) chapter.

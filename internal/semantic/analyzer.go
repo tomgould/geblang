@@ -632,6 +632,13 @@ func (a *Analyzer) validateExprAnnotations(expr ast.Expression) {
 	case *ast.PipeExpression:
 		a.validateExprAnnotations(e.Left)
 		a.validateExprAnnotations(e.Right)
+	case *ast.PartialExpression:
+		a.validateExprAnnotations(e.Callee)
+		for _, arg := range e.Arguments {
+			if !arg.Hole {
+				a.validateExprAnnotations(arg.Value)
+			}
+		}
 	case *ast.AwaitExpression:
 		a.validateExprAnnotations(e.Value)
 	case *ast.SpreadExpression:
@@ -1955,6 +1962,13 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 	case *ast.SetLiteral:
 		for _, element := range expr.Elements {
 			a.analyzeExpression(element)
+		}
+	case *ast.PartialExpression:
+		a.analyzeExpression(expr.Callee)
+		for _, arg := range expr.Arguments {
+			if !arg.Hole {
+				a.analyzeExpression(arg.Value)
+			}
 		}
 	}
 }

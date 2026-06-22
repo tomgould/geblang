@@ -30,7 +30,7 @@ export func compose(list<func> fns): func {
 
 ## Returns a function that calls `fn` with `bound` prepended to its arguments.
 ##
-## `partial(add, 1)(2)` is equivalent to `add(1, 2)`.
+## `partial(add, 1)(2)` is equivalent to `add(1, 2)`. For holes in any position, use the native `_` placeholder syntax instead.
 export func partial(func fn, any ...bound): func {
     return func(any ...rest): any {
         let combined = bound.concat(rest);

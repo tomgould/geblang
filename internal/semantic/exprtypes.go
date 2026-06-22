@@ -115,6 +115,13 @@ func (a *Analyzer) recordSkippedExpression(expr ast.Expression) {
 	case *ast.PipeExpression:
 		a.analyzeExpression(e.Left)
 		a.analyzeExpression(e.Right)
+	case *ast.PartialExpression:
+		a.analyzeExpression(e.Callee)
+		for _, arg := range e.Arguments {
+			if !arg.Hole {
+				a.analyzeExpression(arg.Value)
+			}
+		}
 	case *ast.InterpolatedString:
 		for _, part := range e.Parts {
 			a.analyzeExpression(part)
