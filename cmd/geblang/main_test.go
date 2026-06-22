@@ -18,6 +18,10 @@ import (
 
 func TestCleanBytecodeCacheRemovesCacheRoot(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -49,6 +53,10 @@ func TestCleanBytecodeCacheRemovesCacheRoot(t *testing.T) {
 
 func TestBytecodeCacheStatsCountsFiles(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -347,6 +355,10 @@ func TestParseInitArgs(t *testing.T) {
 
 func TestInitPackageWritesManifestAndSourceDir(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -391,6 +403,10 @@ func TestPackageNameFromDir(t *testing.T) {
 
 func TestCollectAndWriteDoctorReportShowsManifestCacheAndGo(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -1282,6 +1298,10 @@ func TestCompleteREPLLineSuggestsCommandsNamesAndModuleMembers(t *testing.T) {
 
 func TestRunScriptFallsBackToEvaluatorByDefault(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -1450,6 +1470,10 @@ io.println(natpath.clean("/a/../b"));
 
 func TestRunScriptVMStrictRejectsUnsupportedBytecode(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -1492,6 +1516,10 @@ class Foo {
 
 func TestRunScriptRunsUserModuleImportsOnVM(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -1557,6 +1585,10 @@ io.println(user.label());
 
 func TestRunModuleInvokesExportedMainOnVM(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -1634,6 +1666,10 @@ func TestRunModuleInvokesSourceStdlibModule(t *testing.T) {
 
 func TestRunScriptRunsReturnedModuleClosureOnVM(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -1685,6 +1721,10 @@ io.println(bang("ok"));
 
 func TestRunScriptRunsDecoratedUserModuleFunctionOnVM(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -1746,6 +1786,10 @@ io.println(reflect.decorators(util.greet)[0]["args"][0]);
 
 func TestRunScriptRunsAsyncRunOnDecoratedUserModuleFunctionOnVM(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -1806,6 +1850,10 @@ io.println(await task);
 
 func TestRunScriptRunsDecoratedUserModuleClassMethodsOnVM(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -1892,6 +1940,10 @@ io.println(reflect.decorators(staticMethod)[0]["args"][0]);
 
 func TestRunScriptRunsStatefulBuiltinOnVM(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -1936,6 +1988,10 @@ io.println(metrics.get("hits"));
 
 func TestRunScriptRunsWebCallbacksOnVM(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -1991,6 +2047,10 @@ io.println(response["headers"]["X-App"]);
 
 func TestRunScriptRunsSourceWebRouterCallbacksOnVM(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -2147,6 +2207,10 @@ func TestRunScriptRunsSourceWebSocketModuleOnVM(t *testing.T) {
 	probe.Close()
 
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -2256,6 +2320,10 @@ func TestRunScriptRunsSourceRedisModuleOnVM(t *testing.T) {
 	}()
 
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
@@ -2312,6 +2380,10 @@ client.close();
 
 func TestRunScriptTraceExecReportsEngine(t *testing.T) {
 	dir := t.TempDir()
+	// macOS temp dirs are under /var -> /private/var; canonicalize to match os.Getwd().
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	previous, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
