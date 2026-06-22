@@ -650,7 +650,7 @@ func (e *Evaluator) runMultiChoose(label string, choices []string, checked []boo
 		return e.multiChooseLoop(label, choices, checked, override)
 	}
 	fd := int(os.Stdin.Fd())
-	original, err := unix.IoctlGetTermios(fd, unix.TCGETS)
+	original, err := unix.IoctlGetTermios(fd, ioctlGetTermios)
 	if err != nil {
 		return e.multiChooseFallback(label, choices, checked)
 	}
@@ -658,10 +658,10 @@ func (e *Evaluator) runMultiChoose(label string, choices []string, checked []boo
 	raw.Lflag &^= (unix.ICANON | unix.ECHO | unix.ISIG)
 	raw.Cc[unix.VMIN] = 1
 	raw.Cc[unix.VTIME] = 0
-	if err := unix.IoctlSetTermios(fd, unix.TCSETS, &raw); err != nil {
+	if err := unix.IoctlSetTermios(fd, ioctlSetTermios, &raw); err != nil {
 		return e.multiChooseFallback(label, choices, checked)
 	}
-	defer func() { _ = unix.IoctlSetTermios(fd, unix.TCSETS, original) }()
+	defer func() { _ = unix.IoctlSetTermios(fd, ioctlSetTermios, original) }()
 	return e.multiChooseLoop(label, choices, checked, bufio.NewReader(os.Stdin))
 }
 
@@ -868,17 +868,17 @@ func readConsoleSecret() (string, error) {
 		return readConsoleLine()
 	}
 	fd := int(os.Stdin.Fd())
-	original, err := unix.IoctlGetTermios(fd, unix.TCGETS)
+	original, err := unix.IoctlGetTermios(fd, ioctlGetTermios)
 	if err != nil {
 		return readConsoleLine()
 	}
 	hidden := *original
 	hidden.Lflag &^= unix.ECHO
-	if err := unix.IoctlSetTermios(fd, unix.TCSETS, &hidden); err != nil {
+	if err := unix.IoctlSetTermios(fd, ioctlSetTermios, &hidden); err != nil {
 		return readConsoleLine()
 	}
 	line, readErr := readConsoleLine()
-	restoreErr := unix.IoctlSetTermios(fd, unix.TCSETS, original)
+	restoreErr := unix.IoctlSetTermios(fd, ioctlSetTermios, original)
 	if readErr != nil {
 		return "", readErr
 	}

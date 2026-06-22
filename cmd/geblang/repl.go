@@ -174,7 +174,7 @@ type terminalLineReader struct {
 }
 
 func newTerminalLineReader(in *os.File, out *os.File, completer replCompleter) (*terminalLineReader, error) {
-	original, err := unix.IoctlGetTermios(int(in.Fd()), unix.TCGETS)
+	original, err := unix.IoctlGetTermios(int(in.Fd()), ioctlGetTermios)
 	if err != nil {
 		return nil, err
 	}
@@ -183,20 +183,20 @@ func newTerminalLineReader(in *os.File, out *os.File, completer replCompleter) (
 	raw.Lflag &^= unix.ECHO | unix.ICANON | unix.IEXTEN | unix.ISIG
 	raw.Cc[unix.VMIN] = 1
 	raw.Cc[unix.VTIME] = 0
-	if err := unix.IoctlSetTermios(int(in.Fd()), unix.TCSETS, &raw); err != nil {
+	if err := unix.IoctlSetTermios(int(in.Fd()), ioctlSetTermios, &raw); err != nil {
 		return nil, err
 	}
 	store := newREPLHistoryStore()
 	history, err := store.Load()
 	if err != nil {
-		_ = unix.IoctlSetTermios(int(in.Fd()), unix.TCSETS, original)
+		_ = unix.IoctlSetTermios(int(in.Fd()), ioctlSetTermios, original)
 		return nil, err
 	}
 	return &terminalLineReader{in: in, out: out, original: original, history: history, store: store, completer: completer}, nil
 }
 
 func isTerminal(file *os.File) bool {
-	_, err := unix.IoctlGetTermios(int(file.Fd()), unix.TCGETS)
+	_, err := unix.IoctlGetTermios(int(file.Fd()), ioctlGetTermios)
 	return err == nil
 }
 
@@ -518,7 +518,7 @@ func (r *terminalLineReader) Close() error {
 	if r.original == nil {
 		return historyErr
 	}
-	if err := unix.IoctlSetTermios(int(r.in.Fd()), unix.TCSETS, r.original); err != nil {
+	if err := unix.IoctlSetTermios(int(r.in.Fd()), ioctlSetTermios, r.original); err != nil {
 		return err
 	}
 	return historyErr
