@@ -109,6 +109,9 @@ func New(l *lexer.Lexer) *Parser {
 	return p
 }
 
+// Comments returns the source comments captured by the lexer (used by the formatter; the AST itself ignores comments).
+func (p *Parser) Comments() []lexer.Comment { return p.l.Comments() }
+
 func (p *Parser) Errors() []string {
 	return p.errors
 }
@@ -355,6 +358,9 @@ func (p *Parser) parseDecoratedStatement() ast.Statement {
 		 * stash the decorators on the DeclarationStatement for the
 		 * class-body parser to harvest into ClassStatement.FieldDecorators. */
 		stmt.Decorators = decorators
+		if stmt.Doc == "" {
+			stmt.Doc = doc
+		}
 	case *ast.ExportStatement:
 		switch inner := stmt.Statement.(type) {
 		case *ast.FunctionStatement:
@@ -495,7 +501,7 @@ func (p *Parser) parseTypeAliasStatement() ast.Statement {
 }
 
 func (p *Parser) parseDeclarationStatement() ast.Statement {
-	stmt := &ast.DeclarationStatement{Token: p.curToken}
+	stmt := &ast.DeclarationStatement{Token: p.curToken, Doc: p.curToken.Doc}
 	static := false
 	if p.curTokenIs(token.Static) {
 		static = true

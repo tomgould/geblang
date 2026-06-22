@@ -301,6 +301,7 @@ type DeclarationStatement struct {
 	Type  *TypeRef
 	Name  *Identifier
 	Value Expression
+	Doc   string
 	// Decorators applies only to declarations that live inside a
 	// class body (`@Assert.email string x;`). It is metadata only -
 	// pure annotations consulted by reflection, never executed

@@ -1223,6 +1223,7 @@ type Field struct {
 	Name    string
 	Type    *ast.TypeRef
 	Default ast.Expression
+	Doc     string // docblock (## or /** */) immediately before the field, surfaced via reflect.fields.
 	// Decorators is the list of @-prefixed annotations applied to
 	// the field declaration inside a class body. They are pure
 	// metadata - the runtime never executes them automatically;

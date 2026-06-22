@@ -205,11 +205,18 @@ io.println(reflect.className(Dog));   # Dog
 ```
 
 `reflect.fields(class)` returns one dict per declared field, each with `name`,
-`type`, `nullable`, `hasDefault`, and `decorators`:
+`type`, `nullable`, `hasDefault`, `doc`, and `decorators`. A docblock (a `##`
+line comment or a `/** ... */` block) written immediately before a field is
+surfaced as its `doc` string; fields without one report `doc` as `null`:
 
 ```gb
+class Dog {
+    /** the breed, or null if unknown */
+    ?string breed;
+}
+
 io.println(reflect.fields(Dog));
-# [{"decorators": [], "hasDefault": false, "name": "breed", "nullable": true, "type": "?string"}]
+# [{"decorators": [], "doc": "the breed, or null if unknown", "hasDefault": false, "name": "breed", "nullable": true, "type": "?string"}]
 ```
 
 `reflect.methods(class)` returns the names of the class's own methods:

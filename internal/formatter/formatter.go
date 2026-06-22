@@ -1,10 +1,9 @@
-// Package formatter provides canonical source formatting for Geblang programs.
-// Comments are not preserved in this implementation; the output is
-// re-parseable to the same AST but without original comments.
+// Package formatter provides canonical source formatting for Geblang programs; it preserves comments and refuses (never corrupts) any output that would not re-parse to the same AST.
 package formatter
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	"geblang/internal/ast"
@@ -14,22 +13,144 @@ import (
 
 // Format parses src, formats it canonically, and returns the result.
 // Returns a parse error if src is not valid Geblang.
-func Format(src []byte) ([]byte, error) {
+func Format(src []byte) (result []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			result, err = nil, fmt.Errorf("formatter bug: panic while formatting (%v); source left unchanged", r)
+		}
+	}()
 	p := parser.New(lexer.New(string(src)))
 	program := p.ParseProgram()
 	if errs := p.Errors(); len(errs) > 0 {
 		return nil, fmt.Errorf("parse error: %s", errs[0])
 	}
-	f := &fmtr{}
+	f := &fmtr{comments: p.Comments()}
 	f.program(program)
 	out := strings.TrimRight(f.buf.String(), "\n") + "\n"
+	if err := verifyRoundTrip(program, out); err != nil {
+		return nil, err
+	}
 	return []byte(out), nil
+}
+
+// verifyRoundTrip refuses any output that does not re-parse to the same AST, so fmt can never silently change a program's meaning or break its syntax.
+func verifyRoundTrip(input *ast.Program, out string) error {
+	p := parser.New(lexer.New(out))
+	reparsed := p.ParseProgram()
+	if errs := p.Errors(); len(errs) > 0 {
+		return fmt.Errorf("formatter bug: output no longer parses (%s); source left unchanged", errs[0])
+	}
+	if input.String() != reparsed.String() {
+		return fmt.Errorf("formatter bug: formatting would change the program's meaning; source left unchanged")
+	}
+	return nil
 }
 
 type fmtr struct {
 	buf             strings.Builder
 	depth           int
 	prevWasTopLevel bool
+	comments        []lexer.Comment
+	ci              int
+}
+
+// startLine returns a statement's first source line via its Token field, or a large sentinel for nodes without one.
+func startLine(s ast.Statement) int {
+	v := reflect.Indirect(reflect.ValueOf(s))
+	if v.Kind() == reflect.Struct {
+		if tok := v.FieldByName("Token"); tok.IsValid() && tok.Kind() == reflect.Struct {
+			if line := tok.FieldByName("Line"); line.IsValid() && line.CanInt() {
+				return int(line.Int())
+			}
+		}
+	}
+	return 1 << 30
+}
+
+// endLine returns the largest source line in a statement's subtree (its last token), so blank-line gaps after multi-line statements are measured correctly.
+func endLine(s ast.Statement) int {
+	max := 0
+	var walk func(v reflect.Value)
+	walk = func(v reflect.Value) {
+		if !v.IsValid() {
+			return
+		}
+		switch v.Kind() {
+		case reflect.Ptr, reflect.Interface:
+			walk(v.Elem())
+		case reflect.Struct:
+			if v.Type().Name() == "Token" {
+				if line := v.FieldByName("Line"); line.IsValid() && line.CanInt() {
+					if n := int(line.Int()); n > max {
+						max = n
+					}
+				}
+				return
+			}
+			for i := 0; i < v.NumField(); i++ {
+				if fv := v.Field(i); fv.CanInterface() {
+					walk(fv)
+				}
+			}
+		case reflect.Slice, reflect.Array:
+			for i := 0; i < v.Len(); i++ {
+				walk(v.Index(i))
+			}
+		case reflect.Map:
+			for _, k := range v.MapKeys() {
+				walk(v.MapIndex(k))
+			}
+		}
+	}
+	walk(reflect.ValueOf(s))
+	return max
+}
+
+// maybeBlank emits one blank line when the source had a gap (>1 line) between the previous statement's end and the next statement or its leading comment.
+func (f *fmtr) maybeBlank(prevEnd int, s ast.Statement) {
+	if prevEnd <= 0 {
+		return
+	}
+	next := startLine(s)
+	if f.ci < len(f.comments) && f.comments[f.ci].Line < next {
+		next = f.comments[f.ci].Line
+	}
+	if next-prevEnd > 1 {
+		f.nl()
+	}
+}
+
+// flushComments emits every pending comment whose source line precedes beforeLine.
+func (f *fmtr) flushComments(beforeLine int) {
+	for f.ci < len(f.comments) && f.comments[f.ci].Line < beforeLine {
+		f.writeln(f.pad() + renderComment(f.comments[f.ci]))
+		f.ci++
+	}
+}
+
+func renderComment(c lexer.Comment) string {
+	switch c.Kind {
+	case "doc-line":
+		if c.Text == "" {
+			return "##"
+		}
+		return "## " + c.Text
+	case "block":
+		if strings.Contains(c.Text, "\n") {
+			return "/*" + c.Text + "*/"
+		}
+		return "/* " + strings.TrimSpace(c.Text) + " */"
+	case "doc-block":
+		if strings.Contains(c.Text, "\n") {
+			return "/**" + c.Text + "*/"
+		}
+		return "/** " + strings.TrimSpace(c.Text) + " */"
+	default:
+		if c.Text == "" {
+			return "#"
+		}
+		return "# " + c.Text
+	}
 }
 
 func (f *fmtr) pad() string { return strings.Repeat("    ", f.depth) }
@@ -49,6 +170,7 @@ func (f *fmtr) program(prog *ast.Program) {
 	for i < len(stmts) {
 		switch stmts[i].(type) {
 		case *ast.ModuleStatement, *ast.ImportStatement:
+			f.flushComments(startLine(stmts[i]))
 			f.stmt(stmts[i])
 			i++
 			continue
@@ -60,9 +182,11 @@ func (f *fmtr) program(prog *ast.Program) {
 		if i > 0 {
 			f.nl()
 		}
+		f.flushComments(startLine(stmts[i]))
 		f.stmt(stmts[i])
 		i++
 	}
+	f.flushComments(1 << 30)
 }
 
 // ---- statements ----
@@ -72,7 +196,11 @@ func (f *fmtr) stmt(s ast.Statement) {
 	case *ast.ModuleStatement:
 		f.writeln("module " + strings.Join(s.Path, ".") + ";")
 	case *ast.ImportStatement:
-		f.writeln("import " + strings.Join(s.Path, ".") + ";")
+		line := "import " + strings.Join(s.Path, ".")
+		if s.Alias != nil {
+			line += " as " + s.Alias.Value
+		}
+		f.writeln(line + ";")
 	case *ast.ExportStatement:
 		f.write(f.pad() + "export ")
 		f.stmtInner(s.Statement)
@@ -126,6 +254,36 @@ func (f *fmtr) stmt(s ast.Statement) {
 	case *ast.InitStatement:
 		f.write(f.pad() + "init ")
 		f.block(s.Body)
+	case *ast.WithStatement:
+		head := "with ("
+		if s.Name != nil {
+			head += s.Name.Value + " = "
+		}
+		head += f.expr(s.Value) + ") "
+		f.write(f.pad() + head)
+		f.block(s.Body)
+	case *ast.SelectStatement:
+		f.writeln(f.pad() + "select {")
+		f.depth++
+		for _, c := range s.Cases {
+			var sc string
+			if c.Kind == "send" {
+				sc = f.expr(c.Channel) + ".send(" + f.expr(c.Value) + ")"
+			} else {
+				if c.Binding != "" {
+					sc = "let " + c.Binding + " = "
+				}
+				sc += f.expr(c.Channel) + ".recv()"
+			}
+			f.write(f.pad() + "case " + sc + ": ")
+			f.block(c.Body)
+		}
+		if s.Default != nil {
+			f.write(f.pad() + "default: ")
+			f.block(s.Default)
+		}
+		f.depth--
+		f.writeln(f.pad() + "}")
 	default:
 		// Fallback: use AST's own String() method
 		f.writeln(f.pad() + s.String() + ";")
@@ -139,6 +297,10 @@ func (f *fmtr) stmtInner(s ast.Statement) {
 		f.fmtFunctionRaw(s)
 	case *ast.ClassStatement:
 		f.fmtClassRaw(s)
+	case *ast.InterfaceStatement:
+		f.fmtInterface(s)
+	case *ast.EnumStatement:
+		f.fmtEnum(s)
 	default:
 		f.stmtNoPrefix(s)
 	}
@@ -147,14 +309,7 @@ func (f *fmtr) stmtInner(s ast.Statement) {
 func (f *fmtr) stmtNoPrefix(s ast.Statement) {
 	switch s := s.(type) {
 	case *ast.DeclarationStatement:
-		var parts []string
-		if s.Type != nil {
-			parts = append(parts, s.Type.String())
-		} else {
-			parts = append(parts, "let")
-		}
-		parts = append(parts, s.Name.Value)
-		line := strings.Join(parts, " ")
+		line := strings.Join(declPrefix(s), " ")
 		if s.Value != nil {
 			line += " = " + f.expr(s.Value)
 		}
@@ -166,15 +321,42 @@ func (f *fmtr) stmtNoPrefix(s ast.Statement) {
 
 // ---- declaration ----
 
-func (f *fmtr) fmtDeclaration(s *ast.DeclarationStatement) {
+// declPrefix renders the qualifier + optional type + name of a declaration, preserving const/static (Kind) which a typed-only render would drop.
+func declPrefix(s *ast.DeclarationStatement) []string {
 	var parts []string
+	if s.Kind != "" {
+		parts = append(parts, s.Kind)
+	}
 	if s.Type != nil {
 		parts = append(parts, s.Type.String())
-	} else {
+	}
+	if len(parts) == 0 {
 		parts = append(parts, "let")
 	}
 	parts = append(parts, s.Name.Value)
-	line := f.pad() + strings.Join(parts, " ")
+	return parts
+}
+
+func (f *fmtr) fmtDecorator(dec ast.Decorator) string {
+	if len(dec.Arguments) > 0 {
+		return "@" + dec.Name.Value + "(" + f.callArgs(dec.Arguments) + ")"
+	}
+	return "@" + dec.Name.Value
+}
+
+func (f *fmtr) typeArgs(args []*ast.TypeRef) string {
+	if len(args) == 0 {
+		return ""
+	}
+	parts := make([]string, len(args))
+	for i, a := range args {
+		parts[i] = a.String()
+	}
+	return "<" + strings.Join(parts, ", ") + ">"
+}
+
+func (f *fmtr) fmtDeclaration(s *ast.DeclarationStatement) {
+	line := f.pad() + strings.Join(declPrefix(s), " ")
 	if s.Value != nil {
 		line += " = " + f.expr(s.Value)
 	}
@@ -258,8 +440,12 @@ func (f *fmtr) blockInline(block *ast.BlockStatement, after func()) {
 	}
 	f.writeln("{")
 	f.depth++
+	prevEnd := 0
 	for _, s := range block.Statements {
+		f.maybeBlank(prevEnd, s)
+		f.flushComments(startLine(s))
 		f.stmt(s)
+		prevEnd = endLine(s)
 	}
 	f.depth--
 	f.write(f.pad() + "}")
@@ -329,8 +515,14 @@ func (f *fmtr) fmtFunction(s *ast.FunctionStatement) {
 }
 
 func (f *fmtr) fmtFunctionRaw(s *ast.FunctionStatement) {
-	for _, dec := range s.Decorators {
-		f.writeln("@" + dec.Name.Value + f.callArgs(dec.Arguments))
+	for i, dec := range s.Decorators {
+		if i > 0 {
+			f.write(f.pad())
+		}
+		f.writeln(f.fmtDecorator(dec))
+	}
+	if len(s.Decorators) > 0 {
+		f.write(f.pad())
 	}
 	prefix := ""
 	if s.Static {
@@ -360,8 +552,14 @@ func (f *fmtr) fmtClass(s *ast.ClassStatement) {
 }
 
 func (f *fmtr) fmtClassRaw(s *ast.ClassStatement) {
-	for _, dec := range s.Decorators {
-		f.writeln("@" + dec.Name.Value + f.callArgs(dec.Arguments))
+	for i, dec := range s.Decorators {
+		if i > 0 {
+			f.write(f.pad())
+		}
+		f.writeln(f.fmtDecorator(dec))
+	}
+	if len(s.Decorators) > 0 {
+		f.write(f.pad())
 	}
 	line := "class " + s.Name.Value
 	if len(s.Generics) > 0 {
@@ -379,8 +577,12 @@ func (f *fmtr) fmtClassRaw(s *ast.ClassStatement) {
 	}
 	f.writeln(line + " {")
 	f.depth++
+	prevEnd := 0
 	for _, m := range s.Members {
+		f.maybeBlank(prevEnd, m)
+		f.flushComments(startLine(m))
 		f.stmt(m)
+		prevEnd = endLine(m)
 	}
 	f.depth--
 	f.writeln(f.pad() + "}")
@@ -502,30 +704,78 @@ func (f *fmtr) fmtMatch(s *ast.MatchStatement) {
 }
 
 func (f *fmtr) fmtMatchCase(c ast.MatchCase) {
+	head := "default"
+	if !c.Default {
+		head = "case " + f.matchCasePattern(c)
+	}
+	if c.Body == nil { // arrow form: `case pat => value;`
+		f.writeln(f.pad() + head + " => " + f.expr(c.Value) + ";")
+		return
+	}
+	f.write(f.pad() + head + ": ")
+	f.block(c.Body)
+}
+
+func (f *fmtr) matchCasePattern(c ast.MatchCase) string {
 	var pat string
-	if c.Type != nil {
+	switch {
+	case c.EnumVariant != nil:
+		pat = f.enumVariantPattern(c.EnumVariant)
+	case c.ListPattern != nil:
+		pat = f.listPattern(c.ListPattern)
+	case c.Type != nil:
 		pat = c.Type.String()
 		if c.Name != nil {
 			pat += " " + c.Name.Value
 		}
-	} else {
+	default:
 		pat = f.matchPattern(c.Pattern)
 	}
 	for _, alt := range c.Alternates {
 		pat += " | " + f.expr(alt)
 	}
 	if c.Guard != nil {
-		pat += " if " + f.expr(c.Guard)
+		pat += " if (" + f.expr(c.Guard) + ")"
 	}
-	f.write(f.pad() + "case " + pat + " => ")
-	if len(c.Body.Statements) == 1 {
-		// Single-statement body: inline
-		tmp := &fmtr{depth: 0}
-		tmp.stmt(c.Body.Statements[0])
-		f.writeln(strings.TrimRight(tmp.buf.String(), "\n"))
-	} else {
-		f.block(c.Body)
+	return pat
+}
+
+func (f *fmtr) enumVariantPattern(p *ast.EnumVariantPattern) string {
+	s := p.Enum.Value + "." + p.Variant.Value
+	if len(p.Params) > 0 {
+		parts := make([]string, len(p.Params))
+		for i, pp := range p.Params {
+			seg := ""
+			if pp.Type != nil {
+				seg = pp.Type.String() + " "
+			}
+			if pp.Name != nil {
+				seg += pp.Name.Value
+			}
+			parts[i] = seg
+		}
+		s += "(" + strings.Join(parts, ", ") + ")"
 	}
+	return s
+}
+
+func (f *fmtr) listPattern(p *ast.ListPatternMatch) string {
+	parts := make([]string, len(p.Bindings))
+	for i, b := range p.Bindings {
+		if b.Literal != nil {
+			parts[i] = f.expr(b.Literal)
+			continue
+		}
+		seg := ""
+		if b.Type != nil {
+			seg = b.Type.String() + " "
+		}
+		if b.Name != nil {
+			seg += b.Name.Value
+		}
+		parts[i] = seg
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 func (f *fmtr) matchPattern(p ast.Expression) string {
@@ -536,6 +786,176 @@ func (f *fmtr) matchPattern(p ast.Expression) string {
 }
 
 // ---- expressions ----
+
+// Precedence ladder mirroring internal/parser so expr() can parenthesize exactly where re-association would otherwise change meaning.
+const (
+	fpLowest = iota
+	fpAssign
+	fpPipe
+	fpTernary
+	fpNullCoalesce
+	fpLogicalOr
+	fpLogicalAnd
+	fpBitOr
+	fpBitXor
+	fpBitAnd
+	fpEquality
+	fpCompare
+	fpShift
+	fpSum
+	fpProduct
+	fpPower
+	fpPrefix
+	fpPostfix
+	fpCall
+)
+
+var fmtInfixPrec = map[string]int{
+	"??": fpNullCoalesce, "|>": fpPipe,
+	"||": fpLogicalOr, "xor": fpLogicalOr, "&&": fpLogicalAnd,
+	"|": fpBitOr, "^": fpBitXor, "&": fpBitAnd,
+	"==": fpEquality, "!=": fpEquality, "is": fpEquality, "is not": fpEquality, "instanceof": fpEquality,
+	"in": fpCompare, "<": fpCompare, "<=": fpCompare, ">": fpCompare, ">=": fpCompare,
+	"<<": fpShift, ">>": fpShift,
+	"+": fpSum, "-": fpSum,
+	"*": fpProduct, "/": fpProduct, "//": fpProduct, "%": fpProduct,
+	"**": fpPower,
+}
+
+func fmtPrec(e ast.Expression) int {
+	switch x := e.(type) {
+	case *ast.InfixExpression:
+		if p, ok := fmtInfixPrec[x.Operator]; ok {
+			return p
+		}
+		return fpLowest + 1 // unknown operator: parenthesize defensively
+	case *ast.PrefixExpression, *ast.AwaitExpression:
+		return fpPrefix
+	case *ast.PostfixExpression:
+		return fpPostfix
+	case *ast.CastExpression, *ast.RangeExpression:
+		return fpCompare
+	case *ast.TernaryExpression:
+		return fpTernary
+	case *ast.AssignmentExpression:
+		return fpAssign
+	case *ast.SpreadExpression:
+		return fpLowest
+	default:
+		return fpCall
+	}
+}
+
+// fmtIsPrimary reports whether e can sit unparenthesized to the left of a postfix tail (call/index/selector).
+func fmtIsPrimary(e ast.Expression) bool {
+	switch e.(type) {
+	case *ast.InfixExpression, *ast.PrefixExpression, *ast.PostfixExpression,
+		*ast.CastExpression, *ast.TernaryExpression, *ast.AssignmentExpression,
+		*ast.RangeExpression, *ast.AwaitExpression, *ast.SpreadExpression:
+		return false
+	}
+	return true
+}
+
+func parenIf(cond bool, s string) string {
+	if cond {
+		return "(" + s + ")"
+	}
+	return s
+}
+
+// nodeLine returns an expression's source line via its Token field, or 0.
+func nodeLine(e ast.Expression) int {
+	v := reflect.Indirect(reflect.ValueOf(e))
+	if v.Kind() == reflect.Struct {
+		if tok := v.FieldByName("Token"); tok.IsValid() && tok.Kind() == reflect.Struct {
+			if line := tok.FieldByName("Line"); line.IsValid() && line.CanInt() {
+				return int(line.Int())
+			}
+		}
+	}
+	return 0
+}
+
+// flattenInfix collects the operands of a left-leaning chain of one operator.
+func flattenInfix(e *ast.InfixExpression, op string) []ast.Expression {
+	var operands []ast.Expression
+	var walk func(n ast.Expression)
+	walk = func(n ast.Expression) {
+		if inf, ok := n.(*ast.InfixExpression); ok && inf.Operator == op {
+			walk(inf.Left)
+			operands = append(operands, inf.Right)
+			return
+		}
+		operands = append(operands, n)
+	}
+	walk(e)
+	return operands
+}
+
+// shouldBreakInfix reports whether a +/&&/|| chain of 3+ operands spanned multiple source lines (an intentional author line break to preserve).
+func (f *fmtr) shouldBreakInfix(e *ast.InfixExpression) bool {
+	op := e.Operator
+	if op != "+" && op != "&&" && op != "||" {
+		return false
+	}
+	operands := flattenInfix(e, op)
+	if len(operands) < 3 {
+		return false
+	}
+	minL, maxL := 1<<30, 0
+	for _, o := range operands {
+		l := nodeLine(o)
+		if l == 0 {
+			continue
+		}
+		if l < minL {
+			minL = l
+		}
+		if l > maxL {
+			maxL = l
+		}
+	}
+	return maxL > minL
+}
+
+// multilineInfix renders a chain with each continuation operand on its own line, operator-first, indented one level past the statement.
+func (f *fmtr) multilineInfix(e *ast.InfixExpression) string {
+	op := e.Operator
+	operands := flattenInfix(e, op)
+	self := fmtPrec(e)
+	indent := strings.Repeat("    ", f.depth+1)
+	var b strings.Builder
+	for i, o := range operands {
+		wrap := fmtPrec(o) <= self
+		if i == 0 {
+			wrap = fmtPrec(o) < self
+		}
+		s := parenIf(wrap, f.expr(o))
+		if i == 0 {
+			b.WriteString(s)
+		} else {
+			b.WriteString("\n" + indent + op + " " + s)
+		}
+	}
+	return b.String()
+}
+
+// sliceIndex renders a range used as an index in Python slice syntax: start:end[:step].
+func (f *fmtr) sliceIndex(r *ast.RangeExpression) string {
+	s := ""
+	if r.Start != nil {
+		s += f.expr(r.Start)
+	}
+	s += ":"
+	if r.End != nil {
+		s += f.expr(r.End)
+	}
+	if r.Step != nil {
+		s += ":" + f.expr(r.Step)
+	}
+	return s
+}
 
 func (f *fmtr) expr(e ast.Expression) string {
 	if e == nil {
@@ -597,11 +1017,28 @@ func (f *fmtr) expr(e ast.Expression) string {
 	case *ast.DictComprehension:
 		return "{" + f.expr(e.KeyBody) + ": " + f.expr(e.ValueBody) + f.fmtComprehensionClauses(e.Clauses) + "}"
 	case *ast.PrefixExpression:
-		return e.Operator + f.expr(e.Right)
+		sep := ""
+		if n := len(e.Operator); n > 0 && e.Operator[n-1] >= 'a' && e.Operator[n-1] <= 'z' {
+			sep = " "
+		}
+		return e.Operator + sep + parenIf(fmtPrec(e.Right) < fpPrefix, f.expr(e.Right))
 	case *ast.PostfixExpression:
-		return f.expr(e.Left) + e.Operator
+		return parenIf(fmtPrec(e.Left) < fpPostfix, f.expr(e.Left)) + e.Operator
 	case *ast.InfixExpression:
-		return f.expr(e.Left) + " " + e.Operator + " " + f.expr(e.Right)
+		if f.shouldBreakInfix(e) {
+			return f.multilineInfix(e)
+		}
+		self := fmtPrec(e)
+		leftWrap := fmtPrec(e.Left) < self
+		rightWrap := fmtPrec(e.Right) <= self
+		if e.Operator == "**" { // right-associative
+			leftWrap = fmtPrec(e.Left) <= self
+			rightWrap = fmtPrec(e.Right) < self
+		}
+		if _, isCast := e.Left.(*ast.CastExpression); isCast && (e.Operator == "|" || e.Operator == "&") {
+			leftWrap = true // a cast's type greedily absorbs a following | / & as a union/intersection type
+		}
+		return parenIf(leftWrap, f.expr(e.Left)) + " " + e.Operator + " " + parenIf(rightWrap, f.expr(e.Right))
 	case *ast.AssignmentExpression:
 		return f.expr(e.Left) + " = " + f.expr(e.Value)
 	case *ast.SelectorExpression:
@@ -609,11 +1046,15 @@ func (f *fmtr) expr(e ast.Expression) string {
 		if e.Optional {
 			dot = "?."
 		}
-		return f.expr(e.Object) + dot + e.Name.Value
+		return parenIf(!fmtIsPrimary(e.Object), f.expr(e.Object)) + dot + e.Name.Value
 	case *ast.CallExpression:
-		return f.expr(e.Callee) + "(" + f.callArgs(e.Arguments) + ")"
+		return parenIf(!fmtIsPrimary(e.Callee), f.expr(e.Callee)) + f.typeArgs(e.TypeArguments) + "(" + f.callArgs(e.Arguments) + ")"
 	case *ast.IndexExpression:
-		return f.expr(e.Left) + "[" + f.expr(e.Index) + "]"
+		idx := f.expr(e.Index)
+		if rng, ok := e.Index.(*ast.RangeExpression); ok {
+			idx = f.sliceIndex(rng) // a range as an index is Python-style slice syntax
+		}
+		return parenIf(!fmtIsPrimary(e.Left), f.expr(e.Left)) + "[" + idx + "]"
 	case *ast.SpreadExpression:
 		return "..." + f.expr(e.Value)
 	case *ast.RangeExpression:
@@ -641,9 +1082,12 @@ func (f *fmtr) expr(e ast.Expression) string {
 	case *ast.AwaitExpression:
 		return "await " + f.expr(e.Value)
 	case *ast.CastExpression:
-		return f.expr(e.Value) + " as " + e.Type.String()
+		return parenIf(fmtPrec(e.Value) < fpCompare, f.expr(e.Value)) + " as " + e.Type.String()
 	case *ast.TernaryExpression:
-		return f.expr(e.Condition) + " ? " + f.expr(e.ThenExpr) + " : " + f.expr(e.ElseExpr)
+		cond := parenIf(fmtPrec(e.Condition) <= fpTernary, f.expr(e.Condition))
+		then := parenIf(fmtPrec(e.ThenExpr) < fpTernary, f.expr(e.ThenExpr))
+		els := parenIf(fmtPrec(e.ElseExpr) < fpTernary, f.expr(e.ElseExpr))
+		return cond + " ? " + then + " : " + els
 	case *ast.MatchExpression:
 		return f.fmtMatchExpr(e)
 	default:
@@ -708,10 +1152,15 @@ func (f *fmtr) inlineBlock(block *ast.BlockStatement) string {
 	// Multi-statement: write as indented block (returns string representation)
 	var b strings.Builder
 	b.WriteString("{\n")
-	inner := &fmtr{depth: f.depth + 1}
+	inner := &fmtr{depth: f.depth + 1, comments: f.comments, ci: f.ci}
+	prevEnd := 0
 	for _, s := range block.Statements {
+		inner.maybeBlank(prevEnd, s)
+		inner.flushComments(startLine(s))
 		inner.stmt(s)
+		prevEnd = endLine(s)
 	}
+	f.ci = inner.ci
 	b.WriteString(inner.buf.String())
 	b.WriteString(strings.Repeat("    ", f.depth) + "}")
 	return b.String()
@@ -750,9 +1199,35 @@ func (f *fmtr) callArgs(args []ast.CallArgument) string {
 func (f *fmtr) params(params []ast.Parameter) string {
 	parts := make([]string, 0, len(params))
 	for _, p := range params {
-		parts = append(parts, p.String())
+		parts = append(parts, f.param(p))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// param renders a parameter, using f.expr for the default so dict/list/closure defaults are not emitted as String() placeholders.
+func (f *fmtr) param(p ast.Parameter) string {
+	prefix := ""
+	for _, d := range p.Decorators {
+		prefix += f.fmtDecorator(d) + " "
+	}
+	var seg []string
+	if p.Const {
+		seg = append(seg, "const")
+	}
+	if p.Type != nil {
+		seg = append(seg, p.Type.String())
+	}
+	if p.Variadic {
+		seg = append(seg, "...")
+	}
+	if p.Name != nil {
+		seg = append(seg, p.Name.Value)
+	}
+	out := prefix + strings.Join(seg, " ")
+	if p.Default != nil {
+		out += " = " + f.expr(p.Default)
+	}
+	return out
 }
 
 func (f *fmtr) fmtComprehensionClauses(clauses []ast.ComprehensionClause) string {

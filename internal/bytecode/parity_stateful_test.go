@@ -1135,3 +1135,18 @@ io.println(r["content"] as string);
 io.println(r["stopReason"] as string);
 `, "2\nHello\nHello world\nstop\n")
 }
+
+// TestParityReflectFieldDoc pins field-docblock exposure via reflect.fields on both backends.
+func TestParityReflectFieldDoc(t *testing.T) {
+	runParityStateful(t, `import reflect;
+import io;
+class User {
+    /** the unique id */
+    int id;
+    string name;
+}
+let fs = reflect.fields(User);
+io.println((fs[0] as dict<string, any>)["doc"] ?? "null");
+io.println((fs[1] as dict<string, any>)["doc"] ?? "null");
+`, "the unique id\nnull\n")
+}

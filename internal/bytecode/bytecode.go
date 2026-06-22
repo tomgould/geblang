@@ -441,6 +441,8 @@ type ClassInfo struct {
 	// each field, or "" when untyped. Populated at compile time so
 	// reflect.fields can report types without re-reading the AST.
 	FieldTypes []string
+	// FieldDocs parallels FieldNames - each field's docblock (or "") for reflect.fields.
+	FieldDocs []string
 	// FieldDecorators parallels FieldNames - the metadata for any
 	// @-prefixed annotations on the field declaration (e.g.
 	// `@Assert.email`). Empty per field by default. Populated at
@@ -627,6 +629,12 @@ func Encode(chunk Chunk) ([]byte, error) {
 			}
 			out = binary.BigEndian.AppendUint16(out, uint16(len(fieldType)))
 			out = append(out, []byte(fieldType)...)
+			fieldDoc := ""
+			if i < len(class.FieldDocs) {
+				fieldDoc = class.FieldDocs[i]
+			}
+			out = binary.BigEndian.AppendUint16(out, uint16(len(fieldDoc)))
+			out = append(out, []byte(fieldDoc)...)
 		}
 		out = binary.BigEndian.AppendUint16(out, uint16(len(class.ConstructorIndices)))
 		for _, index := range class.ConstructorIndices {
@@ -880,10 +888,12 @@ func Decode(data []byte) (Chunk, error) {
 		class.FieldNames = make([]string, 0, fieldCount)
 		class.FieldDefaults = make([]int64, 0, fieldCount)
 		class.FieldTypes = make([]string, 0, fieldCount)
+		class.FieldDocs = make([]string, 0, fieldCount)
 		for j := 0; j < fieldCount; j++ {
 			class.FieldNames = append(class.FieldNames, string(reader.read(int(reader.u16()))))
 			class.FieldDefaults = append(class.FieldDefaults, int64(reader.u64()))
 			class.FieldTypes = append(class.FieldTypes, string(reader.read(int(reader.u16()))))
+			class.FieldDocs = append(class.FieldDocs, string(reader.read(int(reader.u16()))))
 		}
 		constructorCount := int(reader.u16())
 		class.ConstructorIndices = make([]int64, 0, constructorCount)

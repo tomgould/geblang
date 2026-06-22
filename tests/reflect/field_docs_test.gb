@@ -1,0 +1,55 @@
+/**
+ * @title Field docblocks via reflect.fields (1.25.0)
+ * @summary A line or block docblock immediately before a class field is
+ * surfaced as a per-field `doc` string in reflect.fields(class); a field with
+ * no docblock reports doc = null. Works alongside field decorators, and is
+ * identical on both backends and on a cached chunk.
+ */
+import test;
+import reflect;
+
+class User {
+    /** the user's unique id */
+    int id;
+
+    ## the display name
+    string name;
+
+    string plain;
+
+    /** the contact email */
+    @Assert.email
+    string email;
+}
+
+class FieldDocTest extends test.Test {
+    func docOf(string field): any {
+        for (entry in reflect.fields(User)) {
+            let f = entry as dict<string, any>;
+            if ((f["name"] as string) == field) {
+                return f["doc"];
+            }
+        }
+        return "MISSING";
+    }
+
+    @test
+    func blockDocblockSurfaced(): void {
+        this.assertEquals("the user's unique id", this.docOf("id"));
+    }
+
+    @test
+    func lineDocblockSurfaced(): void {
+        this.assertEquals("the display name", this.docOf("name"));
+    }
+
+    @test
+    func undocumentedFieldHasNullDoc(): void {
+        this.assertEquals(null, this.docOf("plain"));
+    }
+
+    @test
+    func documentedAndDecoratedField(): void {
+        this.assertEquals("the contact email", this.docOf("email"));
+    }
+}

@@ -287,6 +287,7 @@ func (c *Compiler) compileClassStatement(stmt *ast.ClassStatement) error {
 				fieldType = member.Type.String()
 			}
 			class.FieldTypes = append(class.FieldTypes, fieldType)
+			class.FieldDocs = append(class.FieldDocs, member.Doc)
 			/* Field decorators ride alongside the field at compile time
 			 * so reflect.fields can surface them at runtime without
 			 * re-reading the AST. Frameworks consume them as

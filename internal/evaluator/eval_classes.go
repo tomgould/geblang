@@ -734,7 +734,7 @@ func (e *Evaluator) buildClass(stmt *ast.ClassStatement, env *runtime.Environmen
 				class.ImmutableFields = append(class.ImmutableFields, member.Name.Value)
 				fieldDecs = withoutImmutableDecoratorEval(member.Decorators)
 			}
-			class.Fields = append(class.Fields, runtime.Field{Name: member.Name.Value, Type: member.Type, Default: member.Value, Decorators: fieldDecs})
+			class.Fields = append(class.Fields, runtime.Field{Name: member.Name.Value, Type: member.Type, Default: member.Value, Doc: member.Doc, Decorators: fieldDecs})
 		case *ast.FunctionStatement:
 			target := "method"
 			if member.Static {

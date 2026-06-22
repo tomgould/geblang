@@ -18,7 +18,18 @@ type Lexer struct {
 	line         int
 	column       int
 	pendingDocs  []string
+	comments     []Comment
 }
+
+// Comment is a source comment captured for the formatter (the parser/AST ignore these). Kind is "line", "doc-line", "block", or "doc-block".
+type Comment struct {
+	Kind string
+	Text string
+	Line int
+}
+
+// Comments returns every comment lexed so far, in source order.
+func (l *Lexer) Comments() []Comment { return l.comments }
 
 func New(input string) *Lexer {
 	l := &Lexer{input: input, line: 1}
@@ -559,27 +570,32 @@ func (l *Lexer) skipIgnored() {
 }
 
 func (l *Lexer) skipLineComment() {
+	startLine := l.line
 	doc := false
 	if l.peekChar() == '#' {
 		doc = true
 		l.readChar()
-		for l.peekChar() == ' ' || l.peekChar() == '\t' {
-			l.readChar()
-		}
 	}
-	var text strings.Builder
-	for l.ch != '\n' && l.ch != 0 {
-		if doc && l.ch != '#' {
-			text.WriteRune(l.ch)
-		}
+	for l.peekChar() == ' ' || l.peekChar() == '\t' {
 		l.readChar()
 	}
+	l.readChar() // step past the marker (or trailing space) to the first content char
+	var text strings.Builder
+	for l.ch != '\n' && l.ch != 0 {
+		text.WriteRune(l.ch)
+		l.readChar()
+	}
+	content := strings.TrimSpace(text.String())
 	if doc {
-		l.pendingDocs = append(l.pendingDocs, strings.TrimSpace(text.String()))
+		l.pendingDocs = append(l.pendingDocs, content)
+		l.comments = append(l.comments, Comment{Kind: "doc-line", Text: content, Line: startLine})
+	} else {
+		l.comments = append(l.comments, Comment{Kind: "line", Text: content, Line: startLine})
 	}
 }
 
 func (l *Lexer) skipBlockComment() {
+	startLine := l.line
 	l.readChar()
 	l.readChar()
 	doc := l.ch == '*'
@@ -593,13 +609,15 @@ func (l *Lexer) skipBlockComment() {
 			l.readChar()
 			break
 		}
-		if doc {
-			text.WriteRune(l.ch)
-		}
+		text.WriteRune(l.ch)
 		l.readChar()
 	}
+	raw := text.String()
 	if doc {
-		l.pendingDocs = append(l.pendingDocs, cleanBlockDoc(text.String()))
+		l.pendingDocs = append(l.pendingDocs, cleanBlockDoc(raw))
+		l.comments = append(l.comments, Comment{Kind: "doc-block", Text: raw, Line: startLine})
+	} else {
+		l.comments = append(l.comments, Comment{Kind: "block", Text: raw, Line: startLine})
 	}
 }
 

@@ -600,6 +600,11 @@ func reflectFields(call *ast.CallExpression, args []runtime.Value) (runtime.Valu
 			}
 			putDict(fd, "nullable", runtime.Bool{Value: nullable})
 			putDict(fd, "hasDefault", runtime.Bool{Value: field.Default != nil})
+			if field.Doc == "" {
+				putDict(fd, "doc", runtime.Null{})
+			} else {
+				putDict(fd, "doc", runtime.String{Value: field.Doc})
+			}
 			decs, derr := decoratorListValue(field.Decorators, "field", "")
 			if derr == nil {
 				putDict(fd, "decorators", decs)

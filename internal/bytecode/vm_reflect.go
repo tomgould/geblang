@@ -1318,11 +1318,16 @@ func (vm *VM) reflectFieldsResult(target runtime.Value, metadata runtime.ClassMe
 				fieldType = classInfo.FieldTypes[i]
 				nullable = strings.HasPrefix(fieldType, "?")
 			}
+			var doc runtime.Value = runtime.Null{}
+			if i < len(classInfo.FieldDocs) && classInfo.FieldDocs[i] != "" {
+				doc = runtime.String{Value: classInfo.FieldDocs[i]}
+			}
 			fieldDict := map[string]runtime.DictEntry{
 				native.DictKey(runtime.String{Value: "name"}):       {Key: runtime.String{Value: "name"}, Value: runtime.String{Value: name}},
 				native.DictKey(runtime.String{Value: "type"}):       {Key: runtime.String{Value: "type"}, Value: runtime.String{Value: fieldType}},
 				native.DictKey(runtime.String{Value: "nullable"}):   {Key: runtime.String{Value: "nullable"}, Value: runtime.Bool{Value: nullable}},
 				native.DictKey(runtime.String{Value: "hasDefault"}): {Key: runtime.String{Value: "hasDefault"}, Value: runtime.Bool{Value: false}},
+				native.DictKey(runtime.String{Value: "doc"}):        {Key: runtime.String{Value: "doc"}, Value: doc},
 			}
 			if i < len(classInfo.FieldDecorators) {
 				decValues := make([]runtime.Value, 0, len(classInfo.FieldDecorators[i]))
