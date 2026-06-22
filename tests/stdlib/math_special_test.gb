@@ -1,0 +1,56 @@
+/**
+ * @title math special functions and combinatorics
+ * @summary Gamma/error/Bessel functions and exact integer combinatorics.
+ */
+import test;
+import math;
+
+class MathSpecialTest extends test.Test {
+    @test
+    func gammaAndFactorialAgree(): void {
+        /* gamma(n) == (n-1)! for positive integers. */
+        this.assertTrue(math.abs(math.gamma(5.0f) - 24.0f) < 0.0000001f);
+        this.assertEquals("15511210043330985984000000", "${math.factorial(25)}");
+    }
+
+    @test
+    func combAndPerm(): void {
+        this.assertEquals(126410606437752, math.comb(50, 25));
+        this.assertEquals(0, math.comb(5, 8));
+        this.assertEquals(670442572800, math.perm(20, 10));
+    }
+
+    @test
+    func gcdLcm(): void {
+        this.assertEquals(12, math.gcd(48, 36));
+        this.assertEquals(4, math.gcd(-12, 8));
+        this.assertEquals(12, math.lcm(4, 6));
+        this.assertEquals(0, math.lcm(7, 0));
+    }
+
+    @test
+    func errorFunctions(): void {
+        this.assertTrue(math.abs(math.erf(0.0f)) < 0.0000001f);
+        this.assertTrue(math.abs(math.erfc(0.0f) - 1.0f) < 0.0000001f);
+    }
+
+    @test
+    func logDomainHelpers(): void {
+        /* beta(a,b) == exp(lbeta(a,b)) */
+        this.assertTrue(math.abs(math.beta(2.0f, 3.0f) - math.exp(math.lbeta(2.0f, 3.0f))) < 0.0000001f);
+    }
+
+    @test
+    func negativeFactorialThrows(): void {
+        let threw = false;
+        try { math.factorial(-1); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func oversizeFactorialThrows(): void {
+        let threw = false;
+        try { math.factorial(100001); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+    }
+}

@@ -142,6 +142,10 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"tau": {}, "ln2": {}, "ln10": {}, "sqrt2": {}, "phi": {},
 		"maxInt": {}, "minInt": {}, "maxFloat": {}, "minFloat": {},
 		"epsilon": {}, "sqrt2Pi": {}, "log2Pi": {},
+		"gamma": {}, "lgamma": {}, "beta": {}, "lbeta": {},
+		"erf": {}, "erfc": {}, "erfinv": {},
+		"j0": {}, "j1": {}, "jn": {}, "y0": {}, "y1": {}, "yn": {},
+		"factorial": {}, "comb": {}, "perm": {}, "gcd": {}, "lcm": {}, "lcomb": {},
 	},
 	"vecmath": {
 		"score": {}, "topK": {}, "normalize": {}, "semanticSearch": {},

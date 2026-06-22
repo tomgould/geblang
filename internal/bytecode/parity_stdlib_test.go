@@ -50,6 +50,40 @@ io.println(math.sqrt(16.0));
 `, "5\n7\n3\n3\n4\n4\n")
 }
 
+func TestParityMathSpecialFunctions(t *testing.T) {
+	runParity(t, `import io;
+import math;
+io.println(math.gamma(5.0));
+io.println(math.lgamma(5.0));
+io.println(math.beta(2.0, 3.0));
+io.println(math.lbeta(2.0, 3.0));
+io.println(math.erf(0.0));
+io.println(math.erfc(0.0));
+io.println(math.erfinv(0.0));
+io.println(math.j0(0.0));
+io.println(math.y0(1.0));
+io.println(math.y1(1.0));
+io.println(math.jn(2, 1.0));
+io.println(math.yn(2, 1.0));
+`, "24\n3.1780538303479458\n0.08333333333333333\n-2.4849066497880004\n0\n1\n0\n1\n0.08825696421567697\n-0.7812128213002887\n0.11490348493190049\n-1.6506826068162543\n")
+}
+
+func TestParityMathCombinatorics(t *testing.T) {
+	runParity(t, `import io;
+import math;
+io.println(math.factorial(0));
+io.println(math.factorial(20));
+io.println(math.factorial(25));
+io.println(math.comb(50, 25));
+io.println(math.comb(5, 8));
+io.println(math.perm(20, 10));
+io.println(math.gcd(48, 36));
+io.println(math.gcd(-12, 8));
+io.println(math.lcm(4, 6));
+io.println(math.lcm(7, 0));
+`, "1\n2432902008176640000\n15511210043330985984000000\n126410606437752\n0\n670442572800\n12\n4\n12\n0\n")
+}
+
 func TestParityJSONStdlib(t *testing.T) {
 	runParity(t, `import io;
 import json;

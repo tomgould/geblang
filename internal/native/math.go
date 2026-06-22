@@ -287,8 +287,51 @@ func FloatUnaryMath(args []runtime.Value, fn func(float64) float64, label string
 	return runtime.Float{Value: fn(value)}, nil
 }
 
-// RoundMode selects the rounding direction for the value-keeping numeric
-// rounding helpers (DecimalQuantize / FloatRound).
+func FloatBinaryMath(args []runtime.Value, fn func(float64, float64) float64, label string) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects exactly two arguments", label)
+	}
+	a, err := FloatLike(args[0])
+	if err != nil {
+		return nil, err
+	}
+	b, err := FloatLike(args[1])
+	if err != nil {
+		return nil, err
+	}
+	return runtime.Float{Value: fn(a, b)}, nil
+}
+
+func besselN(args []runtime.Value, fn func(int, float64) float64, label string) (runtime.Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("%s expects exactly two arguments (order, x)", label)
+	}
+	n, err := intArg(args[0], label+" order")
+	if err != nil {
+		return nil, err
+	}
+	x, err := FloatLike(args[1])
+	if err != nil {
+		return nil, err
+	}
+	return runtime.Float{Value: fn(int(n), x)}, nil
+}
+
+func intArg(v runtime.Value, label string) (int64, error) {
+	switch n := v.(type) {
+	case runtime.SmallInt:
+		return n.Value, nil
+	case runtime.Int:
+		if !n.Value.IsInt64() {
+			return 0, fmt.Errorf("%s is too large", label)
+		}
+		return n.Value.Int64(), nil
+	default:
+		return 0, fmt.Errorf("%s expects an integer", label)
+	}
+}
+
+// RoundMode selects the rounding direction for DecimalQuantize / FloatRound.
 type RoundMode int
 
 const (

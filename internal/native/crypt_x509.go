@@ -281,7 +281,7 @@ func decodeASN1Value(raw asn1.RawValue) (runtime.Value, error) {
 
 func bigIntValue(bi *big.Int) runtime.Value {
 	if bi.IsInt64() {
-		return runtime.NewInt64(bi.Int64())
+		return runtime.SmallInt{Value: bi.Int64()}
 	}
 	return runtime.Int{Value: bi}
 }

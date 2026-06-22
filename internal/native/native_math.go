@@ -8,6 +8,9 @@ import (
 	"sort"
 )
 
+// maxCombinatoricN bounds factorial/perm/comb input (memory/CPU safety).
+const maxCombinatoricN = 100000
+
 func registerMath(r *Registry) {
 	r.Register("math", "abs", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {
@@ -392,6 +395,181 @@ func registerMath(r *Registry) {
 			}
 		}
 		return runtime.Float{Value: best}, nil
+	})
+	r.Register("math", "gamma", func(args []runtime.Value) (runtime.Value, error) {
+		return FloatUnaryMath(args, math.Gamma, "math.gamma")
+	})
+	r.Register("math", "lgamma", func(args []runtime.Value) (runtime.Value, error) {
+		return FloatUnaryMath(args, func(x float64) float64 { v, _ := math.Lgamma(x); return v }, "math.lgamma")
+	})
+	r.Register("math", "lbeta", func(args []runtime.Value) (runtime.Value, error) {
+		return FloatBinaryMath(args, func(a, b float64) float64 {
+			la, _ := math.Lgamma(a)
+			lb, _ := math.Lgamma(b)
+			lab, _ := math.Lgamma(a + b)
+			return la + lb - lab
+		}, "math.lbeta")
+	})
+	r.Register("math", "beta", func(args []runtime.Value) (runtime.Value, error) {
+		return FloatBinaryMath(args, func(a, b float64) float64 {
+			la, _ := math.Lgamma(a)
+			lb, _ := math.Lgamma(b)
+			lab, _ := math.Lgamma(a + b)
+			return math.Exp(la + lb - lab)
+		}, "math.beta")
+	})
+	r.Register("math", "erf", func(args []runtime.Value) (runtime.Value, error) {
+		return FloatUnaryMath(args, math.Erf, "math.erf")
+	})
+	r.Register("math", "erfc", func(args []runtime.Value) (runtime.Value, error) {
+		return FloatUnaryMath(args, math.Erfc, "math.erfc")
+	})
+	r.Register("math", "erfinv", func(args []runtime.Value) (runtime.Value, error) {
+		return FloatUnaryMath(args, math.Erfinv, "math.erfinv")
+	})
+	r.Register("math", "j0", func(args []runtime.Value) (runtime.Value, error) {
+		return FloatUnaryMath(args, math.J0, "math.j0")
+	})
+	r.Register("math", "j1", func(args []runtime.Value) (runtime.Value, error) {
+		return FloatUnaryMath(args, math.J1, "math.j1")
+	})
+	r.Register("math", "y0", func(args []runtime.Value) (runtime.Value, error) {
+		return FloatUnaryMath(args, math.Y0, "math.y0")
+	})
+	r.Register("math", "y1", func(args []runtime.Value) (runtime.Value, error) {
+		return FloatUnaryMath(args, math.Y1, "math.y1")
+	})
+	r.Register("math", "jn", func(args []runtime.Value) (runtime.Value, error) {
+		return besselN(args, math.Jn, "math.jn")
+	})
+	r.Register("math", "yn", func(args []runtime.Value) (runtime.Value, error) {
+		return besselN(args, math.Yn, "math.yn")
+	})
+	r.Register("math", "factorial", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("math.factorial expects exactly one argument")
+		}
+		n, err := intArg(args[0], "math.factorial n")
+		if err != nil {
+			return nil, err
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("math.factorial: n must be non-negative")
+		}
+		if n > maxCombinatoricN {
+			return nil, fmt.Errorf("math.factorial: n too large (max %d)", maxCombinatoricN)
+		}
+		result := big.NewInt(1)
+		for i := int64(2); i <= n; i++ {
+			result.Mul(result, big.NewInt(i))
+		}
+		return bigIntValue(result), nil
+	})
+	r.Register("math", "comb", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("math.comb expects exactly two arguments")
+		}
+		n, err := intArg(args[0], "math.comb n")
+		if err != nil {
+			return nil, err
+		}
+		k, err := intArg(args[1], "math.comb k")
+		if err != nil {
+			return nil, err
+		}
+		if n < 0 || k < 0 {
+			return nil, fmt.Errorf("math.comb: n and k must be non-negative")
+		}
+		if n > maxCombinatoricN {
+			return nil, fmt.Errorf("math.comb: n too large (max %d)", maxCombinatoricN)
+		}
+		if k > n {
+			return runtime.SmallInt{Value: 0}, nil
+		}
+		return bigIntValue(new(big.Int).Binomial(n, k)), nil
+	})
+	r.Register("math", "perm", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("math.perm expects exactly two arguments")
+		}
+		n, err := intArg(args[0], "math.perm n")
+		if err != nil {
+			return nil, err
+		}
+		k, err := intArg(args[1], "math.perm k")
+		if err != nil {
+			return nil, err
+		}
+		if n < 0 || k < 0 {
+			return nil, fmt.Errorf("math.perm: n and k must be non-negative")
+		}
+		if n > maxCombinatoricN {
+			return nil, fmt.Errorf("math.perm: n too large (max %d)", maxCombinatoricN)
+		}
+		if k > n {
+			return runtime.SmallInt{Value: 0}, nil
+		}
+		result := big.NewInt(1)
+		for i := n - k + 1; i <= n; i++ {
+			result.Mul(result, big.NewInt(i))
+		}
+		return bigIntValue(result), nil
+	})
+	r.Register("math", "gcd", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("math.gcd expects exactly two arguments")
+		}
+		a, err := intArg(args[0], "math.gcd a")
+		if err != nil {
+			return nil, err
+		}
+		b, err := intArg(args[1], "math.gcd b")
+		if err != nil {
+			return nil, err
+		}
+		g := new(big.Int).GCD(nil, nil, big.NewInt(a), big.NewInt(b))
+		return bigIntValue(g), nil
+	})
+	r.Register("math", "lcm", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("math.lcm expects exactly two arguments")
+		}
+		a, err := intArg(args[0], "math.lcm a")
+		if err != nil {
+			return nil, err
+		}
+		b, err := intArg(args[1], "math.lcm b")
+		if err != nil {
+			return nil, err
+		}
+		if a == 0 || b == 0 {
+			return runtime.SmallInt{Value: 0}, nil
+		}
+		g := new(big.Int).GCD(nil, nil, big.NewInt(a), big.NewInt(b))
+		absA := new(big.Int).Abs(big.NewInt(a))
+		absB := new(big.Int).Abs(big.NewInt(b))
+		lcm := new(big.Int).Mul(new(big.Int).Quo(absA, g), absB)
+		return bigIntValue(lcm), nil
+	})
+	r.Register("math", "lcomb", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("math.lcomb expects exactly two arguments")
+		}
+		n, err := intArg(args[0], "math.lcomb n")
+		if err != nil {
+			return nil, err
+		}
+		k, err := intArg(args[1], "math.lcomb k")
+		if err != nil {
+			return nil, err
+		}
+		if n < 0 || k < 0 {
+			return nil, fmt.Errorf("math.lcomb: n and k must be non-negative")
+		}
+		ln1, _ := math.Lgamma(float64(n) + 1)
+		lk1, _ := math.Lgamma(float64(k) + 1)
+		lnk1, _ := math.Lgamma(float64(n-k) + 1)
+		return runtime.Float{Value: ln1 - lk1 - lnk1}, nil
 	})
 }
 

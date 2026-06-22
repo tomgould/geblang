@@ -234,6 +234,54 @@ io.println(math.percentile(xs, 75));    # 30
 io.println(math.mode([1, 1, 2, 2, 3])); # 1
 ```
 
+### Special functions
+
+| Function | Description |
+|----------|-------------|
+| `gamma(x)` | Gamma function. |
+| `lgamma(x)` | Natural log of the absolute value of Gamma. |
+| `beta(a, b)` / `lbeta(a, b)` | Beta function and its natural log. |
+| `erf(x)` / `erfc(x)` / `erfinv(x)` | Error function, complement, and inverse. |
+| `j0(x)` / `j1(x)` / `jn(n, x)` | Bessel functions of the first kind. |
+| `y0(x)` / `y1(x)` / `yn(n, x)` | Bessel functions of the second kind. |
+
+All take `float` arguments and return `float`. `gamma(n)` satisfies
+`gamma(n) == (n-1)!` for positive integer `n`. `erf` and `erfc` sum to 1.
+`erfinv` is the inverse of `erf`. `jn` and `yn` take an integer order `n`
+followed by `x`.
+
+```gb
+io.println(math.gamma(5.0f));              # 24.0  (== 4!)
+io.println(math.erf(0.0f));               # 0.0
+io.println(math.erfc(0.0f));              # 1.0
+io.println(math.j0(0.0f));               # 1.0
+io.println(math.jn(2, 0.0f));            # 0.0
+```
+
+### Combinatorics and number theory
+
+| Function | Description |
+|----------|-------------|
+| `factorial(n)` | n! as an exact integer (no overflow). |
+| `comb(n, k)` / `perm(n, k)` | Binomial coefficient and permutations, exact. |
+| `gcd(a, b)` / `lcm(a, b)` | Greatest common divisor and least common multiple. |
+| `lcomb(n, k)` | Log of the binomial coefficient (float). |
+
+All combinatorics functions require integer arguments. `factorial`, `comb`,
+and `perm` return an exact big integer (no floating-point approximation);
+`lcomb` returns `float`. Inputs `n` > 100000 raise an error. `comb(n, k)`
+returns 0 when `k > n`. `lcm(a, 0)` or `lcm(0, b)` returns 0. `gcd`
+handles negative inputs by returning the positive GCD.
+
+```gb
+io.println(math.factorial(25));    # 15511210043330985984000000
+io.println(math.comb(50, 25));     # 126410606437752
+io.println(math.perm(20, 10));     # 670442572800
+io.println(math.gcd(48, 36));      # 12
+io.println(math.lcm(4, 6));        # 12
+io.println(math.lcomb(50, 25));    # 32.07245...
+```
+
 ---
 
 ## Datetime
