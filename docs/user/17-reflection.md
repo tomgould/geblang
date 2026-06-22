@@ -333,6 +333,33 @@ A decorator can act as pure metadata for reflection, as a callable wrapper, or
 both. See [Functions and callables](05-functions-callables.md#decorators) for
 how to define and apply decorators.
 
+## Docblocks
+
+A docblock written immediately before a declaration is retained and readable at
+runtime. A docblock is either a run of `##` line comments or a `/** ... */`
+block placed directly above the declaration.
+
+`reflect.doc(target)` returns the raw docblock string for a function, method,
+class, or interface, or `null` when it has none:
+
+```gb
+/** Greets a person by name. */
+func greet(string name): string { return "hi " + name; }
+
+io.println(reflect.doc(greet));   # Greets a person by name.
+```
+
+`reflect.docs(target)` returns the same text parsed into a dict with `text` (the
+full docblock), `summary` (the first non-empty line), `body` (everything after
+the summary), and `lines` (the raw lines):
+
+```gb
+io.println(reflect.docs(greet)["summary"]);   # Greets a person by name.
+```
+
+Field docblocks are surfaced separately, through the `doc` key of each
+`reflect.fields` entry (see [Class reflection](#class-reflection) above).
+
 ## Modules
 
 `reflect.module("name")` resolves an imported module by name. `reflect.exports`,
@@ -383,6 +410,9 @@ the introduction to `dir` and `typeof`.
 - **User classes, functions, fields, and methods** are fully reflectable:
   structure, parameters, decorators, and locations are all available.
 - **Decorators** are inspectable metadata, not erased.
+- **Docblocks** are retained: `reflect.doc` / `reflect.docs` expose the comment
+  written above a function, method, class, or interface, and each
+  `reflect.fields` entry carries its field's `doc`.
 - **Generics** are reified: `instanceof list<int>` and `reflect.typeBindings`
   resolve concrete type arguments at runtime.
 - **Native module class exports** are reflectable via the `module.Class` form

@@ -165,6 +165,11 @@
           "enum": ["auto", "native", "wsl"],
           "default": "auto",
           "markdownDescription": "How the extension launches `geblang`. `auto` uses native execution except for Linux/WSL paths on Windows, `native` always runs the configured executable directly, and `wsl` runs it through `wsl.exe`."
+        },
+        "geblang.format.clean": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Format with `geblang fmt --clean`, which produces the minimal canonical form: redundant parentheses are dropped and multi-line operator and method chains are flattened onto one line. When off (the default), formatting preserves your grouping parentheses and multi-line chains. Either way the result is guaranteed identical to the source at the AST level."
         }
       }
     }

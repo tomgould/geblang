@@ -195,3 +195,55 @@ func TestFormatTrailingComments(t *testing.T) {
 		t.Errorf("trailing comment not kept inline / moved out of block:\n%s", out)
 	}
 }
+
+func TestFormatCleanMode(t *testing.T) {
+	clean := func(in string) string {
+		out, err := formatter.FormatWithOptions([]byte(in), formatter.Options{Clean: true})
+		if err != nil {
+			t.Fatalf("clean %q errored: %v", in, err)
+		}
+		// idempotent in clean mode too
+		out2, _ := formatter.FormatWithOptions(out, formatter.Options{Clean: true})
+		if string(out2) != string(out) {
+			t.Errorf("clean not idempotent for %q", in)
+		}
+		return strings.TrimRight(string(out), "\n")
+	}
+	// redundant grouping parens stripped, precedence-required ones kept
+	if got := clean("let c = (((a || b) && k) || (d && e && f));"); got != "let c = (a || b) && k || d && e && f;" {
+		t.Errorf("clean parens: got %q", got)
+	}
+	if got := clean("let x = (a || b) && c;"); got != "let x = (a || b) && c;" {
+		t.Errorf("clean dropped a needed paren: got %q", got)
+	}
+	// multi-line method chain flattened to one line
+	if got := clean("func f(): void {\nlet r = a.b()\n.c()\n.d();\n}"); !strings.Contains(got, "let r = a.b().c().d();") {
+		t.Errorf("clean did not flatten chain:\n%s", got)
+	}
+	// multi-line concat flattened to one line
+	if got := clean("func g(): string {\nreturn \"a\"\n+ \"b\"\n+ \"c\";\n}"); !strings.Contains(got, "return \"a\" + \"b\" + \"c\";") {
+		t.Errorf("clean did not flatten concat:\n%s", got)
+	}
+	// blank lines are KEPT in clean mode (structure, not redundant syntax)
+	if got := clean("class C {\nint a;\n\nint b;\n}"); !strings.Contains(got, "int a;\n\n    int b;") {
+		t.Errorf("clean dropped blank lines:\n%s", got)
+	}
+}
+
+func TestFormatStripComments(t *testing.T) {
+	out, err := formatter.FormatWithOptions(
+		[]byte("/* a */\nlet x = 1; /* trailing */\n## doc\nlet y = 2;"),
+		formatter.Options{StripComments: true})
+	if err != nil {
+		t.Fatalf("strip-comments errored: %v", err)
+	}
+	got := string(out)
+	for _, c := range []string{"/* a */", "trailing", "## doc"} {
+		if strings.Contains(got, c) {
+			t.Errorf("strip-comments left %q:\n%s", c, got)
+		}
+	}
+	if !strings.Contains(got, "let x = 1;") || !strings.Contains(got, "let y = 2;") {
+		t.Errorf("strip-comments dropped code:\n%s", got)
+	}
+}

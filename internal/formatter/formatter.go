@@ -14,7 +14,18 @@ import (
 
 // Format parses src, formats it canonically, and returns the result.
 // Returns a parse error if src is not valid Geblang.
-func Format(src []byte) (result []byte, err error) {
+func Format(src []byte) ([]byte, error) {
+	return FormatWithOptions(src, Options{})
+}
+
+// Options selects a formatting mode (zero value preserves style; Clean strips redundant parens + flattens chains; StripComments drops comments).
+type Options struct {
+	Clean         bool
+	StripComments bool
+}
+
+// FormatWithOptions formats src under opts; the round-trip self-check applies to every mode.
+func FormatWithOptions(src []byte, opts Options) (result []byte, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			result, err = nil, fmt.Errorf("formatter bug: panic while formatting (%v); source left unchanged", r)
@@ -25,7 +36,10 @@ func Format(src []byte) (result []byte, err error) {
 	if errs := p.Errors(); len(errs) > 0 {
 		return nil, fmt.Errorf("parse error: %s", errs[0])
 	}
-	f := &fmtr{comments: p.Comments()}
+	f := &fmtr{clean: opts.Clean}
+	if !opts.StripComments {
+		f.comments = p.Comments()
+	}
 	f.program(program)
 	out := strings.TrimRight(f.buf.String(), "\n") + "\n"
 	if err := verifyRoundTrip(program, out); err != nil {
@@ -53,6 +67,7 @@ type fmtr struct {
 	prevWasTopLevel bool
 	comments        []lexer.Comment
 	ci              int
+	clean           bool
 }
 
 // flushTrailing appends a comment that sits on the same source line as the statement just written, keeping it on that line instead of moving it.
@@ -526,7 +541,7 @@ func (f *fmtr) fmtFor(s *ast.ForStatement) {
 	var initStr, condStr, updateStr string
 	if s.Init != nil {
 		// strip trailing newline/semicolon from statement rendering
-		tmp := &fmtr{depth: 0}
+		tmp := &fmtr{depth: 0, clean: f.clean}
 		tmp.stmt(s.Init)
 		initStr = strings.TrimRight(tmp.buf.String(), "\n;")
 	}
@@ -534,7 +549,7 @@ func (f *fmtr) fmtFor(s *ast.ForStatement) {
 		condStr = f.expr(s.Condition)
 	}
 	if s.Update != nil {
-		tmp := &fmtr{depth: 0}
+		tmp := &fmtr{depth: 0, clean: f.clean}
 		tmp.stmt(s.Update)
 		updateStr = strings.TrimRight(tmp.buf.String(), "\n;")
 	}
@@ -931,6 +946,9 @@ func flattenInfix(e *ast.InfixExpression, op string) []ast.Expression {
 
 // shouldBreakInfix reports whether a +/&&/|| chain of 3+ operands spanned multiple source lines (an intentional author line break to preserve).
 func (f *fmtr) shouldBreakInfix(e *ast.InfixExpression) bool {
+	if f.clean {
+		return false
+	}
 	op := e.Operator
 	if op != "+" && op != "&&" && op != "||" {
 		return false
@@ -989,6 +1007,9 @@ func flattenChain(e ast.Expression) (ast.Expression, []chainSeg) {
 
 // shouldBreakChain reports whether a method chain has 2+ segments the author split across source lines.
 func (f *fmtr) shouldBreakChain(e ast.Expression) bool {
+	if f.clean {
+		return false
+	}
 	base, segs := flattenChain(e)
 	if len(segs) < 2 {
 		return false
@@ -1075,8 +1096,11 @@ func (f *fmtr) sliceIndex(r *ast.RangeExpression) string {
 	return s
 }
 
-// isParen reports whether an expression was written in explicit grouping parentheses the formatter should preserve.
-func isParen(e ast.Expression) bool {
+// isParen reports whether an explicit grouping paren should be preserved; clean mode drops them.
+func (f *fmtr) isParen(e ast.Expression) bool {
+	if f.clean {
+		return false
+	}
 	switch x := e.(type) {
 	case *ast.InfixExpression:
 		return x.Parenthesized
@@ -1094,12 +1118,12 @@ func isParen(e ast.Expression) bool {
 
 // expr renders an expression, keeping the author's explicit parentheses.
 func (f *fmtr) expr(e ast.Expression) string {
-	return parenIf(isParen(e), f.exprBare(e))
+	return parenIf(f.isParen(e), f.exprBare(e))
 }
 
 // exprChild renders a child expression, wrapping it once if precedence requires it OR the author parenthesized it.
 func (f *fmtr) exprChild(e ast.Expression, needs bool) string {
-	return parenIf(needs || isParen(e), f.exprBare(e))
+	return parenIf(needs || f.isParen(e), f.exprBare(e))
 }
 
 func (f *fmtr) exprBare(e ast.Expression) string {
@@ -1295,7 +1319,7 @@ func (f *fmtr) inlineBlock(block *ast.BlockStatement) string {
 		return "{}"
 	}
 	if len(block.Statements) == 1 {
-		tmp := &fmtr{depth: 0}
+		tmp := &fmtr{depth: 0, clean: f.clean}
 		tmp.stmt(block.Statements[0])
 		inner := strings.TrimRight(tmp.buf.String(), "\n")
 		return "{ " + inner + " }"
@@ -1303,7 +1327,7 @@ func (f *fmtr) inlineBlock(block *ast.BlockStatement) string {
 	// Multi-statement: write as indented block (returns string representation)
 	var b strings.Builder
 	b.WriteString("{\n")
-	inner := &fmtr{depth: f.depth + 1, comments: f.comments, ci: f.ci}
+	inner := &fmtr{depth: f.depth + 1, comments: f.comments, ci: f.ci, clean: f.clean}
 	prevEnd := 0
 	for _, s := range block.Statements {
 		inner.maybeBlank(prevEnd, s)
@@ -1321,7 +1345,7 @@ func (f *fmtr) inlineBlock(block *ast.BlockStatement) string {
 func (f *fmtr) fmtMatchExpr(e *ast.MatchExpression) string {
 	var b strings.Builder
 	b.WriteString("match (" + f.expr(e.Expr) + ") {\n")
-	inner := &fmtr{depth: f.depth + 1}
+	inner := &fmtr{depth: f.depth + 1, clean: f.clean}
 	for _, c := range e.Cases {
 		inner.fmtMatchCase(c)
 	}

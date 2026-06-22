@@ -328,9 +328,11 @@ function quote(value: string): string {
 async function formatDocument(document: vscode.TextDocument): Promise<vscode.TextEdit[]> {
     const exe = geblangExecutablePath();
     const useWsl = shouldUseWsl(exe);
+    const clean = vscode.workspace.getConfiguration('geblang').get<boolean>('format.clean', false);
     return new Promise(resolve => {
         const command = useWsl ? 'wsl.exe' : exe;
-        const args = useWsl ? ['-e', exe, 'fmt', '--stdin'] : ['fmt', '--stdin'];
+        const fmtArgs = clean ? ['fmt', '--clean', '--stdin'] : ['fmt', '--stdin'];
+        const args = useWsl ? ['-e', exe, ...fmtArgs] : fmtArgs;
         const proc = cp.spawn(command, args);
         let stdout = '';
         let stderr = '';

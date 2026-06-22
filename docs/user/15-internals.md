@@ -976,7 +976,16 @@ line arguments and delegates to one of several execution modes:
 - **Check mode**: `geblang check script.gb` runs parse and semantic analysis
   only, reporting errors without executing.
 - **Format mode**: `geblang fmt script.gb` runs the formatter
-  (`internal/formatter`).
+  (`internal/formatter`), rewriting files in place (or `geblang fmt --stdin`
+  reads stdin and writes stdout). By default it preserves the author's layout:
+  explicit grouping parentheses, intentional blank lines, and multi-line
+  operator and method chains are all kept. `--clean` produces the minimal
+  canonical form instead (drops redundant parentheses, flattens multi-line
+  chains and concatenations onto one line); `--strip-comments` removes all
+  comments. The two flags are independent and may be combined. Every mode
+  re-parses its own output and refuses to write anything that is not identical
+  to the input at the AST level, so formatting can never silently change a
+  program's meaning or break its syntax.
 - **Build mode**: `geblang build` compiles the application and its
   dependencies into a self-contained binary (`build.go`, `internal/bundle`).
 - **LSP mode**: `geblang lsp` starts the Language Server Protocol server

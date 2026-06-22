@@ -10,6 +10,10 @@
   only at runtime. The error names both fixes and their tradeoff: cast with
   `as float` (fast, drops the decimal's exactness) or `as decimal` (keeps an
   exact type, adopts the float's binary imprecision).
+- `reflect.fields(class)` now includes a `doc` key on each field entry: the
+  docblock written immediately before the field (a `##` line or a `/** */`
+  block), or `null` when there is none. This matches how class, function, and
+  method docblocks were already surfaced.
 
 ### Standard library
 
@@ -22,6 +26,19 @@
   external driver, is gated behind `--allow-browser`, and always terminates the
   browser on close. Needs Chrome installed (located via `$GEBLANG_CHROME` or an
   `executable` option).
+
+### Tooling
+
+- `geblang fmt` is substantially more robust. It now re-parses its own output
+  and refuses to write anything that is not identical to the input at the AST
+  level, so formatting can never silently change a program's meaning or break
+  its syntax. By default it preserves the author's layout: explicit grouping
+  parentheses, intentional blank lines, multi-line operator and method chains,
+  and comments (including trailing same-line comments) are all kept.
+- `geblang fmt` gained two formatting modes. `--clean` produces the minimal
+  canonical form (drops redundant parentheses, flattens multi-line chains and
+  concatenations onto one line); `--strip-comments` removes all comments. The
+  flags are independent and may be combined.
 
 ## 1.24.1
 
