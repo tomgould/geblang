@@ -1435,6 +1435,9 @@ var stdlibCatalog = map[string]moduleDoc{
 		"confidenceIntervalMean":       fn([]string{"list<float> sample", "float level = 0.95"}, "dict<string, float>", "t-based confidence interval for a mean."),
 		"confidenceIntervalProportion": fn([]string{"int successes", "int n", "float level = 0.95"}, "dict<string, float>", "Wald confidence interval for a proportion."),
 		"confidenceIntervalDiffMeans":  fn([]string{"list<float> a", "list<float> b", "float level = 0.95", "dict<string, any> opts = {}"}, "dict<string, float>", "Confidence interval for a difference of means."),
+		"linregress": fn([]string{"list<float> x", "list<float> y"}, "dict<string, float>", "Simple linear regression (slope, intercept, r, r2, pvalue, stderr)."),
+		"polyfit": fn([]string{"list<float> x", "list<float> y", "int degree"}, "list<float>", "Least-squares polynomial fit; returns coefficients highest degree first."),
+		"polyval": fn([]string{"list<float> coeffs", "float x"}, "float", "Evaluate a polynomial (coefficients highest degree first) at x."),
 	}, classes: map[string]string{"Distribution": "A probability distribution object."}, classMethods: map[string]map[string]functionDoc{
 		"Distribution": {
 			"pdf":      fn([]string{"float x"}, "float", "Probability density (or mass) at x."),

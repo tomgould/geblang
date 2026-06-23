@@ -1,0 +1,76 @@
+/**
+ * @title stats regression
+ * @summary Linear regression and polynomial fit/eval.
+ */
+import test;
+import stats;
+
+class StatsRegressionTest extends test.Test {
+    func approx(float a, float b): bool {
+        return (a - b < 0.0001f) && (b - a < 0.0001f);
+    }
+
+    @test
+    func linregressReference(): void {
+        let fit = stats.linregress([1, 2, 3, 4, 5], [2, 4, 5, 4, 5]);
+        this.assertTrue(this.approx(fit["slope"], 0.6f));
+        this.assertTrue(this.approx(fit["intercept"], 2.2f));
+        this.assertTrue(this.approx(fit["r2"], 0.6f));
+        this.assertTrue(this.approx(fit["stderr"], 0.28284f));
+        this.assertTrue(this.approx(fit["r"], 0.77460f));
+        this.assertTrue(this.approx(fit["pvalue"], 0.12403f));
+    }
+
+    @test
+    func linregressPerfectFit(): void {
+        let fit = stats.linregress([1, 2, 3], [2, 4, 6]);
+        this.assertTrue(this.approx(fit["slope"], 2.0f));
+        this.assertTrue(this.approx(fit["intercept"], 0.0f));
+        this.assertTrue(this.approx(fit["r2"], 1.0f));
+        this.assertTrue(this.approx(fit["stderr"], 0.0f));
+        this.assertTrue(this.approx(fit["pvalue"], 0.0f));
+    }
+
+    @test
+    func linregressErrors(): void {
+        let threw = false;
+        try { stats.linregress([1, 2], [3, 4]); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+        let threw2 = false;
+        try { stats.linregress([1, 2, 3], [4, 5]); } catch (RuntimeError e) { threw2 = true; }
+        this.assertTrue(threw2);
+    }
+
+    @test
+    func polyfitAndPolyval(): void {
+        let c = stats.polyfit([0, 1, 2, 3], [1, 3, 7, 13], 2);
+        this.assertTrue(this.approx(c[0], 1.0f));
+        this.assertTrue(this.approx(c[1], 1.0f));
+        this.assertTrue(this.approx(c[2], 1.0f));
+        this.assertTrue(this.approx(stats.polyval(c, 2.0), 7.0f));
+        this.assertTrue(this.approx(stats.polyval([2.0, 0.0, -1.0], 3.0), 17.0f));
+    }
+
+    @test
+    func polyfitMatchesLinregress(): void {
+        let c = stats.polyfit([1, 2, 3, 4, 5], [2, 4, 5, 4, 5], 1);
+        this.assertTrue(this.approx(c[0], 0.6f));
+        this.assertTrue(this.approx(c[1], 2.2f));
+    }
+
+    @test
+    func polyErrors(): void {
+        let threw = false;
+        try { stats.polyfit([1, 2, 3], [1, 2, 3], 0); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+        let threw2 = false;
+        try { stats.polyval([], 1.0); } catch (RuntimeError e) { threw2 = true; }
+        this.assertTrue(threw2);
+        let threw3 = false;
+        try { stats.polyfit([1, 2], [3, 4], 2); } catch (RuntimeError e) { threw3 = true; }
+        this.assertTrue(threw3);
+        let threw4 = false;
+        try { stats.polyfit([1, 1, 1], [2, 2, 2], 2); } catch (RuntimeError e) { threw4 = true; }
+        this.assertTrue(threw4);
+    }
+}

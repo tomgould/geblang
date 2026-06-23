@@ -157,3 +157,42 @@ as a list of lists in addition to `statistic`, `pvalue`, and `df`.
 The confidence `level` parameter defaults to `0.95` if omitted. All sample
 arguments must be lists of numbers; mismatched lengths, empty lists, or
 out-of-range `level` values raise `RuntimeError`.
+
+## Regression
+
+```gb
+import stats;
+
+let xs = [1.0, 2.0, 3.0, 4.0, 5.0];
+let ys = [2.1, 3.9, 6.0, 8.1, 9.8];
+
+let fit = stats.linregress(xs, ys);   /* {slope, intercept, r, r2, pvalue, stderr} */
+let c = stats.polyfit(xs, ys, 2);     /* coefficients, highest degree first */
+stats.polyval(c, 3.0);                /* evaluate the polynomial at x=3.0 */
+```
+
+| Function | Result |
+|----------|--------|
+| `linregress(x, y)` | `{slope, intercept, r, r2, pvalue, stderr}` (requires n >= 3) |
+| `polyfit(x, y, degree)` | `list<float>` of `degree+1` coefficients, highest degree first (degree in [1, 10]) |
+| `polyval(coeffs, x)` | float (coefficients highest degree first) |
+
+`linregress` fits a line y = slope*x + intercept using ordinary least squares.
+`r` is the Pearson correlation coefficient, `r2` its square, `pvalue` the
+two-tailed p-value against slope=0 via the Student-t distribution, and
+`stderr` the standard error of the slope. Both `x` and `y` must have at
+least 3 elements.
+
+`polyfit(x, y, degree)` fits a polynomial of the given degree (1 to 10) using
+normal equations. Coefficients are returned highest degree first, matching the
+convention used by `polyval`. A singular design matrix raises `RuntimeError`.
+
+`polyval(coeffs, x)` evaluates a polynomial at a single point using Horner's
+method. `coeffs` is a list of coefficients highest degree first (matching
+`polyfit` output). An empty `coeffs` list raises a runtime error.
+
+```gb
+/* fit a quadratic and evaluate at new points */
+let c = stats.polyfit([0.0, 1.0, 2.0, 3.0], [0.0, 1.1, 3.9, 9.1], 2);
+io.println(stats.polyval(c, 4.0));   /* ~16.0 */
+```

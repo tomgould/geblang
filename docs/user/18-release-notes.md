@@ -39,6 +39,10 @@
   Welch), `tTestPaired`, `chiSquareTest`, `chiSquareIndependence`,
   `mannWhitneyU`, and `ksTest`. Intervals: `confidenceIntervalMean`,
   `confidenceIntervalProportion`, and `confidenceIntervalDiffMeans`.
+- The `stats` module also gains regression: `linregress` (simple linear
+  least-squares, returning slope, intercept, correlation, r-squared, p-value,
+  and slope standard error), plus `polyfit` (least-squares polynomial fit) and
+  `polyval` (polynomial evaluation).
 
 ### Platform
 

@@ -363,6 +363,43 @@ func statsFloatMatrix(v runtime.Value, label string) ([][]float64, error) {
 	return rows, nil
 }
 
+// statsSolveLinear solves a*x = b by Gauss-Jordan elimination with partial pivoting; ok=false if singular.
+func statsSolveLinear(a [][]float64, b []float64) ([]float64, bool) {
+	n := len(b)
+	m := make([][]float64, n)
+	for i := 0; i < n; i++ {
+		m[i] = make([]float64, n+1)
+		copy(m[i], a[i])
+		m[i][n] = b[i]
+	}
+	for col := 0; col < n; col++ {
+		piv := col
+		for row := col + 1; row < n; row++ {
+			if math.Abs(m[row][col]) > math.Abs(m[piv][col]) {
+				piv = row
+			}
+		}
+		if math.Abs(m[piv][col]) < 1e-12 {
+			return nil, false
+		}
+		m[col], m[piv] = m[piv], m[col]
+		for row := 0; row < n; row++ {
+			if row == col {
+				continue
+			}
+			factor := m[row][col] / m[col][col]
+			for c := col; c <= n; c++ {
+				m[row][c] -= factor * m[col][c]
+			}
+		}
+	}
+	x := make([]float64, n)
+	for i := 0; i < n; i++ {
+		x[i] = m[i][n] / m[i][i]
+	}
+	return x, true
+}
+
 func registerStats(r *Registry) {
 	r.Register("stats", "binomial", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
@@ -897,6 +934,141 @@ func registerStats(r *Registry) {
 		diff := m1 - m2
 		margin := tc * se
 		return statsIntervalResult(diff-margin, diff+margin), nil
+	})
+	r.Register("stats", "linregress", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("stats.linregress expects (x, y)")
+		}
+		xs, err := mathNumericListSingle(args[0], "stats.linregress x")
+		if err != nil {
+			return nil, err
+		}
+		ys, err := mathNumericListSingle(args[1], "stats.linregress y")
+		if err != nil {
+			return nil, err
+		}
+		if len(xs) != len(ys) {
+			return nil, fmt.Errorf("stats.linregress: x and y must have equal length")
+		}
+		n := len(xs)
+		if n < 3 {
+			return nil, fmt.Errorf("stats.linregress: need at least 3 points")
+		}
+		mx := statsSampleMean(xs)
+		my := statsSampleMean(ys)
+		sxx, sxy, syy := 0.0, 0.0, 0.0
+		for i := 0; i < n; i++ {
+			dx := xs[i] - mx
+			dy := ys[i] - my
+			sxx += dx * dx
+			sxy += dx * dy
+			syy += dy * dy
+		}
+		if sxx == 0 {
+			return nil, fmt.Errorf("stats.linregress: x has zero variance")
+		}
+		nf := float64(n)
+		slope := sxy / sxx
+		intercept := my - slope*mx
+		rval := 0.0
+		if syy > 0 {
+			rval = sxy / math.Sqrt(sxx*syy)
+		}
+		r2 := rval * rval
+		ssres := math.Max(0, syy-slope*sxy)
+		stderr := math.Sqrt((ssres / (nf - 2)) / sxx)
+		pvalue := 0.0
+		if r2 < 1 {
+			tstat := rval * math.Sqrt((nf-2)/(1-r2))
+			dist := &runtime.Distribution{Kind: "studentT", Params: []float64{nf - 2}}
+			pvalue = 2 * (1 - statsCdf(dist, math.Abs(tstat)))
+		}
+		d := runtime.NewDictHint(6)
+		statsPutFloat(&d, "slope", slope)
+		statsPutFloat(&d, "intercept", intercept)
+		statsPutFloat(&d, "r", rval)
+		statsPutFloat(&d, "r2", r2)
+		statsPutFloat(&d, "pvalue", pvalue)
+		statsPutFloat(&d, "stderr", stderr)
+		return d, nil
+	})
+	r.Register("stats", "polyfit", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("stats.polyfit expects (x, y, degree)")
+		}
+		xs, err := mathNumericListSingle(args[0], "stats.polyfit x")
+		if err != nil {
+			return nil, err
+		}
+		ys, err := mathNumericListSingle(args[1], "stats.polyfit y")
+		if err != nil {
+			return nil, err
+		}
+		if len(xs) != len(ys) {
+			return nil, fmt.Errorf("stats.polyfit: x and y must have equal length")
+		}
+		deg, ok := AsInt64(args[2])
+		if !ok || deg < 1 || deg > 10 {
+			return nil, fmt.Errorf("stats.polyfit: degree must be an int in [1, 10]")
+		}
+		d := int(deg)
+		if len(xs) < d+1 {
+			return nil, fmt.Errorf("stats.polyfit: need at least degree+1 points")
+		}
+		dim := d + 1
+		powSums := make([]float64, 2*d+1)
+		for _, x := range xs {
+			p := 1.0
+			for k := 0; k <= 2*d; k++ {
+				powSums[k] += p
+				p *= x
+			}
+		}
+		a := make([][]float64, dim)
+		for j := 0; j < dim; j++ {
+			a[j] = make([]float64, dim)
+			for k := 0; k < dim; k++ {
+				a[j][k] = powSums[j+k]
+			}
+		}
+		c := make([]float64, dim)
+		for i := range xs {
+			p := 1.0
+			for j := 0; j < dim; j++ {
+				c[j] += ys[i] * p
+				p *= xs[i]
+			}
+		}
+		sol, ok2 := statsSolveLinear(a, c)
+		if !ok2 {
+			return nil, fmt.Errorf("stats.polyfit: singular system (cannot fit)")
+		}
+		out := make([]runtime.Value, dim)
+		for i := 0; i < dim; i++ {
+			out[i] = runtime.Float{Value: sol[dim-1-i]}
+		}
+		return &runtime.List{Elements: out}, nil
+	})
+	r.Register("stats", "polyval", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("stats.polyval expects (coeffs, x)")
+		}
+		coeffs, err := mathNumericListSingle(args[0], "stats.polyval coeffs")
+		if err != nil {
+			return nil, err
+		}
+		if len(coeffs) == 0 {
+			return nil, fmt.Errorf("stats.polyval: coeffs must be non-empty")
+		}
+		x, err := FloatLike(args[1])
+		if err != nil {
+			return nil, err
+		}
+		acc := 0.0
+		for _, coef := range coeffs {
+			acc = acc*x + coef
+		}
+		return runtime.Float{Value: acc}, nil
 	})
 	r.Register("stats", "chiSquareIndependence", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {

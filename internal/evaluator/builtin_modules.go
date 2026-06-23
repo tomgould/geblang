@@ -674,6 +674,9 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"confidenceIntervalMean":       e.registryBuiltin("stats", "confidenceIntervalMean"),
 			"confidenceIntervalProportion": e.registryBuiltin("stats", "confidenceIntervalProportion"),
 			"confidenceIntervalDiffMeans":  e.registryBuiltin("stats", "confidenceIntervalDiffMeans"),
+			"linregress":                   e.registryBuiltin("stats", "linregress"),
+			"polyfit":                      e.registryBuiltin("stats", "polyfit"),
+			"polyval":                      e.registryBuiltin("stats", "polyval"),
 		},
 		"markdown": {
 			"parse":      e.registryBuiltin("markdown", "parse"),

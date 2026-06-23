@@ -337,6 +337,8 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"chiSquareTest": {}, "chiSquareIndependence": {},
 		"mannWhitneyU": {}, "ksTest": {},
 		"confidenceIntervalMean": {}, "confidenceIntervalProportion": {}, "confidenceIntervalDiffMeans": {},
+		"linregress": {},
+		"polyfit": {}, "polyval": {},
 	},
 	"args": {
 		"parse": {}, "help": {},

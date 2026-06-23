@@ -112,3 +112,27 @@ io.println(stats.confidenceIntervalDiffMeans([1, 2, 3, 4, 5], [2, 4, 6, 8, 10], 
 io.println(stats.confidenceIntervalDiffMeans([1, 2, 3, 4, 5], [2, 4, 6, 8, 10], 0.95)["high"]);
 `, "1.0367568385224448\n4.963243161477555\n0.3039817664728939\n-6.646112680506018\n0.6461126805060187\n")
 }
+
+func TestParityStatsLinregress(t *testing.T) {
+	runParity(t, `import io;
+import stats;
+let fit = stats.linregress([1, 2, 3, 4, 5], [2, 4, 5, 4, 5]);
+io.println(fit["slope"]);
+io.println(fit["intercept"]);
+io.println(fit["r2"]);
+io.println(fit["stderr"]);
+io.println(fit["pvalue"]);
+`, "0.6\n2.2\n0.6000000000000001\n0.28284271247461906\n0.12402706265755459\n")
+}
+
+func TestParityStatsPolyfit(t *testing.T) {
+	runParity(t, `import io;
+import stats;
+let c = stats.polyfit([0, 1, 2, 3], [1, 3, 7, 13], 2);
+io.println(c[0]);
+io.println(c[1]);
+io.println(c[2]);
+io.println(stats.polyval(c, 2.0));
+io.println(stats.polyval([2.0, 0.0, -1.0], 3.0));
+`, "0.9999999999999973\n1.0000000000000087\n0.9999999999999962\n7.0000000000000036\n17\n")
+}
