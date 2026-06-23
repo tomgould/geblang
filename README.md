@@ -642,6 +642,22 @@ geblang test examples/sample_test.gb # run a Geblang test file
 geblang test --tag fast examples     # filter by @tag
 ```
 
+## Claude Code skill
+
+This repo ships a Claude Code skill that equips Claude to write, run, test,
+check, format, build, and bundle Geblang correctly: the idioms, the
+cross-language gotchas (`//` is integer division, `parent()` not `super`,
+decimal-default literals), the standard-library surface, and the `geblang` CLI
+workflow.
+
+It lives at [`.claude/skills/geblang/`](.claude/skills/geblang/). Claude Code
+loads it automatically as a project skill when you work inside a checkout of
+this repo. To use it in any project, copy it into your user skills:
+
+```sh
+cp -r .claude/skills/geblang ~/.claude/skills/geblang
+```
+
 ## Project layout
 
 - `cmd/geblang/` - CLI and REPL.

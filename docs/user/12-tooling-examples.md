@@ -374,3 +374,23 @@ make clean
 ```
 
 Use `geblang init --name package.name` to create a package manifest.
+
+## Claude Code Skill
+
+The toolchain ships a Claude Code skill that equips Claude to author and operate
+Geblang: the language idioms and gotchas, the standard-library surface, and the
+`geblang` CLI (run, test, check, fmt, build, doc). It is bundled at
+`.claude/skills/geblang/` as a top-level `SKILL.md` plus reference files for the
+language, the stdlib, and the toolchain.
+
+Claude Code discovers it automatically as a project skill when you open a
+checkout of the toolchain repository. To make it available in any project, copy
+it into your user skills directory:
+
+```sh
+cp -r .claude/skills/geblang ~/.claude/skills/geblang
+```
+
+The skill directs Claude to confirm exact signatures with `geblang doc` and
+`geblang help` rather than guessing, so it stays accurate against your installed
+version.
