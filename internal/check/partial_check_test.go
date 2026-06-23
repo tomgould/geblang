@@ -20,6 +20,15 @@ func hasError(diags []Diagnostic) bool {
 	return false
 }
 
+func hasRule(diags []Diagnostic, rule string) bool {
+	for _, d := range diags {
+		if d.Rule == rule {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCheckValidPartialNoDiagnostics(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.gb")
@@ -59,5 +68,39 @@ let f = log(_, ...rest);
 	_, diags := Source(file, src, partialCheckOpts(dir))
 	if !hasError(diags) {
 		t.Fatalf("expected an error for _ mixed with spread, got %v", diags)
+	}
+}
+
+// Ambiguous-overload partial: eval accepts at application, VM rejects at compile; check reports vm-unsupported, not error.
+func TestCheckPartialOverAmbiguousOverloadIsVMUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := `
+func describe(int n): string { return "int"; }
+func describe(string s): string { return "str"; }
+let d = describe(_);
+let a = d(42);
+`
+	_, diags := Source(file, src, partialCheckOpts(dir))
+	if hasError(diags) {
+		t.Fatalf("ambiguous-overload partial must be a warning, not an error: %v", diags)
+	}
+	if !hasRule(diags, "vm-unsupported") {
+		t.Fatalf("expected a vm-unsupported warning for the ambiguous-overload partial, got %v", diags)
+	}
+}
+
+// A module function used as a partial target counts as using its import.
+func TestCheckModuleFnAsPartialTargetCountsAsUse(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "main.gb")
+	src := `
+import math;
+let f = math.max(0, _);
+let r = f(5);
+`
+	_, diags := Source(file, src, partialCheckOpts(dir))
+	if hasRule(diags, "unused-import") {
+		t.Fatalf("math used as a partial target must not warn unused-import: %v", diags)
 	}
 }

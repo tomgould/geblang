@@ -2534,7 +2534,7 @@ func (c *Compiler) selectFunctionIndicesCallBound(name string, indices []int64, 
 		return 0, nil, fmt.Errorf("no matching overload for %s", name)
 	}
 	if len(matches) > 1 {
-		return 0, nil, fmt.Errorf("ambiguous overload for %s", name)
+		return 0, nil, parityErrorf("ambiguous overload for %s; the evaluator resolves it at runtime, the bytecode VM resolves overloads at compile time", name)
 	}
 	return matches[0], orderedMatches[0], nil
 }

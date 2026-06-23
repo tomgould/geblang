@@ -283,6 +283,16 @@ func lintMarkExpressionIdentifiers(expr ast.Expression, imports map[string]*lint
 		lintMarkExpressionIdentifiers(e.Condition, imports)
 		lintMarkExpressionIdentifiers(e.ThenExpr, imports)
 		lintMarkExpressionIdentifiers(e.ElseExpr, imports)
+	case *ast.PipeExpression:
+		lintMarkExpressionIdentifiers(e.Left, imports)
+		lintMarkExpressionIdentifiers(e.Right, imports)
+	case *ast.PartialExpression:
+		lintMarkExpressionIdentifiers(e.Callee, imports)
+		for _, arg := range e.Arguments {
+			if !arg.Hole {
+				lintMarkExpressionIdentifiers(arg.Value, imports)
+			}
+		}
 	}
 }
 
