@@ -410,6 +410,16 @@ output by a parity test suite and a generative fuzzer, so programs
 behave the same whichever engine runs them. Use `--trace-exec` to see
 which engine ran a script.
 
+## Guides
+
+Onboarding guides for developers coming from other backgrounds:
+
+- [Guides overview](guides/00-index.md)
+- [Geblang for data scientists](guides/01-for-data-scientists.md)
+- [Geblang for developers from another language](guides/02-for-developers-from-another-language.md)
+- [Geblang for systems programmers](guides/03-for-systems-programmers.md)
+- [Geblang for web developers](guides/04-for-web-developers.md)
+
 ## For AI agents
 
 A condensed cheatsheet for AI coding agents working in Geblang
