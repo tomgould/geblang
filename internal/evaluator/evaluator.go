@@ -4039,6 +4039,9 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 	if dist, ok := receiver.(*runtime.Distribution); ok {
 		return native.DistributionMethod(dist, name, args)
 	}
+	if z, ok := receiver.(*runtime.Complex); ok {
+		return native.ComplexMethod(z, name, args)
+	}
 	if frame, ok := receiver.(*runtime.DataFrame); ok {
 		return native.DataFrameMethod(frame, name, args)
 	}
@@ -6399,6 +6402,9 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 	case *runtime.Instance:
 		rightValue, ok := right.(*runtime.Instance)
 		return ok && leftValue == rightValue
+	case *runtime.Complex:
+		rightValue, ok := right.(*runtime.Complex)
+		return ok && leftValue.C == rightValue.C
 	default:
 		return false
 	}

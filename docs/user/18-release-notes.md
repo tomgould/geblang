@@ -46,6 +46,21 @@
 - The `stats` module also gains descriptive extensions: `skewness` and
   `kurtosis` (population, with excess kurtosis), `covariance` (sample), and
   `corrcoef` (Pearson correlation).
+- New `physics` module: twelve physical constants as zero-argument functions
+  (`c`, `G`, `planck`, `hbar`, `avogadro`, `boltzmann`, `gasConstant`,
+  `elementaryCharge`, `electronMass`, `protonMass`, `stefanBoltzmann`,
+  `gravity`) and `convert(value, fromUnit, toUnit)` covering length, mass, time
+  (scale), and temperature (affine: C, F, K).
+- New `complex` module: complex number value with two constructors (`complex.of`,
+  `complex.fromPolar`), a full method set (`re`, `im`, `abs`, `arg`, `conj`,
+  `neg`, `exp`, `sqrt`, and binary `add`/`sub`/`mul`/`div`/`pow`/`equals`), and
+  operator overloads for `+`, `-`, `*`, `/`, `**`, unary `-`, and `==`. Plain
+  numbers are promoted automatically on either side of a binary operation.
+- New `geo` module: `haversineDistance`, `bearing`, `midpoint`, and `destination`
+  for geodetic calculations on the sphere. Coordinates are in decimal degrees
+  using a mean Earth radius of 6371 km. Distance functions accept an optional
+  unit argument (`"km"` default, `"m"`, `"mi"`, `"nmi"`); `midpoint` and
+  `destination` return `{"lat", "lon"}` dicts.
 - New `async.tasks` module: high-level task combinators over the async core for
   callers who would rather hand off a function and data than manage tasks,
   channels, and semaphores directly. `map`/`forEach` run a function over a

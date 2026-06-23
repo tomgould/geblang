@@ -1994,6 +1994,9 @@ func primitiveEqual(left runtime.Value, right runtime.Value) bool {
 	case *runtime.Instance:
 		rightValue, ok := right.(*runtime.Instance)
 		return ok && leftValue == rightValue
+	case *runtime.Complex:
+		rightValue, ok := right.(*runtime.Complex)
+		return ok && leftValue.C == rightValue.C
 	default:
 		return false
 	}

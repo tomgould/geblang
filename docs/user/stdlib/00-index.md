@@ -144,6 +144,16 @@ Operations, introspection, and extension:
   moments, and seeded sampling for 12 distributions (normal, uniform,
   exponential, gamma, beta, chiSquared, studentT, f, lognormal, weibull,
   binomial, poisson).
+- [physics](physics.html): physical constants as zero-argument functions (speed
+  of light, gravitational constant, Planck, Boltzmann, Avogadro, and more) and
+  `convert` for unit conversion across length, mass, time, and temperature.
+- [complex](complex.html): complex number type with constructors (`of`,
+  `fromPolar`), a full method set (`re`, `im`, `abs`, `arg`, `conj`, `neg`,
+  `exp`, `sqrt`, arithmetic), and operator overloads (`+`, `-`, `*`, `/`, `**`,
+  unary `-`, `==`).
+- [geo](geo.html): geodetic calculations on the sphere - great-circle distance
+  (Haversine), initial bearing, midpoint, and destination point. Coordinates in
+  decimal degrees; distance unit is km by default.
 - [Utility Modules](utilities.html): miscellaneous result, option, and helper
   modules that do not fit one larger category.
 

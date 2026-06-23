@@ -1,0 +1,65 @@
+/**
+ * @title geo
+ * @summary Geodesic calculations: haversine distance, bearing, midpoint, destination.
+ */
+import test;
+import geo;
+
+class GeoTest extends test.Test {
+    func approx(float a, float b): bool {
+        return (a - b < 0.5f) && (b - a < 0.5f);
+    }
+
+    @test
+    func haversineDistanceKm(): void {
+        let d = geo.haversineDistance(51.5074, -0.1278, 48.8566, 2.3522);
+        this.assertTrue(this.approx(d as float, 343.5f));
+    }
+
+    @test
+    func haversineDistanceMi(): void {
+        let d = geo.haversineDistance(51.5074, -0.1278, 48.8566, 2.3522, "mi");
+        this.assertTrue(this.approx(d as float, 213.4f));
+    }
+
+    @test
+    func bearing(): void {
+        let b = geo.bearing(51.5074, -0.1278, 48.8566, 2.3522);
+        this.assertTrue(this.approx(b as float, 148.0f));
+    }
+
+    @test
+    func midpoint(): void {
+        let m = geo.midpoint(51.5074, -0.1278, 48.8566, 2.3522);
+        this.assertTrue(this.approx((m["lat"] as float), 50.2f));
+    }
+
+    @test
+    func destination(): void {
+        let d = geo.destination(51.5074, -0.1278, 148.0, 343.5);
+        this.assertTrue(this.approx((d["lat"] as float), 48.8f));
+        this.assertTrue(this.approx((d["lon"] as float), 2.36f));
+    }
+
+    @test
+    func badLatitude(): void {
+        let threw = false;
+        try {
+            geo.haversineDistance(91.0, 0.0, 0.0, 0.0);
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func badUnit(): void {
+        let threw = false;
+        try {
+            geo.haversineDistance(0.0, 0.0, 1.0, 1.0, "parsec");
+        } catch (RuntimeError e) {
+            threw = true;
+        }
+        this.assertTrue(threw);
+    }
+}

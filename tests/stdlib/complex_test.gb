@@ -1,0 +1,52 @@
+/**
+ * @title complex
+ * @summary Complex numbers with methods and operator overloading.
+ */
+import test;
+import complex;
+
+class ComplexTest extends test.Test {
+    func approx(float a, float b): bool {
+        return (a - b < 0.0001f) && (b - a < 0.0001f);
+    }
+
+    @test
+    func methods(): void {
+        let z = complex.of(3.0, 4.0);
+        this.assertTrue(this.approx(z.abs(), 5.0f));
+        this.assertTrue(this.approx(z.re(), 3.0f));
+        this.assertTrue(this.approx(z.im(), 4.0f));
+        let w = z.add(complex.of(1.0, 1.0));
+        this.assertTrue(this.approx(w.re(), 4.0f));
+        this.assertTrue(this.approx(w.im(), 5.0f));
+    }
+
+    @test
+    func operators(): void {
+        let p = complex.of(1.0, 2.0) * complex.of(3.0, 4.0);
+        this.assertTrue(this.approx(p.re(), -5.0f));
+        this.assertTrue(this.approx(p.im(), 10.0f));
+        let s = complex.of(1.0, 1.0) + 2.0;
+        this.assertTrue(this.approx(s.re(), 3.0f));
+        this.assertTrue(this.approx(s.im(), 1.0f));
+        let n = -complex.of(3.0, 4.0);
+        this.assertTrue(this.approx(n.re(), -3.0f));
+        this.assertTrue(complex.of(3.0, 4.0) == complex.of(3.0, 4.0));
+        let d = complex.of(5.0, 3.0) - complex.of(2.0, 1.0);
+        this.assertTrue(this.approx(d.re(), 3.0f));
+        this.assertTrue(this.approx(d.im(), 2.0f));
+        let q = complex.of(4.0, 2.0) / complex.of(2.0, 0.0);
+        this.assertTrue(this.approx(q.re(), 2.0f));
+        this.assertTrue(this.approx(q.im(), 1.0f));
+        let pw = complex.of(2.0, 0.0) ** complex.of(2.0, 0.0);
+        this.assertTrue(this.approx(pw.re(), 4.0f));
+        this.assertTrue(this.approx(pw.im(), 0.0f));
+    }
+
+    @test
+    func errors(): void {
+        let threw = false;
+        try { complex.of(1.0, 1.0).add("x"); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+    }
+}

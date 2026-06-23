@@ -8,6 +8,8 @@ import (
 
 var infixToNDArith = map[string]string{"+": "add", "-": "sub", "*": "mul", "/": "div", "**": "pow"}
 
+var infixToComplexOp = map[string]string{"+": "add", "-": "sub", "*": "mul", "/": "div", "**": "pow"}
+
 var infixToNDCompare = map[string]func(x, y float64) bool{
 	"<":  func(x, y float64) bool { return x < y },
 	">":  func(x, y float64) bool { return x > y },
@@ -32,6 +34,17 @@ func BinaryOperatorValue(op string, left, right runtime.Value) (runtime.Value, b
 			return nil, true, UnsupportedOperandsError(op, left.TypeName(), right.TypeName())
 		}
 		return &runtime.DFExpr{Kind: "bin", Op: exprOp, Left: exprOperand(left), Right: exprOperand(right)}, true, nil
+	}
+	_, leftCplx := left.(*runtime.Complex)
+	_, rightCplx := right.(*runtime.Complex)
+	if leftCplx || rightCplx {
+		la, lok := complexOperand(left)
+		ra, rok := complexOperand(right)
+		name, opOK := infixToComplexOp[op]
+		if !lok || !rok || !opOK {
+			return nil, true, UnsupportedOperandsError(op, left.TypeName(), right.TypeName())
+		}
+		return &runtime.Complex{C: complexArith(name, la, ra)}, true, nil
 	}
 	leftArr, leftIs, err := operandAsNDArray(left)
 	if err != nil {
@@ -71,8 +84,11 @@ func BinaryOperatorValue(op string, left, right runtime.Value) (runtime.Value, b
 	return nil, true, UnsupportedOperandsError(op, left.TypeName(), right.TypeName())
 }
 
-// UnaryMinusValue dispatches prefix `-` over NDArray and numeric Series.
+// UnaryMinusValue dispatches prefix `-` over Complex, NDArray and numeric Series.
 func UnaryMinusValue(operand runtime.Value) (runtime.Value, bool, error) {
+	if c, ok := operand.(*runtime.Complex); ok {
+		return &runtime.Complex{C: -c.C}, true, nil
+	}
 	arr, ok, err := operandAsNDArray(operand)
 	if err != nil {
 		return nil, true, err

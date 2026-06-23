@@ -341,6 +341,17 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"polyfit": {}, "polyval": {},
 		"skewness": {}, "kurtosis": {}, "covariance": {}, "corrcoef": {},
 	},
+	"physics": {
+		"c": {}, "G": {}, "planck": {}, "hbar": {}, "avogadro": {}, "boltzmann": {},
+		"gasConstant": {}, "elementaryCharge": {}, "electronMass": {}, "protonMass": {},
+		"stefanBoltzmann": {}, "gravity": {}, "convert": {},
+	},
+	"complex": {
+		"of": {}, "fromPolar": {},
+	},
+	"geo": {
+		"haversineDistance": {}, "bearing": {}, "midpoint": {}, "destination": {},
+	},
 	"args": {
 		"parse": {}, "help": {},
 	},

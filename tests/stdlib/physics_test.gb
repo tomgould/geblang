@@ -1,0 +1,31 @@
+/**
+ * @title physics
+ * @summary Physical constants and unit conversion.
+ */
+import test;
+import physics;
+
+class PhysicsTest extends test.Test {
+    func approx(float a, float b): bool {
+        return (a - b < 0.001f) && (b - a < 0.001f);
+    }
+
+    @test
+    func constantsAndConvert(): void {
+        this.assertTrue(this.approx(physics.c(), 299792458.0f));
+        this.assertTrue(this.approx(physics.convert(5.0, "km", "mi"), 3.10686f));
+        this.assertTrue(this.approx(physics.convert(100.0, "C", "F"), 212.0f));
+        this.assertTrue(this.approx(physics.convert(0.0, "C", "K"), 273.15f));
+        this.assertTrue(this.approx(physics.convert(1000.0, "g", "kg"), 1.0f));
+    }
+
+    @test
+    func convertErrors(): void {
+        let threw = false;
+        try { physics.convert(1.0, "km", "kg"); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+        let threw2 = false;
+        try { physics.convert(1.0, "km", "parsec"); } catch (RuntimeError e) { threw2 = true; }
+        this.assertTrue(threw2);
+    }
+}
