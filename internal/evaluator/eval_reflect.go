@@ -313,6 +313,8 @@ func dirValue(value runtime.Value) []string {
 		names = append([]string(nil), native.GeneratorMethods...)
 	case *runtime.NDArray:
 		names = append([]string(nil), native.NDArrayMethods...)
+	case *runtime.Distribution:
+		names = append([]string(nil), native.DistributionMethods...)
 	case *runtime.DataFrame:
 		names = append([]string(nil), native.DataFrameMethods...)
 	case *runtime.DFSeries:

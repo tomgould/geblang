@@ -329,6 +329,11 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"arange": {}, "linspace": {}, "random": {}, "randn": {},
 		"solve": {}, "inv": {}, "det": {},
 	},
+	"stats": {
+		"normal": {}, "uniform": {}, "exponential": {}, "lognormal": {}, "weibull": {},
+		"gamma": {}, "chiSquared": {}, "beta": {}, "studentT": {}, "f": {},
+		"binomial": {}, "poisson": {},
+	},
 	"args": {
 		"parse": {}, "help": {},
 	},

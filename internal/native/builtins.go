@@ -86,6 +86,7 @@ func registerAllBuiltins(r *Registry) {
 	registerRe(r)
 	registerRegexCompile(r)
 	registerNDArray(r)
+	registerStats(r)
 	registerDataFrame(r)
 	registerDataFrameIO(r)
 	registerPCRE(r)

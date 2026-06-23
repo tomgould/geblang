@@ -19,6 +19,12 @@
   `comb`, `perm`, `gcd`, `lcm`, and the log binomial coefficient `lcomb`.
   `factorial`, `perm`, and `comb` reject `n` above 100000 to bound memory and
   CPU.
+- New `stats` module: probability distributions as objects. A constructor
+  (`stats.normal(0, 1)`, `stats.binomial(20, 0.5)`, ...) returns a distribution
+  exposing `pdf`, `cdf`, `ppf`, `mean`, `variance`, `std`, and `sample`. Twelve
+  distributions are included: normal, uniform, exponential, gamma, beta,
+  chi-squared, Student's t, F, log-normal, Weibull, binomial, and Poisson.
+  `sample(n, {"seed": k})` draws reproducibly into an ndarray.
 
 ### Platform
 

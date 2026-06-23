@@ -493,6 +493,14 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		vm.push(result)
 		return ip, nil
 	}
+	if dist, ok := receiver.(*runtime.Distribution); ok {
+		result, err := native.DistributionMethod(dist, nameValue.Value, args)
+		if err != nil {
+			return 0, vm.runtimeError(instruction, "%s", err.Error())
+		}
+		vm.push(result)
+		return ip, nil
+	}
 	if frame, ok := receiver.(*runtime.DataFrame); ok {
 		result, err := native.DataFrameMethod(frame, nameValue.Value, args)
 		if err != nil {

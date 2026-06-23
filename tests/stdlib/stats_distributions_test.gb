@@ -1,0 +1,115 @@
+/**
+ * @title stats distributions
+ * @summary Probability distributions with pdf/cdf/ppf/moments/sample.
+ */
+import test;
+import stats;
+
+class StatsDistributionsTest extends test.Test {
+    func approx(float a, float b): bool {
+        return (a - b < 0.0001f) && (b - a < 0.0001f);
+    }
+
+    @test
+    func normalReference(): void {
+        let d = stats.normal(0.0, 1.0);
+        this.assertTrue(this.approx(d.pdf(0.0), 0.3989423f));
+        this.assertTrue(this.approx(d.cdf(1.96), 0.9750021f));
+        this.assertTrue(this.approx(d.ppf(0.975), 1.9599640f));
+        this.assertTrue(this.approx(d.mean(), 0.0f));
+        this.assertTrue(this.approx(d.std(), 1.0f));
+        this.assertTrue(this.approx(d.variance(), 1.0f));
+    }
+
+    @test
+    func normalRoundTrip(): void {
+        let d = stats.normal(2.0, 3.0);
+        this.assertTrue(this.approx(d.cdf(d.ppf(0.3)), 0.3f));
+    }
+
+    @test
+    func invalidParamThrows(): void {
+        let threw = false;
+        try { stats.normal(0.0, -1.0); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func ppfDomainThrows(): void {
+        let threw = false;
+        try { stats.normal(0.0, 1.0).ppf(1.5); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func closedFormReference(): void {
+        this.assertTrue(this.approx(stats.uniform(0.0, 10.0).cdf(2.5), 0.25f));
+        this.assertTrue(this.approx(stats.exponential(2.0).cdf(1.0), 0.8646647f));
+        this.assertTrue(this.approx(stats.weibull(2.0, 1.0).cdf(1.0), 0.6321206f));
+        this.assertTrue(this.approx(stats.lognormal(0.0, 1.0).cdf(1.0), 0.5f));
+    }
+
+    @test
+    func gammaReference(): void {
+        this.assertTrue(this.approx(stats.gamma(2.0, 2.0).cdf(4.0), 0.5939942f));
+        this.assertTrue(this.approx(stats.gamma(2.0, 2.0).mean(), 4.0f));
+        this.assertTrue(this.approx(stats.gamma(2.0, 2.0).variance(), 8.0f));
+        this.assertTrue(this.approx(stats.chiSquared(3.0).cdf(3.0), 0.6083748f));
+        this.assertTrue(this.approx(stats.chiSquared(3.0).mean(), 3.0f));
+        this.assertTrue(this.approx(stats.chiSquared(3.0).variance(), 6.0f));
+    }
+
+    @test
+    func chiSquaredRoundTrip(): void {
+        let d = stats.chiSquared(5.0);
+        this.assertTrue(this.approx(d.cdf(d.ppf(0.7)), 0.7f));
+    }
+
+    @test
+    func betaReference(): void {
+        this.assertTrue(this.approx(stats.beta(2.0, 3.0).cdf(0.5), 0.6875f));
+        this.assertTrue(this.approx(stats.beta(2.0, 3.0).mean(), 0.4f));
+        this.assertTrue(this.approx(stats.beta(2.0, 3.0).variance(), 0.04f));
+    }
+
+    @test
+    func studentTReference(): void {
+        this.assertTrue(this.approx(stats.studentT(10.0).ppf(0.975), 2.2281389f));
+        this.assertTrue(this.approx(stats.studentT(10.0).cdf(2.228), 0.975f));
+        this.assertTrue(this.approx(stats.studentT(10.0).mean(), 0.0f));
+        this.assertTrue(this.approx(stats.studentT(10.0).variance(), 1.25f));
+    }
+
+    @test
+    func fRoundTrip(): void {
+        let d = stats.f(5.0, 10.0);
+        this.assertTrue(this.approx(d.cdf(d.ppf(0.9)), 0.9f));
+    }
+
+    @test
+    func binomialReference(): void {
+        let d = stats.binomial(20, 0.5);
+        this.assertTrue(this.approx(d.pdf(10.0), 0.1761971f));
+        this.assertTrue(this.approx(d.cdf(12.0), 0.8684120f));
+        this.assertTrue(this.approx(d.mean(), 10.0f));
+        this.assertTrue(this.approx(d.variance(), 5.0f));
+        this.assertEqual(d.pdf(3.5), 0.0f);
+        this.assertEqual(d.ppf(0.5), 10.0f);
+    }
+
+    @test
+    func poissonReference(): void {
+        let d = stats.poisson(4.0);
+        this.assertTrue(this.approx(d.pdf(3.0), 0.1953668f));
+        this.assertTrue(this.approx(d.cdf(5.0), 0.7851304f));
+        this.assertTrue(this.approx(d.mean(), 4.0f));
+        this.assertTrue(this.approx(d.variance(), 4.0f));
+        this.assertEqual(d.pdf(3.5), 0.0f);
+    }
+
+    @test
+    func sampleMeanApproxDistributionMean(): void {
+        let s = stats.normal(5.0, 2.0).sample(20000, {"seed": 123});
+        this.assertTrue(s.mean() > 4.8f && s.mean() < 5.2f);
+    }
+}

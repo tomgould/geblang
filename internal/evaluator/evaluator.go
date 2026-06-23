@@ -4036,6 +4036,9 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 	if arr, ok := receiver.(*runtime.NDArray); ok {
 		return native.NDArrayMethod(arr, name, args)
 	}
+	if dist, ok := receiver.(*runtime.Distribution); ok {
+		return native.DistributionMethod(dist, name, args)
+	}
 	if frame, ok := receiver.(*runtime.DataFrame); ok {
 		return native.DataFrameMethod(frame, name, args)
 	}

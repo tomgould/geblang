@@ -140,6 +140,10 @@ Operations, introspection, and extension:
 - [dataframe](dataframe.html): columnar data frames - typed columns with null
   masks, expression filtering, grouping and joins, and CSV/JSON/SQL IO; numeric
   columns bridge to ndarray.
+- [stats](stats.html): probability distributions as objects - pdf, cdf, ppf,
+  moments, and seeded sampling for 12 distributions (normal, uniform,
+  exponential, gamma, beta, chiSquared, studentT, f, lognormal, weibull,
+  binomial, poisson).
 - [Utility Modules](utilities.html): miscellaneous result, option, and helper
   modules that do not fit one larger category.
 
