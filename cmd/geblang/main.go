@@ -384,6 +384,8 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "--out    output file path (required)")
 		fmt.Fprintln(writer, "--native compile to a standalone native binary via the Go transpiler (experimental);")
 		fmt.Fprintln(writer, "         calls the entry module's exported main, same as the bundled build")
+		fmt.Fprintln(writer, "--runtime <p> embed the bundle into the runtime binary at p instead of this one")
+		fmt.Fprintln(writer, "         (for cross-platform builds; p must be the same geblang version - see scripts/cross-build.sh)")
 		fmt.Fprintln(writer, "--docker        also write a Dockerfile next to the binary")
 		fmt.Fprintln(writer, "--docker-port N add EXPOSE N to the generated Dockerfile")
 		fmt.Fprintln(writer, "--force         overwrite an existing generated Dockerfile")

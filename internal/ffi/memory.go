@@ -163,14 +163,14 @@ func libcInit() {
 		}
 		libcOpen = lib
 
-		mallocAddr, err := purego.Dlsym(lib.handle, "malloc")
+		mallocAddr, err := dlSym(lib.handle, "malloc")
 		if err != nil {
 			libcErr = fmt.Errorf("ffi: dlsym malloc: %w", err)
 			return
 		}
 		purego.RegisterFunc(&mallocFn, mallocAddr)
 
-		freeAddr, err := purego.Dlsym(lib.handle, "free")
+		freeAddr, err := dlSym(lib.handle, "free")
 		if err != nil {
 			libcErr = fmt.Errorf("ffi: dlsym free: %w", err)
 			return
@@ -179,7 +179,7 @@ func libcInit() {
 
 		errnoSym := errnoLocSymbol()
 		if errnoSym != "" {
-			errnoAddr, err := purego.Dlsym(lib.handle, errnoSym)
+			errnoAddr, err := dlSym(lib.handle, errnoSym)
 			if err == nil {
 				purego.RegisterFunc(&errnoLocFn, errnoAddr)
 			}

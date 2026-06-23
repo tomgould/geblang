@@ -19,8 +19,6 @@ import (
 	"geblang/internal/runtime"
 	"geblang/internal/semantic"
 	"geblang/internal/token"
-
-	"golang.org/x/sys/unix"
 )
 
 type replConfig struct {
@@ -164,7 +162,7 @@ func (r *scannerLineReader) Close() error {
 type terminalLineReader struct {
 	in        *os.File
 	out       *os.File
-	original  *unix.Termios
+	restore   func()
 	history   []string
 	store     *replHistoryStore
 	completer replCompleter
@@ -174,30 +172,17 @@ type terminalLineReader struct {
 }
 
 func newTerminalLineReader(in *os.File, out *os.File, completer replCompleter) (*terminalLineReader, error) {
-	original, err := unix.IoctlGetTermios(int(in.Fd()), ioctlGetTermios)
+	restore, err := enterReplRawMode(int(in.Fd()))
 	if err != nil {
-		return nil, err
-	}
-	raw := *original
-	raw.Iflag &^= unix.ICRNL | unix.IXON
-	raw.Lflag &^= unix.ECHO | unix.ICANON | unix.IEXTEN | unix.ISIG
-	raw.Cc[unix.VMIN] = 1
-	raw.Cc[unix.VTIME] = 0
-	if err := unix.IoctlSetTermios(int(in.Fd()), ioctlSetTermios, &raw); err != nil {
 		return nil, err
 	}
 	store := newREPLHistoryStore()
 	history, err := store.Load()
 	if err != nil {
-		_ = unix.IoctlSetTermios(int(in.Fd()), ioctlSetTermios, original)
+		restore()
 		return nil, err
 	}
-	return &terminalLineReader{in: in, out: out, original: original, history: history, store: store, completer: completer}, nil
-}
-
-func isTerminal(file *os.File) bool {
-	_, err := unix.IoctlGetTermios(int(file.Fd()), ioctlGetTermios)
-	return err == nil
+	return &terminalLineReader{in: in, out: out, restore: restore, history: history, store: store, completer: completer}, nil
 }
 
 func (r *terminalLineReader) ReadLine(prompt string) (string, error) {
@@ -499,11 +484,7 @@ func displayWidth(s string) int {
 }
 
 func (r *terminalLineReader) terminalWidth() int {
-	ws, err := unix.IoctlGetWinsize(int(r.out.Fd()), unix.TIOCGWINSZ)
-	if err != nil || ws == nil || ws.Col == 0 {
-		return 80
-	}
-	return int(ws.Col)
+	return terminalColumns(int(r.out.Fd()))
 }
 
 func (r *terminalLineReader) History() []string {
@@ -515,12 +496,10 @@ func (r *terminalLineReader) Close() error {
 	if r.store != nil {
 		historyErr = r.store.Save(r.history)
 	}
-	if r.original == nil {
+	if r.restore == nil {
 		return historyErr
 	}
-	if err := unix.IoctlSetTermios(int(r.in.Fd()), ioctlSetTermios, r.original); err != nil {
-		return err
-	}
+	r.restore()
 	return historyErr
 }
 

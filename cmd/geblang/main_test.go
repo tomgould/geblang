@@ -2705,3 +2705,34 @@ func TestRunSubcommandAliasesBareScriptForm(t *testing.T) {
 		t.Fatalf("expected `run test` to attempt a file read, got:\n%s", out)
 	}
 }
+
+// TestBuildRuntimeFlagEmbedsSuppliedRuntime: `build --runtime <bin>` embeds the bundle into the given runtime.
+func TestBuildRuntimeFlagEmbedsSuppliedRuntime(t *testing.T) {
+	tmp := t.TempDir()
+	gebBin := filepath.Join(tmp, "geblang")
+	if out, err := exec.Command("go", "build", "-o", gebBin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build geblang: %v\n%s", err, out)
+	}
+	proj := filepath.Join(tmp, "proj")
+	if err := os.MkdirAll(filepath.Join(proj, "src"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "geblang.yaml"), []byte("name: x\nversion: 0.1.0\nsource: src\n"), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	src := "module main;\nimport io;\nexport func main(list<string> args): int { io.println(\"runtime-flag ok\"); return 0; }\n"
+	if err := os.WriteFile(filepath.Join(proj, "src", "main.gb"), []byte(src), 0o644); err != nil {
+		t.Fatalf("write main: %v", err)
+	}
+	out := filepath.Join(tmp, "app")
+	if o, err := exec.Command(gebBin, "build", "--runtime", gebBin, "--entry", "main", "--out", out, proj).CombinedOutput(); err != nil {
+		t.Fatalf("build --runtime failed: %v\n%s", err, o)
+	}
+	got, err := exec.Command(out).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run built binary: %v\n%s", err, got)
+	}
+	if !strings.Contains(string(got), "runtime-flag ok") {
+		t.Fatalf("unexpected output: %s", got)
+	}
+}

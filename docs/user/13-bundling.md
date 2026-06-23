@@ -264,6 +264,49 @@ arguments; the standard flags below work inside the container too. The
 typical reverse-proxy deployment runs the container on an internal port
 and fronts it with nginx.
 
+## Cross-Platform Builds
+
+`geblang build` embeds the running runtime into the output, so by default the
+binary it writes targets the platform you run it on. To build for another
+platform, embed the bundle into a runtime compiled for that target instead:
+`geblang build --runtime <path>` reads the runtime at that path rather than the
+running one. Because the runtime is pure Go with no cgo it cross-compiles to any
+supported target with the Go toolchain, and the bundle itself is platform-
+independent, so any host can produce a binary for any target.
+
+The shipped helper `scripts/cross-build.sh` does both steps (cross-compile the
+runtime, then embed the bundle) from a source checkout; the Go toolchain is the
+only requirement:
+
+```sh
+scripts/cross-build.sh --target linux/amd64   --entry app.main --out build/app
+scripts/cross-build.sh --target darwin/arm64  --entry app.main --out build/app
+scripts/cross-build.sh --target windows/amd64 --entry app.main --out build/app.exe
+```
+
+Any host (Linux, macOS, Windows) can build for `linux`, `darwin`, or `windows`
+on `amd64` or `arm64`. The package directory is set with `--dir` (default: the
+current directory); extra build flags go after `--`:
+
+```sh
+scripts/cross-build.sh --target linux/amd64 --entry app.main --out build/app -- --no-assert
+```
+
+### Windows limitations
+
+Geblang builds and runs on Windows, but a few unix-oriented capabilities are
+unavailable there and report a clear error at runtime; programs that do not use
+them run unchanged:
+
+- FFI (`ffi`, `clib.*`) and local ONNX inference (`onnx`) load native shared
+  libraries through dlopen, which is unix-only here.
+- Advisory file locking (`io.lock` / `io.tryLock`) is unix-only.
+- The `hnsw` vector-store backend uses an exact brute-force index on Windows
+  rather than the approximate HNSW graph; results are exact and performance
+  differs on very large indexes.
+- Interactive console widgets (`cli.choose` / `cli.multiChoose`) and the REPL
+  line editor fall back to plain line input (no raw-key handling).
+
 ## Standard Flags Of Built Binaries
 
 Every built binary answers a small set of standard flags, recognised

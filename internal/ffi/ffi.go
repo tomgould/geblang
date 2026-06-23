@@ -13,8 +13,6 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
-
-	"github.com/ebitengine/purego"
 )
 
 // Type names a C-ABI type for argument and return marshalling. The
@@ -93,7 +91,7 @@ type Library struct {
 // internal/ffi/policy.go and is applied by the Geblang surface
 // before reaching Open.
 func Open(path string) (*Library, error) {
-	handle, err := purego.Dlopen(path, purego.RTLD_NOW|purego.RTLD_GLOBAL)
+	handle, err := dlOpen(path)
 	if err != nil {
 		return nil, fmt.Errorf("ffi.Open %q: %w", path, err)
 	}
@@ -113,7 +111,7 @@ func (l *Library) Close() error {
 		return nil
 	}
 	l.closed = true
-	return purego.Dlclose(l.handle)
+	return dlClose(l.handle)
 }
 
 // Symbol resolves name in the library and prepares a callable
@@ -129,7 +127,7 @@ func (l *Library) Symbol(name string, argTypes []Type, retType Type) (*Symbol, e
 	if cached, ok := l.symbols[key]; ok {
 		return cached, nil
 	}
-	addr, err := purego.Dlsym(l.handle, name)
+	addr, err := dlSym(l.handle, name)
 	if err != nil {
 		return nil, fmt.Errorf("ffi.Symbol %q: %w", name, err)
 	}

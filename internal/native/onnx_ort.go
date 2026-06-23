@@ -47,7 +47,7 @@ type ortAPI struct {
 }
 
 var (
-	ortMu   sync.Mutex
+	ortMu    sync.Mutex
 	ortByLib = map[string]*ortAPI{}
 )
 
@@ -70,11 +70,11 @@ func getORT(libPath string) (*ortAPI, error) {
 }
 
 func loadORT(libPath string) (*ortAPI, error) {
-	handle, err := purego.Dlopen(libPath, purego.RTLD_NOW|purego.RTLD_GLOBAL)
+	handle, err := dlOpen(libPath)
 	if err != nil {
 		return nil, fmt.Errorf("onnx: cannot load ONNX Runtime at %q: %w", libPath, err)
 	}
-	addr, err := purego.Dlsym(handle, "OrtGetApiBase")
+	addr, err := dlSym(handle, "OrtGetApiBase")
 	if err != nil {
 		return nil, fmt.Errorf("onnx: OrtGetApiBase not found in %q: %w", libPath, err)
 	}

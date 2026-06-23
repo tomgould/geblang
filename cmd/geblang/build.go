@@ -27,6 +27,7 @@ func runBuild(args []string) {
 	dockerForce := false
 	dockerPort := 0
 	emitNative := false
+	runtimePath := ""
 	var cliAllowFFI []string
 	cliAllowOnnx := false
 	cliAllowProcessControl := false
@@ -36,6 +37,13 @@ func runBuild(args []string) {
 		switch args[i] {
 		case "--native":
 			emitNative = true
+		case "--runtime":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "geblang build: --runtime requires a path")
+				os.Exit(2)
+			}
+			i++
+			runtimePath = args[i]
 		case "--allow-ffi":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "geblang build: --allow-ffi requires a path or glob")
@@ -99,12 +107,17 @@ func runBuild(args []string) {
 
 	if entry == "" {
 		fmt.Fprintln(os.Stderr, "geblang build: --entry is required")
-		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--allow-ffi <path-or-glob>] [--allow-onnx] [--allow-process-control] [--allow-browser] [--docker [--docker-port N] [--force]] [<package-dir>]")
+		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--runtime <path>] [--allow-ffi <path-or-glob>] [--allow-onnx] [--allow-process-control] [--allow-browser] [--docker [--docker-port N] [--force]] [<package-dir>]")
 		os.Exit(2)
 	}
 	if outPath == "" {
 		fmt.Fprintln(os.Stderr, "geblang build: --out is required")
-		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--allow-ffi <path-or-glob>] [--allow-onnx] [--allow-process-control] [--allow-browser] [--docker [--docker-port N] [--force]] [<package-dir>]")
+		fmt.Fprintln(os.Stderr, "usage: geblang build --entry module.name --out <path> [--native] [--runtime <path>] [--allow-ffi <path-or-glob>] [--allow-onnx] [--allow-process-control] [--allow-browser] [--docker [--docker-port N] [--force]] [<package-dir>]")
+		os.Exit(2)
+	}
+
+	if emitNative && runtimePath != "" {
+		fmt.Fprintln(os.Stderr, "geblang build: --runtime cannot be combined with --native")
 		os.Exit(2)
 	}
 
@@ -247,14 +260,18 @@ func runBuild(args []string) {
 		Permissions:   resolveBundlePermissions(manifestPerm, cliAllowFFI, cliAllowOnnx, cliAllowProcessControl, cliAllowBrowser),
 	}
 
-	exe, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "geblang build: get executable: %v\n", err)
-		os.Exit(1)
+	exe := runtimePath
+	if exe == "" {
+		self, exeErr := os.Executable()
+		if exeErr != nil {
+			fmt.Fprintf(os.Stderr, "geblang build: get executable: %v\n", exeErr)
+			os.Exit(1)
+		}
+		exe = self
 	}
 	exeData, err := os.ReadFile(exe)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "geblang build: read executable: %v\n", err)
+		fmt.Fprintf(os.Stderr, "geblang build: read runtime %s: %v\n", exe, err)
 		os.Exit(1)
 	}
 

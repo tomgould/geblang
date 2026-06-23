@@ -9,6 +9,15 @@
   VM with evaluator fallback and accept the same flags
   (`geblang run --vm-strict app.gb`). The verb stays optional; the next token
   after `run` is always a script path, never re-read as another subcommand.
+- Cross-platform builds: `geblang build --runtime <path>` embeds the bundle into
+  a runtime compiled for another platform, and the new `scripts/cross-build.sh`
+  helper drives it end to end (`--target linux/amd64`, `darwin/arm64`,
+  `windows/amd64`, ...) using the Go toolchain, so any host can build for any
+  target.
+- Geblang now builds and runs on Windows. FFI, local ONNX inference, and
+  advisory file locking report a clear unsupported error there; the `hnsw`
+  vector-store backend uses an exact index; and interactive console widgets and
+  the REPL line editor fall back to plain line input. See the bundling chapter.
 
 ### Standard library
 

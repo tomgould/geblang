@@ -16,8 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-
-	"golang.org/x/sys/unix"
 )
 
 func secretsGetEnv(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -650,18 +648,11 @@ func (e *Evaluator) runMultiChoose(label string, choices []string, checked []boo
 		return e.multiChooseLoop(label, choices, checked, override)
 	}
 	fd := int(os.Stdin.Fd())
-	original, err := unix.IoctlGetTermios(fd, ioctlGetTermios)
+	restore, err := enterRawMode(fd)
 	if err != nil {
 		return e.multiChooseFallback(label, choices, checked)
 	}
-	raw := *original
-	raw.Lflag &^= (unix.ICANON | unix.ECHO | unix.ISIG)
-	raw.Cc[unix.VMIN] = 1
-	raw.Cc[unix.VTIME] = 0
-	if err := unix.IoctlSetTermios(fd, ioctlSetTermios, &raw); err != nil {
-		return e.multiChooseFallback(label, choices, checked)
-	}
-	defer func() { _ = unix.IoctlSetTermios(fd, ioctlSetTermios, original) }()
+	defer restore()
 	return e.multiChooseLoop(label, choices, checked, bufio.NewReader(os.Stdin))
 }
 
@@ -868,24 +859,13 @@ func readConsoleSecret() (string, error) {
 		return readConsoleLine()
 	}
 	fd := int(os.Stdin.Fd())
-	original, err := unix.IoctlGetTermios(fd, ioctlGetTermios)
+	restore, err := disableEcho(fd)
 	if err != nil {
 		return readConsoleLine()
 	}
-	hidden := *original
-	hidden.Lflag &^= unix.ECHO
-	if err := unix.IoctlSetTermios(fd, ioctlSetTermios, &hidden); err != nil {
-		return readConsoleLine()
-	}
 	line, readErr := readConsoleLine()
-	restoreErr := unix.IoctlSetTermios(fd, ioctlSetTermios, original)
-	if readErr != nil {
-		return "", readErr
-	}
-	if restoreErr != nil {
-		return "", restoreErr
-	}
-	return line, nil
+	restore()
+	return line, readErr
 }
 
 func cliStyle(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {

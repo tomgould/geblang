@@ -34,8 +34,9 @@ What you get either way:
   / XML, templating, math, and more, so most programs need no third-party
   dependencies at all. Gebweb, a typed web framework, builds on top of it.
 - `geblang build` produces a single self-contained binary with the runtime
-  bundled in. There is nothing else to install on the target: no separate
-  interpreter, no virtualenv, no `node_modules`.
+  bundled in, and `scripts/cross-build.sh` cross-compiles it for any Linux,
+  macOS, or Windows target. There is nothing else to install on the target: no
+  separate interpreter, no virtualenv, no `node_modules`.
 
 One language that reads like the scripting you already know and deploys like a Go
 binary.

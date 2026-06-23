@@ -721,26 +721,26 @@ func (e *Evaluator) ioDataSync(call *ast.CallExpression, args []runtime.Value) (
 }
 
 func (e *Evaluator) ioLock(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	file, mode, err := e.fileLockArgs(call, args)
+	file, exclusive, err := e.fileLockArgs(call, args)
 	if err != nil {
 		return nil, err
 	}
-	return runtime.Null{}, syscall.Flock(int(file.Fd()), mode)
+	if _, err := lockFile(file.Fd(), exclusive, false); err != nil {
+		return nil, err
+	}
+	return runtime.Null{}, nil
 }
 
 func (e *Evaluator) ioTryLock(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
-	file, mode, err := e.fileLockArgs(call, args)
+	file, exclusive, err := e.fileLockArgs(call, args)
 	if err != nil {
 		return nil, err
 	}
-	err = syscall.Flock(int(file.Fd()), mode|syscall.LOCK_NB)
-	if err == nil {
-		return runtime.Bool{Value: true}, nil
+	acquired, err := lockFile(file.Fd(), exclusive, true)
+	if err != nil {
+		return nil, err
 	}
-	if err == syscall.EWOULDBLOCK || err == syscall.EAGAIN {
-		return runtime.Bool{Value: false}, nil
-	}
-	return nil, err
+	return runtime.Bool{Value: acquired}, nil
 }
 
 func (e *Evaluator) ioUnlock(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -751,32 +751,32 @@ func (e *Evaluator) ioUnlock(call *ast.CallExpression, args []runtime.Value) (ru
 	if err != nil {
 		return nil, err
 	}
-	return runtime.Null{}, syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+	return runtime.Null{}, unlockFile(file.Fd())
 }
 
-func (e *Evaluator) fileLockArgs(call *ast.CallExpression, args []runtime.Value) (*os.File, int, error) {
+func (e *Evaluator) fileLockArgs(call *ast.CallExpression, args []runtime.Value) (*os.File, bool, error) {
 	if len(args) != 1 && len(args) != 2 {
-		return nil, 0, fmt.Errorf("%s expects file and optional mode", call.Callee.String())
+		return nil, false, fmt.Errorf("%s expects file and optional mode", call.Callee.String())
 	}
 	file, err := e.fileHandle(args[0])
 	if err != nil {
-		return nil, 0, err
+		return nil, false, err
 	}
 	mode := "exclusive"
 	if len(args) == 2 {
 		value, ok := args[1].(runtime.String)
 		if !ok {
-			return nil, 0, fmt.Errorf("%s mode must be string", call.Callee.String())
+			return nil, false, fmt.Errorf("%s mode must be string", call.Callee.String())
 		}
 		mode = value.Value
 	}
 	switch mode {
 	case "exclusive":
-		return file, syscall.LOCK_EX, nil
+		return file, true, nil
 	case "shared":
-		return file, syscall.LOCK_SH, nil
+		return file, false, nil
 	default:
-		return nil, 0, fmt.Errorf("%s mode must be \"exclusive\" or \"shared\"", call.Callee.String())
+		return nil, false, fmt.Errorf("%s mode must be \"exclusive\" or \"shared\"", call.Callee.String())
 	}
 }
 
