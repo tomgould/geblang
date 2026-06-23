@@ -58,7 +58,7 @@ selector base without importing it is a semantic error.
 
 | Module | Purpose |
 |---|---|
-| `async` | tasks, channels (`async.channel`), `select`, worker pools. |
+| `async` | tasks, channels (`async.channel`), `select`, worker pools; `async.tasks` adds `map`/`forEach`/`retry`/`settle`/`any`/`parallel`. |
 | `collections` | `maxBy`, `groupBy`, `chunk`, `sortBy`, lazy `lazyMap`/`lazyFilter`, `range`. |
 | `streams` (seq) | lazy fluent collection pipelines (`Stream`). |
 | `strbuilder` | O(n) string accumulation. |

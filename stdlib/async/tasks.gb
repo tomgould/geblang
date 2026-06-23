@@ -1,0 +1,184 @@
+module async.tasks;
+
+import async;
+import async.sync as sync;
+import random;
+
+/* High-level task combinators over the async core, for callers who do not want to wire up channels or manual task plumbing. */
+
+/* Run fn over each item concurrently, results in input order; opts.concurrency caps parallelism (default unbounded); fail-fast. */
+export func map(list<any> items, callable fn, ?dict<string, any> opts = null): list<any> {
+    int limit = intOpt(opts, "concurrency", 0);
+    ?sync.Semaphore bound = null;
+    if (limit > 0) {
+        bound = sync.Semaphore(limit);
+    }
+    let gate = bound;
+    list<any> tasks = [];
+    for (item in items) {
+        let captured = item;
+        tasks.push(async.run(func(): any {
+            if (gate != null) {
+                gate.acquire();
+                try {
+                    return fn(captured);
+                } finally {
+                    gate.release();
+                }
+            }
+            return fn(captured);
+        }));
+    }
+    return async.await(async.all(tasks)) as list<any>;
+}
+
+/* Like map, but for side effects; returns null. */
+export func forEach(list<any> items, callable fn, ?dict<string, any> opts = null): void {
+    map(items, fn, opts);
+}
+
+/* Call fn with exponential-backoff retry. opts: attempts(3) delayMs(0) factor(2.0) maxDelayMs(0=uncapped) jitter(false) retryIf(callable). */
+export func retry(callable fn, ?dict<string, any> opts = null): any {
+    int attempts = intOpt(opts, "attempts", 3);
+    if (attempts < 1) {
+        attempts = 1;
+    }
+    decimal factor = decimalOpt(opts, "factor", 2.0);
+    int maxDelay = intOpt(opts, "maxDelayMs", 0);
+    bool jitter = boolOpt(opts, "jitter", false);
+    ?callable retryIf = callableOpt(opts, "retryIf");
+    int currentDelay = intOpt(opts, "delayMs", 0);
+    int attempt = 0;
+    ?Error lastErr = null;
+    while (attempt < attempts) {
+        try {
+            return fn();
+        } catch (Error e) {
+            lastErr = e;
+            if (retryIf != null && !(retryIf(e) as bool)) {
+                throw e;
+            }
+            attempt += 1;
+            if (attempt < attempts) {
+                int waitMs = currentDelay;
+                if (jitter && waitMs > 0) {
+                    waitMs = random.intRange(waitMs // 2, waitMs);
+                }
+                if (waitMs > 0) {
+                    async.sleep(waitMs);
+                }
+                currentDelay = ((currentDelay as decimal) * factor) as int;
+                if (maxDelay > 0 && currentDelay > maxDelay) {
+                    currentDelay = maxDelay;
+                }
+            }
+        }
+    }
+    if (lastErr != null) {
+        throw lastErr;
+    }
+    throw RuntimeError("async.tasks.retry: no attempts made");
+}
+
+/* Await every task without fail-fast; per task {"ok": true, "value": ...} or {"ok": false, "error": ...}. */
+export func settle(list<any> tasks): list<any> {
+    list<any> out = [];
+    for (t in tasks) {
+        try {
+            let v = async.await(t);
+            out.push({"ok": true, "value": v});
+        } catch (Error e) {
+            out.push({"ok": false, "error": e});
+        }
+    }
+    return out;
+}
+
+/* Return the first task, in list order, that succeeds; throws if every task fails. */
+export func any(list<any> tasks): any {
+    int failures = 0;
+    ?Error lastErr = null;
+    for (t in tasks) {
+        try {
+            return async.await(t);
+        } catch (Error e) {
+            failures += 1;
+            lastErr = e;
+        }
+    }
+    if (lastErr != null) {
+        throw RuntimeError("async.tasks.any: all ${failures} tasks failed (last: ${lastErr.message})");
+    }
+    throw RuntimeError("async.tasks.any: no tasks given");
+}
+
+/* Run a list or dict of zero-arg callables concurrently; list -> ordered results, dict -> same-keyed result dict. */
+export func parallel(any fns): any {
+    if (fns instanceof list) {
+        list<any> tasks = [];
+        for (f in fns as list<callable>) {
+            tasks.push(async.run(f));
+        }
+        return async.await(async.all(tasks));
+    }
+    if (fns instanceof dict) {
+        list<string> keys = [];
+        list<any> tasks = [];
+        for (k, v in fns as dict<string, callable>) {
+            keys.push(k);
+            tasks.push(async.run(v));
+        }
+        let results = async.await(async.all(tasks)) as list<any>;
+        dict<string, any> out = {};
+        int i = 0;
+        for (key in keys) {
+            out[key] = results[i];
+            i += 1;
+        }
+        return out;
+    }
+    throw RuntimeError("async.tasks.parallel: expects a list or dict of callables");
+}
+
+func intOpt(?dict<string, any> opts, string key, int fallback): int {
+    if (opts == null || !(key in opts)) {
+        return fallback;
+    }
+    let v = opts[key];
+    if (v instanceof int) {
+        return (v as int);
+    }
+    return fallback;
+}
+
+func decimalOpt(?dict<string, any> opts, string key, decimal fallback): decimal {
+    if (opts == null || !(key in opts)) {
+        return fallback;
+    }
+    let v = opts[key];
+    if (v instanceof decimal) {
+        return (v as decimal);
+    }
+    if (v instanceof int) {
+        return ((v as int) as decimal);
+    }
+    return fallback;
+}
+
+func boolOpt(?dict<string, any> opts, string key, bool fallback): bool {
+    if (opts == null || !(key in opts)) {
+        return fallback;
+    }
+    let v = opts[key];
+    if (v instanceof bool) {
+        return (v as bool);
+    }
+    return fallback;
+}
+
+func callableOpt(?dict<string, any> opts, string key): ?callable {
+    if (opts == null || !(key in opts)) {
+        return null;
+    }
+    return opts[key] as callable;
+}

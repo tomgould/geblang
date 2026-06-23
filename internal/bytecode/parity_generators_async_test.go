@@ -590,3 +590,32 @@ try {
 } catch (ValueError e) { io.println("outer ${e.message}"); }
 `, "1\ncaught ValueError: boom\n5\nsub MyErr: custom\ncompr TypeError\n2\nouter nested\n")
 }
+
+func TestParityAsyncTasks(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import async;
+import async.tasks as task;
+
+let doubled = task.map([1, 2, 3, 4], func(int x): int { return x * 2; });
+io.println("map=${doubled}");
+
+let bounded = task.map([10, 20, 30], func(int x): int { return x + 1; }, {"concurrency": 2});
+io.println("bounded=${bounded}");
+
+let p = task.parallel([func(): int { return 7; }, func(): int { return 8; }]);
+io.println("parallel=${p}");
+
+let calls = [0];
+let r = task.retry(func(): string {
+    calls[0] = calls[0] + 1;
+    if (calls[0] < 2) { throw RuntimeError("x"); }
+    return "ok";
+}, {"attempts": 3, "delayMs": 1});
+io.println("retry=${r}");
+
+let t1 = async.run(func(): int { return 1; });
+let t2 = async.run(func(): int { throw RuntimeError("e"); });
+let outcomes = task.settle([t1, t2]);
+io.println("settle=${outcomes[0]["ok"]},${outcomes[1]["ok"]}");
+`, "map=[2, 4, 6, 8]\nbounded=[11, 21, 31]\nparallel=[7, 8]\nretry=ok\nsettle=true,false\n")
+}

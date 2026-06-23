@@ -1,0 +1,43 @@
+/**
+ * @title stats descriptive extensions
+ * @summary skewness, kurtosis, covariance, corrcoef.
+ */
+import test;
+import stats;
+
+class StatsDescriptiveTest extends test.Test {
+    func approx(float a, float b): bool {
+        return (a - b < 0.0001f) && (b - a < 0.0001f);
+    }
+
+    @test
+    func reference(): void {
+        this.assertTrue(this.approx(stats.skewness([1, 2, 3, 4, 5]), 0.0f));
+        this.assertTrue(this.approx(stats.kurtosis([1, 2, 3, 4, 5]), -1.3f));
+        this.assertTrue(this.approx(stats.skewness([1, 2, 3, 4, 10]), 1.13840f));
+        this.assertTrue(this.approx(stats.covariance([1, 2, 3, 4, 5], [2, 4, 5, 4, 5]), 1.5f));
+        this.assertTrue(this.approx(stats.corrcoef([1, 2, 3, 4, 5], [2, 4, 5, 4, 5]), 0.77460f));
+    }
+
+    @test
+    func errors(): void {
+        let threw = false;
+        try { stats.skewness([5, 5, 5]); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+        let threw2 = false;
+        try { stats.covariance([1, 2, 3], [1, 2]); } catch (RuntimeError e) { threw2 = true; }
+        this.assertTrue(threw2);
+        let threw3 = false;
+        try { stats.corrcoef([1, 2, 3], [5, 5, 5]); } catch (RuntimeError e) { threw3 = true; }
+        this.assertTrue(threw3);
+        let threw4 = false;
+        try { stats.kurtosis([5, 5, 5]); } catch (RuntimeError e) { threw4 = true; }
+        this.assertTrue(threw4);
+        let threw5 = false;
+        try { stats.skewness([1]); } catch (RuntimeError e) { threw5 = true; }
+        this.assertTrue(threw5);
+        let threw6 = false;
+        try { stats.corrcoef([1, 2, 3], [1, 2]); } catch (RuntimeError e) { threw6 = true; }
+        this.assertTrue(threw6);
+    }
+}

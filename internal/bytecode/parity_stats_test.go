@@ -136,3 +136,14 @@ io.println(stats.polyval(c, 2.0));
 io.println(stats.polyval([2.0, 0.0, -1.0], 3.0));
 `, "0.9999999999999973\n1.0000000000000087\n0.9999999999999962\n7.0000000000000036\n17\n")
 }
+
+func TestParityStatsDescriptive(t *testing.T) {
+	runParity(t, `import io;
+import stats;
+io.println(stats.skewness([1, 2, 3, 4, 5]));
+io.println(stats.kurtosis([1, 2, 3, 4, 5]));
+io.println(stats.skewness([1, 2, 3, 4, 10]));
+io.println(stats.covariance([1, 2, 3, 4, 5], [2, 4, 5, 4, 5]));
+io.println(stats.corrcoef([1, 2, 3, 4, 5], [2, 4, 5, 4, 5]));
+`, "0\n-1.3\n1.1384199576606164\n1.5\n0.7745966692414834\n")
+}

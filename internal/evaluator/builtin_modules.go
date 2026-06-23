@@ -677,6 +677,10 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"linregress":                   e.registryBuiltin("stats", "linregress"),
 			"polyfit":                      e.registryBuiltin("stats", "polyfit"),
 			"polyval":                      e.registryBuiltin("stats", "polyval"),
+			"skewness":                     e.registryBuiltin("stats", "skewness"),
+			"kurtosis":                     e.registryBuiltin("stats", "kurtosis"),
+			"covariance":                   e.registryBuiltin("stats", "covariance"),
+			"corrcoef":                     e.registryBuiltin("stats", "corrcoef"),
 		},
 		"markdown": {
 			"parse":      e.registryBuiltin("markdown", "parse"),

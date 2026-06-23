@@ -1438,6 +1438,10 @@ var stdlibCatalog = map[string]moduleDoc{
 		"linregress": fn([]string{"list<float> x", "list<float> y"}, "dict<string, float>", "Simple linear regression (slope, intercept, r, r2, pvalue, stderr)."),
 		"polyfit": fn([]string{"list<float> x", "list<float> y", "int degree"}, "list<float>", "Least-squares polynomial fit; returns coefficients highest degree first."),
 		"polyval": fn([]string{"list<float> coeffs", "float x"}, "float", "Evaluate a polynomial (coefficients highest degree first) at x."),
+		"skewness":   fn([]string{"list<float> xs"}, "float", "Population skewness."),
+		"kurtosis":   fn([]string{"list<float> xs"}, "float", "Population excess kurtosis (normal is 0)."),
+		"covariance": fn([]string{"list<float> xs", "list<float> ys"}, "float", "Sample covariance of two equal-length samples."),
+		"corrcoef":   fn([]string{"list<float> xs", "list<float> ys"}, "float", "Pearson correlation coefficient."),
 	}, classes: map[string]string{"Distribution": "A probability distribution object."}, classMethods: map[string]map[string]functionDoc{
 		"Distribution": {
 			"pdf":      fn([]string{"float x"}, "float", "Probability density (or mass) at x."),
@@ -2476,6 +2480,14 @@ var stdlibCatalog = map[string]moduleDoc{
 			"cancel": fn([]string{}, "void", "Cancels the operation."),
 			"spawn":  fn([]string{"callable fn"}, "any", "Spawns a task in the group."),
 		},
+	}},
+	"async.tasks": {functions: map[string]functionDoc{
+		"map":      fn([]string{"list<any> items", "callable fn", "?dict<string, any> opts"}, "list<any>", "Runs fn over each item concurrently, results in input order; opts.concurrency caps parallelism (default unbounded); fail-fast."),
+		"forEach":  fn([]string{"list<any> items", "callable fn", "?dict<string, any> opts"}, "void", "Like map, but for side effects; returns null."),
+		"retry":    fn([]string{"callable fn", "?dict<string, any> opts"}, "any", "Calls fn with exponential-backoff retry (opts: attempts, delayMs, factor, maxDelayMs, jitter, retryIf)."),
+		"settle":   fn([]string{"list<any> tasks"}, "list<any>", "Awaits every task without fail-fast; per task {ok, value} or {ok, error}."),
+		"any":      fn([]string{"list<any> tasks"}, "any", "Returns the first task, in list order, that succeeds; throws if all fail."),
+		"parallel": fn([]string{"any fns"}, "any", "Runs a list or dict of zero-arg callables concurrently; list gives ordered results, dict gives a same-keyed result dict."),
 	}},
 	"async.stream": {functions: map[string]functionDoc{
 		"csvReader":  fn([]string{"any source"}, "Task<any>", "Creates a CSV streaming reader asynchronously."),

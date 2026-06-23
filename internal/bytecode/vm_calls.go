@@ -1331,6 +1331,14 @@ func (vm *VM) asyncRun(args []runtime.Value) (runtime.Value, error) {
 		return vm.startAsyncCallable(fn, nil), nil
 	case runtime.BytecodeClosure:
 		return vm.startAsyncCallable(fn, nil), nil
+	case runtime.OverloadedFunction:
+		return vm.startAsyncCallable(fn, nil), nil
+	case runtime.Function:
+		// A cross-module callable arrives wrapped as a Native-backed runtime.Function (wrapStatefulNativeValue).
+		if fn.Native == nil {
+			return nil, fmt.Errorf("async.run expects a function, got %s", args[0].TypeName())
+		}
+		return vm.startAsyncCallable(fn, nil), nil
 	default:
 		return nil, fmt.Errorf("async.run expects a function, got %s", args[0].TypeName())
 	}

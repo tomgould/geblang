@@ -122,4 +122,19 @@ class FFILibCTest extends test.Test {
         this.assertTrue(e != 0);
         lib.close();
     }
+
+    @test
+    func errnoStableAcrossRepeatedCalls(): void {
+        let lib = this.tryOpen();
+        if (lib == null) { return; }
+        let open = lib.symbol("open", [ffi.CSTRING, ffi.INT32], ffi.INT32);
+        /* Capture errno after each failing open; must be non-zero every iteration. */
+        for (i in 0..49) {
+            let fd = open("/definitely-not-a-real-path-zxqwy", 0) as int;
+            this.assertEquals(-1 as int, fd);
+            let e = ffi.errno();
+            this.assertTrue(e != 0);
+        }
+        lib.close();
+    }
 }

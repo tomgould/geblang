@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
@@ -125,16 +126,24 @@ func NewCString(s string) (uintptr, error) {
 	return ptr, nil
 }
 
-// Errno returns the value of the C `errno` variable on the calling
-// OS thread. Reading errno meaningfully requires the immediately
-// preceding FFI call to have set it; the value is not stable across
-// goroutine scheduling boundaries.
-func Errno() (int, error) {
+// lastErrno holds errno from the most recent FFI call on the locked OS thread.
+var lastErrno int64
+
+// CaptureErrno records errno on the locked OS thread after an FFI call.
+func CaptureErrno() {
 	loc, err := errnoLocation()
 	if err != nil {
+		return
+	}
+	atomic.StoreInt64(&lastErrno, int64(*(*int32)(unsafe.Pointer(loc))))
+}
+
+// Errno returns the errno captured from the most recent FFI call.
+func Errno() (int, error) {
+	if _, err := errnoLocation(); err != nil {
 		return 0, err
 	}
-	return int(*(*int32)(unsafe.Pointer(loc))), nil
+	return int(atomic.LoadInt64(&lastErrno)), nil
 }
 
 // libc lookups are cached behind a sync.Once so the dlopen happens

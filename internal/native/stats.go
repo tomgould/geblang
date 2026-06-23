@@ -1070,6 +1070,118 @@ func registerStats(r *Registry) {
 		}
 		return runtime.Float{Value: acc}, nil
 	})
+	r.Register("stats", "skewness", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("stats.skewness expects (xs)")
+		}
+		xs, err := mathNumericListSingle(args[0], "stats.skewness xs")
+		if err != nil {
+			return nil, err
+		}
+		if len(xs) < 2 {
+			return nil, fmt.Errorf("stats.skewness: need at least 2 values")
+		}
+		mean := statsSampleMean(xs)
+		m2, m3 := 0.0, 0.0
+		for _, x := range xs {
+			d := x - mean
+			m2 += d * d
+			m3 += d * d * d
+		}
+		n := float64(len(xs))
+		m2 /= n
+		m3 /= n
+		if m2 == 0 {
+			return nil, fmt.Errorf("stats.skewness: zero variance")
+		}
+		return runtime.Float{Value: m3 / math.Pow(m2, 1.5)}, nil
+	})
+	r.Register("stats", "kurtosis", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("stats.kurtosis expects (xs)")
+		}
+		xs, err := mathNumericListSingle(args[0], "stats.kurtosis xs")
+		if err != nil {
+			return nil, err
+		}
+		if len(xs) < 2 {
+			return nil, fmt.Errorf("stats.kurtosis: need at least 2 values")
+		}
+		mean := statsSampleMean(xs)
+		m2, m4 := 0.0, 0.0
+		for _, x := range xs {
+			d := x - mean
+			dd := d * d
+			m2 += dd
+			m4 += dd * dd
+		}
+		n := float64(len(xs))
+		m2 /= n
+		m4 /= n
+		if m2 == 0 {
+			return nil, fmt.Errorf("stats.kurtosis: zero variance")
+		}
+		return runtime.Float{Value: m4/(m2*m2) - 3}, nil
+	})
+	r.Register("stats", "covariance", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("stats.covariance expects (xs, ys)")
+		}
+		xs, err := mathNumericListSingle(args[0], "stats.covariance xs")
+		if err != nil {
+			return nil, err
+		}
+		ys, err := mathNumericListSingle(args[1], "stats.covariance ys")
+		if err != nil {
+			return nil, err
+		}
+		if len(xs) != len(ys) {
+			return nil, fmt.Errorf("stats.covariance: xs and ys must have equal length")
+		}
+		if len(xs) < 2 {
+			return nil, fmt.Errorf("stats.covariance: need at least 2 values")
+		}
+		mx := statsSampleMean(xs)
+		my := statsSampleMean(ys)
+		sxy := 0.0
+		for i := range xs {
+			sxy += (xs[i] - mx) * (ys[i] - my)
+		}
+		return runtime.Float{Value: sxy / (float64(len(xs)) - 1)}, nil
+	})
+	r.Register("stats", "corrcoef", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("stats.corrcoef expects (xs, ys)")
+		}
+		xs, err := mathNumericListSingle(args[0], "stats.corrcoef xs")
+		if err != nil {
+			return nil, err
+		}
+		ys, err := mathNumericListSingle(args[1], "stats.corrcoef ys")
+		if err != nil {
+			return nil, err
+		}
+		if len(xs) != len(ys) {
+			return nil, fmt.Errorf("stats.corrcoef: xs and ys must have equal length")
+		}
+		if len(xs) < 2 {
+			return nil, fmt.Errorf("stats.corrcoef: need at least 2 values")
+		}
+		mx := statsSampleMean(xs)
+		my := statsSampleMean(ys)
+		sxx, sxy, syy := 0.0, 0.0, 0.0
+		for i := range xs {
+			dx := xs[i] - mx
+			dy := ys[i] - my
+			sxx += dx * dx
+			sxy += dx * dy
+			syy += dy * dy
+		}
+		if sxx == 0 || syy == 0 {
+			return nil, fmt.Errorf("stats.corrcoef: zero variance in xs or ys")
+		}
+		return runtime.Float{Value: sxy / math.Sqrt(sxx*syy)}, nil
+	})
 	r.Register("stats", "chiSquareIndependence", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("stats.chiSquareIndependence expects (table)")

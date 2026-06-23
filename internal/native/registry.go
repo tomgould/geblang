@@ -339,6 +339,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"confidenceIntervalMean": {}, "confidenceIntervalProportion": {}, "confidenceIntervalDiffMeans": {},
 		"linregress": {},
 		"polyfit": {}, "polyval": {},
+		"skewness": {}, "kurtosis": {}, "covariance": {}, "corrcoef": {},
 	},
 	"args": {
 		"parse": {}, "help": {},

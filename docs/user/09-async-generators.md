@@ -112,6 +112,67 @@ job.cancel();
 io.println(job.cancelled);   # true
 ```
 
+## High-Level Task Helpers (`async.tasks`)
+
+`async.tasks` is a thin layer over the async core for callers who would rather
+hand off a function and some data than wire up tasks, channels, and semaphores
+by hand. Import it with an alias:
+
+```gb
+import async.tasks as task;
+```
+
+- `task.map(items, fn, opts?)` runs `fn` over each item concurrently and returns
+  the results in input order. `opts.concurrency` (an int) caps how many run at
+  once; omit it for unbounded parallelism. It fails fast: the first error is
+  rethrown and the remaining tasks are cancelled.
+- `task.forEach(items, fn, opts?)` is `map` for side effects; it returns null.
+- `task.retry(fn, opts?)` calls `fn`, retrying on error with exponential
+  backoff. `opts`: `attempts` (default 3), `delayMs` (0), `factor` (2.0),
+  `maxDelayMs` (0 = uncapped), `jitter` (false), and `retryIf(error): bool` to
+  decide whether a given error is retryable.
+- `task.settle(tasks)` awaits every task without failing fast, returning one
+  dict per task: `{"ok": true, "value": ...}` or `{"ok": false, "error": ...}`.
+- `task.any(tasks)` returns the result of the first task, in list order, that
+  succeeds, and throws if every task fails.
+- `task.parallel(fns)` runs a list or dict of zero-argument callables at once; a
+  list returns results in order, a dict returns a result dict with the same keys.
+
+```gb
+import async.tasks as task;
+
+let bodies = task.map(urls, func(string u): string { return fetch(u); }, {"concurrency": 8});
+
+let user = task.retry(func(): any { return loadUser(id); }, {"attempts": 5, "delayMs": 100});
+
+let data = task.parallel({"user": func(): any { return loadUser(1); },
+                          "orders": func(): any { return loadOrders(1); }});
+```
+
+### Capturing the loop variable
+
+A closure that captures a `for` loop variable directly shares one binding, so
+spawning tasks in a loop and reading the loop variable inside them yields the
+last value rather than each iteration's:
+
+```gb
+for (i in 1..3) {
+    async.run(func(): int { return i; });   # every task sees 3
+}
+```
+
+Bind a fresh variable per iteration instead:
+
+```gb
+for (i in 1..3) {
+    let n = i;
+    async.run(func(): int { return n; });   # each task sees its own value
+}
+```
+
+The `async.tasks` helpers handle this for you; the note matters only when you
+spawn tasks in a loop by hand.
+
 ## Doing Work While A Task Runs
 
 A common mistake is to start a task and immediately await it. That is valid, but

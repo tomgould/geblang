@@ -43,6 +43,22 @@
   least-squares, returning slope, intercept, correlation, r-squared, p-value,
   and slope standard error), plus `polyfit` (least-squares polynomial fit) and
   `polyval` (polynomial evaluation).
+- The `stats` module also gains descriptive extensions: `skewness` and
+  `kurtosis` (population, with excess kurtosis), `covariance` (sample), and
+  `corrcoef` (Pearson correlation).
+- New `async.tasks` module: high-level task combinators over the async core for
+  callers who would rather hand off a function and data than manage tasks,
+  channels, and semaphores directly. `map`/`forEach` run a function over a
+  collection concurrently (results in input order, optional `concurrency` cap,
+  fail-fast); `retry` adds exponential-backoff retry; `settle` awaits every task
+  without failing fast; `any` returns the first task to succeed; and `parallel`
+  runs a list or dict of callables at once.
+
+### Fixes
+
+- A closure created in one module and passed to `async.run` from another module
+  is now accepted on the bytecode VM, matching the evaluator. The VM previously
+  rejected such a cross-module callable with "async.run expects a function".
 
 ### Platform
 

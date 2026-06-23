@@ -177,7 +177,9 @@ greet(...{"name": "Ada"});               # dict spread -> named args (extra keys
   wrapper there.)
 - Overloading resolves by argument count and type at the call site.
 - Closures capture by reference; captured variables can be reassigned through the
-  closure.
+  closure. A `for` loop variable is a single shared binding, so a closure that
+  captures it directly (e.g. spawning tasks in a loop and reading the loop variable
+  inside them) sees the final value; bind a fresh `let n = i;` per iteration first.
 - Pipe: `x |> f(y)` calls `f(x, y)`; chains read left to right.
 
 ## Generics
@@ -238,7 +240,11 @@ io.println(c.recv());                    # channels also iterate: for (x in c)
 
 Tasks are goroutines: CPU-bound fan-out scales across cores (no GIL, no event
 loop). `async.await`, `async.all`, `async.race`, `async.timeout(ms, fn)`,
-`async.cancel` compose tasks; channels and `select` coordinate them.
+`async.cancel` compose tasks; channels and `select` coordinate them. For
+higher-level orchestration, `import async.tasks as task` adds `map`/`forEach`
+(bounded parallel over a collection), `retry` (backoff), `settle` (await-all,
+no fail-fast), `any` (first success), and `parallel` (run a list/dict of
+callables), all built on the async core.
 
 ## Classes
 

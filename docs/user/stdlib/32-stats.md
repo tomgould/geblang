@@ -196,3 +196,30 @@ method. `coeffs` is a list of coefficients highest degree first (matching
 let c = stats.polyfit([0.0, 1.0, 2.0, 3.0], [0.0, 1.1, 3.9, 9.1], 2);
 io.println(stats.polyval(c, 4.0));   /* ~16.0 */
 ```
+
+## Descriptive extensions
+
+```gb
+import stats;
+
+let xs = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
+let ys = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+
+stats.skewness(xs);           /* population skewness */
+stats.kurtosis(xs);           /* population excess kurtosis (normal is 0) */
+stats.covariance(xs, ys);     /* sample covariance (n-1 denominator) */
+stats.corrcoef(xs, ys);       /* Pearson correlation coefficient */
+```
+
+| Function | Result |
+|----------|--------|
+| `skewness(xs)` | population skewness (float) |
+| `kurtosis(xs)` | population excess kurtosis, normal is 0 (float) |
+| `covariance(xs, ys)` | sample covariance, n-1 denominator (float) |
+| `corrcoef(xs, ys)` | Pearson correlation coefficient (float) |
+
+`skewness` and `kurtosis` require at least 2 values and non-zero variance.
+`covariance` and `corrcoef` require equal-length samples of at least 2
+elements; `corrcoef` additionally requires that neither input is constant
+(non-zero variance in both `xs` and `ys`). All functions raise `RuntimeError`
+when their preconditions are not met.

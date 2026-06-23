@@ -1,0 +1,103 @@
+import test;
+import async;
+import async.tasks as task;
+import async.atomic as atomic;
+
+class AsyncTasksTest extends test.Test {
+    @test
+    func mapReturnsResultsInInputOrder(): void {
+        let r = task.map([1, 2, 3, 4], func(int x): int { return x * 2; });
+        this.assertEquals([2, 4, 6, 8], r);
+    }
+
+    @test
+    func mapBoundedConcurrency(): void {
+        let r = task.map([1, 2, 3], func(int x): int { return x + 10; }, {"concurrency": 2});
+        this.assertEquals([11, 12, 13], r);
+    }
+
+    @test
+    func mapFailsFast(): void {
+        this.assertThrows(func(): void {
+            task.map([1, 2, 3], func(int x): int {
+                if (x == 2) { throw RuntimeError("boom"); }
+                return x;
+            });
+        });
+    }
+
+    @test
+    func forEachRunsEveryItem(): void {
+        let total = atomic.AtomicInt(0);
+        task.forEach([1, 2, 3, 4], func(int x): void { total.add(x); });
+        this.assertEquals(10, total.load());
+    }
+
+    @test
+    func retrySucceedsAfterTransientFailures(): void {
+        let calls = [0];
+        let result = task.retry(func(): string {
+            calls[0] = calls[0] + 1;
+            if (calls[0] < 3) { throw RuntimeError("transient ${calls[0]}"); }
+            return "ok";
+        }, {"attempts": 5, "delayMs": 1});
+        this.assertEquals("ok", result);
+        this.assertEquals(3, calls[0]);
+    }
+
+    @test
+    func retryRethrowsAfterAttemptsExhausted(): void {
+        let calls = [0];
+        this.assertThrows(func(): void {
+            task.retry(func(): int {
+                calls[0] = calls[0] + 1;
+                throw RuntimeError("always");
+            }, {"attempts": 3, "delayMs": 1});
+        });
+        this.assertEquals(3, calls[0]);
+    }
+
+    @test
+    func retryStopsWhenRetryIfRejects(): void {
+        let calls = [0];
+        let never = func(any e): bool { return false; };
+        this.assertThrows(func(): void {
+            task.retry(func(): int {
+                calls[0] = calls[0] + 1;
+                throw ValueError("fatal");
+            }, {"attempts": 5, "delayMs": 1, "retryIf": never});
+        });
+        this.assertEquals(1, calls[0]);
+    }
+
+    @test
+    func settleCollectsSuccessAndFailure(): void {
+        let t1 = async.run(func(): int { return 7; });
+        let t2 = async.run(func(): int { throw RuntimeError("nope"); });
+        let r = task.settle([t1, t2]);
+        this.assertEquals(2, r.length());
+        this.assertTrue(r[0]["ok"] as bool);
+        this.assertEquals(7, r[0]["value"]);
+        this.assertFalse(r[1]["ok"] as bool);
+    }
+
+    @test
+    func anyReturnsFirstSuccess(): void {
+        let t1 = async.run(func(): int { throw RuntimeError("fail"); });
+        let t2 = async.run(func(): int { return 42; });
+        this.assertEquals(42, task.any([t1, t2]));
+    }
+
+    @test
+    func parallelListPreservesOrder(): void {
+        let r = task.parallel([func(): int { return 1; }, func(): int { return 2; }, func(): int { return 3; }]);
+        this.assertEquals([1, 2, 3], r);
+    }
+
+    @test
+    func parallelDictKeepsKeys(): void {
+        let r = task.parallel({"a": func(): int { return 10; }, "b": func(): int { return 20; }}) as dict<string, any>;
+        this.assertEquals(10, r["a"]);
+        this.assertEquals(20, r["b"]);
+    }
+}

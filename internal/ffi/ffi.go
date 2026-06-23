@@ -12,6 +12,7 @@ package ffi
 import (
 	"fmt"
 	"reflect"
+	"runtime"
 	"sync"
 )
 
@@ -204,7 +205,10 @@ func (s *Symbol) Call(args []any) (any, error) {
 		}
 		in[i] = v
 	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	out := s.caller.Call(in)
+	CaptureErrno()
 	if s.RetType == Void {
 		return nil, nil
 	}
