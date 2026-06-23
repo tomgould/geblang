@@ -2,12 +2,17 @@
 
 ## Who this is for
 
-This guide is for developers arriving from Python, JavaScript, Go, or Java who
-want to orient quickly to Geblang. It maps the concepts you already know onto
+This guide is for developers arriving from Python, JavaScript, Go, Java, or PHP
+who want to orient quickly to Geblang. It maps the concepts you already know onto
 Geblang's equivalents, highlights where the language diverges from what you
 expect, and points you at the relevant reference chapters. You do not need to
 read this front to back; jump to the row or section that matches your
 background.
+
+Geblang takes much of its inspiration from PHP, so PHP developers will find a lot
+already familiar: named arguments (`f(x: 1)`), `parent::` becoming `parent(...)`,
+`?T` nullable types, `interface` / `extends`, and interpolation in double-quoted
+strings all echo PHP.
 
 ## Quick orientation
 
@@ -65,36 +70,36 @@ Things to notice:
 
 ## Coming from another language: concept mapping
 
-| Concept | Python | JavaScript | Go | Java | Geblang |
-|---------|--------|------------|----|------|---------|
-| Variable declaration | `x = 1` | `let x = 1` | `x := 1` | `int x = 1;` | `int x = 1;` or `let x = 1;` |
-| Typed declaration | (type annotations: `x: int = 1`) | (JSDoc / TypeScript: `let x: number`) | `var x int = 1` | `int x = 1;` | `int x = 1;` |
-| Constant | (no keyword; convention `X = 1`) | `const X = 1` | `const X = 1` | `final int X = 1;` | `const X = 1;` |
-| Inferred variable | `x = 1` | `let x = 1` | `x := 1` | `var x = 1;` (Java 10+) | `let x = 1;` |
-| Function definition | `def add(a: int, b: int) -> int:` | `function add(a, b) { }` | `func add(a, b int) int { }` | `int add(int a, int b) { }` | `func add(int a, int b): int { }` |
-| Default parameters | `def f(x=0):` | `function f(x = 0) { }` | (not supported) | (overloads) | `func f(int x = 0): void { }` |
-| Named arguments | (positional or keyword: `f(x=1)`) | (not built in) | (not supported) | (not supported) | `f(x: 1)` |
-| Lambda / anonymous func | `lambda x: x + 1` | `x => x + 1` | `func(x int) int { return x + 1 }` | `x -> x + 1` | `func(int x): int { return x + 1; }` |
-| Class definition | `class User:` | `class User { }` | (no classes; structs) | `class User { }` | `class User { }` |
-| Constructor | `def __init__(self, name):` | `constructor(name) { }` | (struct literal / factory) | `User(String name) { }` | `func User(string name) { }` |
-| Inheritance | `class Admin(User):` | `class Admin extends User { }` | (embedding) | `class Admin extends User { }` | `class Admin extends User { }` |
-| Parent constructor | `super().__init__(name)` | `super(name)` | (not applicable) | `super(name);` | `parent(name);` |
-| Interface | (Protocol / ABC) | (TypeScript interface) | `type I interface { }` | `interface I { }` | `interface I { }` |
-| Generics | (type hints: `list[T]`) | (TypeScript: `function f<T>`) | `func f[T any](v T) T` | `<T> T f(T v)` | `func f<T>(T v): T` |
-| Module import | `import math` | `import * as math from 'math'` | `import "math"` | `import java.lang.Math;` | `import math;` |
-| Named import | `from math import sqrt` | `import { sqrt } from 'math'` | (dot access after import) | `import static ...Math.sqrt;` | `from math import sqrt;` |
-| Error handling | `try: ... except ValueError as e:` | `try { } catch (e) { }` | `if err != nil { }` | `try { } catch (Exception e) { }` | `try { } catch (ValueError e) { }` |
-| Throw / raise | `raise ValueError("msg")` | `throw new Error("msg")` | `return nil, errors.New("msg")` | `throw new RuntimeException("msg");` | `throw RuntimeError("msg");` |
-| Async function | `async def f():` | `async function f() { }` | (goroutine / channel) | `CompletableFuture<T>` | `async func f(): T { }` |
-| Await | `await coro` | `await promise` | (channel receive: `<-ch`) | `.get()` / `.join()` | `await task` |
-| List / array | `[1, 2, 3]` | `[1, 2, 3]` | `[]int{1, 2, 3}` | `List.of(1, 2, 3)` | `[1, 2, 3]` as `list<int>` |
-| Dictionary / map | `{"a": 1}` | `{a: 1}` | `map[string]int{"a": 1}` | `Map.of("a", 1)` | `{"a": 1}` as `dict<string, int>` |
-| Set | `{1, 2, 3}` | `new Set([1, 2, 3])` | `map[int]struct{}` | `Set.of(1, 2, 3)` | `{1, 2, 3}` as `set<int>` |
-| String interpolation | `f"Hello {name}"` | `` `Hello ${name}` `` | `fmt.Sprintf("Hello %s", name)` | `"Hello " + name` (text blocks in Java 15+) | `"Hello ${name}"` (double-quoted only) |
-| Integer division | `x // y` | `Math.floor(x / y)` | `x / y` (int operands) | `x / y` (int operands) | `x // y` |
-| True division | `x / y` | `x / y` | (float operands) | (float or cast) | `x / y` (returns decimal) |
-| Null / nil | `None` | `null` / `undefined` | `nil` | `null` | `null` |
-| Nullable type | `Optional[T]` / `T \| None` | `T \| null` (TypeScript) | `*T` (pointer) | `Optional<T>` | `?T` |
+| Concept | Python | JavaScript | Go | Java | PHP | Geblang |
+|---------|--------|------------|----|------|-----|---------|
+| Variable declaration | `x = 1` | `let x = 1` | `x := 1` | `int x = 1;` | `$x = 1;` | `int x = 1;` or `let x = 1;` |
+| Typed declaration | (type annotations: `x: int = 1`) | (JSDoc / TypeScript: `let x: number`) | `var x int = 1` | `int x = 1;` | (typed params / properties only) | `int x = 1;` |
+| Constant | (no keyword; convention `X = 1`) | `const X = 1` | `const X = 1` | `final int X = 1;` | `const X = 1;` | `const X = 1;` |
+| Inferred variable | `x = 1` | `let x = 1` | `x := 1` | `var x = 1;` (Java 10+) | `$x = 1;` | `let x = 1;` |
+| Function definition | `def add(a: int, b: int) -> int:` | `function add(a, b) { }` | `func add(a, b int) int { }` | `int add(int a, int b) { }` | `function add(int $a, int $b): int { }` | `func add(int a, int b): int { }` |
+| Default parameters | `def f(x=0):` | `function f(x = 0) { }` | (not supported) | (overloads) | `function f($x = 0) { }` | `func f(int x = 0): void { }` |
+| Named arguments | (positional or keyword: `f(x=1)`) | (not built in) | (not supported) | (not supported) | `f(x: 1)` (PHP 8+) | `f(x: 1)` |
+| Lambda / anonymous func | `lambda x: x + 1` | `x => x + 1` | `func(x int) int { return x + 1 }` | `x -> x + 1` | `fn($x) => $x + 1` | `func(int x): int { return x + 1; }` |
+| Class definition | `class User:` | `class User { }` | (no classes; structs) | `class User { }` | `class User { }` | `class User { }` |
+| Constructor | `def __init__(self, name):` | `constructor(name) { }` | (struct literal / factory) | `User(String name) { }` | `function __construct($name) { }` | `func User(string name) { }` |
+| Inheritance | `class Admin(User):` | `class Admin extends User { }` | (embedding) | `class Admin extends User { }` | `class Admin extends User { }` | `class Admin extends User { }` |
+| Parent constructor | `super().__init__(name)` | `super(name)` | (not applicable) | `super(name);` | `parent::__construct($name);` | `parent(name);` |
+| Interface | (Protocol / ABC) | (TypeScript interface) | `type I interface { }` | `interface I { }` | `interface I { }` | `interface I { }` |
+| Generics | (type hints: `list[T]`) | (TypeScript: `function f<T>`) | `func f[T any](v T) T` | `<T> T f(T v)` | (no native generics; `@template` docblocks) | `func f<T>(T v): T` |
+| Module import | `import math` | `import * as math from 'math'` | `import "math"` | `import java.lang.Math;` | `require 'math.php';` | `import math;` |
+| Named import | `from math import sqrt` | `import { sqrt } from 'math'` | (dot access after import) | `import static ...Math.sqrt;` | `use function Math\sqrt;` | `from math import sqrt;` |
+| Error handling | `try: ... except ValueError as e:` | `try { } catch (e) { }` | `if err != nil { }` | `try { } catch (Exception e) { }` | `try { } catch (ValueError $e) { }` | `try { } catch (ValueError e) { }` |
+| Throw / raise | `raise ValueError("msg")` | `throw new Error("msg")` | `return nil, errors.New("msg")` | `throw new RuntimeException("msg");` | `throw new RuntimeException("msg");` | `throw RuntimeError("msg");` |
+| Async function | `async def f():` | `async function f() { }` | (goroutine / channel) | `CompletableFuture<T>` | (no built-in async; Fibers) | `async func f(): T { }` |
+| Await | `await coro` | `await promise` | (channel receive: `<-ch`) | `.get()` / `.join()` | (Fiber suspend / resume) | `await task` |
+| List / array | `[1, 2, 3]` | `[1, 2, 3]` | `[]int{1, 2, 3}` | `List.of(1, 2, 3)` | `[1, 2, 3]` | `[1, 2, 3]` as `list<int>` |
+| Dictionary / map | `{"a": 1}` | `{a: 1}` | `map[string]int{"a": 1}` | `Map.of("a", 1)` | `["a" => 1]` | `{"a": 1}` as `dict<string, int>` |
+| Set | `{1, 2, 3}` | `new Set([1, 2, 3])` | `map[int]struct{}` | `Set.of(1, 2, 3)` | (no native set; array keys) | `{1, 2, 3}` as `set<int>` |
+| String interpolation | `f"Hello {name}"` | `` `Hello ${name}` `` | `fmt.Sprintf("Hello %s", name)` | `"Hello " + name` (text blocks in Java 15+) | `"Hello {$name}"` | `"Hello ${name}"` (double-quoted only) |
+| Integer division | `x // y` | `Math.floor(x / y)` | `x / y` (int operands) | `x / y` (int operands) | `intdiv($x, $y)` | `x // y` |
+| True division | `x / y` | `x / y` | (float operands) | (float or cast) | `$x / $y` | `x / y` (returns decimal) |
+| Null / nil | `None` | `null` / `undefined` | `nil` | `null` | `null` | `null` |
+| Nullable type | `Optional[T]` / `T \| None` | `T \| null` (TypeScript) | `*T` (pointer) | `Optional<T>` | `?T` | `?T` |
 
 ## Key features for you
 
