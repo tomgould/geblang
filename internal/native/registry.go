@@ -333,6 +333,10 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"normal": {}, "uniform": {}, "exponential": {}, "lognormal": {}, "weibull": {},
 		"gamma": {}, "chiSquared": {}, "beta": {}, "studentT": {}, "f": {},
 		"binomial": {}, "poisson": {},
+		"tTestOneSample": {}, "tTestIndependent": {}, "tTestPaired": {},
+		"chiSquareTest": {}, "chiSquareIndependence": {},
+		"mannWhitneyU": {}, "ksTest": {},
+		"confidenceIntervalMean": {}, "confidenceIntervalProportion": {}, "confidenceIntervalDiffMeans": {},
 	},
 	"args": {
 		"parse": {}, "help": {},

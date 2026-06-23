@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	mrand "math/rand"
+	"sort"
 	"time"
 
 	"geblang/internal/runtime"
@@ -192,6 +193,176 @@ func statsSampleGamma(shape, scale float64, rng *mrand.Rand) float64 {
 	}
 }
 
+// statsPutFloat adds a float entry to a result dict.
+func statsPutFloat(d *runtime.Dict, key string, v float64) {
+	k := runtime.String{Value: key}
+	d.PutEntry(DictKey(k), runtime.DictEntry{Key: k, Value: runtime.Float{Value: v}})
+}
+
+func statsSampleMean(xs []float64) float64 {
+	sum := 0.0
+	for _, x := range xs {
+		sum += x
+	}
+	return sum / float64(len(xs))
+}
+
+func statsSampleVariance(xs []float64, ddof int) float64 {
+	m := statsSampleMean(xs)
+	ss := 0.0
+	for _, x := range xs {
+		d := x - m
+		ss += d * d
+	}
+	return ss / float64(len(xs)-ddof)
+}
+
+func statsAlternative(opts runtime.Value) (string, error) {
+	if opts == nil {
+		return "two-sided", nil
+	}
+	dict, ok := opts.(runtime.Dict)
+	if !ok {
+		return "", fmt.Errorf("options must be a dict")
+	}
+	v, ok := ndDictValue(dict, "alternative")
+	if !ok {
+		return "two-sided", nil
+	}
+	s, ok := v.(runtime.String)
+	if !ok {
+		return "", fmt.Errorf("alternative must be a string")
+	}
+	switch s.Value {
+	case "two-sided", "less", "greater":
+		return s.Value, nil
+	}
+	return "", fmt.Errorf("alternative must be 'two-sided', 'less', or 'greater'")
+}
+
+func statsBoolOpt(opts runtime.Value, key string, def bool) (bool, error) {
+	if opts == nil {
+		return def, nil
+	}
+	dict, ok := opts.(runtime.Dict)
+	if !ok {
+		return def, fmt.Errorf("options must be a dict")
+	}
+	v, ok := ndDictValue(dict, key)
+	if !ok {
+		return def, nil
+	}
+	b, ok := v.(runtime.Bool)
+	if !ok {
+		return def, fmt.Errorf("%s must be a bool", key)
+	}
+	return b.Value, nil
+}
+
+func statsIntervalResult(low, high float64) runtime.Value {
+	d := runtime.NewDictHint(2)
+	statsPutFloat(&d, "low", low)
+	statsPutFloat(&d, "high", high)
+	return d
+}
+
+// statsRanks returns 1-based average ranks plus the sizes of each tie group.
+func statsRanks(xs []float64) ([]float64, []int) {
+	n := len(xs)
+	idx := make([]int, n)
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.Slice(idx, func(a, b int) bool { return xs[idx[a]] < xs[idx[b]] })
+	ranks := make([]float64, n)
+	ties := []int{}
+	i := 0
+	for i < n {
+		j := i
+		for j+1 < n && xs[idx[j+1]] == xs[idx[i]] {
+			j++
+		}
+		avg := float64(i+j)/2 + 1
+		for k := i; k <= j; k++ {
+			ranks[idx[k]] = avg
+		}
+		if j > i {
+			ties = append(ties, j-i+1)
+		}
+		i = j + 1
+	}
+	return ranks, ties
+}
+
+// statsKSProb is the Kolmogorov survival series Q_KS(lambda).
+func statsKSProb(lambda float64) float64 {
+	if lambda <= 0 {
+		return 1
+	}
+	a := -2 * lambda * lambda
+	sum := 0.0
+	sign := 1.0
+	for j := 1; j <= 100; j++ {
+		term := sign * math.Exp(a*float64(j)*float64(j))
+		sum += term
+		if math.Abs(term) < 1e-12 {
+			break
+		}
+		sign = -sign
+	}
+	p := 2 * sum
+	if p < 0 {
+		p = 0
+	}
+	if p > 1 {
+		p = 1
+	}
+	return p
+}
+
+func statsTTestResult(tStat, df float64, alternative string) runtime.Value {
+	dist := &runtime.Distribution{Kind: "studentT", Params: []float64{df}}
+	var p float64
+	switch alternative {
+	case "less":
+		p = statsCdf(dist, tStat)
+	case "greater":
+		p = 1 - statsCdf(dist, tStat)
+	default:
+		p = 2 * (1 - statsCdf(dist, math.Abs(tStat)))
+	}
+	d := runtime.NewDictHint(3)
+	statsPutFloat(&d, "statistic", tStat)
+	statsPutFloat(&d, "pvalue", p)
+	statsPutFloat(&d, "df", df)
+	return d
+}
+
+func statsChiResult(stat, df float64) runtime.Value {
+	dist := &runtime.Distribution{Kind: "chiSquared", Params: []float64{df}}
+	d := runtime.NewDictHint(3)
+	statsPutFloat(&d, "statistic", stat)
+	statsPutFloat(&d, "pvalue", 1-statsCdf(dist, stat))
+	statsPutFloat(&d, "df", df)
+	return d
+}
+
+func statsFloatMatrix(v runtime.Value, label string) ([][]float64, error) {
+	list, ok := v.(*runtime.List)
+	if !ok {
+		return nil, fmt.Errorf("%s: argument must be a list of lists", label)
+	}
+	rows := make([][]float64, len(list.Elements))
+	for i, row := range list.Elements {
+		r, err := mathNumericListSingle(row, fmt.Sprintf("%s row %d", label, i))
+		if err != nil {
+			return nil, err
+		}
+		rows[i] = r
+	}
+	return rows, nil
+}
+
 func registerStats(r *Registry) {
 	r.Register("stats", "binomial", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
@@ -338,6 +509,449 @@ func registerStats(r *Registry) {
 			return nil, fmt.Errorf("stats.f: d1 and d2 must be positive")
 		}
 		return &runtime.Distribution{Kind: "f", Params: []float64{d1, d2}}, nil
+	})
+	r.Register("stats", "tTestOneSample", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) < 2 || len(args) > 3 {
+			return nil, fmt.Errorf("stats.tTestOneSample expects (sample, mu, opts?)")
+		}
+		xs, err := mathNumericListSingle(args[0], "stats.tTestOneSample sample")
+		if err != nil {
+			return nil, err
+		}
+		if len(xs) < 2 {
+			return nil, fmt.Errorf("stats.tTestOneSample: sample needs at least 2 values")
+		}
+		mu, err := FloatLike(args[1])
+		if err != nil {
+			return nil, err
+		}
+		var opts runtime.Value
+		if len(args) == 3 {
+			opts = args[2]
+		}
+		alt, err := statsAlternative(opts)
+		if err != nil {
+			return nil, err
+		}
+		n := float64(len(xs))
+		m := statsSampleMean(xs)
+		s := math.Sqrt(statsSampleVariance(xs, 1))
+		tStat := (m - mu) / (s / math.Sqrt(n))
+		return statsTTestResult(tStat, n-1, alt), nil
+	})
+	r.Register("stats", "tTestIndependent", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) < 2 || len(args) > 3 {
+			return nil, fmt.Errorf("stats.tTestIndependent expects (a, b, opts?)")
+		}
+		a, err := mathNumericListSingle(args[0], "stats.tTestIndependent a")
+		if err != nil {
+			return nil, err
+		}
+		b, err := mathNumericListSingle(args[1], "stats.tTestIndependent b")
+		if err != nil {
+			return nil, err
+		}
+		if len(a) < 2 || len(b) < 2 {
+			return nil, fmt.Errorf("stats.tTestIndependent: each sample needs at least 2 values")
+		}
+		var opts runtime.Value
+		if len(args) == 3 {
+			opts = args[2]
+		}
+		alt, err := statsAlternative(opts)
+		if err != nil {
+			return nil, err
+		}
+		equalVar, err := statsBoolOpt(opts, "equalVar", true)
+		if err != nil {
+			return nil, err
+		}
+		n1, n2 := float64(len(a)), float64(len(b))
+		m1, m2 := statsSampleMean(a), statsSampleMean(b)
+		v1, v2 := statsSampleVariance(a, 1), statsSampleVariance(b, 1)
+		var tStat, df float64
+		if equalVar {
+			sp2 := ((n1-1)*v1 + (n2-1)*v2) / (n1 + n2 - 2)
+			tStat = (m1 - m2) / math.Sqrt(sp2*(1/n1+1/n2))
+			df = n1 + n2 - 2
+		} else {
+			se2 := v1/n1 + v2/n2
+			tStat = (m1 - m2) / math.Sqrt(se2)
+			df = se2 * se2 / ((v1/n1)*(v1/n1)/(n1-1) + (v2/n2)*(v2/n2)/(n2-1))
+		}
+		return statsTTestResult(tStat, df, alt), nil
+	})
+	r.Register("stats", "tTestPaired", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) < 2 || len(args) > 3 {
+			return nil, fmt.Errorf("stats.tTestPaired expects (a, b, opts?)")
+		}
+		a, err := mathNumericListSingle(args[0], "stats.tTestPaired a")
+		if err != nil {
+			return nil, err
+		}
+		b, err := mathNumericListSingle(args[1], "stats.tTestPaired b")
+		if err != nil {
+			return nil, err
+		}
+		if len(a) != len(b) {
+			return nil, fmt.Errorf("stats.tTestPaired: samples must have equal length")
+		}
+		if len(a) < 2 {
+			return nil, fmt.Errorf("stats.tTestPaired: samples need at least 2 values")
+		}
+		var opts runtime.Value
+		if len(args) == 3 {
+			opts = args[2]
+		}
+		alt, err := statsAlternative(opts)
+		if err != nil {
+			return nil, err
+		}
+		diffs := make([]float64, len(a))
+		for i := range a {
+			diffs[i] = a[i] - b[i]
+		}
+		n := float64(len(diffs))
+		m := statsSampleMean(diffs)
+		s := math.Sqrt(statsSampleVariance(diffs, 1))
+		tStat := m / (s / math.Sqrt(n))
+		return statsTTestResult(tStat, n-1, alt), nil
+	})
+	r.Register("stats", "chiSquareTest", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) < 1 || len(args) > 3 {
+			return nil, fmt.Errorf("stats.chiSquareTest expects (observed, expected?, opts?)")
+		}
+		obs, err := mathNumericListSingle(args[0], "stats.chiSquareTest observed")
+		if err != nil {
+			return nil, err
+		}
+		if len(obs) < 2 {
+			return nil, fmt.Errorf("stats.chiSquareTest: need at least 2 categories")
+		}
+		var exp []float64
+		var opts runtime.Value
+		for _, a := range args[1:] {
+			if dict, ok := a.(runtime.Dict); ok {
+				opts = dict
+				continue
+			}
+			exp, err = mathNumericListSingle(a, "stats.chiSquareTest expected")
+			if err != nil {
+				return nil, err
+			}
+		}
+		ddof := 0
+		if opts != nil {
+			if v, ok := ndDictValue(opts.(runtime.Dict), "ddof"); ok {
+				n, ok := AsInt64(v)
+				if !ok {
+					return nil, fmt.Errorf("stats.chiSquareTest: ddof must be an int")
+				}
+				ddof = int(n)
+			}
+		}
+		if exp == nil {
+			total := 0.0
+			for _, o := range obs {
+				total += o
+			}
+			uniform := total / float64(len(obs))
+			exp = make([]float64, len(obs))
+			for i := range exp {
+				exp[i] = uniform
+			}
+		} else if len(exp) != len(obs) {
+			return nil, fmt.Errorf("stats.chiSquareTest: expected length must match observed")
+		}
+		stat := 0.0
+		for i := range obs {
+			if exp[i] <= 0 {
+				return nil, fmt.Errorf("stats.chiSquareTest: expected counts must be positive")
+			}
+			d := obs[i] - exp[i]
+			stat += d * d / exp[i]
+		}
+		return statsChiResult(stat, float64(len(obs)-1-ddof)), nil
+	})
+	r.Register("stats", "mannWhitneyU", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) < 2 || len(args) > 3 {
+			return nil, fmt.Errorf("stats.mannWhitneyU expects (a, b, opts?)")
+		}
+		a, err := mathNumericListSingle(args[0], "stats.mannWhitneyU a")
+		if err != nil {
+			return nil, err
+		}
+		b, err := mathNumericListSingle(args[1], "stats.mannWhitneyU b")
+		if err != nil {
+			return nil, err
+		}
+		if len(a) == 0 || len(b) == 0 {
+			return nil, fmt.Errorf("stats.mannWhitneyU: samples must be non-empty")
+		}
+		var opts runtime.Value
+		if len(args) == 3 {
+			opts = args[2]
+		}
+		alt, err := statsAlternative(opts)
+		if err != nil {
+			return nil, err
+		}
+		n1, n2 := len(a), len(b)
+		combined := make([]float64, 0, n1+n2)
+		combined = append(combined, a...)
+		combined = append(combined, b...)
+		ranks, ties := statsRanks(combined)
+		r1 := 0.0
+		for i := 0; i < n1; i++ {
+			r1 += ranks[i]
+		}
+		u1 := r1 - float64(n1)*float64(n1+1)/2
+		nn := float64(n1 + n2)
+		muU := float64(n1) * float64(n2) / 2
+		tieSum := 0.0
+		for _, t := range ties {
+			tf := float64(t)
+			tieSum += tf*tf*tf - tf
+		}
+		sigmaU := math.Sqrt(float64(n1) * float64(n2) / 12 * ((nn + 1) - tieSum/(nn*(nn-1))))
+		z := 0.0
+		if sigmaU > 0 {
+			diff := u1 - muU
+			if diff > 0 {
+				diff -= 0.5
+			} else if diff < 0 {
+				diff += 0.5
+			}
+			z = diff / sigmaU
+		}
+		norm := &runtime.Distribution{Kind: "normal", Params: []float64{0, 1}}
+		var p float64
+		switch alt {
+		case "less":
+			p = statsCdf(norm, z)
+		case "greater":
+			p = 1 - statsCdf(norm, z)
+		default:
+			p = 2 * (1 - statsCdf(norm, math.Abs(z)))
+		}
+		if p > 1 {
+			p = 1
+		}
+		d := runtime.NewDictHint(2)
+		statsPutFloat(&d, "statistic", u1)
+		statsPutFloat(&d, "pvalue", p)
+		return d, nil
+	})
+	r.Register("stats", "ksTest", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("stats.ksTest expects (a, b)")
+		}
+		a, err := mathNumericListSingle(args[0], "stats.ksTest a")
+		if err != nil {
+			return nil, err
+		}
+		b, err := mathNumericListSingle(args[1], "stats.ksTest b")
+		if err != nil {
+			return nil, err
+		}
+		if len(a) == 0 || len(b) == 0 {
+			return nil, fmt.Errorf("stats.ksTest: samples must be non-empty")
+		}
+		sa := append([]float64(nil), a...)
+		sb := append([]float64(nil), b...)
+		sort.Float64s(sa)
+		sort.Float64s(sb)
+		n1, n2 := len(sa), len(sb)
+		i, j := 0, 0
+		dstat := 0.0
+		for i < n1 && j < n2 {
+			x := math.Min(sa[i], sb[j])
+			for i < n1 && sa[i] <= x {
+				i++
+			}
+			for j < n2 && sb[j] <= x {
+				j++
+			}
+			gap := math.Abs(float64(i)/float64(n1) - float64(j)/float64(n2))
+			if gap > dstat {
+				dstat = gap
+			}
+		}
+		en := math.Sqrt(float64(n1) * float64(n2) / float64(n1+n2))
+		d := runtime.NewDictHint(2)
+		statsPutFloat(&d, "statistic", dstat)
+		statsPutFloat(&d, "pvalue", statsKSProb((en+0.12+0.11/en)*dstat))
+		return d, nil
+	})
+	r.Register("stats", "confidenceIntervalMean", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) < 1 || len(args) > 2 {
+			return nil, fmt.Errorf("stats.confidenceIntervalMean expects (sample, level?)")
+		}
+		xs, err := mathNumericListSingle(args[0], "stats.confidenceIntervalMean sample")
+		if err != nil {
+			return nil, err
+		}
+		if len(xs) < 2 {
+			return nil, fmt.Errorf("stats.confidenceIntervalMean: sample needs at least 2 values")
+		}
+		level := 0.95
+		if len(args) == 2 {
+			level, err = FloatLike(args[1])
+			if err != nil {
+				return nil, err
+			}
+		}
+		if level <= 0 || level >= 1 {
+			return nil, fmt.Errorf("stats.confidenceIntervalMean: level must be in (0, 1)")
+		}
+		n := float64(len(xs))
+		m := statsSampleMean(xs)
+		s := math.Sqrt(statsSampleVariance(xs, 1))
+		tdist := &runtime.Distribution{Kind: "studentT", Params: []float64{n - 1}}
+		tc := statsPpf(tdist, 1-(1-level)/2)
+		margin := tc * s / math.Sqrt(n)
+		return statsIntervalResult(m-margin, m+margin), nil
+	})
+	r.Register("stats", "confidenceIntervalProportion", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) < 2 || len(args) > 3 {
+			return nil, fmt.Errorf("stats.confidenceIntervalProportion expects (successes, n, level?)")
+		}
+		k, ok := AsInt64(args[0])
+		if !ok {
+			return nil, fmt.Errorf("stats.confidenceIntervalProportion: successes must be an int")
+		}
+		nn, ok := AsInt64(args[1])
+		if !ok || nn <= 0 {
+			return nil, fmt.Errorf("stats.confidenceIntervalProportion: n must be a positive int")
+		}
+		if k < 0 || k > nn {
+			return nil, fmt.Errorf("stats.confidenceIntervalProportion: successes must be in [0, n]")
+		}
+		level := 0.95
+		var err error
+		if len(args) == 3 {
+			level, err = FloatLike(args[2])
+			if err != nil {
+				return nil, err
+			}
+		}
+		if level <= 0 || level >= 1 {
+			return nil, fmt.Errorf("stats.confidenceIntervalProportion: level must be in (0, 1)")
+		}
+		ph := float64(k) / float64(nn)
+		se := math.Sqrt(ph * (1 - ph) / float64(nn))
+		norm := &runtime.Distribution{Kind: "normal", Params: []float64{0, 1}}
+		zc := statsPpf(norm, 1-(1-level)/2)
+		margin := zc * se
+		return statsIntervalResult(ph-margin, ph+margin), nil
+	})
+	r.Register("stats", "confidenceIntervalDiffMeans", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) < 2 || len(args) > 4 {
+			return nil, fmt.Errorf("stats.confidenceIntervalDiffMeans expects (a, b, level?, opts?)")
+		}
+		a, err := mathNumericListSingle(args[0], "stats.confidenceIntervalDiffMeans a")
+		if err != nil {
+			return nil, err
+		}
+		b, err := mathNumericListSingle(args[1], "stats.confidenceIntervalDiffMeans b")
+		if err != nil {
+			return nil, err
+		}
+		if len(a) < 2 || len(b) < 2 {
+			return nil, fmt.Errorf("stats.confidenceIntervalDiffMeans: each sample needs at least 2 values")
+		}
+		level := 0.95
+		var opts runtime.Value
+		for _, arg := range args[2:] {
+			if dict, ok := arg.(runtime.Dict); ok {
+				opts = dict
+				continue
+			}
+			level, err = FloatLike(arg)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if level <= 0 || level >= 1 {
+			return nil, fmt.Errorf("stats.confidenceIntervalDiffMeans: level must be in (0, 1)")
+		}
+		equalVar, err := statsBoolOpt(opts, "equalVar", true)
+		if err != nil {
+			return nil, err
+		}
+		n1, n2 := float64(len(a)), float64(len(b))
+		m1, m2 := statsSampleMean(a), statsSampleMean(b)
+		v1, v2 := statsSampleVariance(a, 1), statsSampleVariance(b, 1)
+		var se, df float64
+		if equalVar {
+			sp2 := ((n1-1)*v1 + (n2-1)*v2) / (n1 + n2 - 2)
+			se = math.Sqrt(sp2 * (1/n1 + 1/n2))
+			df = n1 + n2 - 2
+		} else {
+			se2 := v1/n1 + v2/n2
+			se = math.Sqrt(se2)
+			df = se2 * se2 / ((v1/n1)*(v1/n1)/(n1-1) + (v2/n2)*(v2/n2)/(n2-1))
+		}
+		tdist := &runtime.Distribution{Kind: "studentT", Params: []float64{df}}
+		tc := statsPpf(tdist, 1-(1-level)/2)
+		diff := m1 - m2
+		margin := tc * se
+		return statsIntervalResult(diff-margin, diff+margin), nil
+	})
+	r.Register("stats", "chiSquareIndependence", func(args []runtime.Value) (runtime.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("stats.chiSquareIndependence expects (table)")
+		}
+		table, err := statsFloatMatrix(args[0], "stats.chiSquareIndependence table")
+		if err != nil {
+			return nil, err
+		}
+		rows := len(table)
+		if rows < 2 {
+			return nil, fmt.Errorf("stats.chiSquareIndependence: need at least 2 rows")
+		}
+		cols := len(table[0])
+		if cols < 2 {
+			return nil, fmt.Errorf("stats.chiSquareIndependence: need at least 2 columns")
+		}
+		for _, row := range table {
+			if len(row) != cols {
+				return nil, fmt.Errorf("stats.chiSquareIndependence: table must be rectangular")
+			}
+		}
+		rowSums := make([]float64, rows)
+		colSums := make([]float64, cols)
+		total := 0.0
+		for i := 0; i < rows; i++ {
+			for j := 0; j < cols; j++ {
+				rowSums[i] += table[i][j]
+				colSums[j] += table[i][j]
+				total += table[i][j]
+			}
+		}
+		if total <= 0 {
+			return nil, fmt.Errorf("stats.chiSquareIndependence: table total must be positive")
+		}
+		stat := 0.0
+		expData := make([]runtime.Value, rows)
+		for i := 0; i < rows; i++ {
+			rowVals := make([]runtime.Value, cols)
+			for j := 0; j < cols; j++ {
+				e := rowSums[i] * colSums[j] / total
+				if e <= 0 {
+					return nil, fmt.Errorf("stats.chiSquareIndependence: expected counts must be positive")
+				}
+				d := table[i][j] - e
+				stat += d * d / e
+				rowVals[j] = runtime.Float{Value: e}
+			}
+			expData[i] = &runtime.List{Elements: rowVals}
+		}
+		df := float64((rows - 1) * (cols - 1))
+		res := statsChiResult(stat, df).(runtime.Dict)
+		ek := runtime.String{Value: "expected"}
+		res.PutEntry(DictKey(ek), runtime.DictEntry{Key: ek, Value: &runtime.List{Elements: expData}})
+		return res, nil
 	})
 }
 

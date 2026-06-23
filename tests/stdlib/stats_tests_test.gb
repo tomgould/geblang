@@ -1,0 +1,94 @@
+/**
+ * @title stats hypothesis tests and confidence intervals
+ * @summary t-tests, chi-squared, nonparametric tests, and CIs.
+ */
+import test;
+import stats;
+
+class StatsTestsTest extends test.Test {
+    func approx(float a, float b): bool {
+        return (a - b < 0.001f) && (b - a < 0.001f);
+    }
+
+    @test
+    func tTests(): void {
+        let one = stats.tTestOneSample([1, 2, 3, 4, 5], 2.0);
+        this.assertTrue(this.approx(one["statistic"], 1.41421f));
+        this.assertTrue(this.approx(one["pvalue"], 0.23037f));
+        this.assertTrue(this.approx(one["df"], 4.0f));
+        let ind = stats.tTestIndependent([1, 2, 3, 4, 5], [2, 4, 6, 8, 10]);
+        this.assertTrue(this.approx(ind["statistic"], -1.89737f));
+        let paired = stats.tTestPaired([1, 2, 3, 4], [2, 4, 6, 8]);
+        this.assertTrue(this.approx(paired["statistic"], -3.87298f));
+    }
+
+    @test
+    func tTestErrors(): void {
+        let threw = false;
+        try { stats.tTestPaired([1, 2, 3], [1, 2]); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+        let threw2 = false;
+        try { stats.tTestOneSample([1, 2, 3], 0.0, {"alternative": "sideways"}); } catch (RuntimeError e) { threw2 = true; }
+        this.assertTrue(threw2);
+    }
+
+    @test
+    func mannWhitneyUTests(): void {
+        let r = stats.mannWhitneyU([1, 2, 3, 4], [5, 6, 7, 8]);
+        this.assertTrue(this.approx(r["statistic"], 0.0f));
+        this.assertTrue(r["pvalue"] > 0.025f && r["pvalue"] < 0.035f);
+        let r2 = stats.mannWhitneyU([5, 6, 7, 8], [1, 2, 3, 4]);
+        this.assertTrue(this.approx(r2["statistic"], 16.0f));
+        this.assertTrue(r2["pvalue"] > 0.025f && r2["pvalue"] < 0.035f);
+        let threw = false;
+        try { stats.mannWhitneyU([], [1, 2, 3]); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func ksTestTests(): void {
+        let r = stats.ksTest([1, 2, 3, 4, 5], [6, 7, 8, 9, 10]);
+        this.assertTrue(this.approx(r["statistic"], 1.0f));
+        this.assertTrue(r["pvalue"] < 0.01f);
+        let r2 = stats.ksTest([1, 2, 3, 4, 5], [1, 2, 3, 4, 5]);
+        this.assertTrue(this.approx(r2["statistic"], 0.0f));
+        this.assertTrue(r2["pvalue"] > 0.99f);
+        let threw = false;
+        try { stats.ksTest([], [1, 2]); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func chiSquareTests(): void {
+        let gof = stats.chiSquareTest([10, 20, 30, 40], [25, 25, 25, 25]);
+        this.assertTrue(this.approx(gof["statistic"], 20.0f));
+        this.assertTrue(this.approx(gof["df"], 3.0f));
+        this.assertTrue(gof["pvalue"] < 0.01f);
+        let gofUniform = stats.chiSquareTest([25, 25, 25, 25]);
+        this.assertTrue(this.approx(gofUniform["statistic"], 0.0f));
+        this.assertTrue(this.approx(gofUniform["df"], 3.0f));
+        let ind = stats.chiSquareIndependence([[10, 20], [30, 40]]);
+        this.assertTrue(this.approx(ind["statistic"], 0.79365f));
+        this.assertTrue(this.approx(ind["df"], 1.0f));
+        this.assertTrue(ind["pvalue"] > 0.01f);
+        let threw = false;
+        try { stats.chiSquareTest([5, 5], [1, 2, 3]); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+    }
+
+    @test
+    func confidenceIntervals(): void {
+        let ciMean = stats.confidenceIntervalMean([1, 2, 3, 4, 5], 0.95);
+        this.assertTrue(this.approx(ciMean["low"], 1.03676f));
+        this.assertTrue(this.approx(ciMean["high"], 4.96324f));
+        let ciProp = stats.confidenceIntervalProportion(40, 100, 0.95);
+        this.assertTrue(this.approx(ciProp["low"], 0.30398f));
+        this.assertTrue(this.approx(ciProp["high"], 0.49602f));
+        let ciDiff = stats.confidenceIntervalDiffMeans([1, 2, 3, 4, 5], [2, 4, 6, 8, 10], 0.95);
+        this.assertTrue(this.approx(ciDiff["low"], -6.64611f));
+        this.assertTrue(this.approx(ciDiff["high"], 0.64611f));
+        let threw = false;
+        try { stats.confidenceIntervalMean([1, 2, 3], 1.5); } catch (RuntimeError e) { threw = true; }
+        this.assertTrue(threw);
+    }
+}

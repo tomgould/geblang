@@ -71,3 +71,44 @@ let p = stats.poisson(4.0).sample(20000, {"seed": 9});
 io.println(p.mean() > 3.8 && p.mean() < 4.2);
 `, "true\ntrue\n")
 }
+
+func TestParityStatsTTests(t *testing.T) {
+	runParity(t, `import io;
+import stats;
+io.println(stats.tTestOneSample([1, 2, 3, 4, 5], 2.0)["statistic"]);
+io.println(stats.tTestOneSample([1, 2, 3, 4, 5], 2.0)["pvalue"]);
+io.println(stats.tTestIndependent([1, 2, 3, 4, 5], [2, 4, 6, 8, 10])["statistic"]);
+io.println(stats.tTestIndependent([1, 2, 3, 4, 5], [2, 4, 6, 8, 10], {"equalVar": false})["df"]);
+io.println(stats.tTestPaired([1, 2, 3, 4], [2, 4, 6, 8])["statistic"]);
+`, "1.414213562373095\n0.23019964108049873\n-1.8973665961010275\n5.882352941176471\n-3.872983346207417\n")
+}
+
+func TestParityStatsChiSquare(t *testing.T) {
+	runParity(t, `import io;
+import stats;
+io.println(stats.chiSquareTest([10, 20, 30, 40], [25, 25, 25, 25])["statistic"]);
+io.println(stats.chiSquareTest([10, 20, 30, 40], [25, 25, 25, 25])["df"]);
+io.println(stats.chiSquareIndependence([[10, 20], [30, 40]])["statistic"]);
+io.println(stats.chiSquareIndependence([[10, 20], [30, 40]])["df"]);
+`, "20\n3\n0.7936507936507936\n1\n")
+}
+
+func TestParityStatsNonparametric(t *testing.T) {
+	runParity(t, `import io;
+import stats;
+io.println(stats.mannWhitneyU([1, 2, 3, 4], [5, 6, 7, 8])["statistic"]);
+io.println(stats.mannWhitneyU([1, 2, 3, 4], [5, 6, 7, 8])["pvalue"]);
+io.println(stats.ksTest([1, 2, 3, 4, 5], [6, 7, 8, 9, 10])["statistic"]);
+`, "0\n0.0303828219765776\n1\n")
+}
+
+func TestParityStatsConfidenceIntervals(t *testing.T) {
+	runParity(t, `import io;
+import stats;
+io.println(stats.confidenceIntervalMean([1, 2, 3, 4, 5], 0.95)["low"]);
+io.println(stats.confidenceIntervalMean([1, 2, 3, 4, 5], 0.95)["high"]);
+io.println(stats.confidenceIntervalProportion(40, 100, 0.95)["low"]);
+io.println(stats.confidenceIntervalDiffMeans([1, 2, 3, 4, 5], [2, 4, 6, 8, 10], 0.95)["low"]);
+io.println(stats.confidenceIntervalDiffMeans([1, 2, 3, 4, 5], [2, 4, 6, 8, 10], 0.95)["high"]);
+`, "1.0367568385224448\n4.963243161477555\n0.3039817664728939\n-6.646112680506018\n0.6461126805060187\n")
+}

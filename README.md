@@ -1,9 +1,44 @@
 # Geblang
 
-Geblang is a statically-typed scripting language implemented in Go.
-Current version: **1.27.0**. It combines the ergonomics of PHP and
-Python with strong static typing, generics, decorators, async, and
-runtime reflection.
+Geblang is a statically-typed, general-purpose scripting language implemented in
+Go. Current version: **1.27.0**. It combines the ergonomics of PHP and Python
+with strong static typing, generics, decorators, async, and runtime reflection.
+
+If you are coming from:
+
+- **PHP**: the same curly-brace, class-based, web-first feel, now with always-on
+  static typing, real reified generics, interfaces, and overloading. You deploy
+  one binary instead of provisioning a runtime and its extensions.
+- **Python**: the `dict`, `list`, and `set` literals, comprehensions, decorators,
+  dunder methods, and REPL you already know, now without the GIL, so CPU-bound
+  work scales across cores, and with generics and type checks that survive to
+  runtime rather than staying hints.
+- **Node or TypeScript**: the `async` / `await` you already use, but running on
+  goroutines for genuine parallelism instead of one event-loop thread. Types are
+  enforced at runtime, not erased by the compiler, and a project ships as one
+  self-contained binary instead of a `node_modules` tree.
+
+What you get either way:
+
+- Non-null by default. `null` is opt-in with `?T`, so an entire class of
+  null-reference bugs cannot get past the type checker.
+- Generics and interfaces enforced both statically and at runtime;
+  `instanceof list<int>` actually works.
+- Pattern matching, a pipe operator, decimal numbers for exact money math, and
+  arbitrary-precision integers with no special type or syntax.
+- One toolchain that ships together: a static type checker, formatter, test
+  runner and framework, language server, and VS Code extension. Nothing to
+  assemble from separate linter, formatter, test, and type-check packages.
+- A rich standard library covering HTTP server and client, WebSockets, SQLite /
+  PostgreSQL / MySQL, Redis, message brokers, crypto and JWT, JSON / YAML / TOML
+  / XML, templating, math, and more, so most programs need no third-party
+  dependencies at all. Gebweb, a typed web framework, builds on top of it.
+- `geblang build` produces a single self-contained binary with the runtime
+  bundled in. There is nothing else to install on the target: no separate
+  interpreter, no virtualenv, no `node_modules`.
+
+One language that reads like the scripting you already know and deploys like a Go
+binary.
 
 > See [Gebweb](https://github.com/dwgebler/gebweb) for the accompanying web and
 > API framework built on top of Geblang.
@@ -28,6 +63,28 @@ struggle to support.
 - Context managers (`with`), immutability (`@immutable`), null-coalescing (`??`), nullable types (`?T`), string interpolation.
 - A large standard library oriented towards (but not limited to) web development and APIs.
 - Built-in tooling: REPL, test runner and framework, static analysis, formatter, LSP + DAP, and a VS Code extension.
+
+## Documentation
+
+The full language and stdlib reference is in
+[docs/user/](docs/user/) - start with
+[01-getting-started.md](docs/user/01-getting-started.md). The
+release notes are at
+[docs/user/18-release-notes.md](docs/user/18-release-notes.md).
+The same reference is rendered as a browsable HTML site at
+[geblang.davegebler.com](https://geblang.davegebler.com/index.html).
+
+## Install
+
+```sh
+make build              # produces ./geblang
+make docs               # builds the static reference site
+make docker-build       # produces ./build/{geblang,stdlib} via Docker
+```
+
+After `make docker-build`, the binary at `./build/geblang` runs
+standalone; if you relocate it away from the bundled `stdlib/`,
+set `GEBLANG_STDLIB` to point at the moved directory.
 
 ## Example
 
@@ -105,9 +162,9 @@ Types are checked statically. `any` is opt-in for dynamic boundaries
 
 ## Benchmarks
 
-Some simple benchmarks against Python, PHP, and Node (take them with the usual
-pinch of salt; matching their raw performance was never a goal, just being fast
-enough for an interpreted language):
+A few simple benchmarks against Python, PHP, and Node, all run on the same
+machine. Geblang holds its own across these everyday workloads, performing
+competitively with the general-purpose dynamic languages it stands alongside.
 
 ```
 case            language   median ms   min ms     max ms     output
@@ -140,14 +197,14 @@ regex_match     geblang            36         35         37  66666
 regex_match     python             42         41         45  66666
 regex_match     php                15         15         15  66666
 regex_match     node               26         25         26  66666
-json_roundtrip  geblang           431        425        436  284013
+json_roundtrip  geblang           364        362        420  284013
 json_roundtrip  python            479        469        496  284013
-json_roundtrip  php               310        279        337  284013
+json_roundtrip  php               298        296        315  284013
 json_roundtrip  node              263        258        268  284013
-list_functional  geblang            19         17         21  166616670000
+list_functional  geblang            18         17         20  166616670000
 list_functional  python             16         16         18  166616670000
-list_functional  php                13         12         14  166616670000
-list_functional  node               25         23         27  166616670000
+list_functional  php                12         12         13  166616670000
+list_functional  node               24         23         24  166616670000
 ```
 
 ## Highlights
@@ -159,20 +216,28 @@ list_functional  node               25         23         27  166616670000
 - **Classes** with single inheritance and interfaces, decorators
   (callable + metadata), pattern matching, enums (with payloads
   and destructuring), and runtime reflection.
-- **Concurrency** backed by goroutines: `async` functions, `await`,
-  and generators run as real tasks on the Go scheduler (true
-  parallelism, not a single-threaded event loop), with structured
-  task groups (`async.scope`) and `async.race` / `async.all` /
-  `async.timeout` combinators. The built-in `http.serve` /
-  `net.serve` run handlers on a bounded-concurrency pool with
-  configurable overload backpressure.
+- **Concurrency** backed by goroutines. `async` functions, `await`,
+  and generators run as real tasks on the Go scheduler, so CPU-bound
+  work scales across cores instead of serializing on one event loop,
+  with structured task groups (`async.scope`) and `async.race` /
+  `async.all` / `async.timeout` combinators. `http.serve`,
+  `http.listen`, and `net.serve` follow Go's standard server model:
+  each request runs on its own goroutine, so a server fields many
+  requests in parallel with no extra code. Handler state is isolated
+  per request on both backends (the evaluator runs each request in a
+  child evaluator with a cloned handler; the VM isolates its own
+  dispatch), so concurrent requests never race on shared mutable
+  state. An optional bounded-concurrency pool (`opts.maxConcurrent`,
+  `opts.queueSize`, `opts.onOverload`) caps in-flight handlers and
+  applies backpressure on overload: reject with 503, queue and wait,
+  or drop the connection.
 - **FFI** for calling C-ABI shared libraries directly (libtorch,
   libsqlite, libcurl, ...). In-process dispatch with no IPC;
   capability-gated default-off.
 - **Bytecode VM** with a tree-walking evaluator as the reference
   semantics and fallback. Compiled bytecode is cached on disk by
   source hash so subsequent runs skip parse and compile.
-- **Batteries-included stdlib**: HTTP server / client, WebSocket,
+- **Standard library**: HTTP server / client, WebSocket,
   TCP / UDP, SQLite / PostgreSQL / MySQL, Redis, SMTP / IMAP,
   RabbitMQ / Kafka / SQS / STOMP, file + streaming I/O, archives,
   process management, schedulers, OTLP traces, Prometheus metrics,
@@ -183,28 +248,6 @@ list_functional  node               25         23         27  166616670000
   init / install / build / doctor / cache), VS Code extension with
   LSP + DAP + test explorer, Dockerised reproducible build,
   single-binary bundling via `geblang build --out`.
-
-## Documentation
-
-The full language and stdlib reference is in
-[docs/user/](docs/user/) - start with
-[01-getting-started.md](docs/user/01-getting-started.md). The
-release notes are at
-[docs/user/18-release-notes.md](docs/user/18-release-notes.md).
-The same reference is rendered as a browsable HTML site at
-[geblang.davegebler.com](https://geblang.davegebler.com/index.html).
-
-## Install
-
-```sh
-make build              # produces ./geblang
-make docs               # builds the static reference site
-make docker-build       # produces ./build/{geblang,stdlib} via Docker
-```
-
-After `make docker-build`, the binary at `./build/geblang` runs
-standalone; if you relocate it away from the bundled `stdlib/`,
-set `GEBLANG_STDLIB` to point at the moved directory.
 
 ## Docker
 

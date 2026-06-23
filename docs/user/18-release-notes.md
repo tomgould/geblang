@@ -25,6 +25,11 @@
   distributions are included: normal, uniform, exponential, gamma, beta,
   chi-squared, Student's t, F, log-normal, Weibull, binomial, and Poisson.
   `sample(n, {"seed": k})` draws reproducibly into an ndarray.
+- The `stats` module also gains hypothesis tests and confidence intervals,
+  each returning a dict. Tests: `tTestOneSample`, `tTestIndependent` (pooled or
+  Welch), `tTestPaired`, `chiSquareTest`, `chiSquareIndependence`,
+  `mannWhitneyU`, and `ksTest`. Intervals: `confidenceIntervalMean`,
+  `confidenceIntervalProportion`, and `confidenceIntervalDiffMeans`.
 
 ### Platform
 

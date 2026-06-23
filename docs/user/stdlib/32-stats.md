@@ -107,3 +107,53 @@ let d = stats.poisson(4.0);
 let s = d.sample(10000, {"seed": 42});
 io.println(s.mean()); /* close to 4.0 */
 ```
+
+## Hypothesis tests and confidence intervals
+
+Tests return a dict with `statistic`, `pvalue`, and (where applicable) `df`.
+Confidence intervals return `{low, high}`.
+
+```gb
+import stats;
+
+let a = [2.1, 2.4, 2.6, 2.8, 3.0];
+let b = [1.9, 2.0, 2.2, 2.3, 2.5];
+
+stats.tTestOneSample(a, 2.5);                            /* one-sample t vs mu=2.5 */
+stats.tTestIndependent(a, b);                            /* pooled two-sample t */
+stats.tTestIndependent(a, b, {"equalVar": false});       /* Welch variant */
+stats.tTestPaired(a, b);                                 /* paired t */
+stats.chiSquareTest([10, 20, 30], [20, 20, 20]);         /* goodness-of-fit */
+stats.chiSquareIndependence([[10, 20], [30, 40]]);       /* independence */
+stats.mannWhitneyU(a, b);                                /* Mann-Whitney U */
+stats.ksTest(a, b);                                      /* Kolmogorov-Smirnov */
+stats.confidenceIntervalMean(a, 0.95);                   /* CI for mean */
+stats.confidenceIntervalProportion(40, 100, 0.95);       /* CI for proportion */
+stats.confidenceIntervalDiffMeans(a, b, 0.95);           /* CI for difference of means */
+```
+
+| Function | Result keys |
+|----------|-------------|
+| `tTestOneSample(sample, mu, opts?)` | `{statistic, pvalue, df}` |
+| `tTestIndependent(a, b, opts?)` | `{statistic, pvalue, df}` |
+| `tTestPaired(a, b, opts?)` | `{statistic, pvalue, df}` |
+| `chiSquareTest(observed, expected?, opts?)` | `{statistic, pvalue, df}` |
+| `chiSquareIndependence(table)` | `{statistic, pvalue, df, expected}` |
+| `mannWhitneyU(a, b, opts?)` | `{statistic, pvalue}` |
+| `ksTest(a, b)` | `{statistic, pvalue}` |
+| `confidenceIntervalMean(sample, level?)` | `{low, high}` |
+| `confidenceIntervalProportion(successes, n, level?)` | `{low, high}` |
+| `confidenceIntervalDiffMeans(a, b, level?, opts?)` | `{low, high}` |
+
+**`opts` keys:**
+
+- `alternative` - `"two-sided"` (default), `"less"`, or `"greater"`.
+- `equalVar` - `true` (default, pooled) or `false` (Welch) for `tTestIndependent` and `confidenceIntervalDiffMeans`.
+- `ddof` - integer delta degrees of freedom for `chiSquareTest` (default 0).
+
+`chiSquareIndependence` returns the matrix of expected cell counts in `expected`
+as a list of lists in addition to `statistic`, `pvalue`, and `df`.
+
+The confidence `level` parameter defaults to `0.95` if omitted. All sample
+arguments must be lists of numbers; mismatched lengths, empty lists, or
+out-of-range `level` values raise `RuntimeError`.
