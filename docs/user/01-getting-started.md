@@ -1,8 +1,56 @@
 # Getting Started
 
-## Prerequisites
+## Installation
 
-Geblang is built from source. Choose a build path before you start:
+There are two ways to get the `geblang` toolchain. The official Docker image is
+the fastest start and needs nothing but Docker. Building from source gives you
+the fastest development loop, a binary on your `PATH`, and the option to build
+the VS Code extension.
+
+### Docker (official image)
+
+The official image ships the CLI and the standard library, so you can run
+Geblang without installing Go or building anything. The `latest` tag always
+tracks the newest release.
+
+```sh
+docker pull dwgebler/geblang        # same as dwgebler/geblang:latest
+
+# Run a script from the current directory (mounted at /app):
+docker run --rm -v "$PWD":/app dwgebler/geblang hello.gb
+
+# Start the REPL:
+docker run --rm -it dwgebler/geblang repl
+
+# Run tests:
+docker run --rm -v "$PWD":/app dwgebler/geblang test tests/
+
+# Pin a specific release instead of latest:
+docker run --rm -v "$PWD":/app dwgebler/geblang:1.27.0 hello.gb
+```
+
+The entrypoint is `geblang`, so anything after the image name is passed straight
+to the CLI (`run`, `test`, `build`, `fmt`, ...). The working directory is
+`/app`; mount your project there. The image is built on a glibc base, so FFI
+(`dlopen`) works for shared libraries you install or mount in.
+
+To ship a containerised application, base your image on it:
+
+```dockerfile
+FROM dwgebler/geblang:latest
+WORKDIR /app
+COPY . /app
+CMD ["main.gb"]
+```
+
+### Build from source
+
+Building from source gives you a `geblang` binary on your `PATH` and the option
+to build the VS Code extension.
+
+#### Prerequisites
+
+Choose a build path before you start:
 
 | Path | Tools required |
 |---|---|
@@ -22,14 +70,14 @@ To build and install the VS Code extension you also need one of:
 The Docker extension path requires no Node.js. If you already chose the Docker
 build path for Geblang itself, no additional tools are needed.
 
-## Getting The Source
+#### Get the source
 
 ```sh
 git clone https://github.com/dwgebler/geblang.git
 cd geblang
 ```
 
-## Building The Binary
+#### Build the binary
 
 **With Go:**
 
@@ -54,7 +102,7 @@ build/stdlib/
 
 Use the Docker path when you do not want to install Go locally.
 
-## Adding Geblang To Your PATH
+#### Add Geblang to your PATH
 
 The `geblang` binary must be on your `PATH` for the VS Code extension, the
 REPL, and all other tooling to work.
@@ -169,7 +217,7 @@ make vscode-install
 This copies the VSIX to `C:\Windows\Temp\` and passes that path to `code`,
 avoiding the *"UNC host 'wsl.localhost' access is not allowed"* error that
 occurs when VS Code tries to open a VSIX from a `\\wsl.localhost\` path
-directly. Never use the VS Code GUI's *Extensions to Install from VSIX…* dialog
+directly. Never use the VS Code GUI's *Extensions to Install from VSIX...* dialog
 to navigate to a file inside WSL  -  use the command above instead.
 
 **Windows (native):**
@@ -181,7 +229,7 @@ code --install-extension vscode-geblang\geblang.vsix
 ```
 
 Or use the VS Code GUI: open the Extensions panel, click the `...` menu, choose
-*Install from VSIX…*, and browse to the file.
+*Install from VSIX...*, and browse to the file.
 
 ### Step 3  -  Configure VS Code
 
@@ -237,6 +285,21 @@ Once the extension is active:
 | Step Into | F11 |
 | Step Out | Shift+F11 |
 | Stop | Shift+F5 |
+
+## Claude Code skill
+
+Geblang ships a Claude Code skill that equips Claude to write, run, test, check,
+format, build, and bundle Geblang correctly: the idioms, the cross-language
+gotchas (`//` is integer division, `parent()` not `super`, decimal-default
+literals), the standard-library surface, and the `geblang` CLI workflow.
+
+It lives at `.claude/skills/geblang/` in the source tree. Claude Code loads it
+automatically as a project skill when you work inside a checkout of the
+repository. To use it in any project, copy it into your user skills:
+
+```sh
+cp -r .claude/skills/geblang ~/.claude/skills/geblang
+```
 
 ## Running Scripts
 
