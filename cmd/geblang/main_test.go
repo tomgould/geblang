@@ -2657,3 +2657,51 @@ func TestUndefinedBareTypeFailsBothBackends(t *testing.T) {
 		}
 	}
 }
+
+// TestRunSubcommandAliasesBareScriptForm: `geblang run <script>` mirrors the bare form.
+func TestRunSubcommandAliasesBareScriptForm(t *testing.T) {
+	gebBin := filepath.Join(t.TempDir(), "geblang")
+	if out, err := exec.Command("go", "build", "-o", gebBin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build geblang: %v\n%s", err, out)
+	}
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "hello.gb")
+	src := "import io;\nimport sys;\nio.println(\"ran:${sys.args()}\");\n"
+	if err := os.WriteFile(script, []byte(src), 0o644); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	bare, err := exec.Command(gebBin, script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("bare run failed: %v\n%s", err, bare)
+	}
+	viaRun, err := exec.Command(gebBin, "run", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run subcommand failed: %v\n%s", err, viaRun)
+	}
+	if string(bare) != string(viaRun) {
+		t.Fatalf("run output differs from bare:\nbare=%q\nrun=%q", bare, viaRun)
+	}
+
+	withArgs, err := exec.Command(gebBin, "run", script, "a", "b").CombinedOutput()
+	if err != nil {
+		t.Fatalf("run with args failed: %v\n%s", err, withArgs)
+	}
+	if !strings.Contains(string(withArgs), `["a", "b"]`) {
+		t.Fatalf("run did not forward script args, got:\n%s", withArgs)
+	}
+
+	if out, err := exec.Command(gebBin, "run").CombinedOutput(); err == nil {
+		t.Fatalf("expected `run` without a script to fail, got:\n%s", out)
+	}
+
+	// `run test` must open a file named test, not dispatch to the test runner.
+	out, err := exec.Command(gebBin, "run", "test").CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected `run test` to fail reading a file, got:\n%s", out)
+	}
+	if !strings.Contains(string(out), "read test") {
+		t.Fatalf("expected `run test` to attempt a file read, got:\n%s", out)
+	}
+}

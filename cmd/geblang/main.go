@@ -1,7 +1,6 @@
 package main
 
 import (
-	goruntime "runtime"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
 
@@ -97,6 +97,11 @@ func main() {
 		if printHelp(os.Stdout, topic) {
 			return
 		}
+	}
+	if len(os.Args) > 1 && os.Args[1] == "run" {
+		// Explicit alias for the default script path (never re-read as a subcommand).
+		runScriptOrModule(os.Args[2:])
+		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "test" {
 		runTests(os.Args[2:])
@@ -187,11 +192,14 @@ func main() {
 		os.Exit(runREPL(os.Stdin, os.Stdout, os.Stderr, replConfig{mode: mode, traceExec: traceExec}))
 	}
 
+	runScriptOrModule(os.Args[1:])
+}
+
+func runScriptOrModule(args []string) {
 	mode := executionAuto
 	traceExec := false
 	moduleName := ""
 	var allowFFI []string
-	args := os.Args[1:]
 	for len(args) > 0 {
 		switch args[0] {
 		case "--disable-vm":
@@ -292,6 +300,7 @@ func printUsage(writer io.Writer) {
 	fmt.Fprintln(writer)
 	fmt.Fprintln(writer, "Running code:")
 	fmt.Fprintln(writer, "  geblang <script.gb> [args...]      run a script with the bytecode VM (fallback to evaluator on unsupported constructs)")
+	fmt.Fprintln(writer, "  geblang run <script.gb> [args...]  explicit alias for the bare script form")
 	fmt.Fprintln(writer, "  geblang --disable-vm <script.gb>   run a script with the tree-walking evaluator")
 	fmt.Fprintln(writer, "  geblang --vm-strict <script.gb>    run a script with the VM only, failing instead of falling back")
 	fmt.Fprintln(writer, "  geblang --trace-exec <script.gb>   print which engine handled the script")
@@ -350,12 +359,14 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "  geblang repl --vm-strict")
 		return true
 	case "run":
-		fmt.Fprintln(writer, "usage: geblang [--disable-vm|--vm-strict|--trace-exec] <script.gb> [args...]")
+		fmt.Fprintln(writer, "usage: geblang [run] [--disable-vm|--vm-strict|--trace-exec] <script.gb> [args...]")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Runs a script. VM execution is attempted by default and falls back to the evaluator when needed.")
+		fmt.Fprintln(writer, "The `run` verb is optional; `geblang app.gb` and `geblang run app.gb` are equivalent.")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Examples:")
 		fmt.Fprintln(writer, "  geblang app.gb")
+		fmt.Fprintln(writer, "  geblang run app.gb")
 		fmt.Fprintln(writer, "  geblang --vm-strict app.gb --port 8080")
 		fmt.Fprintln(writer, "  geblang --trace-exec app.gb")
 		return true

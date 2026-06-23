@@ -33,9 +33,9 @@ Tests are `*_test.gb` files next to source.
 geblang run main.gb              # run a script
 geblang test tests/              # run *_test.gb under a path
 geblang check src/               # static check (no execution)
-geblang fmt src/                 # format in place
+geblang fmt src/                 # format in place (--clean, --strip-comments)
 geblang doc src/                 # print signatures for a file or dir
-geblang build --entry main --out app <package-dir>
+geblang build --entry main --out app <package-dir>   # add --native or --docker
 ```
 
 `geblang build` takes a MODULE name for `--entry` (the module must
@@ -93,6 +93,9 @@ const PI = 3.14;             # immutable; PI is decimal
 `1.0 as float` when you specifically want the float type.
 `decimal` is the default for floating-point literals because
 money and precise arithmetic are more common than fast IEEE math.
+Division `/` is true division and yields `decimal` (or `float`),
+so `int n = a / b` is a compile error; use `//` for the integer
+(floor) quotient or `(a / b) as int` to truncate.
 
 ### Primitive types
 
@@ -129,6 +132,11 @@ set<int>           s  = {1, 2, 3};      # brace literal w/o ':' is a set
 - Comprehensions: `[x * x for x in 1..5]`,
   `[x for x in xs if x > 0]`, `{k: v * 2 for k, v in d}`.
 - `instanceof list<T>` works at runtime (reified generics).
+- `xs.search(v)` / `xs.search(pred)` / `s.searchPattern(re)` return every
+  matching locator (list indices, dict keys, string positions); `xs.fill(v, n)`
+  appends n copies in place.
+- Numeric-check predicates test before converting: `s.isInt()` / `s.isDecimal()`
+  / `s.isNumeric()` on strings; `f.isInt()` / `d.isInt()` on float / decimal.
 
 ### Ranges
 
@@ -136,7 +144,8 @@ set<int>           s  = {1, 2, 3};      # brace literal w/o ':' is a set
 for (i in 1..5)   { }     # inclusive: 1,2,3,4,5
 for (i in 0..<10) { }     # exclusive end
 let xs = (1..5).toList();
-range(1, 9, 2);           # builtin -> [1, 3, 5, 7, 9]
+range(1, 9, 2);           # builtin -> [1, 3, 5, 7, 9] (inclusive)
+zrange(0, 5);             # exclusive, Python-style -> [0,1,2,3,4]; zrange(n) from 0
 r.length; r.first; r.last; r.contains(3);
 ```
 
@@ -210,6 +219,9 @@ greet(...{"name": "Ada"});              # dict spread -> named args
 - Closures capture by reference; captured variables can be
   reassigned through the closure.
 - Pipe: `x |> f(y)` calls `f(x, y)`; chains read left to right.
+- Partial application: a call with `_` placeholders returns a new callable with
+  those positions open (`add(_, 10)`, `wrap(_, "-", _)`), across every dispatch
+  context. Non-hole arguments are captured once at creation.
 
 ### Generics
 
@@ -225,9 +237,12 @@ class Box<T> {
 func topBy<T implements Scored>(list<T> items): T { ... }
 ```
 
-Generics are reified: `instanceof T`, `reflect.typeBindings(x)`,
-and element-type enforcement on `list<T>.push` all work at
-runtime.
+Generics are reified: `instanceof T`, `instanceof Box<string>`,
+`reflect.typeBindings(x)`, and element-type enforcement on `list<T>.push` all
+work at runtime. Explicit constructor type arguments (`Box<string>(42)`) and
+class-type-parameter method parameters are enforced on both backends, and
+constraints accept interface, class, and primitive leaves combined with `|`/`&`
+(`<T implements string|int>`, or the bare `<T string|int>`).
 
 ### Generators
 
@@ -241,6 +256,8 @@ for (n in counter()) { io.println(n); }
 
 Return type is `generator<T>`. Use `iterable<T>` for parameters
 that accept any iterable (generators, lists, sets, ranges).
+Manual stepping: `next()` advances (`null` once exhausted), `done()` peeks for
+exhaustion, `close()` ends early; these compose with `for-in`.
 Errors thrown inside a generator keep their class in the
 consuming loop's `catch`.
 
@@ -349,6 +366,11 @@ let area = match (shape) {
 };
 ```
 
+Enums can also declare instance methods (`match this` inside the body) and
+`implements` an interface, and expose `EnumName.values()` (nullary variants in
+declaration order) and `EnumName.fromName(s)` (lookup by exact name, else
+`null`).
+
 ### Errors
 
 ```gb
@@ -369,9 +391,11 @@ throw MyError("boom");
 Catches dispatch by class hierarchy (subclasses match parent
 catches). Built-in classes include `Error`, `RuntimeError`,
 `ValueError`, `TypeError`, `IOError`, `NetworkError`,
-`DatabaseError`, `NotFoundError`, `TimeoutError`,
-`AssertionError`. `errors.wrap(inner, msg)`, `errors.is(e, cls)`,
-`errors.stackTrace(e)` are the stdlib helpers.
+`DatabaseError`, `NotFoundError`, `TimeoutError`, `TlsError`,
+`PermissionError`, `AssertionError` (`TimeoutError`/`TlsError` are `IOError`
+subclasses; `PermissionError` guards capability-gated ops). `errors.wrap(inner,
+msg)`, `errors.is(e, cls)`, `errors.stackTrace(e)`, `errors.frames(e)` are the
+stdlib helpers.
 
 ### Context managers and decorators
 
@@ -475,7 +499,12 @@ introspection builtins.
 | `collections` | `maxBy`, `groupBy`, `chunk`, `sortBy`, lazy `lazyMap`/`lazyFilter`. |
 | `streams` | lazy iteration pipelines. |
 | `strbuilder` | O(n) string accumulation. |
-| `math` | trig, log, floor/ceil/round, prime tests. |
+| `math` | trig, log, floor/ceil/round, prime tests, special functions (gamma, error functions, Bessel). |
+| `ndarray` | N-dimensional numeric arrays: broadcasting, views, reductions, linear algebra, seeded random. |
+| `dataframe` | columnar frames: typed columns, expression/predicate filters, `groupBy().agg()`, joins, pivot, CSV/JSON/SQL IO. |
+| `process` | own pid/uid/gid; inspect (`list`/`info`/`exists`); gated control (`kill`/`signal`/`setuid`) behind `--allow-process-control`. |
+| `file` | `File` object wrapping a handle with method-style read/write/seek and `with`-block auto-close. |
+| `llm` | provider-neutral chat/embed client (OpenAI/Anthropic/Bedrock): `chat`, `chatStream`, tool calling, `embed`/`embedBatch`. |
 | `profiler` | `timer()`, `profile()` context managers; CPU/memory/wall. |
 | `image` | decode/encode PNG/JPEG/GIF/WebP, resize, crop, rotate. |
 | `errors` | `wrap`, `is`, stack traces. |
@@ -509,11 +538,14 @@ class MathTest extends test.Test {
 }
 ```
 
-`setUp()` and `tearDown()` run around each test method. The test
-runner picks up `Test` subclasses; no manual `test.run()`. Run
-with `geblang test path/`. Asserters: `assertEquals`,
+`setup()` / `teardown()` (per method) and `setupClass()` /
+`teardownClass()` (per class) are optional lifecycle hooks. The test
+runner picks up `Test` subclasses; no manual `test.run()`. Run with
+`geblang test path/`. Asserters include `assertEquals`,
 `assertNotEquals`, `assertTrue`, `assertFalse`, `assertNull`,
-`assertNotNull`, `assertThrows`.
+`assertNotNull`, `assertContains`, `assertEmpty`, `assertGreaterThan`,
+`assertThrows`, and `assertThrowsOf`; `this.skip([reason])` skips a
+method and `@tag("name")` categorizes it for `--tag`.
 
 To test a module's PRIVATE members, declare the SAME module name
 in a sibling `*_test.gb` (1.17.0): the test then runs inside the

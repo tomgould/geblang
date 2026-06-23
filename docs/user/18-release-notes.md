@@ -1,5 +1,31 @@
 # Release Notes
 
+## 1.27.0
+
+### Tooling
+
+- `geblang run <script.gb> [args...]` is now an explicit alias for the default
+  script-running form (`geblang <script.gb> [args...]`). Both invoke the bytecode
+  VM with evaluator fallback and accept the same flags
+  (`geblang run --vm-strict app.gb`). The verb stays optional; the next token
+  after `run` is always a script path, never re-read as another subcommand.
+
+### Standard library
+
+- The `math` module gains special functions and exact combinatorics. Special
+  functions (real-valued): `gamma`, `lgamma`, `beta`, `lbeta`, `erf`, `erfc`,
+  `erfinv`, and the Bessel functions `j0`/`j1`/`jn`/`y0`/`y1`/`yn`.
+  Combinatorics return exact integers at arbitrary precision: `factorial`,
+  `comb`, `perm`, `gcd`, `lcm`, and the log binomial coefficient `lcomb`.
+  `factorial`, `perm`, and `comb` reject `n` above 100000 to bound memory and
+  CPU.
+
+### Platform
+
+- macOS and BSD support: the toolchain now builds and runs on macOS and the
+  BSDs. Terminal handling uses per-platform ioctl constants, and `sys.osVersion`
+  plus `process.list` / `process.info` are implemented for those platforms.
+
 ## 1.26.0
 
 ### Language
