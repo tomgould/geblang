@@ -34,6 +34,7 @@ r.json();           # body parsed as JSON
 r.body();           # the raw body value, untyped (same as r["body"])
 r.header("ETag");   # first value of a header, or null
 r.headers();        # all response headers
+r.url();            # the final URL after any redirects (empty for non-request responses)
 
 r.isSuccessful();   # 2xx
 r.isRedirect();     # 3xx
@@ -62,6 +63,7 @@ earlier versions, so existing code keeps working:
 r["status"];        # same as r.status()
 r["body"];          # same as r.body()
 r["headers"];       # same as r.headers()
+r["url"];           # same as r.url()
 let plain = r.toDict();   # a plain dict<string, any> snapshot
 ```
 

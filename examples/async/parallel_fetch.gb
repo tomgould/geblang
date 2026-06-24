@@ -1,0 +1,40 @@
+/**
+ * @title Parallel Fetch
+ * @summary Fetches Wikipedia's random article five times in parallel with
+ * async.tasks.map, logging each request to stdout to show the concurrency,
+ * then prints the titles in input order.
+ * @category Async
+ */
+import http;
+import io;
+import async.tasks as task;
+
+/* Pull the article name out of the page's <title>Foo - Wikipedia</title>. */
+func articleTitle(string html): string {
+    let parts = html.split("<title>");
+    if (parts.length() < 2) {
+        return "(title not found)";
+    }
+    return parts[1].split("</title>")[0].replace(" - Wikipedia", "").trim();
+}
+
+let randomUrl = "https://en.wikipedia.org/wiki/Special:Random";
+
+io.println("Fetching 5 random Wikipedia articles in parallel...");
+
+/* task.map runs the closure over [1..5] concurrently, returning results in input order. */
+let articles = task.map([1, 2, 3, 4, 5], func(int n): dict<string, any> {
+    io.println("[req ${n}] --> GET Special:Random");
+    let resp = http.get(randomUrl);
+    /* resp.url() is the article the Special:Random redirect resolved to. */
+    io.println("[req ${n}] <-- ${resp.status()}  ${resp.url()}");
+    return {"title": articleTitle(resp.text()), "url": resp.url()};
+});
+
+io.println("");
+io.println("Articles fetched:");
+for (i in 0..<articles.length()) {
+    let a = articles[i] as dict<string, any>;
+    io.println("  ${i + 1}. ${a["title"]}");
+    io.println("     ${a["url"]}");
+}

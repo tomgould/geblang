@@ -469,13 +469,19 @@ func doHTTPRequestWithRetries(client *http.Client, req *http.Request, opts httpR
 		status := runtime.NewInt64(int64(resp.StatusCode))
 		body := runtime.String{Value: string(responseBody)}
 		headerDict := runtime.Dict{Entries: headers}
+		finalURL := req.URL.String()
+		if resp.Request != nil && resp.Request.URL != nil {
+			finalURL = resp.Request.URL.String()
+		}
+		urlVal := runtime.String{Value: finalURL}
 		if httpResponseResultClass != nil {
-			return newResponseInstance(httpResponseResultClass, status, body, headerDict), nil
+			return newResponseInstance(httpResponseResultClass, status, body, headerDict, urlVal), nil
 		}
 		entries := map[string]runtime.DictEntry{}
 		putDict(entries, "status", status)
 		putDict(entries, "body", body)
 		putDict(entries, "headers", headerDict)
+		putDict(entries, "url", urlVal)
 		return runtime.Dict{Entries: entries}, nil
 	}
 	if lastErr != nil {
@@ -1208,7 +1214,8 @@ func buildResponseInstance(class *runtime.Class, label string, args []runtime.Va
 			status, _ := dictField(dict, "status")
 			body, _ := dictField(dict, "body")
 			headers, _ := dictField(dict, "headers")
-			return newResponseInstance(class, status, body, headers), nil
+			url, _ := dictField(dict, "url")
+			return newResponseInstance(class, status, body, headers, url), nil
 		}
 	}
 	if len(args) > 3 {
@@ -1240,5 +1247,5 @@ func buildResponseInstance(class *runtime.Class, label string, args []runtime.Va
 		}
 		headers = args[2]
 	}
-	return newResponseInstance(class, status, body, headers), nil
+	return newResponseInstance(class, status, body, headers, runtime.String{}), nil
 }

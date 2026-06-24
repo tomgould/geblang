@@ -217,6 +217,7 @@ func TestWriteHTTPResponseAcceptsResponseObject(t *testing.T) {
 		gruntime.NewInt64(http.StatusCreated),
 		gruntime.String{Value: "created"},
 		gruntime.Dict{Entries: headers},
+		gruntime.String{},
 	)
 	recorder := httptest.NewRecorder()
 	writeHTTPResponse(recorder, response)
@@ -259,7 +260,7 @@ func TestWriteHTTPResponseStreamsFileAndBufferBodies(t *testing.T) {
 	e.files[fileID] = file
 	e.fileMu.Unlock()
 
-	fileResponse := newResponseInstance(e.httpResponseClass, gruntime.NewInt64(http.StatusOK), gruntime.NewInt64(fileID), nil)
+	fileResponse := newResponseInstance(e.httpResponseClass, gruntime.NewInt64(http.StatusOK), gruntime.NewInt64(fileID), nil, gruntime.String{})
 	fileRecorder := httptest.NewRecorder()
 	e.writeHTTPResponseValue(fileRecorder, fileResponse)
 	fileResult := fileRecorder.Result()
@@ -280,7 +281,7 @@ func TestWriteHTTPResponseStreamsFileAndBufferBodies(t *testing.T) {
 	e.buffers[bufferID] = buffer
 	e.bufferMu.Unlock()
 
-	bufferResponse := newResponseInstance(e.httpResponseClass, gruntime.NewInt64(http.StatusOK), gruntime.NativeObject{Kind: "IOBuffer", ID: bufferID}, nil)
+	bufferResponse := newResponseInstance(e.httpResponseClass, gruntime.NewInt64(http.StatusOK), gruntime.NativeObject{Kind: "IOBuffer", ID: bufferID}, nil, gruntime.String{})
 	bufferRecorder := httptest.NewRecorder()
 	e.writeHTTPResponseValue(bufferRecorder, bufferResponse)
 	bufferResult := bufferRecorder.Result()

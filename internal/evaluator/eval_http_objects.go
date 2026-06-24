@@ -278,6 +278,7 @@ func httpObjectClasses(env *runtime.Environment) []*runtime.Class {
 			"json":          []runtime.Function{{Name: "json", Native: nativeResponseJSON}},
 			"header":        []runtime.Function{{Name: "header", Native: nativeResponseHeader}},
 			"headers":       []runtime.Function{{Name: "headers", Native: nativeResponseHeaders}},
+			"url":           []runtime.Function{{Name: "url", Native: nativeResponseURL}},
 			"__index":       []runtime.Function{{Name: "__index", Native: nativeResponseIndex}},
 		},
 		Constructors: []runtime.Function{{Name: "Response", Native: nativeResponseConstructor}},
@@ -436,14 +437,14 @@ func nativeResponseWithHeader(this *runtime.Instance, args []runtime.Value) (run
 		})
 	}
 	putDict(headers, name.Value, value)
-	return newResponseInstance(this.Class, this.Fields["status"], this.Fields["body"], runtime.Dict{Entries: headers}), nil
+	return newResponseInstance(this.Class, this.Fields["status"], this.Fields["body"], runtime.Dict{Entries: headers}, this.Fields["url"]), nil
 }
 
 func nativeResponseWithBody(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("Response.withBody expects one argument")
 	}
-	return newResponseInstance(this.Class, this.Fields["status"], args[0], this.Fields["headers"]), nil
+	return newResponseInstance(this.Class, this.Fields["status"], args[0], this.Fields["headers"], this.Fields["url"]), nil
 }
 
 func nativeResponseWithStatus(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -453,7 +454,7 @@ func nativeResponseWithStatus(this *runtime.Instance, args []runtime.Value) (run
 	if _, ok := toInt64(args[0]); !ok {
 		return nil, fmt.Errorf("Response.withStatus status must be int")
 	}
-	return newResponseInstance(this.Class, args[0], this.Fields["body"], this.Fields["headers"]), nil
+	return newResponseInstance(this.Class, args[0], this.Fields["body"], this.Fields["headers"], this.Fields["url"]), nil
 }
 
 func nativeResponseToDict(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -475,6 +476,17 @@ func nativeResponseStatus(this *runtime.Instance, args []runtime.Value) (runtime
 		return nil, fmt.Errorf("Response.status expects no arguments")
 	}
 	return runtime.NewInt64(responseStatusInt64(this)), nil
+}
+
+// nativeResponseURL returns the final URL after redirects (empty for non-request responses).
+func nativeResponseURL(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("Response.url expects no arguments")
+	}
+	if v, ok := this.Fields["url"].(runtime.String); ok {
+		return v, nil
+	}
+	return runtime.String{}, nil
 }
 
 func responseStatusPredicate(name string, lo, hi int64) func(*runtime.Instance, []runtime.Value) (runtime.Value, error) {
@@ -608,9 +620,17 @@ func nativeResponseIndex(this *runtime.Instance, args []runtime.Value) (runtime.
 			return v, nil
 		}
 		return runtime.Null{}, nil
-	case "index", "url":
-		// Set by fetchStream to correlate a streamed result to its input.
-		if v := this.Fields["_"+key.Value]; v != nil {
+	case "url":
+		// Real client responses carry the post-redirect URL; fetchStream sets _url for input correlation.
+		if v := this.Fields["url"]; v != nil {
+			return v, nil
+		}
+		if v := this.Fields["_url"]; v != nil {
+			return v, nil
+		}
+		return runtime.Null{}, nil
+	case "index":
+		if v := this.Fields["_index"]; v != nil {
 			return v, nil
 		}
 		return runtime.Null{}, nil
@@ -644,6 +664,7 @@ func newErrorResponseInstance(class *runtime.Class, message string) *runtime.Ins
 		"status":  runtime.NewInt64(0),
 		"body":    runtime.String{},
 		"headers": runtime.Dict{Entries: map[string]runtime.DictEntry{}},
+		"url":     runtime.String{},
 		"_error":  runtime.String{Value: message},
 	}}
 }
@@ -704,10 +725,13 @@ func responseInstanceDict(instance *runtime.Instance) runtime.Dict {
 	putDict(entries, "status", status)
 	putDict(entries, "body", body)
 	putDict(entries, "headers", headers)
+	if url, ok := instance.Fields["url"].(runtime.String); ok && url.Value != "" {
+		putDict(entries, "url", url)
+	}
 	return runtime.Dict{Entries: entries}
 }
 
-func newResponseInstance(class *runtime.Class, status runtime.Value, body runtime.Value, headers runtime.Value) *runtime.Instance {
+func newResponseInstance(class *runtime.Class, status runtime.Value, body runtime.Value, headers runtime.Value, url runtime.Value) *runtime.Instance {
 	if status == nil {
 		status = runtime.NewInt64(http.StatusOK)
 	}
@@ -720,10 +744,14 @@ func newResponseInstance(class *runtime.Class, status runtime.Value, body runtim
 	if headers == nil {
 		headers = runtime.Dict{Entries: map[string]runtime.DictEntry{}}
 	}
+	if url == nil {
+		url = runtime.String{}
+	}
 	return &runtime.Instance{Class: class, Fields: map[string]runtime.Value{
 		"status":  status,
 		"body":    body,
 		"headers": headers,
+		"url":     url,
 	}}
 }
 
@@ -754,7 +782,7 @@ func (e *Evaluator) httpJSONResponseObject(call *ast.CallExpression, args []runt
 	}
 	headers := map[string]runtime.DictEntry{}
 	putDict(headers, "Content-Type", runtime.String{Value: "application/json"})
-	return newResponseInstance(e.httpResponseClass, status, runtime.String{Value: body}, runtime.Dict{Entries: headers}), nil
+	return newResponseInstance(e.httpResponseClass, status, runtime.String{Value: body}, runtime.Dict{Entries: headers}, runtime.String{}), nil
 }
 
 func (e *Evaluator) httpRedirectObject(call *ast.CallExpression, args []runtime.Value) (runtime.Value, error) {
@@ -777,5 +805,5 @@ func (e *Evaluator) httpRedirectObject(call *ast.CallExpression, args []runtime.
 	}
 	headers := map[string]runtime.DictEntry{}
 	putDict(headers, "Location", runtime.String{Value: url.Value})
-	return newResponseInstance(e.httpResponseClass, status, runtime.String{}, runtime.Dict{Entries: headers}), nil
+	return newResponseInstance(e.httpResponseClass, status, runtime.String{}, runtime.Dict{Entries: headers}, runtime.String{}), nil
 }

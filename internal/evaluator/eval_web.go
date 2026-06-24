@@ -163,7 +163,7 @@ func (e *Evaluator) webResponseArg(fn runtime.Value, index int, response runtime
 	if headers == nil {
 		headers = runtime.Dict{Entries: map[string]runtime.DictEntry{}}
 	}
-	return newResponseInstance(class, status, body, headers)
+	return newResponseInstance(class, status, body, headers, runtime.String{})
 }
 
 // runWebAfterMiddlewares runs the response-phase chain (last-registered first).

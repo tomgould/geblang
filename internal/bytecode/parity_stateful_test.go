@@ -301,6 +301,28 @@ http.close(server);
 `, "Response\n404\nfalse\ntrue\ntrue\n{\"ok\": false}\nfalse\nyes\n404\n{\"ok\": false}\n")
 }
 
+// TestParityHTTPResponseURL checks Response.url() reports the final post-redirect address on both backends.
+func TestParityHTTPResponseURL(t *testing.T) {
+	runParityStateful(t, `
+import http;
+import io;
+let server = http.listen("127.0.0.1:0", func(dict<string, any> req): dict<string, any> {
+    if (req["path"] == "/start") {
+        return {"status": 302, "body": "", "headers": {"Location": "/end"}};
+    }
+    return {"status": 200, "body": "arrived", "headers": {}};
+}, {});
+let base = "http://" + http.serverAddr(server);
+let r = http.get(base + "/start");
+io.println(r.status());
+io.println(r.text());
+io.println(r.url() == base + "/end");
+io.println(r["url"] == base + "/end");
+io.println(http.response("hi", 200).url() == "");
+http.close(server);
+`, "200\narrived\ntrue\ntrue\ntrue\n")
+}
+
 // TestParityHTTPRequestBuilder exercises the immutable withX request
 // builder (http.request(url) one-arg form) on both backends, including
 // that withX returns a fresh builder (sibling requests don't leak).

@@ -1,5 +1,16 @@
 # Release Notes
 
+## 1.27.1
+
+### Standard library
+
+- HTTP client responses now expose the final URL after redirects. `r.url()` (and
+  the index form `r["url"]`) returns the address the response was ultimately
+  served from, so a request to a redirecting endpoint reports where it landed.
+  It is an empty string for responses not produced by a request (for example
+  `http.response(...)`), and is carried through `withStatus`/`withHeader`/`withBody`
+  and `toDict`.
+
 ## 1.27.0
 
 ### Tooling
