@@ -8,23 +8,21 @@ import datetime;
 
 class TimeTest extends test.Test {
     @test
-    func nowIsPositiveAndIncreasing(): void {
-        let t1 = time.now();
-        this.assertTrue(t1 > 0);
-        time.sleep(2);
-        let t2 = time.now();
-        this.assertTrue(t2 >= t1);
+    func nowReturnsPositiveWallMillis(): void {
+        # now() is the wall clock, which is not monotonic; assert only that it
+        # is a sane positive millisecond timestamp. Monotonic increase is
+        # covered by monotonicNeverDecreases.
+        let t = time.now();
+        this.assertTrue(t > 1000000000000);
     }
 
     @test
-    func elapsedIsMonotonic(): void {
-        let t0 = time.now();
-        time.sleep(5);
-        let elapsed = time.elapsed(t0);
-        # Allow generous slack for slow test environments but assert the
-        # rough ballpark.
-        this.assertTrue(elapsed >= 3);
-        this.assertTrue(elapsed < 5000);
+    func elapsedReportsMillisSincePast(): void {
+        # Use a start fixed 10s in the past rather than a live sleep, so the
+        # delta is deterministically positive even if the wall clock steps.
+        let elapsed = time.elapsed(time.now() - 10000);
+        this.assertTrue(elapsed >= 5000);
+        this.assertTrue(elapsed < 60000);
     }
 
     @test
@@ -81,19 +79,18 @@ class TimeTest extends test.Test {
 
     @test
     func elapsedFloatReportsPositiveDelta(): void {
-        let start = time.unixFloat();
-        time.sleep(20);
-        let elapsed = time.elapsedFloat(start);
-        this.assertTrue(elapsed > 0.0.toFloat());
-        this.assertTrue(elapsed < 5.0.toFloat());
+        # Start fixed 10s in the past, so elapsed is ~10 regardless of any wall
+        # clock jitter during the test (unixFloat/elapsedFloat are wall-clock).
+        let elapsed = time.elapsedFloat(time.unixFloat() - 10.0.toFloat());
+        this.assertTrue(elapsed > 1.0.toFloat());
+        this.assertTrue(elapsed < 60.0.toFloat());
     }
 
     @test
     func elapsedFloatAcceptsDecimalStart(): void {
-        let start = time.unixDecimal();
-        time.sleep(5);
-        let elapsed = time.elapsedFloat(start);
-        this.assertTrue(elapsed > 0.0.toFloat());
+        # A decimal start, also fixed in the past for a deterministic delta.
+        let elapsed = time.elapsedFloat(time.unixDecimal() - 10);
+        this.assertTrue(elapsed > 1.0.toFloat());
     }
 
     @test
