@@ -944,14 +944,13 @@ func matchValueToTypeRef(typeParams map[string]bool, value runtime.Value, typ *a
 	if typ.Operator != "" {
 		return true
 	}
-	// A null value is assignable to any nullable type, regardless of element
-	// parameterisation. The element check below would otherwise dereference
-	// the null as a List/Dict/Set and panic in the VM.
-	if _, isNull := value.(runtime.Null); isNull {
-		return typ.Nullable
-	}
+	// Generic type parameter accepts any value incl null at runtime, matching the VM.
 	if typeParams[strings.ToLower(typ.Name)] {
 		return true
+	}
+	// Null matches only a nullable type; also avoids null-deref in the element checks below.
+	if _, isNull := value.(runtime.Null); isNull {
+		return typ.Nullable
 	}
 	typeName := simpleTypeName(typ.Name)
 	if typ.ListAlias || typeName == "list" {

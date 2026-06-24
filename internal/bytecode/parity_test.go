@@ -3823,3 +3823,19 @@ io.println(dir(doc.selectFirst("h1")));
 io.println(dir(ndarray.array([1, 2, 3])).length());
 `, "#document\nHello\n2\nhttp://x\n3\nbody\n<li>a</li><li>b</li>\n[\"attr\", \"attrs\", \"children\", \"html\", \"parent\", \"select\", \"selectFirst\", \"tag\", \"text\"]\n44\n")
 }
+
+func TestParityGenericNullArg(t *testing.T) {
+	// null must bind to a generic T param on both backends (eval was rejecting it)
+	runParity(t, `import io;
+class Box<T> { any v; func put(T value): void { this.v = value; } func get(): any { return this.v; } }
+let b = Box<any>();
+b.put(null);
+io.println(b.get() == null);
+`, "true\n")
+	runParity(t, `import io;
+class Box<T> { any v; func put(T value): void { this.v = value; } func get(): any { return this.v; } }
+let b = Box<any>();
+b.put(42);
+io.println(b.get());
+`, "42\n")
+}

@@ -1,0 +1,27 @@
+/**
+ * @title Redis live integration test
+ * @summary Tests setex and eval against a real Redis server.
+ *          Gated on GEBLANG_REDIS_TEST_ADDR: skips when unset.
+ */
+import test;
+import sys;
+import redis;
+
+class RedisLiveTest extends test.Test {
+    @test
+    func setexAndEval(): void {
+        let addr = sys.getenv("GEBLANG_REDIS_TEST_ADDR") ?? "";
+        if (addr == "") {
+            this.skip("GEBLANG_REDIS_TEST_ADDR unset");
+            return;
+        }
+        let c = redis.connect(addr);
+        c.setex("gb:test:setex", 60, "hello");
+        this.assertEquals("hello", c.get("gb:test:setex") as string);
+        this.assertTrue(c.ttl("gb:test:setex") > 0);
+        this.assertEquals(1, c.eval("return 1", [], []) as int);
+        this.assertEquals("x", c.eval("return ARGV[1]", [], ["x"]) as string);
+        this.assertEquals("k", c.eval("return KEYS[1]", ["k"], []) as string);
+        c.close();
+    }
+}

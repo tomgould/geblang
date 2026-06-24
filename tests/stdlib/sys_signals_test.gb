@@ -13,8 +13,9 @@ import time;
 class SysSignalsTest extends test.Test {
 
     func waitFor(any s, string key, int wanted): bool {
-        let deadline = time.now() + 5000;
-        while ((s.get(key) as int) < wanted && time.now() < deadline) {
+        # Monotonic deadline: a wall-clock jump must not trip the timeout early.
+        let deadline = time.monotonic() + 5000;
+        while ((s.get(key) as int) < wanted && time.monotonic() < deadline) {
             sys.sleep(10);
         }
         return (s.get(key) as int) >= wanted;
@@ -40,8 +41,8 @@ class SysSignalsTest extends test.Test {
             s.set("name", name);
         });
         sys.raise("SIGUSR2");
-        let deadline = time.now() + 5000;
-        while ((s.get("name") as string) == "" && time.now() < deadline) {
+        let deadline = time.monotonic() + 5000;
+        while ((s.get("name") as string) == "" && time.monotonic() < deadline) {
             sys.sleep(10);
         }
         this.assertEquals("SIGUSR2", s.get("name") as string);

@@ -2413,6 +2413,8 @@ var stdlibCatalog = map[string]moduleDoc{
 			"hget":      fn([]string{"string key", "string field"}, "any", "HGET."),
 			"hdel":      fn([]string{"string key", "string field"}, "int", "HDEL."),
 			"hgetAll":   fn([]string{"string key"}, "dict<string, any>", "HGETALL."),
+			"setex":     fn([]string{"string key", "int seconds", "string value"}, "bool", "SETEX: set key with expiry in seconds."),
+			"eval":      fn([]string{"string script", "list<string> keys", "list<string> args"}, "any", "EVAL: run a Lua script on the server."),
 			"close":     fn([]string{}, "void", "Closes the connection."),
 		},
 	}},

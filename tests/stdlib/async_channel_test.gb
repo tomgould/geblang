@@ -159,4 +159,12 @@ class AsyncChannelTest extends test.Test {
         await consumer;
         this.assertEquals(-1, observed.load());
     }
+
+    @test
+    func nullSendAndRecvOnAnyChannel(): void {
+        /* generic T param must accept null at runtime on both backends */
+        let c = ch.Channel<any>(2);
+        c.send(null);
+        this.assertTrue(c.recv() == null);
+    }
 }

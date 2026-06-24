@@ -85,4 +85,12 @@ class MethodTypeEnforcementTest extends test.Test {
         b.put(7);
         this.assertEquals(7, b.value);
     }
+
+    @test
+    func genericParamAcceptsNull(): void {
+        /* null must bind to T at runtime, matching the VM */
+        let b = Box<any>("init");
+        b.put(null);
+        this.assertTrue(b.value == null);
+    }
 }
