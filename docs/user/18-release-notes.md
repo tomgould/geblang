@@ -1,5 +1,24 @@
 # Release Notes
 
+## 1.28.0
+
+### Standard library
+
+- New `html` module for parsing real-world HTML and querying it with CSS
+  selectors. `html.parse(source)` returns the root node; nodes expose
+  `select`/`selectFirst` (CSS3 selectors: type, class, id, attribute operators,
+  descendant/child/sibling combinators, structural pseudo-classes, grouping),
+  `text`, `attr`, `attrs`, `tag`, `html` (inner HTML), `children`, and
+  `parent`. The parser is lenient, so malformed markup is repaired rather than
+  rejected. See the HTML chapter in the standard-library reference.
+
+### Fixes
+
+- `dir()` now lists the methods of the native value types (n-dimensional arrays,
+  data frames, series, distributions, complex numbers, generators, and html
+  nodes) on the bytecode VM, matching the evaluator. Previously it returned an
+  empty list for those types on the VM.
+
 ## 1.27.1
 
 ### Standard library

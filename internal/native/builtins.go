@@ -55,6 +55,7 @@ func registerAllBuiltins(r *Registry) {
 	registerJSON(r)
 	registerCSV(r)
 	registerXML(r)
+	registerHTML(r)
 	registerTOML(r)
 	registerYAML(r)
 	registerCrypt(r)

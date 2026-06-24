@@ -4036,6 +4036,9 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 	if arr, ok := receiver.(*runtime.NDArray); ok {
 		return native.NDArrayMethod(arr, name, args)
 	}
+	if node, ok := receiver.(*runtime.HtmlNode); ok {
+		return native.HtmlNodeMethod(node, name, args)
+	}
 	if dist, ok := receiver.(*runtime.Distribution); ok {
 		return native.DistributionMethod(dist, name, args)
 	}

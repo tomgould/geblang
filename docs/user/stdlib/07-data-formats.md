@@ -74,6 +74,12 @@ Import `xml`:
 - `validate(text)` - returns `bool`; `validateDetailed(text)` - returns detail dict
 - `reader(source)`, `stream(source, handler)`
 
+## HTML (1.28.0)
+
+For parsing real-world HTML with the lenient HTML5 parser and querying it with
+CSS selectors, use the `html` module. It has its own chapter: see
+[HTML](36-html.md).
+
 ## Class instances: stringify and parseAs
 
 `json.stringify`, `yaml.stringify`, and `toml.stringify` accept

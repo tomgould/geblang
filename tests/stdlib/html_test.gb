@@ -1,0 +1,53 @@
+import test;
+import html;
+
+class HtmlTest extends test.Test {
+    func sample(): any {
+        return html.parse("<html><body><h1 class=\"title\" id=\"main\">Hello</h1><ul><li>a</li><li>b</li></ul><a href=\"http://x\">link</a></body></html>");
+    }
+
+    @test
+    func parseAndTag(): void {
+        this.assertEquals("#document", this.sample().tag());
+    }
+
+    @test
+    func selectAndText(): void {
+        let items = this.sample().select("li");
+        this.assertEquals(2, items.length());
+        this.assertEquals("a", items[0].text());
+        this.assertEquals("b", items[1].text());
+    }
+
+    @test
+    func selectFirstAndAttr(): void {
+        let h1 = this.sample().selectFirst("h1.title");
+        this.assertEquals("Hello", h1.text());
+        this.assertEquals("h1", h1.tag());
+        this.assertEquals("main", h1.attr("id"));
+        this.assertTrue(h1.attr("missing") == null);
+    }
+
+    @test
+    func attrsReturnsAllAttributes(): void {
+        let attrs = this.sample().selectFirst("a").attrs() as dict<string, any>;
+        this.assertEquals("http://x", attrs["href"]);
+    }
+
+    @test
+    func selectFirstReturnsNullWhenNoMatch(): void {
+        this.assertTrue(this.sample().selectFirst("video") == null);
+    }
+
+    @test
+    func childrenAndParent(): void {
+        let doc = this.sample();
+        this.assertEquals(3, doc.selectFirst("body").children().length());
+        this.assertEquals("body", doc.selectFirst("h1").parent().tag());
+    }
+
+    @test
+    func innerHtml(): void {
+        this.assertEquals("<li>a</li><li>b</li>", this.sample().selectFirst("ul").html());
+    }
+}

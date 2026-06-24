@@ -62,6 +62,8 @@ IN THE SOFTWARE.
 
 The following components are licensed under the BSD 2-Clause License:
 
+- `github.com/andybalholm/cascadia` v1.3.4 - Copyright (c) 2011 Andy Balholm.
+  All rights reserved.
 - `github.com/chewxy/math32` v1.10.1 - Copyright (c) 2021, Xuanyi Chew and
   the Go Authors. All rights reserved.
 - `github.com/gorilla/websocket` v1.5.3 - Copyright (c) 2013 The Gorilla
@@ -123,7 +125,7 @@ The following components are licensed under the BSD 3-Clause License:
   Go Authors. All rights reserved.
 - `golang.org/x/image` v0.41.0 - Copyright 2009 The Go Authors.
 - `golang.org/x/mod` v0.35.0 - Copyright 2009 The Go Authors.
-- `golang.org/x/net` v0.54.0 - Copyright 2009 The Go Authors.
+- `golang.org/x/net` v0.55.0 - Copyright 2009 The Go Authors.
 - `golang.org/x/sync` v0.20.0 - Copyright 2009 The Go Authors.
 - `golang.org/x/sys` v0.45.0 - Copyright 2009 The Go Authors.
 - `golang.org/x/text` v0.37.0 - Copyright 2009 The Go Authors.

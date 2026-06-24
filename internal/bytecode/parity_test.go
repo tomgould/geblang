@@ -3806,3 +3806,20 @@ io.println(rows.sumBy(func(any r): any { return (r as dict<string, any>)["v"]; }
 30
 `)
 }
+
+func TestParityHtmlModule(t *testing.T) {
+	runParity(t, `import html;
+import ndarray;
+import io;
+let doc = html.parse("<html><body><h1 class='t'>Hello</h1><ul><li>a</li><li>b</li></ul><a href='http://x'>L</a></body></html>");
+io.println(doc.tag());
+io.println(doc.selectFirst("h1.t").text());
+io.println(doc.select("li").length());
+io.println(doc.selectFirst("a").attr("href"));
+io.println(doc.selectFirst("body").children().length());
+io.println(doc.selectFirst("h1").parent().tag());
+io.println(doc.selectFirst("ul").html());
+io.println(dir(doc.selectFirst("h1")));
+io.println(dir(ndarray.array([1, 2, 3])).length());
+`, "#document\nHello\n2\nhttp://x\n3\nbody\n<li>a</li><li>b</li>\n[\"attr\", \"attrs\", \"children\", \"html\", \"parent\", \"select\", \"selectFirst\", \"tag\", \"text\"]\n44\n")
+}

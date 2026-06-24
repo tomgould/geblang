@@ -823,6 +823,24 @@ func vmDirValue(value runtime.Value) runtime.Value {
 		names = vmPrimitiveMethodNamesFor("float")
 	case runtime.Bool:
 		names = vmPrimitiveMethodNamesFor("bool")
+	case *runtime.Generator:
+		names = append([]string(nil), native.GeneratorMethods...)
+	case *runtime.NDArray:
+		names = append([]string(nil), native.NDArrayMethods...)
+	case *runtime.HtmlNode:
+		names = append([]string(nil), native.HtmlNodeMethods...)
+	case *runtime.Distribution:
+		names = append([]string(nil), native.DistributionMethods...)
+	case *runtime.Complex:
+		names = append([]string(nil), native.ComplexMethods...)
+	case *runtime.DataFrame:
+		names = append([]string(nil), native.DataFrameMethods...)
+	case *runtime.DFSeries:
+		names = append([]string(nil), native.DFSeriesMethods...)
+	case *runtime.DFExpr:
+		names = append([]string(nil), native.DFExprMethods...)
+	case *runtime.DFGroupBy:
+		names = append([]string(nil), native.DFGroupByMethods...)
 	case runtime.DateTimeInstant:
 		names = append([]string(nil), native.DateTimeInstantMethods...)
 	case runtime.DateTimeDuration:

@@ -1400,6 +1400,9 @@ var stdlibCatalog = map[string]moduleDoc{
 		"renderHtml": fn([]string{"string source"}, "string", "Renders GFM Markdown to HTML."),
 		"stripText":  fn([]string{"string source"}, "string", "Extracts plain text, stripping all markup."),
 	}},
+	"html": {functions: map[string]functionDoc{
+		"parse": fn([]string{"string source"}, "html.Node", "Parses an HTML document and returns the root node, for DOM traversal and CSS-selector queries (select/selectFirst/text/attr/attrs/tag/html/children/parent)."),
+	}},
 	"maps": {classes: map[string]string{
 		"DictInterface": "Dict-like contract: implement __index(key) + keys() (and optional __setIndex) to inherit contains/get/values/length/isEmpty and the `in` operator.",
 	}, classMethods: map[string]map[string]functionDoc{

@@ -199,6 +199,9 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"parse": {}, "tryParse": {}, "stringify": {}, "validate": {},
 		"validateDetailed": {}, "parseAs": {},
 	},
+	"html": {
+		"parse": {},
+	},
 	"toml": {
 		"parse": {}, "tryParse": {}, "stringify": {}, "validate": {},
 		"validateDetailed": {}, "parseAs": {},

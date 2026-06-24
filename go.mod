@@ -4,6 +4,7 @@ go 1.26.3
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/andybalholm/cascadia v1.3.4
 	github.com/coder/hnsw v0.6.1
 	github.com/creack/pty v1.1.24
 	github.com/dlclark/regexp2 v1.12.0
@@ -23,6 +24,7 @@ require (
 	golang.org/x/crypto v0.52.0
 	golang.org/x/image v0.41.0
 	golang.org/x/mod v0.35.0
+	golang.org/x/net v0.55.0
 	golang.org/x/sys v0.45.0
 	golang.org/x/text v0.37.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -51,7 +53,6 @@ require (
 	github.com/viterin/partial v1.1.0 // indirect
 	github.com/viterin/vek v0.4.2 // indirect
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
-	golang.org/x/net v0.54.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	modernc.org/gc/v3 v3.1.3 // indirect
 	modernc.org/libc v1.72.3 // indirect

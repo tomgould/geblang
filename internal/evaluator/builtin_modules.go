@@ -309,6 +309,9 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"reader":           e.xmlReader,
 			"stream":           e.xmlStream,
 		},
+		"html": {
+			"parse": e.registryBuiltin("html", "parse"),
+		},
 		"toml": {
 			"parse":            e.registryBuiltin("toml", "parse"),
 			"parseAs":          e.registryBuiltin("toml", "parseAs"),
