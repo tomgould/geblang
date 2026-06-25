@@ -1,0 +1,11 @@
+module backedstatus;
+
+export enum Status: string {
+    Active = "active";
+    Closed = "closed";
+}
+
+export enum Code: int {
+    Ok = 200;
+    NotFound = 404;
+}

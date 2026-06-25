@@ -443,6 +443,38 @@ io.println("done");
 	}
 }
 
+func TestCompileEncodeDecodeRunBackedEnum(t *testing.T) {
+	source := []byte(`import io;
+enum Status: string {
+    Active = "active";
+    Closed = "closed";
+}
+io.println(Status.Active.value);
+io.println(Status.from("closed") == Status.Closed);
+`)
+	program := parseProgram(t, string(source))
+	chunk, err := bytecode.Compile(program, source, "test")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	encoded, err := bytecode.Encode(chunk)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	decoded, err := bytecode.Decode(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := bytecode.NewVM(decoded, &out).Run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got, want := out.String(), "active\ntrue\n"; got != want {
+		t.Fatalf("output: got %q, want %q", got, want)
+	}
+}
+
 func TestCompileAndRunBytecodeInitBlock(t *testing.T) {
 	source := []byte(`import io;
 int value = 1;

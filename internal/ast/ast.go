@@ -616,16 +616,18 @@ func (s *TryStatement) TokenLiteral() string { return s.Token.Literal }
 func (s *TryStatement) String() string       { return "try " + s.Body.String() }
 
 type EnumVariantDef struct {
-	Name       *Identifier
-	FieldTypes []*TypeRef
+	Name         *Identifier
+	FieldTypes   []*TypeRef
+	BackingValue Expression
 }
 
 type EnumStatement struct {
-	Token      token.Token
-	Name       *Identifier
-	Variants   []EnumVariantDef
-	Implements []*TypeRef
-	Methods    []*FunctionStatement
+	Token       token.Token
+	Name        *Identifier
+	BackingType *TypeRef
+	Variants    []EnumVariantDef
+	Implements  []*TypeRef
+	Methods     []*FunctionStatement
 }
 
 func (*EnumStatement) statementNode()         {}
@@ -867,11 +869,40 @@ func ParseDecimalLiteral(lit string) (*big.Rat, error) {
 	if strings.ContainsRune(digits, '_') {
 		digits = strings.ReplaceAll(digits, "_", "")
 	}
+	if strings.ContainsAny(digits, "eE") {
+		mantissa, exponentText, ok := strings.Cut(digits, "e")
+		if !ok {
+			mantissa, exponentText, ok = strings.Cut(digits, "E")
+		}
+		if !ok {
+			return nil, fmt.Errorf("invalid decimal literal %q", lit)
+		}
+		value, ok := new(big.Rat).SetString(mantissa)
+		if !ok {
+			return nil, fmt.Errorf("invalid decimal literal %q", lit)
+		}
+		exponent, err := strconv.Atoi(exponentText)
+		if err != nil {
+			return nil, fmt.Errorf("invalid decimal literal %q", lit)
+		}
+		scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(absInt(exponent))), nil)
+		if exponent >= 0 {
+			return value.Mul(value, new(big.Rat).SetInt(scale)), nil
+		}
+		return value.Quo(value, new(big.Rat).SetInt(scale)), nil
+	}
 	value, ok := new(big.Rat).SetString(digits)
 	if !ok {
 		return nil, fmt.Errorf("invalid decimal literal %q", lit)
 	}
 	return value, nil
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 type FloatLiteral struct {

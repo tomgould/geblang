@@ -783,6 +783,10 @@ func (c *Compiler) checkEnumMethodCollision(stmt *ast.EnumStatement, name string
 	switch strings.ToLower(name) {
 	case "variant", "fields":
 		return c.withStatementLocation(stmt, fmt.Errorf("enum %s method %q collides with a built-in variant accessor", stmt.Name.Value, name))
+	case "value":
+		if stmt.BackingType != nil {
+			return c.withStatementLocation(stmt, fmt.Errorf("enum %s method %q collides with a built-in variant accessor", stmt.Name.Value, name))
+		}
 	}
 	return nil
 }
@@ -822,16 +826,56 @@ func (c *Compiler) declareEnum(stmt *ast.EnumStatement) int64 {
 		return index
 	}
 	enumDef := &runtime.EnumDef{Name: stmt.Name.Value}
+	if stmt.BackingType != nil {
+		enumDef.BackingType = stmt.BackingType.Name
+	}
 	for _, v := range stmt.Variants {
+		backingValue, err := enumBackingValue(v.BackingValue)
+		if err != nil {
+			backingValue = nil
+		}
 		enumDef.Variants = append(enumDef.Variants, runtime.EnumVariantDefRuntime{
-			Name:       v.Name.Value,
-			FieldCount: len(v.FieldTypes),
+			Name:         v.Name.Value,
+			FieldCount:   len(v.FieldTypes),
+			BackingValue: backingValue,
 		})
 	}
 	index := int64(len(c.chunk.Constants))
 	c.chunk.Constants = append(c.chunk.Constants, enumDef)
 	c.enums[key] = index
 	return index
+}
+
+func enumBackingValue(expr ast.Expression) (runtime.Value, error) {
+	switch lit := expr.(type) {
+	case nil:
+		return nil, nil
+	case *ast.StringLiteral:
+		return runtime.String{Value: lit.Value}, nil
+	case *ast.IntegerLiteral:
+		value, err := runtime.NewIntLiteral(lit.Value)
+		if err != nil {
+			return nil, err
+		}
+		if value.Value.IsInt64() {
+			return runtime.SmallInt{Value: value.Value.Int64()}, nil
+		}
+		return value, nil
+	case *ast.PrefixExpression:
+		if lit.Operator == "-" {
+			if intLit, ok := lit.Right.(*ast.IntegerLiteral); ok {
+				value, err := runtime.NewIntLiteral("-" + intLit.Value)
+				if err != nil {
+					return nil, err
+				}
+				if value.Value.IsInt64() {
+					return runtime.SmallInt{Value: value.Value.Int64()}, nil
+				}
+				return value, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("enum backing value must be a string or int literal")
 }
 
 func (c *Compiler) declareTypeAlias(stmt *ast.TypeAliasStatement) {

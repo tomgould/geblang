@@ -138,10 +138,11 @@ type interfaceInfo struct {
 }
 
 type enumInfo struct {
-	name       string
-	implements []string
-	methods    map[string][]methodInfo
-	variants   []string
+	name        string
+	backingType string
+	implements  []string
+	methods     map[string][]methodInfo
+	variants    []string
 }
 
 type methodInfo struct {
@@ -421,6 +422,9 @@ func (a *Analyzer) collectTypeDeclarations(stmts []ast.Statement) {
 			a.interfaces[info.name] = info
 		case *ast.EnumStatement:
 			info := enumInfo{name: stmt.Name.Value, methods: map[string][]methodInfo{}}
+			if stmt.BackingType != nil {
+				info.backingType = stmt.BackingType.Name
+			}
 			for _, v := range stmt.Variants {
 				if v.Name != nil {
 					info.variants = append(info.variants, v.Name.Value)
@@ -505,6 +509,10 @@ func (a *Analyzer) validateStmtAnnotations(stmt ast.Statement) {
 		}
 		pop()
 	case *ast.EnumStatement:
+		a.checkTypeRefExists(s.BackingType, "backing type of "+nameOf(s.Name))
+		for _, variant := range s.Variants {
+			a.validateExprAnnotations(variant.BackingValue)
+		}
 		for _, iface := range s.Implements {
 			a.checkTypeRefExists(iface, "implements clause of "+nameOf(s.Name))
 		}
@@ -937,9 +945,13 @@ func (a *Analyzer) analyzeClassMembers(stmt *ast.ClassStatement) {
 }
 
 func (a *Analyzer) analyzeEnumMembers(stmt *ast.EnumStatement) {
+	a.validateBackedEnum(stmt)
 	for _, method := range stmt.Methods {
 		switch strings.ToLower(method.Name.Value) {
-		case "variant", "fields":
+		case "variant", "fields", "value":
+			if strings.EqualFold(method.Name.Value, "value") && stmt.BackingType == nil {
+				break
+			}
 			a.errorAt(method.Name.Token, "enum %s method %q collides with a built-in variant accessor", stmt.Name.Value, method.Name.Value)
 		}
 		a.pushScope()
@@ -953,6 +965,75 @@ func (a *Analyzer) analyzeEnumMembers(stmt *ast.EnumStatement) {
 		a.analyzeBlock(method.Body, method)
 		a.popScope()
 	}
+}
+
+func (a *Analyzer) validateBackedEnum(stmt *ast.EnumStatement) {
+	backed := stmt.BackingType != nil
+	if backed {
+		switch stmt.BackingType.Name {
+		case "string", "int":
+		default:
+			a.errorAt(stmt.BackingType.Token, "enum %s backing type must be string or int, got %s", stmt.Name.Value, stmt.BackingType.Name)
+		}
+	}
+	seen := map[string]token.Token{}
+	for _, variant := range stmt.Variants {
+		if variant.Name == nil {
+			continue
+		}
+		if len(variant.FieldTypes) > 0 && variant.BackingValue != nil {
+			a.errorAt(variant.Name.Token, "enum variant %s.%s cannot have both associated data and a backing value", stmt.Name.Value, variant.Name.Value)
+		}
+		if backed && variant.BackingValue == nil {
+			a.errorAt(variant.Name.Token, "backed enum %s requires a backing value for %s", stmt.Name.Value, variant.Name.Value)
+			continue
+		}
+		if !backed && variant.BackingValue != nil {
+			a.errorAt(variant.Name.Token, "enum %s has a backing value for %s but no backing type", stmt.Name.Value, variant.Name.Value)
+			continue
+		}
+		if !backed || variant.BackingValue == nil {
+			continue
+		}
+		typ, key, ok := enumBackingLiteralInfo(variant.BackingValue)
+		if !ok {
+			a.errorAt(tokenOfExpression(variant.BackingValue), "enum backing value must be a string or int literal")
+			continue
+		}
+		if typ != stmt.BackingType.Name {
+			a.errorAt(tokenOfExpression(variant.BackingValue), "enum %s backing value for %s must be %s, got %s", stmt.Name.Value, variant.Name.Value, stmt.BackingType.Name, typ)
+			continue
+		}
+		if first, exists := seen[key]; exists {
+			a.errorAt(tokenOfExpression(variant.BackingValue), "enum %s backing value %s is already used at line %d:%d", stmt.Name.Value, key, first.Line, first.Column)
+			continue
+		}
+		seen[key] = tokenOfExpression(variant.BackingValue)
+	}
+}
+
+func enumBackingLiteralInfo(expr ast.Expression) (string, string, bool) {
+	switch lit := expr.(type) {
+	case *ast.StringLiteral:
+		return "string", "string:" + lit.Value, true
+	case *ast.IntegerLiteral:
+		value, err := ast.ParseIntLiteral(lit.Value)
+		if err != nil {
+			return "", "", false
+		}
+		return "int", "int:" + value.String(), true
+	case *ast.PrefixExpression:
+		if lit.Operator == "-" {
+			if intLit, ok := lit.Right.(*ast.IntegerLiteral); ok {
+				value, err := ast.ParseIntLiteral("-" + intLit.Value)
+				if err != nil {
+					return "", "", false
+				}
+				return "int", "int:" + value.String(), true
+			}
+		}
+	}
+	return "", "", false
 }
 
 func (a *Analyzer) analyzeDeclaration(stmt *ast.DeclarationStatement) {
@@ -1360,12 +1441,12 @@ func (a *Analyzer) checkTypedCollectionMethodCall(call *ast.CallExpression) {
 		case "push", "prepend", "append", "unshift":
 			a.validateArgs(call.Arguments, []typeInfo{receiverType.args[0]},
 				fmt.Sprintf("list<%s>.%s element", receiverType.args[0].display(), selector.Name.Value), receiver.Value)
-			case "fill":
-				// fill(value, count) - first arg is the element.
-				if len(call.Arguments) >= 1 {
-					a.validateArgAt(call.Arguments[0], receiverType.args[0],
-						fmt.Sprintf("list<%s>.fill element", receiverType.args[0].display()), receiver.Value)
-				}
+		case "fill":
+			// fill(value, count) - first arg is the element.
+			if len(call.Arguments) >= 1 {
+				a.validateArgAt(call.Arguments[0], receiverType.args[0],
+					fmt.Sprintf("list<%s>.fill element", receiverType.args[0].display()), receiver.Value)
+			}
 		case "insert":
 			// insert(index, value) - second arg is the element.
 			if len(call.Arguments) >= 2 {

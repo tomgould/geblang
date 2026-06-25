@@ -1360,6 +1360,38 @@ let message = match (result) {
 };
 ```
 
+### Backed enums
+
+An enum can be backed by a distinct scalar value. Backing types are limited to
+`string` and `int`, and every case in a backed enum must declare a unique
+literal value:
+
+```gb
+enum Status: string {
+    Active = "active";
+    Closed = "closed";
+}
+
+Status.Active.value;      # "active"
+Status.from("active");    # Status.Active
+Status.tryFrom("x");      # null
+```
+
+`from(value)` returns the matching variant or throws when no variant has that
+backing value. `tryFrom(value)` returns the matching variant or `null`. The
+argument type must match the enum backing type. A variant can have associated
+data or a backing value, not both.
+
+```gb
+enum Code: int {
+    Ok = 200;
+    NotFound = 404;
+}
+
+Code.NotFound.value;   # 404
+Code.from(200);        # Code.Ok
+```
+
 ### Enum methods
 
 An enum may declare instance methods, callable on any variant. The body is the
@@ -1394,8 +1426,8 @@ Inside a method `this` is the receiving variant, typed as the enum. Per-variant
 behaviour is expressed with `match (this)` in one body; there is no per-variant
 override. A method may call sibling methods on `this`. Methods sit beside the
 existing data access: associated values and a backed scalar are read first, so a
-method never shadows them, and a method named like a built-in variant accessor
-(`variant`, `fields`) is a compile error.
+method never shadows them. A method named like a built-in variant accessor
+(`variant`, `fields`, and `value` on backed enums) is a compile error.
 
 Enums remain immutable value types. A method cannot mutate the receiver; the bare
 `enum Name { A, B }` form is unchanged.
@@ -1437,6 +1469,8 @@ Two operations are available on the enum type itself:
 - `EnumName.fromName(s)` resolves a variant by its exact name and returns
   `?Variant`: the matching variant, or `null` when no variant has that name.
   The match is case-sensitive.
+- Backed enums additionally expose `EnumName.from(value)` and
+  `EnumName.tryFrom(value)` lookup by backing value.
 
 ```
 enum Status { Active, Suspended, Closed }
@@ -1456,5 +1490,5 @@ caller can supply a fallback at the call site without catching an error:
 Status s = Status.fromName(input) ?? Status.Active;
 ```
 
-Apart from `values` and `fromName`, the enum surface is instance methods and
-interface implementation only.
+Apart from `values`, `fromName`, and backed-enum `from` / `tryFrom`, the enum
+surface is instance methods and interface implementation only.

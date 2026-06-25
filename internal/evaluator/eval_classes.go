@@ -483,10 +483,18 @@ func streamInterface(name string, methods []methodSpec) *runtime.Interface {
 
 func (e *Evaluator) buildEnum(stmt *ast.EnumStatement, env *runtime.Environment) (*runtime.EnumDef, error) {
 	enum := &runtime.EnumDef{Name: stmt.Name.Value}
+	if stmt.BackingType != nil {
+		enum.BackingType = stmt.BackingType.Name
+	}
 	for _, v := range stmt.Variants {
+		backingValue, err := enumBackingValue(v.BackingValue)
+		if err != nil {
+			return nil, err
+		}
 		enum.Variants = append(enum.Variants, runtime.EnumVariantDefRuntime{
-			Name:       v.Name.Value,
-			FieldCount: len(v.FieldTypes),
+			Name:         v.Name.Value,
+			FieldCount:   len(v.FieldTypes),
+			BackingValue: backingValue,
 		})
 	}
 	if len(stmt.Methods) > 0 {
@@ -530,6 +538,38 @@ func (e *Evaluator) buildEnum(stmt *ast.EnumStatement, env *runtime.Environment)
 	return enum, nil
 }
 
+func enumBackingValue(expr ast.Expression) (runtime.Value, error) {
+	switch lit := expr.(type) {
+	case nil:
+		return nil, nil
+	case *ast.StringLiteral:
+		return runtime.String{Value: lit.Value}, nil
+	case *ast.IntegerLiteral:
+		value, err := runtime.NewIntLiteral(lit.Value)
+		if err != nil {
+			return nil, err
+		}
+		if value.Value.IsInt64() {
+			return runtime.SmallInt{Value: value.Value.Int64()}, nil
+		}
+		return value, nil
+	case *ast.PrefixExpression:
+		if lit.Operator == "-" {
+			if intLit, ok := lit.Right.(*ast.IntegerLiteral); ok {
+				value, err := runtime.NewIntLiteral("-" + intLit.Value)
+				if err != nil {
+					return nil, err
+				}
+				if value.Value.IsInt64() {
+					return runtime.SmallInt{Value: value.Value.Int64()}, nil
+				}
+				return value, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("enum backing value must be a string or int literal")
+}
+
 // foldInterfaceDefaultsIntoEnum compiles an interface's default method bodies
 // into the enum's method table for any method the enum leaves unimplemented.
 func (e *Evaluator) foldInterfaceDefaultsIntoEnum(enum *runtime.EnumDef, iface *runtime.Interface, env *runtime.Environment) error {
@@ -566,6 +606,10 @@ func checkEnumMethodCollision(enum *runtime.EnumDef, name string) error {
 	switch strings.ToLower(name) {
 	case "variant", "fields":
 		return fmt.Errorf("enum %s method %q collides with a built-in variant accessor", enum.Name, name)
+	case "value":
+		if enum.BackingType != "" {
+			return fmt.Errorf("enum %s method %q collides with a built-in variant accessor", enum.Name, name)
+		}
 	}
 	return nil
 }
@@ -635,6 +679,10 @@ func enumVariantField(ev runtime.EnumVariant, name string) (runtime.Value, error
 		return runtime.String{Value: ev.Variant}, nil
 	case "fields":
 		return &runtime.List{Elements: ev.Fields}, nil
+	case "value":
+		if value, ok := runtime.EnumVariantBackingValue(ev); ok {
+			return value, nil
+		}
 	}
 	return nil, fmt.Errorf("enum variant %s.%s has no field %s", ev.Enum.Name, ev.Variant, name)
 }

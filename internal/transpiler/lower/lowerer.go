@@ -20,10 +20,10 @@ type Lowerer struct {
 	// (`import profiler as native` inside profiler) routes to the native bridge.
 	Canonical string
 
-	scope         *types.Scope
-	errors        []Error
-	w             *emit.Writer
-	parentClass   string
+	scope       *types.Scope
+	errors      []Error
+	w           *emit.Writer
+	parentClass string
 	// moduleTopLevel holds the Geblang names of this module's top-level functions
 	// and module-level let/const; a same-module reference to one prefixes it with
 	// NamePrefix so it binds to the prefixed Go symbol (non-entry modules only).
@@ -31,7 +31,7 @@ type Lowerer struct {
 	// entryHoist names entry-module top-level let/const referenced by a sibling
 	// function; these lower to package-level vars instead of main() locals so the
 	// functions can see them (entry modules only).
-	entryHoist map[string]bool
+	entryHoist    map[string]bool
 	inConstructor bool
 	inGenerator   bool
 	typeParams    map[string]struct{}
@@ -367,6 +367,12 @@ func (l *Lowerer) lowerTopLevelStatement(stmt ast.Statement) {
 	case *ast.ClassStatement:
 		l.lowerClass(s)
 	case *ast.EnumStatement:
+		if s.BackingType != nil {
+			l.errAt(s.Token.Line, s.Token.Column,
+				fmt.Sprintf("geblang build --native does not support backed enum %s yet", s.Name.Value),
+				"use the default bytecode build path for backed enums")
+			return
+		}
 		l.lowerEnum(s)
 	case *ast.InterfaceStatement:
 		l.lowerInterface(s)

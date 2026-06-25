@@ -40,3 +40,32 @@ export func main() {
 		t.Fatalf("expected an unsupported-enum-static-call diagnostic, got: %v", diags)
 	}
 }
+
+func TestBackedEnumDiagnosesUnderNative(t *testing.T) {
+	src := `import io;
+enum Status: string { Active = "active"; Closed = "closed"; }
+export func main() {
+    io.println(Status.Active.value);
+}`
+	p := parser.New(lexer.New(src))
+	prog := p.ParseProgram()
+	if errs := p.Errors(); len(errs) != 0 {
+		t.Fatalf("parse: %s", strings.Join(errs, "; "))
+	}
+	_, diags, err := transpiler.Transpile(transpiler.Input{
+		Modules: map[string]*ast.Program{"main": prog},
+	}, transpiler.Options{EntryModule: "main", IntMode: types.IntModeFast})
+	if err != nil {
+		t.Fatalf("transpile: %v", err)
+	}
+	var found bool
+	for _, d := range diags {
+		if d.Severity == transpiler.SeverityError && strings.Contains(d.Message, "does not support backed enum") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected a backed-enum diagnostic, got: %v", diags)
+	}
+}

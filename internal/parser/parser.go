@@ -2088,6 +2088,11 @@ func (p *Parser) parseEnumStatement() ast.Statement {
 		return stmt
 	}
 	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	if p.peekTokenIs(token.Colon) {
+		p.nextToken()
+		p.nextToken()
+		stmt.BackingType = p.parseTypeRefFromCurrent()
+	}
 	if p.peekTokenIs(token.Implements) {
 		p.nextToken()
 		stmt.Implements = p.parseTypeList()
@@ -2125,9 +2130,22 @@ func (p *Parser) parseEnumStatement() ast.Statement {
 			}
 			p.expectPeek(token.RParen)
 		}
+		if p.peekTokenIs(token.Assign) {
+			p.nextToken()
+			p.nextToken()
+			variant.BackingValue = p.parseExpression(lowest)
+		}
+		if len(variant.FieldTypes) > 0 && variant.BackingValue != nil {
+			p.errorf(variant.Name.Token, "enum variant %s cannot have both associated data and a backing value", variant.Name.Value)
+		}
 		stmt.Variants = append(stmt.Variants, variant)
 		if p.peekTokenIs(token.Comma) {
 			p.nextToken() // consume ','
+		} else if p.peekTokenIs(token.Semicolon) {
+			p.nextToken() // consume ';'
+			if p.peekTokenIs(token.Func) {
+				break
+			}
 		}
 	}
 	for {

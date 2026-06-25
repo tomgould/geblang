@@ -85,8 +85,9 @@ handled by peeking one character ahead.
 Identifiers and keywords share the same token type initially; the lexer checks a
 keyword table before returning the token, upgrading `Ident` to the keyword type
 where appropriate. String literals handle escape sequences and Unicode in the
-lexer. Numeric literals support decimal underscores (`1_000_000`), hex
-(`0xFF`), octal (`0o77`), and binary (`0b1010`) prefixes.
+lexer. Numeric literals support decimal underscores (`1_000_000`), scientific
+notation (`1.5e-3`, `1e3f`), hex (`0xFF`), octal (`0o77`), and binary
+(`0b1010`) prefixes.
 
 Doc comments (`##` or `/** ... */`) are accumulated in `pendingDocs` and
 attached to the next non-comment token so the parser can associate them with the

@@ -1104,6 +1104,56 @@ func f(foo.Bar x): void {}`},
 	}
 }
 
+func TestBackedEnumValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "unsupported backing type",
+			src:  `enum Bad: bool { Yes = true; }`,
+			want: "backing type must be string or int",
+		},
+		{
+			name: "missing backing value",
+			src:  `enum Bad: string { Yes = "yes"; No }`,
+			want: "requires a backing value",
+		},
+		{
+			name: "backing value without type",
+			src:  `enum Bad { Yes = "yes" }`,
+			want: "no backing type",
+		},
+		{
+			name: "wrong literal type",
+			src:  `enum Bad: int { Yes = "yes"; }`,
+			want: "must be int",
+		},
+		{
+			name: "duplicate value",
+			src:  `enum Bad: string { A = "x"; B = "x"; }`,
+			want: "already used",
+		},
+		{
+			name: "non literal",
+			src:  `let x = "x"; enum Bad: string { A = x; }`,
+			want: "must be a string or int literal",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			diags := analyzeInput(t, tc.src)
+			for _, diag := range diags {
+				if strings.Contains(diag.Message, tc.want) {
+					return
+				}
+			}
+			t.Fatalf("expected diagnostic containing %q, got: %v", tc.want, diags)
+		})
+	}
+}
+
 func TestAnalyzerRejectsModuleAsValue(t *testing.T) {
 	cases := []string{
 		"import math;\nlet x = math;\n",

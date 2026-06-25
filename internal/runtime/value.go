@@ -938,13 +938,15 @@ func (v NativeObject) TypeName() string { return v.Kind }
 func (v NativeObject) Inspect() string  { return "<" + v.Kind + ">" }
 
 type EnumVariantDefRuntime struct {
-	Name       string
-	FieldCount int
+	Name         string
+	FieldCount   int
+	BackingValue Value
 }
 
 type EnumDef struct {
-	Name     string
-	Variants []EnumVariantDefRuntime
+	Name        string
+	BackingType string
+	Variants    []EnumVariantDefRuntime
 	// Module is the enum's home module; the VM routes a method call to that
 	// module's chunk when it differs from the executing VM's module.
 	Module string
@@ -1011,8 +1013,62 @@ func EnumStaticMethod(enum *EnumDef, name string, args []Value) (Value, bool, er
 			}
 		}
 		return Null{}, true, nil
+	case "from", "tryFrom":
+		if enum.BackingType == "" {
+			return nil, true, fmt.Errorf("enum %s.%s is only available on backed enums", enum.Name, name)
+		}
+		if len(args) != 1 {
+			return nil, true, fmt.Errorf("enum %s.%s expects 1 argument, got %d", enum.Name, name, len(args))
+		}
+		if args[0].TypeName() != enum.BackingType {
+			return nil, true, fmt.Errorf("enum %s.%s expects a %s argument, got %s", enum.Name, name, enum.BackingType, args[0].TypeName())
+		}
+		for _, v := range enum.Variants {
+			if valuesIdentical(args[0], v.BackingValue) {
+				return EnumVariant{Enum: enum, Variant: v.Name}, true, nil
+			}
+		}
+		if name == "tryFrom" {
+			return Null{}, true, nil
+		}
+		return nil, true, fmt.Errorf("enum %s has no variant backed by %s", enum.Name, args[0].Inspect())
 	}
 	return nil, false, nil
+}
+
+func EnumVariantBackingValue(ev EnumVariant) (Value, bool) {
+	if ev.Enum == nil || ev.Enum.BackingType == "" {
+		return nil, false
+	}
+	for _, v := range ev.Enum.Variants {
+		if strings.EqualFold(v.Name, ev.Variant) && v.BackingValue != nil {
+			return v.BackingValue, true
+		}
+	}
+	return nil, false
+}
+
+func valuesIdentical(left, right Value) bool {
+	switch l := left.(type) {
+	case String:
+		r, ok := right.(String)
+		return ok && l.Value == r.Value
+	case SmallInt:
+		switch r := right.(type) {
+		case SmallInt:
+			return l.Value == r.Value
+		case Int:
+			return r.Value.IsInt64() && l.Value == r.Value.Int64()
+		}
+	case Int:
+		switch r := right.(type) {
+		case SmallInt:
+			return l.Value.IsInt64() && l.Value.Int64() == r.Value
+		case Int:
+			return l.Value.Cmp(r.Value) == 0
+		}
+	}
+	return false
 }
 
 type TaskResult struct {

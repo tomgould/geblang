@@ -1,5 +1,27 @@
 # Release Notes
 
+## 1.29.0
+
+### Language
+
+- Numeric literals now support scientific notation. Unsuffixed exponent
+  literals are exact `decimal` values (`1e3`, `1.5e-3`, `2E8`); add `f` for
+  IEEE 754 floats (`1e308f`).
+- Enums can now be backed by scalar `string` or `int` values:
+  `enum Status: string { Active = "active"; }`. Backed variants expose a
+  read-only `.value`, `EnumName.from(value)` returns the matching variant or
+  throws, and `EnumName.tryFrom(value)` returns the variant or `null`.
+  Backing values must be unique literals, and variants cannot mix backing
+  values with associated data.
+
+### Runtime
+
+- Bytecode chunk format version bumped 75 to 76 so backed enum metadata
+  round-trips through cached bytecode and built binaries.
+- The experimental `geblang build --native` path now rejects backed enums with a
+  clear diagnostic instead of emitting incorrect Go; use the default bytecode
+  build path for backed enums.
+
 ## 1.28.1
 
 ### Language

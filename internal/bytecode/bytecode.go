@@ -16,7 +16,7 @@ import (
 
 const (
 	Magic   = "GEBBC"
-	Version = uint16(75)
+	Version = uint16(76)
 )
 
 type Op byte
@@ -1085,10 +1085,21 @@ func appendConstant(out []byte, value runtime.Value) ([]byte, error) {
 		out = append(out, 7)
 		out = appendString(out, value.Name)
 		out = appendString(out, value.Module)
+		out = appendString(out, value.BackingType)
 		out = binary.BigEndian.AppendUint16(out, uint16(len(value.Variants)))
 		for _, v := range value.Variants {
 			out = appendString(out, v.Name)
 			out = binary.BigEndian.AppendUint16(out, uint16(v.FieldCount))
+			if v.BackingValue == nil {
+				out = append(out, 0)
+			} else {
+				out = append(out, 1)
+				var err error
+				out, err = appendMetadataValue(out, v.BackingValue)
+				if err != nil {
+					return nil, err
+				}
+			}
 		}
 		out = binary.BigEndian.AppendUint16(out, uint16(len(value.Implements)))
 		for _, name := range value.Implements {
@@ -1432,12 +1443,17 @@ func (r *byteReader) constant() runtime.Value {
 	case 7:
 		name := r.string()
 		module := r.string()
+		backingType := r.string()
 		count := int(r.u16())
-		enum := &runtime.EnumDef{Name: name, Module: module, Variants: make([]runtime.EnumVariantDefRuntime, 0, count)}
+		enum := &runtime.EnumDef{Name: name, Module: module, BackingType: backingType, Variants: make([]runtime.EnumVariantDefRuntime, 0, count)}
 		for i := 0; i < count; i++ {
 			variantName := r.string()
 			fieldCount := int(r.u16())
-			enum.Variants = append(enum.Variants, runtime.EnumVariantDefRuntime{Name: variantName, FieldCount: fieldCount})
+			var backingValue runtime.Value
+			if r.u8() != 0 {
+				backingValue = r.metadataValue()
+			}
+			enum.Variants = append(enum.Variants, runtime.EnumVariantDefRuntime{Name: variantName, FieldCount: fieldCount, BackingValue: backingValue})
 		}
 		implementsCount := int(r.u16())
 		for i := 0; i < implementsCount; i++ {

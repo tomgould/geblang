@@ -1,0 +1,23 @@
+/**
+ * @title Cross-module backed enums
+ * @summary Backed enum metadata survives import, VM module loading, and
+ * evaluator module resolution.
+ */
+import test;
+import backedstatus;
+
+class BackedEnumsCrossModuleTest extends test.Test {
+    @test
+    func foreignStringBackedEnum(): void {
+        this.assertEquals("active", backedstatus.Status.Active.value);
+        this.assertEquals(backedstatus.Status.Active, backedstatus.Status.from("active"));
+        this.assertNull(backedstatus.Status.tryFrom("missing"));
+    }
+
+    @test
+    func foreignIntBackedEnum(): void {
+        this.assertEquals(200, backedstatus.Code.Ok.value);
+        this.assertEquals(backedstatus.Code.NotFound, backedstatus.Code.from(404));
+        this.assertNull(backedstatus.Code.tryFrom(500));
+    }
+}

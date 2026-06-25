@@ -107,9 +107,10 @@ and infinities are `false`); `decimal.isInt()` is true when the exact
 value has denominator 1.
 
 A numeric literal like `2.9` is a `decimal`; floats are written with an
-`f` suffix (`2.9f`). Decimals display at 10 places by default (they
-store an exact value, not a scale), so use `toString(scale)` or a format
-spec to control the rendered precision:
+`f` suffix (`2.9f`). Scientific notation follows the same rule: `1e3`
+is the exact decimal `1000`, while `1e3f` is a `float`. Decimals display
+at 10 places by default (they store an exact value, not a scale), so use
+`toString(scale)` or a format spec to control the rendered precision:
 
 ```gb
 import io;

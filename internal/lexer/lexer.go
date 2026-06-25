@@ -345,6 +345,16 @@ func (l *Lexer) readNumberToken() token.Token {
 			l.readChar()
 		}
 	}
+	if (l.ch == 'e' || l.ch == 'E') && (isDigit(l.peekChar()) || ((l.peekChar() == '+' || l.peekChar() == '-') && isDigit(l.peekSecondChar()))) {
+		tokenType = token.Decimal
+		l.readChar()
+		if l.ch == '+' || l.ch == '-' {
+			l.readChar()
+		}
+		for isDigit(l.ch) {
+			l.readChar()
+		}
+	}
 	if l.ch == 'f' {
 		tokenType = token.Float
 		l.readChar()

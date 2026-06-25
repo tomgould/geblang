@@ -68,6 +68,46 @@ let half = 5 // 2;
 	}
 }
 
+func TestLexerReadsScientificNotationLiterals(t *testing.T) {
+	input := `let a = 1e308; let b = 1.5e-3; let c = 2E8; let d = 1e10f;`
+	tests := []struct {
+		tokenType token.Type
+		literal   string
+	}{
+		{token.Let, "let"},
+		{token.Ident, "a"},
+		{token.Assign, "="},
+		{token.Decimal, "1e308"},
+		{token.Semicolon, ";"},
+		{token.Let, "let"},
+		{token.Ident, "b"},
+		{token.Assign, "="},
+		{token.Decimal, "1.5e-3"},
+		{token.Semicolon, ";"},
+		{token.Let, "let"},
+		{token.Ident, "c"},
+		{token.Assign, "="},
+		{token.Decimal, "2E8"},
+		{token.Semicolon, ";"},
+		{token.Let, "let"},
+		{token.Ident, "d"},
+		{token.Assign, "="},
+		{token.Float, "1e10f"},
+		{token.Semicolon, ";"},
+		{token.EOF, ""},
+	}
+	l := lexer.New(input)
+	for i, tt := range tests {
+		tok := l.NextToken()
+		if tok.Type != tt.tokenType {
+			t.Fatalf("tests[%d] token type: got %q, want %q", i, tok.Type, tt.tokenType)
+		}
+		if tok.Literal != tt.literal {
+			t.Fatalf("tests[%d] literal: got %q, want %q", i, tok.Literal, tt.literal)
+		}
+	}
+}
+
 func TestLexerTracksUnicodeColumns(t *testing.T) {
 	input := "let café = \"😀\";\n"
 	l := lexer.New(input)

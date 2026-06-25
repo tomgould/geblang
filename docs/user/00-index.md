@@ -151,7 +151,7 @@ scale. The key differences are:
 | Async runtime | `asyncio`, event loop plumbing visible | `async func`, `await`, and `Task<T>` - runtime managed, no loop setup |
 | Decorators | Callable wrappers only, no runtime metadata | Both callable wrappers and inspectable metadata via `reflect` |
 | Type introspection | `type()`, `isinstance()`, `__class__` | `typeof(x)`, `x instanceof T`, `x.type`, consistent everywhere |
-| Enums | `enum.Enum` (import, class, `.value` access) | `enum Color { Red, Green }` - first-class syntax, pattern matching |
+| Enums | `enum.Enum` (import, class, `.value` access) | `enum Status: string { Active = "active"; }` - first-class syntax, pattern matching |
 | Generators | `yield`, `yield from`, generator expressions | `yield` in functions and closures, `generator<T>` type hint |
 | Distribution | `venv`, `pip`, runtime required | `geblang build` embeds interpreter, stdlib, and source into one binary |
 | Indentation sensitivity | Required (syntax-level) | Braces (no whitespace sensitivity) |
@@ -401,7 +401,7 @@ chapter covers the full surface.
 
 ## Status
 
-Geblang is at version 1.28.0 and under active development, with
+Geblang is at version 1.29.0 and under active development, with
 regular minor releases since 1.0 (see the release notes chapter for
 the full history). The bytecode VM is the default execution path; the
 tree-walking evaluator backs the test runner and acts as a

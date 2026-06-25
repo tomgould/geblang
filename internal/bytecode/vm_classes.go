@@ -372,6 +372,20 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 		return 0, vm.runtimeError(instruction, "enum %s has no variant %s", enumDef.Name, name)
 	}
 	if ev, ok := receiver.(runtime.EnumVariant); ok {
+		if name == "variant" {
+			vm.push(runtime.String{Value: ev.Variant})
+			return ip, nil
+		}
+		if name == "fields" {
+			vm.push(&runtime.List{Elements: ev.Fields})
+			return ip, nil
+		}
+		if name == "value" {
+			if value, ok := runtime.EnumVariantBackingValue(ev); ok {
+				vm.push(value)
+				return ip, nil
+			}
+		}
 		if idx, err2 := strconv.Atoi(name); err2 == nil && idx >= 0 && idx < len(ev.Fields) {
 			vm.push(ev.Fields[idx])
 			return ip, nil

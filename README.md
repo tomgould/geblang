@@ -1,7 +1,7 @@
 # Geblang
 
 Geblang is a statically-typed, general-purpose scripting language implemented in
-Go. Current version: **1.28.1**. It combines the ergonomics of PHP and Python
+Go. Current version: **1.29.0**. It combines the ergonomics of PHP and Python
 with strong static typing, generics, decorators, async, and runtime reflection.
 
 If you are coming from:
@@ -331,6 +331,15 @@ list<Shape> shapes = [
 for (Shape s in shapes) {
     io.println(area(s));
 }
+```
+
+Enums can also be backed by scalar values:
+
+```gb
+enum Status: string { Active = "active"; Closed = "closed"; }
+
+io.println(Status.Active.value);      # active
+io.println(Status.from("closed"));    # Status.Closed
 ```
 
 Tagged enums destructure inside `match`, so the payload binds with

@@ -231,6 +231,15 @@ let mask    = 0xFF;
 let million = 1_000_000;
 ```
 
+Decimal and float literals also support scientific notation. An exponent makes
+an unsuffixed literal a `decimal`; add the `f` suffix when you need an IEEE 754
+`float`:
+
+```gb
+let exact = 1.5e-3;   # decimal
+let wide  = 1e308f;   # float
+```
+
 ### The `decimal` type
 
 `decimal` stores values as exact rational numbers (numerator/denominator

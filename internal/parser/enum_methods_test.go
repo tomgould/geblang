@@ -45,6 +45,43 @@ func TestParseEnumWithAssociatedValuesBackCompat(t *testing.T) {
 	}
 }
 
+func TestParseBackedEnum(t *testing.T) {
+	stmt := parseEnumOnly(t, `enum Status: string {
+		Active = "active";
+		Closed = "closed";
+	}`)
+	if stmt.BackingType == nil || stmt.BackingType.Name != "string" {
+		t.Fatalf("backing type: got %#v, want string", stmt.BackingType)
+	}
+	if len(stmt.Variants) != 2 {
+		t.Fatalf("variants: got %d, want 2", len(stmt.Variants))
+	}
+	if stmt.Variants[0].BackingValue == nil || stmt.Variants[1].BackingValue == nil {
+		t.Fatalf("backed variants should carry backing expressions")
+	}
+	if _, ok := stmt.Variants[0].BackingValue.(*ast.StringLiteral); !ok {
+		t.Fatalf("first backing value: got %T, want *ast.StringLiteral", stmt.Variants[0].BackingValue)
+	}
+}
+
+func TestParseBackedEnumWithMethods(t *testing.T) {
+	stmt := parseEnumOnly(t, `enum Code: int {
+		Ok = 200;
+		NotFound = 404;
+
+		func isError(): bool { return this.value >= 400; }
+	}`)
+	if stmt.BackingType == nil || stmt.BackingType.Name != "int" {
+		t.Fatalf("backing type: got %#v, want int", stmt.BackingType)
+	}
+	if len(stmt.Variants) != 2 {
+		t.Fatalf("variants: got %d, want 2", len(stmt.Variants))
+	}
+	if len(stmt.Methods) != 1 {
+		t.Fatalf("methods: got %d, want 1", len(stmt.Methods))
+	}
+}
+
 func TestParseEnumWithMethods(t *testing.T) {
 	stmt := parseEnumOnly(t, `enum Status {
 		Active, Closed(string);

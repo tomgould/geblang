@@ -1,0 +1,62 @@
+/**
+ * @title Backed enums
+ * @summary Backed enums expose read-only scalar values and PHP-style
+ * from/tryFrom lookups while preserving ordinary enum equality and values().
+ */
+import test;
+
+enum Status: string {
+    Active = "active";
+    Closed = "closed";
+}
+
+enum Code: int {
+    Ok = 200;
+    NotFound = 404;
+
+    func isError(): bool {
+        return this.value >= 400;
+    }
+}
+
+class BackedEnumsTest extends test.Test {
+    @test
+    func stringBackedValues(): void {
+        this.assertEquals("active", Status.Active.value);
+        this.assertEquals("closed", Status.Closed.value);
+    }
+
+    @test
+    func stringBackedLookups(): void {
+        this.assertEquals(Status.Active, Status.from("active"));
+        this.assertEquals(Status.Closed, Status.tryFrom("closed"));
+        this.assertNull(Status.tryFrom("missing"));
+    }
+
+    @test
+    func fromThrowsOnMissingValue(): void {
+        try {
+            Status.from("missing");
+            this.fail("expected missing backed enum value to throw");
+        } catch (Error e) {
+            this.assertTrue(e.message.contains("no variant"));
+        }
+    }
+
+    @test
+    func intBackedValuesAndMethods(): void {
+        this.assertEquals(200, Code.Ok.value);
+        this.assertEquals(404, Code.NotFound.value);
+        this.assertEquals(Code.Ok, Code.from(200));
+        this.assertTrue(Code.from(404).isError());
+        this.assertNull(Code.tryFrom(500));
+    }
+
+    @test
+    func valuesIncludesBackedNullaryVariants(): void {
+        list<Status> all = Status.values();
+        this.assertEquals(2, all.length());
+        this.assertEquals("active", all[0].value);
+        this.assertEquals("closed", all[1].value);
+    }
+}

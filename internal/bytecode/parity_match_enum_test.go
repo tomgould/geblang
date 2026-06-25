@@ -220,6 +220,50 @@ io.println(Token.fromName("Number") == null);
 `, "2\nToken.Plus\nToken.Minus\ntrue\ntrue\n")
 }
 
+func TestParityBackedEnumString(t *testing.T) {
+	runParity(t, `import io;
+
+enum Status: string {
+    Active = "active";
+    Closed = "closed";
+}
+
+io.println(Status.Active.value);
+io.println(Status.Closed.value);
+io.println(Status.from("active") == Status.Active);
+io.println(Status.tryFrom("closed") == Status.Closed);
+io.println(Status.tryFrom("missing") == null);
+try {
+    io.println(Status.from("missing"));
+} catch (Error e) {
+    io.println("missing");
+}
+for (Status s in Status.values()) {
+    io.println(s.value);
+}
+`, "active\nclosed\ntrue\ntrue\ntrue\nmissing\nactive\nclosed\n")
+}
+
+func TestParityBackedEnumIntAndMethods(t *testing.T) {
+	runParity(t, `import io;
+
+enum Code: int {
+    Ok = 200;
+    NotFound = 404;
+
+    func isError(): bool {
+        return this.value >= 400;
+    }
+}
+
+io.println(Code.Ok.value);
+io.println(Code.NotFound.value);
+io.println(Code.from(200) == Code.Ok);
+io.println(Code.tryFrom(404).isError());
+io.println(Code.tryFrom(500) == null);
+`, "200\n404\ntrue\ntrue\ntrue\n")
+}
+
 func TestParityEnumMatchSimpleVariants(t *testing.T) {
 	runParity(t, `import io;
 
