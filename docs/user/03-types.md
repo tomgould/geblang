@@ -125,6 +125,25 @@ io.println((255).toString(16)); # ff
 io.println((3.1415926536 as decimal).toString(13));  # 3.1415926536000
 ```
 
+Rendering at a fixed scale rounds. `format(scale)` and `toString(scale)`
+round half away from zero to the requested number of places, which is the
+usual expectation for displaying a value. To scale a value *down* without
+rounding, truncate it to that scale first and then render - the value
+already sits at the target scale, so the render step has nothing left to
+round:
+
+```gb
+import io;
+decimal price = 1.246;
+io.println(price.format(2));                 # 1.25  (rounds when rendering)
+io.println(price.truncate(2).format(2));     # 1.24  (cut off toward zero, then render)
+io.println((-1.246).truncate(2).format(2));  # -1.24 (truncates toward zero, not -1.25)
+```
+
+The same composition works with `toString`: `price.truncate(2).toString(2)`
+yields `"1.24"`. `truncate` does the cutting-off; `format` / `toString`
+just choose how many places to show.
+
 ### Mixing numeric types
 
 The three numeric types interact by a single rule, designed to protect the
