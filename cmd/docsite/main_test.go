@@ -221,8 +221,24 @@ export func name(): string { return "app"; }
 	}
 }
 
-// --search/--search-scope inject a navbar form with a hidden product
-// filter; without the flags pages stay form-free.
+func TestLoadPagesExcludesArchiveFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "01-intro.md"), []byte("# Intro\n\ntext\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "18-release-notes-archive.md"), []byte("# Archive\n\nold notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pages, err := loadPages(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != 1 || pages[0].Title != "Intro" {
+		t.Fatalf("expected only the non-archive page, got %#v", pages)
+	}
+}
+
+// --search/--search-scope inject a navbar form; absent, pages stay form-free.
 func TestSearchFormInjection(t *testing.T) {
 	searchURL = ""
 	searchScope = ""

@@ -524,6 +524,10 @@ func loadPages(srcDir string) ([]page, error) {
 			return nil
 		}
 		if filepath.Ext(path) == ".md" {
+			// *-archive.md stays in-repo for history but is left out of the site.
+			if strings.HasSuffix(strings.TrimSuffix(filepath.Base(path), ".md"), "-archive") {
+				return nil
+			}
 			files = append(files, path)
 		}
 		return nil
