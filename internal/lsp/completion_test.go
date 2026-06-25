@@ -225,6 +225,111 @@ func TestCompletionOffersDatetimeInstantMethods(t *testing.T) {
 	}
 }
 
+func TestCompletionOffersEnumStaticSurface(t *testing.T) {
+	src := `enum Color { Red, Green, Blue }
+Color.`
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 1, Character: 6},
+	}})
+	for _, want := range []string{"Red", "Green", "Blue", "values", "fromName"} {
+		if !hasCompletion(items, want) {
+			t.Fatalf("expected `%s` in Color.<> completions, got %#v", want, items)
+		}
+	}
+	if hasCompletion(items, "from") || hasCompletion(items, "tryFrom") {
+		t.Fatalf("unbacked enum should not offer backed lookup completions, got %#v", items)
+	}
+}
+
+func TestCompletionOffersBackedEnumStaticSurface(t *testing.T) {
+	src := `enum Status: string { Active = "active"; Closed = "closed"; }
+Status.`
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 1, Character: 7},
+	}})
+	for _, want := range []string{"Active", "Closed", "values", "fromName", "from", "tryFrom"} {
+		if !hasCompletion(items, want) {
+			t.Fatalf("expected `%s` in Status.<> completions, got %#v", want, items)
+		}
+	}
+}
+
+func TestSignatureHelpForBackedEnumStaticLookup(t *testing.T) {
+	src := `enum Status: string { Active = "active"; Closed = "closed"; }
+Status.tryFrom(`
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	help := s.signatureHelp(SignatureHelpParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 1, Character: 15},
+	}})
+	if len(help.Signatures) != 1 {
+		t.Fatalf("expected one signature for Status.tryFrom, got %d (%#v)", len(help.Signatures), help)
+	}
+	if got, want := help.Signatures[0].Label, "tryFrom(string value): ?Status"; got != want {
+		t.Fatalf("signature: got %q, want %q", got, want)
+	}
+}
+
+func TestCompletionOffersBackedEnumValueMembers(t *testing.T) {
+	src := `enum Status: string { Active = "active"; Closed = "closed"; }
+Status s = Status.Active;
+s.`
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 2, Character: 2},
+	}})
+	for _, want := range []string{"variant", "fields", "value"} {
+		if !hasCompletion(items, want) {
+			t.Fatalf("expected `%s` in Status value completions, got %#v", want, items)
+		}
+	}
+}
+
+func TestCompletionOffersEnumMethodsOnValues(t *testing.T) {
+	src := `enum Status {
+	Active, Closed;
+
+	func isClosed(): bool { return this.variant == "Closed"; }
+}
+Status s = Status.Active;
+s.`
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 6, Character: 2},
+	}})
+	for _, want := range []string{"variant", "fields", "isClosed"} {
+		if !hasCompletion(items, want) {
+			t.Fatalf("expected `%s` in Status value completions, got %#v", want, items)
+		}
+	}
+	if hasCompletion(items, "value") {
+		t.Fatalf("unbacked enum value should not offer .value, got %#v", items)
+	}
+}
+
+func TestCompletionMarksTopLevelEnumAsEnum(t *testing.T) {
+	src := `enum Status: string { Active = "active"; Closed = "closed"; }
+Sta`
+	s := &server{docs: map[string]string{"file:///main.gb": src}}
+	items := s.completions(CompletionParams{TextDocumentPositionParams: TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: "file:///main.gb"},
+		Position:     Position{Line: 1, Character: 3},
+	}})
+	item, ok := findCompletion(items, "Status")
+	if !ok {
+		t.Fatalf("expected Status completion, got %#v", items)
+	}
+	if item.Kind != completionKindEnum {
+		t.Fatalf("Status completion kind: got %d, want %d", item.Kind, completionKindEnum)
+	}
+}
+
 // TestCompletionClassContextFallsThroughForUnknownClass verifies
 // that an unrecognised qualified type (e.g. `mymod.Mine x;`) falls
 // through to identifier completion rather than returning empty.
@@ -274,10 +379,15 @@ func TestSignatureHelpForClassMethod(t *testing.T) {
 }
 
 func hasCompletion(items []CompletionItem, label string) bool {
+	_, ok := findCompletion(items, label)
+	return ok
+}
+
+func findCompletion(items []CompletionItem, label string) (CompletionItem, bool) {
 	for _, item := range items {
 		if item.Label == label {
-			return true
+			return item, true
 		}
 	}
-	return false
+	return CompletionItem{}, false
 }

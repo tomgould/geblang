@@ -4,13 +4,21 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"geblang/internal/ast"
+	"geblang/internal/lexer"
+	"geblang/internal/parser"
 )
 
 const (
-	completionKindModule   = 9
-	completionKindFunction = 3
-	completionKindClass    = 7
-	completionKindKeyword  = 14
+	completionKindModule     = 9
+	completionKindFunction   = 3
+	completionKindClass      = 7
+	completionKindField      = 5
+	completionKindEnum       = 13
+	completionKindProperty   = 10
+	completionKindKeyword    = 14
+	completionKindEnumMember = 20
 )
 
 func (s *server) completions(params CompletionParams) []CompletionItem {
@@ -21,6 +29,13 @@ func (s *server) completions(params CompletionParams) []CompletionItem {
 	prefix := sourcePrefix(source, params.Position)
 	if mod, ok := moduleMemberContext(prefix); ok {
 		return moduleCompletionItems(mod)
+	}
+	enumInfos := fileEnumInfos(source)
+	if enumName, ok := enumStaticContext(prefix, enumInfos); ok {
+		return enumStaticCompletionItems(enumInfos[enumName])
+	}
+	if enumName, ok := enumInstanceContext(prefix, source, enumInfos); ok {
+		return enumInstanceCompletionItems(enumInfos[enumName])
 	}
 	// `this.<TAB>` inside a class extending test.Test -> the builtin
 	// assertion methods on the Test base class.
@@ -106,6 +121,17 @@ func (s *server) signatureHelp(params SignatureHelpParams) SignatureHelp {
 			ActiveParameter: activeParameter(argPrefix, len(fn.params)),
 		}
 	}
+	if fn, ok := lookupEnumStaticMethod(source, module, name); ok {
+		return SignatureHelp{
+			Signatures: []SignatureInformation{{
+				Label:         fn.signature(),
+				Documentation: fn.doc,
+				Parameters:    parameterInformation(fn.params),
+			}},
+			ActiveSignature: 0,
+			ActiveParameter: activeParameter(argPrefix, len(fn.params)),
+		}
+	}
 	fn, ok := lookupFunction(module, name)
 	if !ok {
 		return SignatureHelp{}
@@ -139,6 +165,18 @@ func lookupClassMethod(source, varName, method string) (functionDoc, bool) {
 	}
 	fn, ok := methods[method]
 	return fn, ok
+}
+
+func lookupEnumStaticMethod(source, enumName, method string) (functionDoc, bool) {
+	if enumName == "" || method == "" {
+		return functionDoc{}, false
+	}
+	enums := fileEnumInfos(source)
+	info, ok := enums[enumName]
+	if !ok {
+		return functionDoc{}, false
+	}
+	return enumStaticFunctionDoc(info, method)
 }
 
 func (s *server) document(uri string) (string, bool) {
@@ -376,6 +414,213 @@ func classMethodCompletionItems(qualified string) []CompletionItem {
 	return items
 }
 
+type lspEnumInfo struct {
+	name        string
+	backed      bool
+	backingType string
+	variants    []string
+	methods     []string
+}
+
+func fileEnumInfos(source string) map[string]lspEnumInfo {
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	out := map[string]lspEnumInfo{}
+	if program == nil {
+		return out
+	}
+	for _, stmt := range program.Statements {
+		collectEnumInfo(stmt, out)
+	}
+	return out
+}
+
+func collectEnumInfo(stmt ast.Statement, out map[string]lspEnumInfo) {
+	if exported, ok := stmt.(*ast.ExportStatement); ok && exported.Statement != nil {
+		collectEnumInfo(exported.Statement, out)
+		return
+	}
+	enumStmt, ok := stmt.(*ast.EnumStatement)
+	if !ok || enumStmt.Name == nil {
+		return
+	}
+	info := lspEnumInfo{name: enumStmt.Name.Value}
+	if enumStmt.BackingType != nil {
+		info.backed = true
+		info.backingType = enumStmt.BackingType.Name
+	}
+	for _, variant := range enumStmt.Variants {
+		if variant.Name != nil {
+			info.variants = append(info.variants, variant.Name.Value)
+		}
+	}
+	for _, method := range enumStmt.Methods {
+		if method.Name != nil {
+			info.methods = append(info.methods, method.Name.Value)
+		}
+	}
+	sort.Strings(info.variants)
+	sort.Strings(info.methods)
+	out[info.name] = info
+}
+
+func enumStaticContext(prefix string, enums map[string]lspEnumInfo) (string, bool) {
+	name, ok := selectorReceiver(prefix)
+	if !ok {
+		return "", false
+	}
+	if _, exists := enums[name]; exists {
+		return name, true
+	}
+	return "", false
+}
+
+func enumInstanceContext(prefix, source string, enums map[string]lspEnumInfo) (string, bool) {
+	name, ok := selectorReceiver(prefix)
+	if !ok {
+		return "", false
+	}
+	types := fileEnumVarTypes(source, enums)
+	enumName, ok := types[name]
+	if !ok {
+		return "", false
+	}
+	if _, exists := enums[enumName]; !exists {
+		return "", false
+	}
+	return enumName, true
+}
+
+func selectorReceiver(prefix string) (string, bool) {
+	trimmed := strings.TrimRightFunc(prefix, isIdentRune)
+	if !strings.HasSuffix(trimmed, ".") {
+		return "", false
+	}
+	beforeDot := strings.TrimSpace(strings.TrimSuffix(trimmed, "."))
+	name := trailingIdentifier(beforeDot)
+	return name, name != ""
+}
+
+func enumStaticCompletionItems(info lspEnumInfo) []CompletionItem {
+	items := make([]CompletionItem, 0, len(info.variants)+4)
+	for _, variant := range info.variants {
+		items = append(items, CompletionItem{
+			Label:  variant,
+			Kind:   completionKindEnumMember,
+			Detail: info.name + "." + variant,
+		})
+	}
+	names := []string{"fromName", "values"}
+	if info.backed {
+		names = append(names, "from", "tryFrom")
+	}
+	sort.Strings(names)
+	staticMethods := make([]CompletionItem, 0, len(names))
+	for _, name := range names {
+		fn, ok := enumStaticFunctionDoc(info, name)
+		if !ok {
+			continue
+		}
+		staticMethods = append(staticMethods, CompletionItem{
+			Label:         name,
+			Kind:          completionKindFunction,
+			Detail:        fn.signature(),
+			Documentation: fn.doc,
+		})
+	}
+	return append(items, staticMethods...)
+}
+
+func enumStaticFunctionDoc(info lspEnumInfo, name string) (functionDoc, bool) {
+	named := func(doc functionDoc) functionDoc {
+		doc.name = name
+		return doc
+	}
+	switch name {
+	case "fromName":
+		return named(fn([]string{"string name"}, "?"+info.name, "Resolves a nullary variant by exact variant name, or returns null.")), true
+	case "values":
+		return named(fn([]string{}, "list<"+info.name+">", "Returns the enum's nullary variants in declaration order.")), true
+	case "from":
+		if !info.backed {
+			return functionDoc{}, false
+		}
+		return named(fn([]string{info.backingType + " value"}, info.name, "Returns the variant with this backing value, or throws when absent.")), true
+	case "tryFrom":
+		if !info.backed {
+			return functionDoc{}, false
+		}
+		return named(fn([]string{info.backingType + " value"}, "?"+info.name, "Returns the variant with this backing value, or null when absent.")), true
+	}
+	return functionDoc{}, false
+}
+
+func enumInstanceCompletionItems(info lspEnumInfo) []CompletionItem {
+	items := []CompletionItem{
+		{Label: "fields", Kind: completionKindProperty, Detail: "fields: list<any>", Documentation: "Associated payload values for this enum variant."},
+		{Label: "variant", Kind: completionKindProperty, Detail: "variant: string", Documentation: "Variant name for this enum value."},
+	}
+	if info.backed {
+		items = append(items, CompletionItem{
+			Label:         "value",
+			Kind:          completionKindField,
+			Detail:        "value: " + info.backingType,
+			Documentation: "Backing scalar value for this enum variant.",
+		})
+	}
+	for _, method := range info.methods {
+		items = append(items, CompletionItem{
+			Label:  method,
+			Kind:   completionKindFunction,
+			Detail: info.name + "." + method + "(...)",
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Label < items[j].Label })
+	return items
+}
+
+func fileEnumVarTypes(source string, enums map[string]lspEnumInfo) map[string]string {
+	out := map[string]string{}
+	lines := strings.Split(source, "\n")
+	for _, line := range lines {
+		if idx := strings.Index(line, "#"); idx >= 0 {
+			line = line[:idx]
+		}
+		if idx := strings.Index(line, "//"); idx >= 0 {
+			line = line[:idx]
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		for _, prefix := range []string{"let ", "const ", "static "} {
+			if strings.HasPrefix(line, prefix) {
+				line = strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			}
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		typ := parts[0]
+		if _, ok := enums[typ]; !ok {
+			continue
+		}
+		name := parts[1]
+		for _, sep := range []string{"=", ";", ","} {
+			if idx := strings.Index(name, sep); idx >= 0 {
+				name = name[:idx]
+			}
+		}
+		name = strings.TrimSpace(name)
+		if name == "" || !isIdentName(name) {
+			continue
+		}
+		out[name] = typ
+	}
+	return out
+}
+
 // primitiveMethodCompletionItems returns the LSP CompletionItems for
 // every method registered on the given primitive type. Sorted for
 // determinism so the editor always shows the same order.
@@ -496,6 +741,8 @@ func userSymbolCompletionItems(source, prefix string) []CompletionItem {
 		switch sym.kind {
 		case symbolKindClass:
 			kind = completionKindClass
+		case symbolKindEnum:
+			kind = completionKindEnum
 		case symbolKindVariable, symbolKindConstant:
 			kind = 6 // variable kind in LSP CompletionItemKind
 		}

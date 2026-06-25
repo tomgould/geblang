@@ -75,6 +75,28 @@
         ],
         "description": "Enum declaration"
     },
+    "String backed enum declaration": {
+        "prefix": "enumstring",
+        "body": [
+            "enum ${1:Name}: string {",
+            "\t${3:VariantOne} = ${4:\"value_one\"};",
+            "\t${5:VariantTwo} = ${6:\"value_two\"};",
+            "$0",
+            "}"
+        ],
+        "description": "String backed enum declaration"
+    },
+    "Int backed enum declaration": {
+        "prefix": "enumint",
+        "body": [
+            "enum ${1:Name}: int {",
+            "\t${2:VariantOne} = ${3:1};",
+            "\t${4:VariantTwo} = ${5:2};",
+            "$0",
+            "}"
+        ],
+        "description": "Int backed enum declaration"
+    },
     "Match statement": {
         "prefix": "match",
         "body": [

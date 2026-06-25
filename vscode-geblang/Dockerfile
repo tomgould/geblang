@@ -10,6 +10,7 @@ RUN npm install
 COPY tsconfig.json build.mjs ./
 COPY src/ ./src/
 COPY syntaxes/ ./syntaxes/
+COPY snippets/ ./snippets/
 COPY language-configuration.json ./
 RUN npm run compile
 
