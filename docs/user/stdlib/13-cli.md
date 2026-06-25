@@ -132,9 +132,9 @@ needs a reusable command tree:
 import cli.command as cmd;
 
 let deploy = cmd.newCommand("deploy", "Deploy the application")
-    .option(cmd.newOption("env",  "string").required().describe("Target environment"))
-    .option(cmd.newOption("dry",  "bool").describe("Dry run, no changes"))
-    .option(cmd.newOption("tag",  "string").describe("Image tag to deploy"));
+    .option(cmd.newOption("env",  "string").required().help("Target environment"))
+    .option(cmd.newOption("dry",  "bool").help("Dry run, no changes"))
+    .option(cmd.newOption("tag",  "string").help("Image tag to deploy"));
 
 let parsed = deploy.parse(sys.args());
 if (parsed == null) {
@@ -147,9 +147,69 @@ io.println("deploying to " + parsed["env"]);
 
 Use `newOption(name, kind)` with:
 - `.required()` - fail if the option is absent
-- `.describe(text)` - add help text
+- `.help(text)` - add help text
 - `.default(value)` - set a default value
 - `.short(char)` - single-character alias
+
+## Progress bars and spinners
+
+Import the source module `cli.widgets` for two terminal progress
+indicators. Both draw to stderr, so they don't interfere with piped
+stdout.
+
+### `Spinner`
+
+`widgets.Spinner(message)` shows a rotating frame next to a message
+while a task runs. The caller owns the cadence: call `.tick()` to
+advance one frame, `.update(message)` to change the label, and
+`.stop(finalMessage?)` to clear the line.
+
+```gb
+import cli.widgets as widgets;
+
+let sp = widgets.Spinner("connecting");
+for (let int i = 0; i < 20; i++) {
+    sp.tick();
+    # ... do a slice of work ...
+}
+sp.update("fetching data");
+sp.tick();
+sp.stop("connected");
+```
+
+| Method | Description |
+|--------|-------------|
+| `Spinner(message)` | Create a spinner with an initial message. |
+| `tick()` | Draw the next frame. |
+| `update(message)` | Change the label shown after the spinner. |
+| `stop(finalMessage = "")` | Clear the line; optionally print a final message. |
+
+### `ProgressBar`
+
+`widgets.ProgressBar(total, width = 30, label = "")` renders a bar
+like `[#####-----] 50% (5/10) label`. Use `.advance(n = 1)` for the
+common increment, `.set(value)` for an explicit position,
+`.updateLabel(label)` to change the trailing text, and `.finish()`
+when done.
+
+```gb
+import cli.widgets as widgets;
+
+let bar = widgets.ProgressBar(10, 20, "downloading");
+for (let int i = 0; i < 10; i++) {
+    bar.advance();
+    # ... download one chunk ...
+}
+bar.finish("done");
+```
+
+| Method | Description |
+|--------|-------------|
+| `ProgressBar(total, width = 30, label = "")` | Create a bar of `width` columns over `total` units. |
+| `advance(n = 1)` | Add `n` to the current count and redraw. |
+| `set(value)` | Set the current count to `value` and redraw. |
+| `updateLabel(label)` | Change the trailing label and redraw. |
+| `finish(finalMessage = "")` | Clear the line; optionally print a final message. |
 
 ## `cli.color` - ANSI terminal styling
 

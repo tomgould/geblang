@@ -29,7 +29,7 @@ complex.fromPolar(r, theta)
 Returns a `Complex` from polar form `r * e^(i*theta)`. `theta` is in radians.
 
 ```gb
-let z = complex.fromPolar(5.0, math.pi() / 4.0);
+let z = complex.fromPolar(5.0, math.pi() / (4.0 as float));
 /* ~3.5355+3.5355i */
 ```
 
@@ -108,6 +108,6 @@ z + 2.0;     /* complex.of(3.0, 2.0) */
 try {
     complex.of(1.0, "x");
 } catch (RuntimeError e) {
-    io.println(e.message());
+    io.println(e.message);
 }
 ```

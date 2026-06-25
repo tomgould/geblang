@@ -94,7 +94,7 @@ let b = stats.normal(0.0, 1.0).sample(5, {"seed": 1});
 try {
     stats.normal(0.0, -1.0);
 } catch (RuntimeError e) {
-    io.println(e.message()); /* sigma must be > 0 */
+    io.println(e.message); /* sigma must be > 0 */
 }
 ```
 

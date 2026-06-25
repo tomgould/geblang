@@ -45,6 +45,12 @@ for (key in data.keys()) {
 
 `break` exits a loop. `continue` skips to the next iteration.
 
+The loop variable may carry a type annotation, and it is checked the same way a
+typed declaration is: `for (int n in [1, 2, 3])` is fine, but `for (string n in
+[1, 2, 3])` is an error ("cannot assign int to string n"), and an unknown type
+name is rejected ("unknown type ..."). Omit the type to let it be inferred from
+the iterable.
+
 Use `for-in` for collections and generators. Use C-style `for` loops when the
 index itself matters:
 
@@ -134,6 +140,7 @@ optional step and infer a negative step when `start > end`. The `a..b` and
 
 Range literals produce first-class values with methods and read-only properties.
 
+<!-- doctest:skip (value/method REPL showcase, not a full program) -->
 ```gb
 let r = 0..10 by 2;
 
@@ -168,7 +175,7 @@ io.println("range: ${r}");       # range: 0..10 by 2
 let [first, second] = pair;
 let {name, age} = person;
 
-for ([key, value] in data.items()) {
+for (key, value in data.items()) {
     io.println(key);
 }
 ```
@@ -323,19 +330,15 @@ no value.
 
 ### Multi-statement branches
 
-Use a block body `{ ... }` when a branch needs more than one statement:
+An arm is a single expression - there is no block-body arm. When a branch needs
+more than one step, call a helper that performs them and returns the value:
 
 ```gb
-match (status) {
-    case "ok" => {
-        io.println("success");
-        return true;
-    }
-    default => {
-        io.println("failed");
-        return false;
-    }
-}
+let report = match (status) {
+    case "ok" => summarize(results);
+    default   => "failed";
+};
+io.println(report);
 ```
 
 ### Or-patterns
@@ -373,12 +376,12 @@ typed case with an internal `if/else`.
 
 ### Guard clauses
 
-A `when` guard filters a case with an additional boolean condition:
+An `if` guard filters a case with an additional boolean condition:
 
 ```gb
 match (score) {
-    case int n when n >= 90 => io.println("A");
-    case int n when n >= 70 => io.println("B");
+    case int n if (n >= 90) => io.println("A");
+    case int n if (n >= 70) => io.println("B");
     default                 => io.println("C");
 }
 ```

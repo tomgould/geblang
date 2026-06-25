@@ -296,11 +296,11 @@ func outer(): void {
 try {
     outer();
 } catch (RuntimeError e) {
-    let trace = e.stackTrace();
-    let first = trace.first();
+    let frames = e.stackTrace();
+    let first = frames.first();
 
     io.println(errors.hasStackTrace(e)); # true
-    io.println(trace.length() > 0);      # true
+    io.println(frames.length() > 0);     # true
     io.println(first.function());        # inner
     io.println(first.line() > 0);        # true
 }

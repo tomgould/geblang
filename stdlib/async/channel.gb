@@ -13,10 +13,10 @@ import async.channel as native;
  *
  * let c = ch.Channel<int>(8);
  * async.run(func(): void {
- *     for (let int i = 0; i < 5; i++) { c.send(i); }
+ *     for (let i = 0; i < 5; i++) { c.send(i); }
  *     c.close();
  * });
- * for (var v in c) {
+ * for (v in c) {
  *     io.println(v);
  * }
  * ```

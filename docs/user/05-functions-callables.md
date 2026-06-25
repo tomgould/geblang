@@ -120,16 +120,19 @@ Java, JavaScript, and Ruby). The argument is a reference to the same value the
 caller holds, so:
 
 - **In-place mutation of a collection or object is visible to the caller** -
-  `list.append(x)`, `list.set(i, x)`, `dict.set(k, v)`, and `obj.field = x` all
-  change the caller's value.
-- **Operations that return a new value do not** - `list.push(x)` returns a new
-  list and leaves the caller's list unchanged.
+  the in-place mutators (`list.push(x)`, `list.append(x)`, `list.set(i, x)`,
+  `dict.set(k, v)`, and `obj.field = x`) all change the caller's value.
+  `push` and `append` mutate the list and return the receiver (the same
+  object), so chaining off the return value keeps mutating the caller's list.
+- **The copy variants do not** - `list.sorted()`, `list.reversed()`, and
+  `list.copy()` return new, independent lists and leave the caller's list
+  unchanged.
 - **Rebinding the parameter does not affect the caller** - assigning a whole new
   value to the parameter name (`xs = [9, 9]`) only changes the local binding.
 
 ```gb
 func addOne(list<int> xs): void {
-    xs.append(1);     # mutates the caller's list (in place)
+    xs.push(1);       # mutates the caller's list in place
     xs = [99];        # rebinds the local only; caller is unaffected
 }
 let nums = [1, 2, 3];

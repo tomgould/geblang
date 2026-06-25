@@ -614,9 +614,12 @@ slower than the VM. Build large strings with a list and `join`.
 
 ## Limitations
 
-- **OS and architecture**: A bundle built on Linux/amd64 runs only on
-  Linux/amd64. Cross-compilation is not yet supported; build on the target
-  platform or use a cross-compilation container.
+- **OS and architecture**: a built binary runs on the OS and architecture it
+  was produced for. Cross-compilation IS supported: `geblang build --runtime
+  <path>` embeds the bundle into a runtime compiled for another target, and the
+  shipped `scripts/cross-build.sh` helper does both steps (the runtime is pure
+  Go and cross-compiles with `CGO_ENABLED=0`). See "Cross-Platform Builds"
+  above.
 - **No hot-reload**: Bundled source is extracted once and cached. Changes to
   the original source files have no effect on a built bundle.
 - **Import-graph walking**: `geblang build` discovers modules by parsing import

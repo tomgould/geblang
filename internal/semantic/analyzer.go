@@ -834,6 +834,7 @@ func (a *Analyzer) analyzeStatement(stmt ast.Statement, fn *ast.FunctionStatemen
 		if stmt.Init != nil {
 			a.analyzeStatement(stmt.Init, fn)
 		}
+		a.checkForInBinder(stmt)
 		if stmt.Update != nil {
 			a.analyzeStatement(stmt.Update, fn)
 		}
@@ -1052,6 +1053,31 @@ func (a *Analyzer) isKnownTypeName(name string) bool {
 // checkTypeRefExists recursively flags any bare type name in an
 // annotation that resolves to no known type. Module-qualified names
 // (containing a dot) are validated by the cross-module check layer.
+// checkForInBinder enforces a present for-in loop-variable type like a typed declaration.
+func (a *Analyzer) checkForInBinder(stmt *ast.ForStatement) {
+	if stmt.VarType == nil {
+		return
+	}
+	a.checkTypeRefExists(stmt.VarType, "for-in loop variable")
+	if stmt.Iterable == nil || stmt.VarType.Name == "" || !a.isKnownTypeName(stmt.VarType.Name) {
+		return
+	}
+	declared := a.typeInfoFromRef(stmt.VarType)
+	names := stmt.VarNames
+	if stmt.VarName != nil {
+		names = []*ast.Identifier{stmt.VarName}
+	}
+	binds := a.forInBindingTypes(stmt.Iterable, len(names))
+	for i, name := range names {
+		if name == nil || i >= len(binds) {
+			continue
+		}
+		if binds[i].known && binds[i].name != "" && !a.isAssignable(declared, binds[i]) {
+			a.errorAt(stmt.VarType.Token, "cannot assign %s to %s %s", binds[i].display(), stmt.VarType.String(), name.Value)
+		}
+	}
+}
+
 func (a *Analyzer) checkTypeRefExists(ref *ast.TypeRef, context string) {
 	if ref == nil {
 		return

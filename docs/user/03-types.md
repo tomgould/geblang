@@ -235,7 +235,11 @@ throws a `RuntimeError` with the expected and actual types:
 get expects int | string for parameter 'id', got bool
 ```
 
-Catch with the standard `try` / `catch (RuntimeError e)` form.
+Catch with the standard `try` / `catch (RuntimeError e)` form - but only when
+the mismatch is genuinely runtime-opaque (the value arrives through an
+`any`-typed or otherwise dynamic path). A bad value the compiler can already
+see at the call site (`get(true)`) is reported as a static error and aborts
+before the `try` body runs, so it is not catchable.
 
 The intersection operator `&` is also supported in parameter and
 return positions: a value must match every branch. It's mainly useful
@@ -406,7 +410,7 @@ class Box<T> {
 
 Box<string> b = Box("hello");
 io.println(typeof(b) == Box);              # true
-io.println(reflect.typeBindings(b));       # {T: string}
+io.println(reflect.typeBindings(b));       # {"T": "string"}
 io.println(reflect.typeBindings(b)["T"]);  # string
 ```
 
@@ -686,7 +690,7 @@ class Container<T> {
 }
 
 let c = Container<string>();
-io.println(reflect.typeBindings(c));   # {"T": <Type string>}
+io.println(reflect.typeBindings(c));   # {"T": "string"}
 ```
 
 ### Enforcement of explicit type arguments

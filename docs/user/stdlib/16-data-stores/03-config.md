@@ -102,7 +102,7 @@ formats available through the serialization modules, such as `json`, `yaml`,
 `toml`, and `xml` where the parsed top-level value is an object.
 
 ```gb
-let cfg = config.parse("json", `{"server":{"port":8080}}`);
+let cfg = config.parse("json", '{"server":{"port":8080}}');
 io.println(cfg.require("server.port"));
 ```
 

@@ -128,7 +128,7 @@ class DequeTest extends test.Test {
         d.pushBack(2); d.pushBack(3); d.pushBack(4);
         d.pushFront(1); d.pushFront(0);
         let seen = ([] as list<int>);
-        for (var x in d) {
+        for (x in d) {
             seen.append(x);
         }
         this.assertEquals([0, 1, 2, 3, 4], seen);
@@ -140,7 +140,7 @@ class DequeTest extends test.Test {
         for (int v in [5, 3, 1, 4, 1, 5, 9, 2, 6]) { d.pushBack(v); }
         d.pushFront(0);
         let viaIter = ([] as list<int>);
-        for (var x in d) { viaIter.append(x); }
+        for (x in d) { viaIter.append(x); }
         this.assertEquals(d.toList(), viaIter);
     }
 

@@ -85,6 +85,6 @@ physics.convert(32.0, "F", "C");      /* 0.0 */
 try {
     physics.convert(1.0, "km", "kg");
 } catch (RuntimeError e) {
-    io.println(e.message()); /* physics.convert: dimension mismatch ... */
+    io.println(e.message); /* physics.convert: dimension mismatch ... */
 }
 ```

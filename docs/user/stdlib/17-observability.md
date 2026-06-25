@@ -66,7 +66,7 @@ part of the API, but entries include at least:
 | `level` | `string` | `info`, `warn`, `error`, or `debug` |
 | `message` | `string` | Log message |
 | `fields` | `dict` | Structured fields passed by the caller |
-| `timeUnix` | `int` | Timestamp as Unix seconds |
+| `time` | `string` | Timestamp as an RFC 3339 nanosecond string |
 
 ### Levels
 
@@ -97,6 +97,7 @@ log.info(logger, "user login", {
 Custom handlers can implement the exported `log.LogInterface`. Its required
 method has this shape:
 
+<!-- doctest:skip (callback signature illustration, not a full program) -->
 ```gb
 func handle(string level, string message, dict<string, any> fields): void;
 ```
@@ -335,13 +336,16 @@ Completed span dictionaries contain:
 
 | Key | Type | Description |
 |-----|------|-------------|
+| `id` | `int` | Span id |
 | `name` | `string` | Span name |
-| `startUnix` | `int` | Start timestamp |
-| `endUnix` | `int` | End timestamp |
-| `durationMs` | `int` | Duration in milliseconds |
+| `startUnixNano` | `int` | Start timestamp (nanoseconds) |
+| `ended` | `bool` | Whether the span has ended |
+| `endUnixNano` | `int` | End timestamp (nanoseconds) |
+| `durationNanos` | `int` | Duration in nanoseconds |
+| `attrs` | `dict` | Span attributes |
 | `events` | `list<dict>` | Span events |
 
-Event dictionaries contain `name`, `fields`, and `timeUnix`.
+Event dictionaries contain `name`, `attrs`, and `unixNano`.
 
 ### Parent / child spans
 
@@ -375,7 +379,7 @@ as before.
 |-----|------|---------|-------------|
 | `serviceName` | `string` | `"geblang"` | The `service.name` resource attribute |
 | `scopeName` | `string` | `"geblang.trace"` | InstrumentationScope name |
-| `scopeVersion` | `string` | `"1.4.0"` | InstrumentationScope version |
+| `scopeVersion` | `string` | toolchain version | InstrumentationScope version (defaults to the running Geblang version) |
 | `resource` | `dict<string, string>` | `{}` | Extra resource attributes |
 | `headers` | `dict<string, string>` | `{}` | Extra HTTP headers (exportOtlp only). Use to set `Authorization`, `X-Api-Key`, etc. |
 | `timeoutMs` | `int` | `10000` | HTTP timeout (exportOtlp only) |

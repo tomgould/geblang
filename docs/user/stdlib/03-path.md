@@ -21,7 +21,7 @@ if (io.exists(file)) {
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `join(parts...)` | `string` | Join path segments and clean the result |
+| `join(string ...parts)` | `string` | Join any number of path segments and clean the result |
 | `clean(path)` | `string` | Normalize `.` / `..` and duplicate separators |
 | `base(path)` | `string` | Last path element |
 | `dir(path)` | `string` | Parent directory path |
@@ -156,7 +156,7 @@ io.println(p.ext());
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `pathlib.of(raw)` | `Path` | Create a cleaned `Path` from a string |
-| `pathlib.join(parts...)` | `Path` | Join segments and return a `Path` |
+| `pathlib.join(string ...parts)` | `Path` | Join any number of segments and return a `Path` |
 
 ### `Path` Methods
 
@@ -168,7 +168,7 @@ io.println(p.ext());
 | `ext()` | `string` | File extension including the dot |
 | `stem()` | `string` | Base name without extension |
 | `withExt(newExt)` | `Path` | Return a path with a different extension |
-| `join(parts...)` | `Path` | Append segments |
+| `join(string ...parts)` | `Path` | Append any number of segments |
 | `abs()` | `Path` | Absolute path |
 | `toString()` | `string` | Plain string path |
 | `exists()` | `bool` | Whether the path exists |

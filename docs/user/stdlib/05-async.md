@@ -33,6 +33,8 @@ The whole point of tasks is to overlap work. Do not immediately `await` every
 task:
 
 ```gb
+import async.io as aio;   # task-returning file I/O (see "Async I/O submodules")
+
 # Good - both I/O operations run in parallel
 let configTask   = aio.readText("config/app.json");
 let templateTask = aio.readText("templates/page.html");
@@ -162,7 +164,8 @@ try {
 
 ## Structured concurrency: `async.scope`
 
-`async.scope.scope(body)` runs `body` with a fresh `TaskGroup` and
+Import the `async.scope` module (aliased below as `ascope`) and call
+`ascope.scope(body)`. It runs `body` with a fresh `TaskGroup` and
 guarantees that every child task spawned inside the body is awaited
 before the call returns. If the body throws, or any child task
 throws, the remaining children are cancelled and the first error is
@@ -260,7 +263,7 @@ await anet.close(conn);
 Task-returning wrappers for streaming parsers:
 
 ```gb
-let stream = await astream.jsonStream(source, func(value): void {
+let stream = await astream.jsonStream(source, func(any value): void {
     io.println(json.stringify(value));
 });
 ```
@@ -285,6 +288,120 @@ save("hello"); save("hello!"); save("hello world");
 |----------|---------|-------------|
 | `rate.throttle(fn, ms)` | `func` | Calls `fn` at most once per `ms` ms; returns the cached last result for calls inside the window. |
 | `rate.debounce(fn, ms)` | `func` | Returns a wrapper that, on each call, schedules `fn` to run after `ms` ms of quiet. Returns a `Task<any>` per call - the superseded ones resolve to `null`. |
+
+## High-level task combinators: `async.tasks`
+
+The `async.tasks` source module bundles common fan-out patterns so you
+don't have to wire up the task plumbing by hand. Pair it with the
+language-level `async` chapter (chapter 09), which covers `async func`,
+`await`, and `Task<T>` in depth.
+
+```gb
+import async;
+import async.tasks as tasks;
+```
+
+| Function | Description |
+|----------|-------------|
+| `tasks.map(items, fn, opts?)` | Run `fn` over each item concurrently; results in input order. `opts.concurrency` caps parallelism (0 = unbounded). Fail-fast: the first error cancels the rest. |
+| `tasks.forEach(items, fn, opts?)` | Like `map` but for side effects; returns `null`. |
+| `tasks.retry(fn, opts?)` | Call `fn` with exponential-backoff retry. `opts`: `attempts` (3), `delayMs` (0), `factor` (2.0), `maxDelayMs` (0 = uncapped), `jitter` (false), `retryIf` (callable). |
+| `tasks.settle(tasks)` | Await every task without fail-fast; per task `{"ok": true, "value": ...}` or `{"ok": false, "error": ...}`. |
+| `tasks.any(tasks)` | Return the first task, in list order, that succeeds; throws if every task fails. |
+| `tasks.parallel(fns)` | Run a list or dict of zero-arg callables concurrently. A list yields ordered results; a dict yields a same-keyed result dict. |
+
+```gb
+# Concurrent map with a parallelism cap of 4.
+let bodies = tasks.map(urls, func(any u): any {
+    return aio.readText(u as string);   # await happens inside the wrapped task
+}, {"concurrency": 4});
+
+# Retry a flaky call with backoff.
+let result = tasks.retry(func(): any {
+    return fetch();
+}, {"attempts": 5, "delayMs": 100, "jitter": true});
+```
+
+## Concurrency primitives
+
+For coordinating goroutine-backed tasks, three source modules provide
+the low-level building blocks. Reach for these only when a `Store`
+(below) or a channel doesn't fit; most code is better served by sharing
+state through a `store.Store`.
+
+### `async.sync` - locks and wait groups
+
+```gb
+import async.sync as sync;
+```
+
+| Class | Surface |
+|-------|---------|
+| `Mutex()` | `lock()`, `unlock()`, `tryLock()`. Mutual exclusion; not re-entrant. |
+| `RWMutex()` | `lock()` / `unlock()` (writer, exclusive), `rLock()` / `rUnlock()` (reader, shared), plus `tryLock()` / `tryRLock()`. |
+| `Semaphore(permits)` | `acquire()`, `release()`, `tryAcquire()`. Up to `permits` holders at once. |
+| `WaitGroup()` | `add(delta)`, `done()`, `wait()`. Block until the counter reaches zero. |
+
+```gb
+let wg = sync.WaitGroup();
+for (let int i = 0; i < 10; i++) {
+    wg.add(1);
+    async.run(func(): void {
+        try { /* work */ } finally { wg.done(); }
+    });
+}
+wg.wait();   # blocks until all ten finish
+```
+
+### `async.atomic` - lock-free cells
+
+```gb
+import async.atomic as atomic;
+```
+
+`AtomicInt(initial = 0)` is a sequentially-consistent int64 cell with
+`load()`, `store(value)`, `add(delta)` (returns the new value), and
+`compareAndSwap(old, next)`. `AtomicBool(initial = false)` is the same
+shape for a flag (`load`, `store`, `compareAndSwap`), handy for
+one-shot signals like closed / cancelled.
+
+```gb
+let counter = atomic.AtomicInt(0);
+counter.add(1);
+io.println(counter.load());   # 1
+```
+
+### `async.channel` - typed message passing
+
+```gb
+import async.channel as ch;
+```
+
+`Channel<T>(buffer = 0)` is a typed channel. `send(value)` and
+`recv()` block; with a positive buffer, sends are non-blocking until
+the buffer fills. `close()` halts further sends, after which recvs
+drain the buffer then return `null`. Also: `trySend(value)` /
+`tryRecv()` (non-blocking), and `isClosed()`. A channel iterates with
+`for-in`, ending when it is closed and drained.
+
+```gb
+let c = ch.Channel<int>(8);
+async.run(func(): void {
+    for (let int i = 0; i < 5; i++) { c.send(i); }
+    c.close();
+});
+for (v in c) {
+    io.println(v);
+}
+```
+
+### `async.token`
+
+`async.token()` is a builtin that returns a fresh, uncompleted `Task`
+used purely as a cancellation signal (it never resolves on its own).
+The `time.scheduler` Timer / Ticker classes use it internally; reach
+for it directly when you need a shared stop signal that several tasks
+can poll with `async.done(token)`.
 
 ## Task values and properties
 

@@ -287,8 +287,9 @@ each algorithm it tolerates:
 
 ```gb
 crypt.jwtVerify(token, secret, {"allowedAlgs": ["HS256", "none"]});
-``` Expiry checking is not
-automatic; verify `exp` yourself:
+```
+
+Expiry checking is not automatic; verify `exp` yourself:
 
 ```gb
 let payload = crypt.jwtVerify(token, secret, {"allowedAlgs": ["HS256"]});
@@ -533,7 +534,7 @@ io.println(bundle["cert"]);             # CERTIFICATE PEM (or null)
 io.println(bundle["caCerts"].length);   # int - intermediates
 ```
 
-Encoding to PFX is not in scope for 1.4.0; export from a CA tool
+Encoding to PFX is not currently supported; export from a CA tool
 (`openssl pkcs12 -export ...`) and decode on the Geblang side.
 
 ### Encrypted JWT (JWE)
@@ -747,8 +748,9 @@ Geblang ships two random number modules. Use the right one for the job:
 | Simulation, sampling, shuffling, procedural generation, fuzz inputs, tests | `random` | Deterministic pseudo-random number generator. Seedable for reproducibility. |
 
 `secrets.*` is the canonical security choice. `random.*` (documented in
-`12-utilities` / **Random**) is for everything else where reproducibility
-matters or cryptographic guarantees do not.
+[Utilities / random](20-utilities.md#random---deterministic-pseudo-random-number-generation))
+is for everything else where reproducibility matters or cryptographic
+guarantees do not.
 
 ### Constant-time comparison
 
@@ -945,7 +947,7 @@ if (!secureRandom.verifyCommitment(
     throw RuntimeError("server seed does not match published commitment");
 }
 
-for (var draw in published["draws"]) {
+for (draw in published["draws"]) {
     let expected = secureRandom.replay(
         published["serverSeed"] as string,
         published["clientSeed"] as string,

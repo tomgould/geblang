@@ -269,9 +269,9 @@ an improved interpreter. Geblang aims to be in the same ballpark as
 those interpreters on realistic application code without attempting
 to match the JIT.
 
-Indicative numbers from a development machine, measured against
-Geblang 1.18.0 (the absolute values will vary; medians of repeated
-runs):
+Indicative numbers from a development machine, measured against an
+earlier release (the absolute values will vary release to release and
+machine to machine; medians of repeated runs):
 
 | Benchmark          | Geblang | Python | PHP    | Node   |
 |--------------------|---------|--------|--------|--------|
@@ -315,7 +315,7 @@ much else; Geblang trails Python, PHP, and Node there. Call-heavy
 code pays for the per-call type validation that reified generics and
 enforced signatures require - 1.17.0's dispatch-loop work narrowed
 the gap, and further call-path tuning is ongoing. `regex_match` cost
-is dominated by the Go regex engine: 1.18.0's cached native dispatch
+is dominated by the Go regex engine: the cached native dispatch
 puts it ahead of CPython, still behind PCRE (PHP) and V8's Irregexp
 (Node).
 
@@ -401,7 +401,7 @@ chapter covers the full surface.
 
 ## Status
 
-Geblang is at version 1.18.0 and under active development, with
+Geblang is at version 1.28.0 and under active development, with
 regular minor releases since 1.0 (see the release notes chapter for
 the full history). The bytecode VM is the default execution path; the
 tree-walking evaluator backs the test runner and acts as a

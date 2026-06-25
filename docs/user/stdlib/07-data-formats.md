@@ -10,7 +10,9 @@ Import `json`:
 - `parseAs(text, ClassRef)` - parse and reconstruct a class instance
   (calls static `__deserialize(dict)` when defined, else the
   constructor matched on parameter names)
-- `tryParse(text)` - returns `null` on error instead of throwing
+- `tryParse(text)` - parse without throwing; returns a result dict
+  `{"ok": bool, "value": any, "error": any}` (on failure `ok` is
+  `false`, `value` is `null`, and `error` describes the problem)
 - `stringify(value)` - serialize to JSON string (accepts dicts, lists,
   scalars, and user-defined class instances; classes can override with
   `__serialize()`)
@@ -27,17 +29,24 @@ io.println(data["name"]);                    # Ada
 io.println(json.stringify({"ok": true}));    # {"ok":true}
 
 let result = json.tryParse("not json");
-if (result == null) {
-    io.println("invalid JSON");
+if (!(result["ok"] as bool)) {
+    io.println("invalid JSON: ${result["error"]}");
+} else {
+    io.println("parsed: ${result["value"]}");
 }
 ```
+
+`tryParse` never throws: it always returns a result dict. Check
+`result["ok"]` before reading `result["value"]`. A `== null` guard
+would never fire (the dict itself is never `null`), so failures would
+pass silently.
 
 ## YAML
 
 Import `yaml`:
 
-- `parse(text)`, `parseAs(text, ClassRef)`, `tryParse(text)`,
-  `stringify(value)`
+- `parse(text)`, `parseAs(text, ClassRef)`, `tryParse(text)` (returns a
+  `{"ok", "value", "error"}` result dict; see JSON above), `stringify(value)`
 - `validate(text)` - returns `bool`; `validateDetailed(text)` - returns detail dict
 - `reader(source)`, `stream(source, handler)`
 
@@ -52,8 +61,8 @@ io.println(cfg["server"]["port"] as string);   # 8080
 
 Import `toml`:
 
-- `parse(text)`, `parseAs(text, ClassRef)`, `tryParse(text)`,
-  `stringify(value)`
+- `parse(text)`, `parseAs(text, ClassRef)`, `tryParse(text)` (returns a
+  `{"ok", "value", "error"}` result dict; see JSON above), `stringify(value)`
 - `validate(text)` - returns `bool`; `validateDetailed(text)` - returns detail dict
 
 TOML is typically configuration-sized and does not expose a streaming reader.
@@ -69,8 +78,8 @@ io.println(cfg["database"]["url"]);
 
 Import `xml`:
 
-- `parse(text)`, `parseAs(text, ClassRef)`, `tryParse(text)`,
-  `stringify(value)`
+- `parse(text)`, `parseAs(text, ClassRef)`, `tryParse(text)` (returns a
+  `{"ok", "value", "error"}` result dict; see JSON above), `stringify(value)`
 - `validate(text)` - returns `bool`; `validateDetailed(text)` - returns detail dict
 - `reader(source)`, `stream(source, handler)`
 
@@ -121,15 +130,15 @@ instance, so a whole object tree comes back fully typed.
 class Address { string postcode; }
 class Order {
     string customer;
-    Address shipTo;            // nested object
-    list<Address> stops;       // list of objects
+    Address shipTo;            # nested object
+    list<Address> stops;       # list of objects
 }
 
 let o = json.parseAs(
     "{\"customer\":\"Ada\",\"shipTo\":{\"postcode\":\"EC1\"},\"stops\":[{\"postcode\":\"W1\"}]}",
     Order);
-io.println(o.shipTo.postcode);   // EC1
-io.println(o.stops[0].postcode); // W1
+io.println(o.shipTo.postcode);   # EC1
+io.println(o.stops[0].postcode); # W1
 ```
 
 Fields typed `any` (or a primitive) keep their raw parsed value, a
@@ -148,7 +157,7 @@ Import `csv` for both in-memory parsing and streaming.
 |----------|---------|-------------|
 | `csv.parse(text, options?)` | `list<list<string>>` | Parses CSV text into a list of rows; each row is a list of cell strings. Options: `delimiter` (single char), `trimSpace` (bool). |
 | `csv.parseDict(text, options?)` | `list<dict<string, string>>` | Parses CSV text using the first row as headers; returns a list of dicts keyed by header name. Same options. |
-| `csv.stringify(rows, options?)` | `string` | Serialises a list-of-lists into CSV text. Options: `delimiter`. |
+| `csv.stringify(rows, options?)` | `string` | Serialises a list-of-lists OR a list-of-dicts into CSV text. For a list of dicts, the first dict's keys become the header row; missing keys in later dicts produce empty cells. Options: `delimiter`. |
 | `csv.reader(source)` | `CsvReader` | Returns an incremental pull reader over a file / bytes / string source. Use `.hasNext()`, `.next()`, `.close()`. |
 | `csv.stream(source, handler)` | `void` | Push-based streaming with one callback per row. |
 
@@ -314,7 +323,8 @@ if (result["valid"] as bool) {
 ```
 
 `schema.validate(value, schema)` returns:
-- `{"valid": true}` on success
+- `{"valid": true, "errors": []}` on success (the `errors` list is always
+  present and empty when valid)
 - `{"valid": false, "errors": list<string>}` on failure, with one message per violation
 
 ### Common schema keywords

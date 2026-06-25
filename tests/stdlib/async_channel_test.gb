@@ -92,7 +92,7 @@ class AsyncChannelTest extends test.Test {
             c.close();
         });
         let collected = ([] as list<int>);
-        for (var v in c) {
+        for (v in c) {
             collected.append(v);
         }
         await producer;
@@ -105,7 +105,7 @@ class AsyncChannelTest extends test.Test {
         c.send("a"); c.send("b"); c.send("c");
         c.close();
         let out = ([] as list<string>);
-        for (var v in c) {
+        for (v in c) {
             out.append(v);
         }
         this.assertEquals(["a", "b", "c"], out);
@@ -130,7 +130,7 @@ class AsyncChannelTest extends test.Test {
             c.close();
         });
         let total = 0;
-        for (var v in c) {
+        for (v in c) {
             total = total + v;
         }
         this.assertEquals(50, total);

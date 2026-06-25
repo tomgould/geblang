@@ -46,7 +46,8 @@ Core runtime and host integration:
   process metadata, permissions, temp files, subprocesses, and shell integration.
 - [Subprocess Streaming](proc.html): `proc.spawn` with concurrent stdin /
   stdout / stderr streams, signals, and PTY support.
-- [Paths](path.html): path manipulation and object-oriented path helpers.
+- [Paths](path.html): path manipulation and object-oriented path helpers
+  (functional `path` plus the class-based `pathlib`).
 - [Watch](watch.html): filesystem watching.
 
 Concurrency and streaming:
@@ -64,6 +65,8 @@ Data and transformation:
   collection algorithms.
 - [Text, Regex, Markdown, And Templates](text.html): strings, regex, markdown
   rendering/parsing, and template helpers.
+- [HTML](html.html): lenient HTML5 parsing and CSS-selector queries for
+  scraping and data extraction.
 - [Bytes, Encoding, And Compression](bytes.html): bytes, base encodings,
   checksums, hashes, and compression.
 - [Math, Dates, And UUIDs](math-datetime.html): numeric helpers, time values,
@@ -94,8 +97,8 @@ Infrastructure and data stores:
   configuration, and schema validation.
 - [Database](data-stores/database.html): PDO-style database wrapper with SQLite,
   PostgreSQL, and MySQL connection examples.
-- [Redis](data-stores/redis.html): Redis strings, hashes, lists, sets, sorted
-  sets, expiry, counters, and connection handling.
+- [Redis](data-stores/redis.html): Redis strings, hashes, lists, sets, expiry,
+  counters, and connection handling.
 - [Config](data-stores/config.html): layered configuration loading and dotted
   path access.
 - [Schema](data-stores/schema.html): validation primitives and schema helpers.
@@ -143,7 +146,8 @@ Operations, introspection, and extension:
 - [stats](stats.html): probability distributions as objects - pdf, cdf, ppf,
   moments, and seeded sampling for 12 distributions (normal, uniform,
   exponential, gamma, beta, chiSquared, studentT, f, lognormal, weibull,
-  binomial, poisson).
+  binomial, poisson) - plus hypothesis tests, confidence intervals, and
+  linear regression.
 - [physics](physics.html): physical constants as zero-argument functions (speed
   of light, gravitational constant, Planck, Boltzmann, Avogadro, and more) and
   `convert` for unit conversion across length, mass, time, and temperature.

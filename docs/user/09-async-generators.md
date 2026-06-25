@@ -79,6 +79,9 @@ let slow = async.run(func(): string {
 io.println(await async.race([fast, slow]));  # "fast"
 ```
 
+For fan-out that must complete as a unit (all-or-nothing, with the rest
+cancelled on the first failure), see Structured Concurrency below.
+
 ### Timeouts
 
 `async.timeout(task, ms)` wraps a task with a deadline. If the task does not
@@ -111,6 +114,91 @@ let job = async.run(func(): int {
 job.cancel();
 io.println(job.cancelled);   # true
 ```
+
+## Structured Concurrency (`async.scope`)
+
+`async.run` starts a task and hands you a handle; awaiting it is then your job,
+and the task keeps running on its own goroutine even if the function that
+started it has already returned. That flexibility is useful, but when you fan
+work out it leaves three questions open: who waits for all of it, what happens
+if one task fails, and what stops a task from outliving the work it was meant
+for?
+
+`async.scope(body)` answers all three. It runs `body` with a task group and
+guarantees that every task spawned inside is awaited before the scope returns
+(nothing leaks past it), and that if the body or any child task throws, the
+remaining children are cancelled and the first error is rethrown. The tasks
+belong to the block:
+
+```gb
+import async;
+import async.scope as ascope;
+
+let users = ascope.scope(func(any group): list<any> {
+    let a = group.spawn(func(): any { return fetchUser(1); });
+    let b = group.spawn(func(): any { return fetchUser(2); });
+    return [async.await(a), async.await(b)];
+});
+# Both fetches have finished here. If either threw, the other was cancelled
+# and the error propagated out of scope() - no half-finished state, nothing
+# still running in the background.
+```
+
+Because the first failure is rethrown out of `scope()`, you handle it with an
+ordinary `try`/`catch` around the call - no per-task error plumbing:
+
+```gb
+try {
+    let users = ascope.scope(func(any group): list<any> {
+        let a = group.spawn(func(): any { return fetchUser(1); });
+        let b = group.spawn(func(): any { return fetchUser(2); });
+        return [async.await(a), async.await(b)];
+    });
+    render(users);
+} catch (RuntimeError e) {
+    # Reached as soon as either fetch fails; the other task has already been
+    # cancelled. e carries the first error that occurred.
+    io.println("fetch failed: " + e.message);
+}
+```
+
+`group.spawn(fn)` starts a task (the same `Task` you get from `async.run`) and
+`group.cancel()` signals every child. Cancellation is cooperative: a task that
+never checks its cancel signal runs to completion.
+
+### Which one do I use?
+
+- Reach for `async.scope` when a set of parallel tasks must finish together as a
+  unit and a failure in one should stop the rest: parallel fetches in a request
+  handler, concurrent file reads, assembling a batch of results where any single
+  failure should abort the others. The scope makes sure they all complete (or all
+  stop) before you continue, and that none keep running afterward.
+- Reach for plain `async.run` (with `async.await` / `async.all`) for tasks you
+  manage individually, or for genuine fire-and-forget background work meant to
+  outlive the current call (warming a cache, emitting a metric).
+
+To make the request-handler case concrete: say a page needs the current user,
+their recent orders, and some recommendations. In PHP you would fetch the three
+one after another, each call blocking, so the handler takes as long as the three
+added together. Fetching them in parallel makes the handler as slow as the
+single slowest call instead - but you still cannot render the page until all
+three have arrived, and if any one fails there is no page to build, so the other
+two are wasted work. "Execute as a unit" is exactly that: `async.scope` starts
+the three together, hands you every result once they are all in, and cancels the
+rest the moment one fails.
+
+Coming from PHP, this is worth pinning down, because one half is familiar and
+one half is not. Geblang keeps the part you rely on: each web request is handled
+in its own isolated copy of state, so one request can never see another's
+in-flight changes - shared-nothing, with no globals bleeding across requests.
+What differs is lifetime. PHP discards the whole world at the end of every
+request, so a "background task" simply cannot outlive it and "is something still
+running?" never comes up. A Geblang server is one long-lived process, so a task
+you spawn keeps running on its own goroutine until it finishes - it is not torn
+down when the handler returns. `async.scope` gives you back PHP's tidy
+"everything is done when this returns" guarantee for a block of parallel work:
+wait for the tasks, stop them all if one fails, and never let them outlive the
+scope.
 
 ## High-Level Task Helpers (`async.tasks`)
 
@@ -152,12 +240,13 @@ let data = task.parallel({"user": func(): any { return loadUser(1); },
 ### Capturing the loop variable
 
 A closure that captures a `for` loop variable directly shares one binding, so
-spawning tasks in a loop and reading the loop variable inside them yields the
-last value rather than each iteration's:
+spawning tasks in a loop and reading the loop variable inside them is a race:
+the tasks may see the wrong value - the last one, or a racy mix - rather than
+each its own:
 
 ```gb
 for (i in 1..3) {
-    async.run(func(): int { return i; });   # every task sees 3
+    async.run(func(): int { return i; });   # tasks may see the wrong value
 }
 ```
 
@@ -232,7 +321,7 @@ put it in a list, pass it to another function, or await it later.
 func awaitAll(list<Task<string>> tasks): list<string> {
     list<string> results = [];
     for (task in tasks) {
-        results = results.push(await task);
+        results.push(await task);
     }
     return results;
 }
@@ -432,7 +521,7 @@ async.run(func(): void {
     for (let int i = 0; i < 5; i++) { c.send(i); }
     c.close();
 });
-for (var v in c) {
+for (v in c) {
     io.println(v);
 }
 ```
@@ -455,7 +544,7 @@ blocks on each recv and exits when the channel is closed and
 drained. This is the idiomatic consumer pattern:
 
 ```gb
-for (var msg in incoming) {
+for (msg in incoming) {
     handle(msg);
 }
 ```
@@ -485,7 +574,7 @@ for (let int p = 0; p < 5; p++) {
 }
 async.run(func(): void { wg.wait(); c.close(); });
 
-for (var v in c) { consume(v); }
+for (v in c) { consume(v); }
 ```
 
 **Non-blocking poll**: use `tryRecv()` when you want to check for
@@ -605,7 +694,7 @@ import async;
 import async.sync as sync;
 
 let throttle = sync.Semaphore(10);   # at most 10 in flight
-for (var url in urls) {
+for (url in urls) {
     async.run(func(): void {
         throttle.acquire();
         try { fetch(url); } finally { throttle.release(); }

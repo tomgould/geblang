@@ -8,7 +8,7 @@ operating what you've already written.
 ## Shipping A Single Binary
 
 `geblang build --entry <module> --out <path>` bundles your program, its
-stdlib, and any installed dependencies into one statically-linked executable.
+stdlib, and any installed dependencies into one self-contained executable.
 The output is a normal Linux/macOS/Windows binary you can `scp` to a server
 or copy into a Docker image; the receiver does not need Geblang installed.
 
@@ -18,7 +18,7 @@ geblang build --entry app --out dist/myapp
 ```
 
 For containerised deployments, build inside a minimal base image and copy
-the artefact into a scratch image:
+the artefact into a small runtime image:
 
 ```dockerfile
 FROM golang:1.26 AS build
@@ -27,10 +27,16 @@ COPY . .
 RUN GOTOOLCHAIN=local go build -o /out/geblang ./cmd/geblang
 RUN /out/geblang build --entry app --out /out/myapp
 
-FROM scratch
+FROM gcr.io/distroless/base-debian12
 COPY --from=build /out/myapp /myapp
 ENTRYPOINT ["/myapp"]
 ```
+
+A default `geblang build` binary embeds the running runtime, which links
+glibc dynamically, so it needs a base image that provides libc (the
+distroless `base-debian12` above, or `debian:bookworm-slim`), not `scratch`.
+A binary cross-built with `scripts/cross-build.sh` forces `CGO_ENABLED=0` and
+is fully static, so `FROM scratch` works for those.
 
 The resulting image is typically 15-25 MB and starts in tens of
 milliseconds. There is no JVM warm-up, no interpreter fork, no source

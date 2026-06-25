@@ -55,4 +55,36 @@ class CSVTest extends test.Test {
         let rows = csv.parseDict("name,age");
         this.assertEquals(0, rows.length);
     }
+
+    @test
+    func stringifyDictsBasic(): void {
+        let records = [{"a": 1, "b": 2}, {"a": 3, "b": 4}];
+        let text = csv.stringify(records);
+        this.assertEquals("a,b\n1,2\n3,4\n", text);
+    }
+
+    @test
+    func stringifyDictsMissingKey(): void {
+        # second dict lacks "b" -> blank cell
+        let records = [{"a": 1, "b": 2}, {"a": 3}];
+        let text = csv.stringify(records);
+        this.assertEquals("a,b\n1,2\n3,\n", text);
+    }
+
+    @test
+    func stringifyDictsRoundtrip(): void {
+        let records = [{"name": "Ada", "age": "37"}, {"name": "Grace", "age": "55"}];
+        let text = csv.stringify(records);
+        let back = csv.parseDict(text);
+        this.assertEquals(2, back.length);
+        this.assertEquals("Ada", back[0]["name"]);
+        this.assertEquals("55", back[1]["age"]);
+    }
+
+    @test
+    func stringifyDictsCustomDelimiter(): void {
+        let records = [{"a": 1, "b": 2}];
+        let text = csv.stringify(records, {"delimiter": ";"});
+        this.assertEquals("a;b\n1;2\n", text);
+    }
 }

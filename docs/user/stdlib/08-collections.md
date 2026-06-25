@@ -402,9 +402,8 @@ io.println(by_age[0]["name"]); # Ada
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `groupBy(fn)` | `dict<string, list<T>>` | Group elements by the key returned by `fn` |
-| `chunk(size)` | `list<list<T>>` | Split into sub-lists of at most `size` elements |
+| `chunk(size)` | `list<list<T>>` | Split into non-overlapping sub-lists of at most `size` elements |
 | `partition(fn)` | `list<list<T>>` | `[[matching], [not-matching]]` |
-| `chunk(size)` | `list<list<T>>` | Non-overlapping sub-lists of at most `size` |
 | `windowed(size, step=1)` | `list<list<T>>` | Overlapping sliding windows of `size` (full windows only) |
 | `zip(other)` | `list<list<any>>` | Pair elements with a second list |
 | `unzip()` | `list<list<any>>` | Inverse of `zip`: a list of pairs becomes `[firsts, seconds]` |
@@ -643,6 +642,23 @@ Graph and tree algorithms:
 
 `graph` is a `dict` mapping each node to its list of neighbors (adjacency list).
 
+```gb
+import collections;
+import io;
+
+let graph = {
+    "a": ["b", "c"],
+    "b": ["d"],
+    "c": ["d"],
+    "d": []
+};
+
+io.println("${collections.bfs(graph, "a")}");              # [a, b, c, d]
+io.println("${collections.dfs(graph, "a")}");              # [a, b, d, c]
+io.println("${collections.topologicalSort(graph)}");       # [a, b, c, d]
+io.println("${collections.shortestPath(graph, "a", "d")}"); # [a, b, d]
+```
+
 Lazy helpers:
 
 - `range(start, end, step)` - lazy, exclusive end (the eager builtins are the
@@ -681,6 +697,10 @@ another class with the 1.0.6 iterator protocol) in a fluent,
 lazy-by-default pipeline. Intermediate ops return a new Stream that
 pulls values on demand; terminal ops drive the pipeline and produce
 a value.
+
+> See also the newer [`seq.Stream`](#seqstreamt-190) (1.9.0), a wider
+> fluent pipeline with more operations (`flatMap`, `distinct`, `sorted`,
+> `min` / `max`, `join`, and short-circuiting terminals).
 
 | Intermediate (returns Stream) | Effect |
 | --- | --- |
@@ -771,7 +791,7 @@ The deque implements the iterator protocol so it slots into
 ```gb
 let d = deque.Deque<string>();
 d.pushBack("a"); d.pushBack("b"); d.pushBack("c");
-for (var s in d) {
+for (s in d) {
     io.println(s);   # a, b, c
 }
 ```
@@ -941,7 +961,7 @@ import io;
 
 func topK<T>(list<T> values, int k): list<T> {
     let q = priorityq.PriorityQueue<T>();
-    for (var v in values) {
+    for (v in values) {
         if (q.length() < k) {
             q.push(v);
         } else if (v > q.peek()) {
@@ -957,6 +977,9 @@ io.println(topK([5, 2, 9, 1, 7, 3, 8, 4, 6], 3));   # [7, 8, 9]
 **Heap-sort** is a one-liner: push everything, then `drain()`.
 
 ## `seq.Stream<T>` (1.9.0)
+
+> This is the successor to the earlier [`streams.Stream`](#streams-module-106);
+> prefer `seq.Stream` for new code.
 
 `seq.stream(source)` wraps any iterable (list, set, range, or
 generator) in a lazy, single-use fluent pipeline. Intermediate

@@ -8,7 +8,7 @@ degrees. Distances use a mean Earth radius of 6371 km.
 import geo;
 
 let d = geo.haversineDistance(51.5074, -0.1278, 48.8566, 2.3522);
-io.println("${d} km");   /* ~341.4 km (London to Paris) */
+io.println("${d} km");   /* ~343.56 km (London to Paris) */
 ```
 
 ## Functions
@@ -40,7 +40,7 @@ Returns the initial bearing in degrees (0 to 360, clockwise from north)
 from point 1 to point 2.
 
 ```gb
-geo.bearing(51.5074, -0.1278, 48.8566, 2.3522);  /* ~156.2 degrees */
+geo.bearing(51.5074, -0.1278, 48.8566, 2.3522);  /* ~148.12 degrees */
 ```
 
 ### midpoint
@@ -55,7 +55,7 @@ Returns the geographic midpoint on the great-circle path as a dict
 ```gb
 let mid = geo.midpoint(51.5074, -0.1278, 48.8566, 2.3522);
 mid["lat"];   /* ~50.19 */
-mid["lon"];   /* ~1.08 */
+mid["lon"];   /* ~1.15 */
 ```
 
 ### destination
@@ -96,6 +96,6 @@ geo.destination(51.5074, -0.1278, 180.0, 200.0, "mi");
 try {
     geo.haversineDistance(91.0, 0.0, 0.0, 0.0);
 } catch (RuntimeError e) {
-    io.println(e.message()); /* geo.haversineDistance: latitude must be in [-90, 90] */
+    io.println(e.message); /* geo.haversineDistance: latitude must be in [-90, 90] */
 }
 ```

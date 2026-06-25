@@ -1,4 +1,4 @@
-.PHONY: all test test-go test-lang test-pgvector check-lang build build-with-path install bench bench-web bench-db bench-docker run repl check doctor cache-stats clean fmt docs docker-build compose-build vscode-build vscode-install vscode-install-wsl vscode-install-native
+.PHONY: all test test-go test-lang doc-test test-pgvector check-lang build build-with-path install bench bench-web bench-db bench-docker run repl check doctor cache-stats clean fmt docs docker-build compose-build vscode-build vscode-install vscode-install-wsl vscode-install-native
 
 BINARY ?= geblang
 GO ?= go
@@ -23,6 +23,7 @@ CODE ?= code
 # the expensive install/docs/vscode/bench steps.
 all:
 	$(MAKE) test
+	$(MAKE) doc-test
 	$(MAKE) install
 	$(MAKE) docs
 	$(MAKE) vscode-build
@@ -33,6 +34,11 @@ test: test-go test-lang
 
 test-go:
 	GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto $(GO) test ./...
+
+# doc-test parses every full-program ```gb block in docs/user so a broken
+# example fails the build; snippet/fragment blocks are skipped.
+doc-test:
+	GEBLANG_DOCTEST=1 GOCACHE=$(GOCACHE) GOTOOLCHAIN=auto $(GO) test ./internal/doctest -run TestDocExamplesParse -count=1
 
 # test-lang runs the Geblang-level regression suite under tests/.
 # It depends on the geblang binary being built (target: build).

@@ -87,8 +87,9 @@ In PTY mode `stderr` merges into `stdout`, so `p.stderr` is
 
 ## Signals and exit
 
-`process.kill()` sends SIGKILL. `process.signal(name)` sends a
-named signal:
+These are instance methods on the spawned `Process` value, not module
+functions. `p.kill()` sends SIGKILL; `p.signal(name)` sends a named
+signal:
 
 ```gb
 import sys;
@@ -100,9 +101,9 @@ p.signal("SIGTERM");
 let code = p.wait();
 ```
 
-The exit code from `wait()` mirrors the shell convention:
+The exit code from `wait()`:
 - Normal exit: the program's exit code.
-- Killed by signal: 128 + signal number (e.g. SIGTERM is 143).
+- Killed by signal: `-1`.
 
 ## When to prefer `process.run`
 

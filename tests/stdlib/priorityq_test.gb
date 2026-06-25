@@ -104,7 +104,7 @@ class PriorityQueueTest extends test.Test {
     @test
     func stringsUseNaturalOrder(): void {
         let q = priorityq.PriorityQueue<string>();
-        for (var s in ["banana", "apple", "cherry"]) { q.push(s); }
+        for (s in ["banana", "apple", "cherry"]) { q.push(s); }
         this.assertEquals("apple", q.pop());
         this.assertEquals("banana", q.pop());
         this.assertEquals("cherry", q.pop());

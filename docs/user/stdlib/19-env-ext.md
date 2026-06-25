@@ -100,7 +100,7 @@ let b64    = secrets.randomBase64(32);        # base64-encoded string
 ### Constant-time comparison
 
 ```gb
-let match = secrets.constantTimeEqual(submitted, stored);
+let equal = secrets.constantTimeEqual(submitted, stored);
 ```
 
 Use `constantTimeEqual` when comparing authentication tokens or HMAC values to

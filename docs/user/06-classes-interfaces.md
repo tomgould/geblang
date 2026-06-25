@@ -604,7 +604,7 @@ logging, caching, retry, or timing.
 
 ```gb
 func log(callable fn): callable {
-    return func(...args) {
+    return func(any ...args): any {
         io.println("calling", reflect.className(fn));
         return fn(...args);
     };
@@ -1347,11 +1347,12 @@ Enums are a good fit for closed sets and tagged results:
 
 ```gb
 enum SaveResult {
-    Saved(string id),
-    Duplicate(string field),
-    Failed(string message)
+    Saved(string),
+    Duplicate(string),
+    Failed(string)
 }
 
+let result = SaveResult.Duplicate("email");
 let message = match (result) {
     case SaveResult.Saved(string id) => "saved " + id;
     case SaveResult.Duplicate(string field) => "duplicate " + field;
@@ -1385,8 +1386,8 @@ enum Status {
 }
 
 let s = Status.Closed("fraud");
-s.isTerminal();   // true
-s.describe();     // "closed: fraud"
+s.isTerminal();   # true
+s.describe();     # "closed: fraud"
 ```
 
 Inside a method `this` is the receiving variant, typed as the enum. Per-variant
@@ -1423,8 +1424,8 @@ enum Status implements Describable {
 }
 
 Describable d = Status.Active;
-d.describe();                       // "active"
-Status.Active instanceof Describable;  // true
+d.describe();                       # "active"
+Status.Active instanceof Describable;  # true
 ```
 
 ### Enum static surface
@@ -1440,10 +1441,10 @@ Two operations are available on the enum type itself:
 ```
 enum Status { Active, Suspended, Closed }
 
-Status.values();              // [Status.Active, Status.Suspended, Status.Closed]
-Status.fromName("Suspended"); // Status.Suspended
-Status.fromName("unknown");   // null
-Status.fromName("active");    // null (case-sensitive)
+Status.values();              # [Status.Active, Status.Suspended, Status.Closed]
+Status.fromName("Suspended"); # Status.Suspended
+Status.fromName("unknown");   # null
+Status.fromName("active");    # null (case-sensitive)
 ```
 
 Tagged variants are excluded from both: a bare name cannot construct a variant

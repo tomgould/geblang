@@ -23,9 +23,9 @@ Use `geblang doc` to generate API reference material from Geblang source
 without executing the program:
 
 ```sh
-go run ./cmd/geblang doc examples/api_docs.gb
-go run ./cmd/geblang doc --format json examples/api_docs.gb
-go run ./cmd/geblang doc --out build/api.md src
+geblang doc examples/api_docs.gb
+geblang doc --format json examples/api_docs.gb
+geblang doc --out build/api.md src
 ```
 
 The command parses `.gb` files, reads docblocks, and emits declarations for
@@ -341,23 +341,23 @@ details.
 Useful examples:
 
 ```sh
-go run ./cmd/geblang examples/core.gb
-go run ./cmd/geblang examples/functions.gb
-go run ./cmd/geblang examples/classes.gb
-go run ./cmd/geblang examples/generics.gb
-go run ./cmd/geblang examples/generators.gb
-go run ./cmd/geblang examples/collections_module.gb
-go run ./cmd/geblang examples/api_docs.gb
-go run ./cmd/geblang examples/markdown.gb
-go run ./cmd/geblang examples/async/file.gb
-go run ./cmd/geblang examples/async/io.gb
-go run ./cmd/geblang examples/async/http.gb
-go run ./cmd/geblang examples/async/sockets.gb
-go run ./cmd/geblang examples/async/streams.gb
-go run ./cmd/geblang examples/async/network_engine.gb
-go run ./cmd/geblang examples/source_web_router.gb
-go run ./cmd/geblang examples/web_decorators.gb
-go run ./cmd/geblang examples/expense_tracker/src/main.gb
+geblang examples/core.gb
+geblang examples/functions.gb
+geblang examples/classes.gb
+geblang examples/generics.gb
+geblang examples/generators.gb
+geblang examples/collections_module.gb
+geblang examples/api_docs.gb
+geblang examples/markdown.gb
+geblang examples/async/file.gb
+geblang examples/async/io.gb
+geblang examples/async/http.gb
+geblang examples/async/sockets.gb
+geblang examples/async/streams.gb
+geblang examples/async/network_engine.gb
+geblang examples/source_web_router.gb
+geblang examples/web_decorators.gb
+geblang examples/expense_tracker/src/main.gb
 ```
 
 `examples/http_server.gb` starts a blocking HTTP server on

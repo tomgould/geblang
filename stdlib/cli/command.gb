@@ -39,20 +39,20 @@ export class Option {
     }
 
     func toSchema(): dict<string, any> {
-        dict<string, any> schema = {"type": this.kind};
+        dict<string, any> out = {"type": this.kind};
         if (!this.shortName.isEmpty()) {
-            schema["short"] = this.shortName;
+            out["short"] = this.shortName;
         }
         if (!this.helpText.isEmpty()) {
-            schema["help"] = this.helpText;
+            out["help"] = this.helpText;
         }
         if (this.requiredFlag) {
-            schema["required"] = true;
+            out["required"] = true;
         }
         if (this.hasDefaultValue) {
-            schema["default"] = this.defaultValue;
+            out["default"] = this.defaultValue;
         }
-        return schema;
+        return out;
     }
 }
 
@@ -74,12 +74,12 @@ export class Command {
     }
 
     func schema(): dict<string, any> {
-        dict<string, any> schema = {};
+        dict<string, any> out = {};
         for (option in this.options) {
             Option opt = option as Option;
-            schema[opt.name] = opt.toSchema();
+            out[opt.name] = opt.toSchema();
         }
-        return schema;
+        return out;
     }
 
     func parse(list<string> argv): dict<string, any> {

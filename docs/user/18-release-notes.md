@@ -1,5 +1,31 @@
 # Release Notes
 
+## 1.28.1
+
+### Language
+
+- A type annotation on a `for-in` loop variable is now checked and enforced, the
+  same way a typed declaration is. `for (int x in xs)` is fine, but an unknown type
+  name (for example `for (var x in xs)`, where `var` is not a type) and an
+  element-type mismatch (`for (string x in [1, 2])`) are reported by `geblang
+  check`, `run`, and `test`. Omit the type to infer it from the iterable.
+
+### Tooling
+
+- `geblang build --help` and `geblang test --help` now list every flag, including
+  `--resource` and the `--allow-ffi` / `--allow-onnx` / `--allow-process-control` /
+  `--allow-browser` capability flags.
+- Editor autocomplete now shows the correct signatures for `io.captureStdout` and
+  `io.captureStderr`: they take no arguments and return a capture stream you read
+  with `io.toString`.
+
+### Documentation
+
+- Corrected reference-manual examples that used syntax the language does not accept:
+  match block-body arms, `when` guards (the keyword is `if`), named enum fields,
+  untyped lambda parameters, scientific-notation float literals, and a backtick
+  string literal.
+
 ## 1.28.0
 
 ### Standard library

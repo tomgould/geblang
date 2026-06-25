@@ -1,4 +1,4 @@
-# HTML
+# HTML (`html`)
 
 The `html` module parses real-world HTML and lets you query it with CSS
 selectors. It uses a lenient HTML5 parser (the same parsing rules a browser

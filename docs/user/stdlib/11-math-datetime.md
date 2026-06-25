@@ -1,4 +1,12 @@
-# Math, Dates, And UUIDs
+# Math, Dates, Time, And UUIDs
+
+This chapter covers several related modules:
+
+- [Math](#math) - numeric helpers, statistics, special functions, combinatorics.
+- [Datetime](#datetime) - calendar-aware moments (`Instant`, `Duration`, `Zone`).
+- [Time](#time---elapsed-durations) - elapsed-duration timing, stopwatch, Unix-time precision.
+- [UUID](#uuid) - UUID / ULID generation and validation.
+- [Cron](#cron---schedule-expressions-160) - parsing cron expressions and computing firing times.
 
 ## Math
 
@@ -197,7 +205,7 @@ let nan = math.nan();
 io.println(math.isInf(inf));   # true
 io.println(math.isNaN(nan));   # true
 io.println(math.isNaN(42.0f)); # false
-io.println(inf > 1e308f);      # true
+io.println(inf > 1000000.0f);  # true
 ```
 
 `math.isPrime(n)` tests an integer for primality. Returns `false` for
@@ -251,11 +259,11 @@ All take `float` arguments and return `float`. `gamma(n)` satisfies
 followed by `x`.
 
 ```gb
-io.println(math.gamma(5.0f));              # 24.0  (== 4!)
-io.println(math.erf(0.0f));               # 0.0
-io.println(math.erfc(0.0f));              # 1.0
-io.println(math.j0(0.0f));               # 1.0
-io.println(math.jn(2, 0.0f));            # 0.0
+io.println(math.gamma(5.0f));   # 24.0  (== 4!)
+io.println(math.erf(1.0f));     # ~0.8427
+io.println(math.erfc(1.0f));    # ~0.1573  (1 - erf(1))
+io.println(math.j0(1.0f));      # ~0.7652
+io.println(math.jn(2, 1.0f));   # ~0.1149
 ```
 
 ### Combinatorics and number theory
@@ -279,7 +287,7 @@ io.println(math.comb(50, 25));     # 126410606437752
 io.println(math.perm(20, 10));     # 670442572800
 io.println(math.gcd(48, 36));      # 12
 io.println(math.lcm(4, 6));        # 12
-io.println(math.lcomb(50, 25));    # 32.07245...
+io.println(math.lcomb(50, 25));    # 32.47055650581197
 ```
 
 ---

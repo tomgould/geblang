@@ -56,6 +56,10 @@ if (client.auth("secret")) {
 | `hgetAll(key)` | `dict<string, any>` | Return all hash fields as a dictionary |
 | `close()` | `void` | Close the TCP connection |
 
+`ttl(key)` returns the remaining time-to-live in seconds, or one of Redis's
+negative sentinels: `-2` if the key does not exist, and `-1` if the key exists
+but has no expiry set.
+
 ## Examples
 
 Strings, counters, and expiry:

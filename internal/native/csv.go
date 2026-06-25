@@ -68,28 +68,25 @@ func registerCSV(r *Registry) {
 		if !ok {
 			return nil, fmt.Errorf("csv.stringify expects a list of rows")
 		}
+		if len(list.Elements) == 0 {
+			return runtime.String{Value: ""}, nil
+		}
 		var buf strings.Builder
 		w := csv.NewWriter(&buf)
 		if opts.delimiter != 0 {
 			w.Comma = opts.delimiter
 		}
-		for _, row := range list.Elements {
-			rowList, ok := row.(*runtime.List)
-			if !ok {
-				return nil, fmt.Errorf("csv.stringify rows must be lists")
+		switch list.Elements[0].(type) {
+		case runtime.Dict:
+			if err := csvStringifyDicts(w, list.Elements); err != nil {
+				return nil, err
 			}
-			cells := make([]string, len(rowList.Elements))
-			for j, cell := range rowList.Elements {
-				switch v := cell.(type) {
-				case runtime.String:
-					cells[j] = v.Value
-				default:
-					cells[j] = v.Inspect()
-				}
+		case *runtime.List:
+			if err := csvStringifyRows(w, list.Elements); err != nil {
+				return nil, err
 			}
-			if err := w.Write(cells); err != nil {
-				return nil, fmt.Errorf("csv.stringify: %v", err)
-			}
+		default:
+			return nil, fmt.Errorf("csv.stringify rows must be lists or dicts")
 		}
 		w.Flush()
 		if err := w.Error(); err != nil {
@@ -150,6 +147,64 @@ func csvParseArgs(args []runtime.Value, label string) (string, csvOptions, error
 		return "", csvOptions{}, fmt.Errorf("%s: %v", label, err)
 	}
 	return text.Value, opts, nil
+}
+
+func csvCellString(v runtime.Value) string {
+	if s, ok := v.(runtime.String); ok {
+		return s.Value
+	}
+	return v.Inspect()
+}
+
+func csvStringifyRows(w *csv.Writer, elements []runtime.Value) error {
+	for _, row := range elements {
+		rowList, ok := row.(*runtime.List)
+		if !ok {
+			return fmt.Errorf("csv.stringify rows must be lists")
+		}
+		cells := make([]string, len(rowList.Elements))
+		for j, cell := range rowList.Elements {
+			cells[j] = csvCellString(cell)
+		}
+		if err := w.Write(cells); err != nil {
+			return fmt.Errorf("csv.stringify: %v", err)
+		}
+	}
+	return nil
+}
+
+func csvStringifyDicts(w *csv.Writer, elements []runtime.Value) error {
+	firstDict := elements[0].(runtime.Dict)
+	dks := firstDict.EntryKeys()
+	headers := make([]string, len(dks))
+	for i, dk := range dks {
+		entry, _ := firstDict.GetEntry(dk)
+		ks, ok := entry.Key.(runtime.String)
+		if !ok {
+			return fmt.Errorf("csv.stringify: dict keys must be strings")
+		}
+		headers[i] = ks.Value
+	}
+	if err := w.Write(headers); err != nil {
+		return fmt.Errorf("csv.stringify: %v", err)
+	}
+	for _, elem := range elements {
+		d, ok := elem.(runtime.Dict)
+		if !ok {
+			return fmt.Errorf("csv.stringify: mixed row types not supported")
+		}
+		cells := make([]string, len(dks))
+		for i, dk := range dks {
+			entry, present := d.GetEntry(dk)
+			if present {
+				cells[i] = csvCellString(entry.Value)
+			}
+		}
+		if err := w.Write(cells); err != nil {
+			return fmt.Errorf("csv.stringify: %v", err)
+		}
+	}
+	return nil
 }
 
 func readCSVAll(text string, opts csvOptions) ([][]string, error) {

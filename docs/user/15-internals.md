@@ -754,7 +754,9 @@ Two things are worth knowing for long-running servers:
 
 - **Forcing a collection.** `profile.gc()` runs a GC cycle on demand; useful right
   after dropping a large object when you want the space reclaimed immediately
-  rather than at the next automatic cycle.
+  rather than at the next automatic cycle. (Note the one-letter difference: the
+  `profile` module here controls GC, while the separate `profiler` module is for
+  CPU/heap measurement - `profiler.snapshot()` / `profiler.delta()`.)
 
 Resources backed by an OS handle - open files, sockets, database connections,
 streaming response bodies - are not pure memory and should be released explicitly

@@ -10,7 +10,7 @@ class MultiReturnTest extends test.Test {
     func minMax(list<int> xs): list<int> {
         int lo = xs.get(0);
         int hi = xs.get(0);
-        for (var x in xs) {
+        for (x in xs) {
             if (x < lo) { lo = x; }
             if (x > hi) { hi = x; }
         }

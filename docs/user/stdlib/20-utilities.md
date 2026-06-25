@@ -27,7 +27,7 @@ All three functions work on both the evaluator and VM execution paths.
 
 Once frozen, mutation raises `ImmutableError`:
 
-```geblang
+```gb
 import freeze;
 
 let x = [1, 2, 3];
@@ -38,7 +38,7 @@ x[0] = 99;   # throws ImmutableError: cannot modify frozen list
 
 `ImmutableError` is catchable:
 
-```geblang
+```gb
 import freeze;
 
 let x = freeze.shallow({"key": "value"});
@@ -54,7 +54,7 @@ try {
 All collection types support a `.copy()` method that returns an unfrozen
 shallow copy, even when the original is frozen:
 
-```geblang
+```gb
 import freeze;
 
 let frozen = freeze.shallow([1, 2, 3]);
@@ -67,7 +67,7 @@ mutable[0] = 99;   # ok (mutable is a new, unfrozen list)
 Declaring a variable with `const` automatically shallow-freezes collection
 values at the point of declaration:
 
-```geblang
+```gb
 const config = {"host": "localhost", "port": 8080};
 config["host"] = "example.com";   # throws ImmutableError
 ```
@@ -79,7 +79,7 @@ Primitives assigned with `const` are unchanged (they are already immutable).
 Apply `@immutable` to a class to freeze every instance after its constructor
 returns. Field reads still work; any field assignment raises `ImmutableError`:
 
-```geblang
+```gb
 @immutable class Point {
     int x;
     int y;
@@ -93,7 +93,7 @@ p.x = 99;          # throws ImmutableError: cannot modify frozen instance of Poi
 
 Use the *wither* pattern to produce modified copies from immutable classes:
 
-```geblang
+```gb
 @immutable class Point {
     int x;
     int y;
@@ -121,7 +121,7 @@ When you need a fully independent copy, use a deep copy.
 | `clone.deep(v)` | same type | Deep copy of any value. Containers and class instances are cloned recursively; primitives are returned unchanged; resource handles (sockets, files, DB connections) are passed through, not duplicated. |
 | `xs.deepCopy()` | same type | Deep-copy method on lists, dicts, and sets - the deep counterpart of `.copy()`. |
 
-```geblang
+```gb
 import clone;
 
 let a = [[1], [2]];
@@ -156,7 +156,7 @@ default implementations. `get(key, default)` returns the value for `key` or
 class; it is intentionally not part of the interface, so read-only maps can omit
 it.
 
-```geblang
+```gb
 import maps;
 
 class CaseInsensitiveHeaders implements maps.DictInterface {

@@ -118,7 +118,7 @@ class NetIPTest extends test.Test {
 
     @test
     func ipBytesRoundTrip(): void {
-        for (var s in ["10.0.0.1", "192.168.42.255", "0.0.0.0", "255.255.255.255"]) {
+        for (s in ["10.0.0.1", "192.168.42.255", "0.0.0.0", "255.255.255.255"]) {
             let b = net.ipToBytes(s);
             this.assertEquals(4, b.length());
             this.assertEquals(s, net.ipFromBytes(b));

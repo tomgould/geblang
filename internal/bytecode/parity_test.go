@@ -2585,8 +2585,17 @@ io.println(rows[1][2]);
 `, "2\n3\n")
 }
 
-// @dataclass synthesizes a constructor, value __eq, __string, and with(); both
-// backends must produce identical results. frozen composes with immutability.
+func TestParityCSVStringifyDicts(t *testing.T) {
+	runParity(t, `import io;
+import csv;
+
+let records = [{"a": 1, "b": 2}, {"a": 3, "b": 4}];
+let text = csv.stringify(records);
+io.println(text);
+`, "a,b\n1,2\n3,4\n\n")
+}
+
+// @dataclass synthesizes constructor, value __eq, __string, and with(); frozen composes with immutability.
 func TestParityDataclass(t *testing.T) {
 	runParity(t, `import io;
 @dataclass

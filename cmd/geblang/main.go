@@ -371,7 +371,7 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "  geblang --trace-exec app.gb")
 		return true
 	case "build":
-		fmt.Fprintln(writer, "usage: geblang build --entry module.name --out <path> [--native] [<package-dir>]")
+		fmt.Fprintln(writer, "usage: geblang build --entry module.name --out <path> [--native] [--runtime <path>] [--resource <path>] [--allow-ffi <glob>] [--allow-onnx] [--allow-process-control] [--allow-browser] [--docker [--docker-port N] [--force]] [<package-dir>]")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Produces a self-contained executable from a Geblang package.")
 		fmt.Fprintln(writer, "The output binary bundles reachable source files, precompiled bytecode,")
@@ -389,6 +389,12 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "--docker        also write a Dockerfile next to the binary")
 		fmt.Fprintln(writer, "--docker-port N add EXPOSE N to the generated Dockerfile")
 		fmt.Fprintln(writer, "--force         overwrite an existing generated Dockerfile")
+		fmt.Fprintln(writer, "--no-assert     strip assert() calls from the bundled program")
+		fmt.Fprintln(writer, "--resource <p>  embed the file or directory at p into the binary as a resource (repeat for multiple)")
+		fmt.Fprintln(writer, "--allow-ffi <glob>       bake FFI access to libraries matching glob into the binary (capability)")
+		fmt.Fprintln(writer, "--allow-onnx             bake local ONNX inference into the binary (capability)")
+		fmt.Fprintln(writer, "--allow-process-control  bake process-control access into the binary (capability)")
+		fmt.Fprintln(writer, "--allow-browser          bake headless-browser access into the binary (capability)")
 		fmt.Fprintln(writer, "<package-dir>  package root directory containing geblang.yaml (default: .)")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Examples:")
@@ -458,7 +464,8 @@ func printHelp(writer io.Writer, topic string) bool {
 		return true
 	case "test":
 		fmt.Fprintln(writer, "usage: geblang test [--tag name] [--class ClassName] [--method methodName]")
-		fmt.Fprintln(writer, "                    [--verbose|-v|--format <summary|verbose|teamcity>] <file-or-dir>")
+		fmt.Fprintln(writer, "                    [--verbose|-v|--format <summary|verbose|teamcity>]")
+		fmt.Fprintln(writer, "                    [--allow-ffi <glob>] [--allow-process-control] [--allow-onnx] [--allow-browser] <file-or-dir>")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Runs Geblang test files. Directory paths discover *_test.gb files recursively.")
 		fmt.Fprintln(writer, "--tag name runs only tests decorated with the given tag. Repeat to include multiple tags.")
@@ -466,6 +473,7 @@ func printHelp(writer io.Writer, topic string) bool {
 		fmt.Fprintln(writer, "--method methodName restricts the run to that method (repeat for multiple methods).")
 		fmt.Fprintln(writer, "--verbose / -v prints each test class and method with PASS/FAIL status (testdox-style).")
 		fmt.Fprintln(writer, "--format teamcity emits ##teamcity[...] service messages for JetBrains IDE test runners.")
+		fmt.Fprintln(writer, "--allow-ffi <glob> / --allow-process-control / --allow-onnx / --allow-browser grant the matching capability to the run (default-deny).")
 		fmt.Fprintln(writer)
 		fmt.Fprintln(writer, "Examples:")
 		fmt.Fprintln(writer, "  geblang test tests/user_test.gb")

@@ -102,7 +102,7 @@ running sum flattened to 1-D. Integer arrays keep `int64` for `sum` /
 | Call | Result |
 |------|--------|
 | `a.matmul(b)` | Matrix product (blocked float64 kernel) |
-| `a.dot(v)` | Vector dot product |
+| `a.dot(v)` | Dot product of two 1-D arrays (use matmul for matrix / matrix-vector products) |
 | `solve(a, b)` | Solves `a x = b` (Gaussian elimination, partial pivoting) |
 | `inv(a)` | Matrix inverse |
 | `det(a)` | Determinant (`0.0` for a singular matrix) |

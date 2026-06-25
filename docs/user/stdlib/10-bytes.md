@@ -90,8 +90,8 @@ URL and HTML escaping (all string -> string):
   schemes). Escaping neutralizes all markup; sanitizing keeps a safe subset.
 
 ```gb
-encoding.htmlEscape("<b>hi</b>");                       // "&lt;b&gt;hi&lt;/b&gt;"
-encoding.sanitizeHtml("<b>hi</b><script>x()</script>"); // "<b>hi</b>"
+encoding.htmlEscape("<b>hi</b>");                       # "&lt;b&gt;hi&lt;/b&gt;"
+encoding.sanitizeHtml("<b>hi</b><script>x()</script>"); # "<b>hi</b>"
 ```
 
 Use this module for transport encodings and escaping, not password hashing or

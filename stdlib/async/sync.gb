@@ -132,7 +132,7 @@ export class Semaphore {
  *
  * ```gb
  * let wg = WaitGroup();
- * for (var i = 0; i < 10; i++) {
+ * for (let i = 0; i < 10; i++) {
  *     wg.add(1);
  *     async.run(func(): void {
  *         try { # work

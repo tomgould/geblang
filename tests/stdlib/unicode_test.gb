@@ -49,7 +49,7 @@ class UnicodeTest extends test.Test {
 
     @test
     func asciiIsAlreadyAllForms(): void {
-        for (var form in ["NFC", "NFD", "NFKC", "NFKD"]) {
+        for (form in ["NFC", "NFD", "NFKC", "NFKD"]) {
             this.assertTrue(unicode.isNormalized("hello", form));
             this.assertEquals("hello", unicode.normalize("hello", form));
         }
@@ -68,7 +68,7 @@ class UnicodeTest extends test.Test {
 
     @test
     func emptyStringRoundTrips(): void {
-        for (var form in ["NFC", "NFD", "NFKC", "NFKD"]) {
+        for (form in ["NFC", "NFD", "NFKC", "NFKD"]) {
             this.assertEquals("", unicode.normalize("", form));
             this.assertTrue(unicode.isNormalized("", form));
         }
@@ -77,7 +77,7 @@ class UnicodeTest extends test.Test {
     @test
     func mixedScriptText(): void {
         let s = "café 中文 mañana";
-        for (var form in ["NFC", "NFD", "NFKC", "NFKD"]) {
+        for (form in ["NFC", "NFD", "NFKC", "NFKD"]) {
             let n = unicode.normalize(s, form);
             this.assertTrue(unicode.isNormalized(n, form));
         }

@@ -8,7 +8,7 @@ discovers `*_test.gb` files, instantiates each test class, and runs every
 
 ## A first test
 
-```geblang
+```gb
 import test;
 
 class CalculatorTest extends test.Test {
@@ -80,7 +80,7 @@ error class, walking the parent chain like a `catch` clause. The class
 is given as a class value or a name string, so built-in error classes
 work without reifying them:
 
-```geblang
+```gb
 import test;
 
 func divide(int a, int b): int {
@@ -108,7 +108,7 @@ Call `this.skip()` (optionally with a reason) to abandon the current
 method without failing it. The runner records it as skipped and moves
 on. Statements after `skip` do not run:
 
-```geblang
+```gb
 class PlatformTest extends test.Test {
     @test
     func usesAFeatureNotAlwaysPresent(): void {
@@ -128,7 +128,7 @@ separately in the summary line (see Running tests in CI below).
 `test.Test` recognises four optional lifecycle hooks. Override any of them
 on your subclass:
 
-```geblang
+```gb
 class DatabaseTest extends test.Test {
     int conn;
 
@@ -163,7 +163,7 @@ module name and a dict mapping function names to replacement
 callables; calls to those functions, including from code nested deep
 inside the unit under test, see the replacement.
 
-```geblang
+```gb
 import test;
 import datetime;
 
@@ -180,7 +180,7 @@ Patches are scoped to the method that installs them. They roll back
 automatically before the next method runs, so one test cannot leak a
 mock into another:
 
-```geblang
+```gb
 @test
 func seesRealTimeAgain(): void {
     # the patch from the previous method is already gone
@@ -191,7 +191,7 @@ func seesRealTimeAgain(): void {
 Replacement callables receive the real arguments, so a mock can return
 different values per input:
 
-```geblang
+```gb
 test.mock("crypt", {
     "sha256": func(string s): string {
         if (s == "key") { return "matched"; }
@@ -215,7 +215,7 @@ is harmless: the patch simply sits unused.
 
 Decorate `@test` methods with `@tag("name")` to put them into a category:
 
-```geblang
+```gb
 class WebTest extends test.Test {
     @tag("integration")
     @test
@@ -256,7 +256,7 @@ table of cases inside one `@test` method does the job. Each iteration
 asserts, and a failure reports which row failed via the assertion
 message:
 
-```geblang
+```gb
 class LengthTest extends test.Test {
     @test
     func countsCharacters(): void {
@@ -395,7 +395,7 @@ source. `geblang test` then runs the test file inside the module, so
 private functions, classes, constants, and module-level state are
 directly visible:
 
-```geblang
+```gb
 # users.gb
 module app.users;
 
@@ -406,7 +406,7 @@ func normalizeId(string id): string {
 export func findUser(string id): ?User { ... }
 ```
 
-```geblang
+```gb
 # users_test.gb
 module app.users;
 import test;
@@ -438,7 +438,7 @@ the module under test and exercise its exported surface.
 The runtime enforces declared element types for `list<T>`, `set<T>`, and
 `dict<K,V>`. A test can confirm the enforcement:
 
-```geblang
+```gb
 @test
 func listRejectsWrongElement(): void {
     let threw = false;

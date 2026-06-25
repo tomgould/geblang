@@ -1272,3 +1272,42 @@ class C {
 		t.Fatalf("expected 'list has no method upper' diagnostic, got %v", diagnostics)
 	}
 }
+
+func TestAnalyzerEnforcesForInBinderType(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"unknown type var", "for (var x in [1, 2]) {}\n", "unknown type"},
+		{"unknown type name", "for (Bogus x in [1, 2]) {}\n", "unknown type"},
+		{"mismatch string over ints", "for (string x in [1, 2]) {}\n", "cannot assign int to string"},
+		{"typed match", "for (int x in [1, 2]) {}\n", ""},
+		{"bare binder", "for (x in [1, 2]) {}\n", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := parser.New(lexer.New(tc.src))
+			program := p.ParseProgram()
+			if len(p.Errors()) != 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+			diagnostics := semantic.New().Analyze(program)
+			if tc.want == "" {
+				if len(diagnostics) != 0 {
+					t.Fatalf("expected no diagnostics, got %v", diagnostics)
+				}
+				return
+			}
+			found := false
+			for _, d := range diagnostics {
+				if strings.Contains(d.Message, tc.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("expected a diagnostic containing %q, got %v", tc.want, diagnostics)
+			}
+		})
+	}
+}
