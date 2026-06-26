@@ -77,6 +77,14 @@ The same reference is rendered as a browsable HTML site at
 
 ## Install
 
+Pre-built binaries for Linux, macOS, and Windows are attached to each
+[GitHub release](https://github.com/dwgebler/geblang/releases/latest). Download
+the archive for your platform, extract it, and put `geblang` on your `PATH`. The
+[downloads page](https://geblang.com/downloads) lists per-platform links and
+install steps.
+
+To build from source instead:
+
 ```sh
 make build              # produces ./geblang
 make docs               # builds the static reference site
