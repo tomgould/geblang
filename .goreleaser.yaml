@@ -1,0 +1,52 @@
+# Release config for the Geblang language toolchain (the geblang CLI).
+# The gebweb CLI is released separately from github.com/dwgebler/gebweb (its own
+# repo + Go module); it is useless without the gebweb framework sources a project
+# installs via `geblang install`, so it does not belong in the geblang release.
+# Validate locally:  goreleaser release --snapshot --clean --skip=publish
+# Publish a release:  git tag v1.29.1 && GITHUB_TOKEN=... goreleaser release --clean
+# Published to github.com/dwgebler/geblang regardless of the local git remote.
+version: 2
+
+project_name: geblang
+
+builds:
+  - id: geblang
+    main: ./cmd/geblang
+    binary: geblang
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: toolchain
+    ids: [geblang]
+    name_template: "geblang_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE*
+      - NOTICES.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+release:
+  github:
+    owner: dwgebler
+    name: geblang
+  draft: true
+  name_template: "Geblang {{ .Version }}"

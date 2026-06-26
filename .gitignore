@@ -20,3 +20,4 @@ __pycache__/
 tmp/
 .geblang-cache/
 benchmarks/web/loadgen-bin
+/dist/
