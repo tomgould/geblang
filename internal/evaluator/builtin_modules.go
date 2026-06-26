@@ -927,6 +927,7 @@ func (e *Evaluator) builtinModules() map[string]map[string]builtinFunc {
 			"file":     e.logFile,
 			"toStream": e.logToStream,
 			"custom":   e.logCustom,
+			"syslog":   e.logSyslog,
 			"info":     e.logInfo,
 			"warn":     e.logWarn,
 			"error":    e.logError,

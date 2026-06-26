@@ -23,7 +23,7 @@ func (vm *VM) constructClass(instruction Instruction, ip int) (int, error) {
 	for i := argc - 1; i >= 0; i-- {
 		value, err := vm.pop()
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		args[i] = value
 	}
@@ -45,7 +45,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 			default:
 				result, err := vm.callCallable(decorated, args)
 				if err != nil {
-					return 0, vm.runtimeError(instruction, "%s", err.Error())
+					return 0, vm.callPropagate(instruction, err)
 				}
 				classInfo := vm.chunk.Classes[classIndex]
 				if instance, ok := result.(*runtime.Instance); ok && instance != nil && instance.Class != nil && instance.Class.Name != classInfo.Name {
@@ -357,7 +357,7 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 	}
 	receiver, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	if enumDef, ok := receiver.(*runtime.EnumDef); ok {
 		for _, v := range enumDef.Variants {
@@ -550,11 +550,11 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 	}
 	value, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	receiver, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	instance, ok := receiver.(*runtime.Instance)
 	if !ok {
@@ -649,7 +649,7 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 				return 0, vm.runtimeError(instruction, "load parent module %s: %s", module, err.Error())
 			}
 			if _, err := vm.moduleLoader.CallParentInModule(module, parentClass, parentClass, instance, args); err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return 0, vm.callPropagate(instruction, err)
 			}
 			for _, f := range vm.moduleLoader.ImmutableFieldsForModuleClass(module, parentClass) {
 				instance.LockField(f)
@@ -734,7 +734,7 @@ func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
 			}
 			var notFound *runtime.MethodNotFoundError
 			if !errors.As(err, &notFound) {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return 0, vm.callPropagate(instruction, err)
 			}
 		}
 	}
@@ -759,13 +759,13 @@ func (vm *VM) popInstanceAndArgs(instruction Instruction, argc int) (*runtime.In
 	for i := argc - 1; i >= 0; i-- {
 		value, err := vm.pop()
 		if err != nil {
-			return nil, nil, vm.runtimeError(instruction, "%s", err.Error())
+			return nil, nil, vm.callPropagate(instruction, err)
 		}
 		args[i] = value
 	}
 	receiver, err := vm.pop()
 	if err != nil {
-		return nil, nil, vm.runtimeError(instruction, "%s", err.Error())
+		return nil, nil, vm.callPropagate(instruction, err)
 	}
 	instance, ok := receiver.(*runtime.Instance)
 	if !ok {
@@ -862,7 +862,7 @@ func (vm *VM) setStaticValue(instruction Instruction, ip int) (int, error) {
 	}
 	value, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	// Statics live in an overlay keyed by their declared constant-pool
 	// index; the pool itself stays immutable so chunks can share it.
@@ -903,7 +903,7 @@ func (vm *VM) callStaticMethod(instruction Instruction, ip int) (int, error) {
 	for i := argc - 1; i >= 0; i-- {
 		value, err := vm.pop()
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		args[i] = value
 	}
@@ -926,13 +926,13 @@ func (vm *VM) callStaticMethodSpread(instruction Instruction, ip int) (int, erro
 	}
 	spreadVal, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	staticArgs := make([]runtime.Value, staticArgCount)
 	for i := staticArgCount - 1; i >= 0; i-- {
 		value, err := vm.pop()
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		staticArgs[i] = value
 	}
@@ -951,7 +951,7 @@ func (vm *VM) callStaticMethodSpread(instruction Instruction, ip int) (int, erro
 	fn := vm.chunk.Functions[indices[0]]
 	args, names, err := spreadDictNamedArguments(spreadDict, staticArgs, fn.ParamNames)
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	ordered, err := vm.orderRuntimeArguments(instruction, fn, args, names, 0)
 	if err != nil {
@@ -967,7 +967,7 @@ func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classInd
 		if module, parentClass, boundary := vm.crossModuleBoundary(vm.chunk.Classes[classIndex]); boundary && vm.moduleLoader != nil {
 			if result, found, err := vm.moduleLoader.CallModuleStaticMethodByName(module, parentClass, name, args); found {
 				if err != nil {
-					return 0, vm.runtimeError(instruction, "%s", err.Error())
+					return 0, vm.callPropagate(instruction, err)
 				}
 				vm.push(result)
 				return ip, nil
@@ -993,7 +993,7 @@ func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classInd
 		}
 		result, err := vm.callCallable(decorated, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil

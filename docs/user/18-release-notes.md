@@ -1,5 +1,31 @@
 # Release Notes
 
+## 1.29.1
+
+### Logging
+
+- New `log.syslog(opts)` destination sends structured log records to a syslog
+  server or the local syslog daemon, framed as RFC 5424. It joins the existing
+  logger family (`stdout` / `stderr` / `file` / `toStream` / `custom`), so the
+  same level calls apply. Transport is `udp` (default), `tcp`, or `local`;
+  `udp` and `tcp` work on Linux, macOS/BSD, and Windows, while `local` (the
+  platform daemon socket) is Unix-only. The message body is the same JSON the
+  other destinations emit, and facility, app name, and hostname are
+  configurable. The logger connects when constructed (a bad address fails
+  fast) and drops transient send failures rather than raising.
+
+### Fixes
+
+- `sys.exit(code)` now terminates the program cleanly with its code from any
+  context, including inside an exported `main` and across module boundaries, on
+  both runtimes. Previously it could surface as an uncaught error in those
+  cases instead of exiting.
+
+### Documentation
+
+- Logging now has its own reference chapter, split out of the observability
+  chapter for discoverability.
+
 ## 1.29.0
 
 ### Language

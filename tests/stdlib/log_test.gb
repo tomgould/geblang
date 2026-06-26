@@ -1,12 +1,15 @@
 /**
  * @title Logger shorthand test
  * @summary `log.info("msg")` form uses a default stderr logger; the
- * `(logger, msg, fields)` form continues to work.
+ * `(logger, msg, fields)` form continues to work; `log.syslog` emits
+ * RFC 5424 frames.
  */
 import test;
 import log;
 import streams;
 import json;
+import net;
+import bytes;
 
 class LogTest extends test.Test {
     @test
@@ -62,6 +65,72 @@ class LogTest extends test.Test {
         let stdin = streams.stdin();
         this.assertThrows(func(): void {
             log.toStream(stdin);
+        });
+    }
+
+    @test
+    func syslogUdpEmitsRfc5424Frame(): void {
+        let srv = net.listenUdp("127.0.0.1:0");
+        net.setDeadline(srv, 5000);
+        let logger = log.syslog({
+            "network": "udp",
+            "address": net.localAddr(srv),
+            "app": "svc",
+            "hostname": "host1",
+            "facility": "local0"
+        });
+        log.info(logger, "started", {"k": "v"});
+        let pkt = net.readFrom(srv, 4096);
+        log.close(logger);
+        net.close(srv);
+
+        let frame = (pkt["data"] as bytes).toString();
+        let body = frame.slice(frame.indexOf("{"), frame.length());
+        let parts = frame.slice(0, frame.indexOf("{")).trim().split(" ");
+        this.assertEquals("<134>1", parts[0] as string);   # local0(16)*8 + info(6)
+        this.assertEquals("host1", parts[2] as string);
+        this.assertEquals("svc", parts[3] as string);
+        this.assertEquals("-", parts[5] as string);        # MSGID is NILVALUE
+        this.assertEquals("-", parts[6] as string);        # STRUCTURED-DATA is NILVALUE
+        let doc = json.parse(body) as dict<string, any>;
+        this.assertEquals("info", doc["level"] as string);
+        this.assertEquals("started", doc["message"] as string);
+        this.assertEquals("v", (doc["fields"] as dict<string, any>)["k"] as string);
+    }
+
+    @test
+    func syslogSeverityMapsToPri(): void {
+        let srv = net.listenUdp("127.0.0.1:0");
+        net.setDeadline(srv, 5000);
+        let logger = log.syslog({"network": "udp", "address": net.localAddr(srv), "hostname": "h", "app": "a"});
+        log.error(logger, "boom");                          # facility user(1)*8 + err(3) = 11
+        let e = (net.readFrom(srv, 4096)["data"] as bytes).toString();
+        log.debug(logger, "trace");                         # user(1)*8 + debug(7) = 15
+        let d = (net.readFrom(srv, 4096)["data"] as bytes).toString();
+        log.close(logger);
+        net.close(srv);
+        this.assertEquals(0, e.indexOf("<11>1 "));
+        this.assertEquals(0, d.indexOf("<15>1 "));
+    }
+
+    @test
+    func syslogRejectsUnknownFacility(): void {
+        this.assertThrows(func(): void {
+            log.syslog({"network": "udp", "address": "127.0.0.1:514", "facility": "nope"});
+        });
+    }
+
+    @test
+    func syslogUdpRequiresAddress(): void {
+        this.assertThrows(func(): void {
+            log.syslog({"network": "udp"});
+        });
+    }
+
+    @test
+    func syslogRejectsUnknownNetwork(): void {
+        this.assertThrows(func(): void {
+            log.syslog({"network": "carrier-pigeon", "address": "127.0.0.1:514"});
         });
     }
 }

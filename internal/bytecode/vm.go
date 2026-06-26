@@ -2402,11 +2402,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 func (vm *VM) boolXor(instruction Instruction) error {
 	right, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	left, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	l, ok := left.(runtime.Bool)
 	if !ok {
@@ -2423,7 +2423,7 @@ func (vm *VM) boolXor(instruction Instruction) error {
 func (vm *VM) not(instruction Instruction, ip int) (int, error) {
 	value, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	if nextIP, handled, err := vm.callPrefixOperatorMethod(instruction, ip, value); handled || err != nil {
 		return nextIP, err
@@ -2439,7 +2439,7 @@ func (vm *VM) not(instruction Instruction, ip int) (int, error) {
 func (vm *VM) negate(instruction Instruction, ip int) (int, error) {
 	value, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	if nextIP, handled, err := vm.callPrefixOperatorMethod(instruction, ip, value); handled || err != nil {
 		return nextIP, err
@@ -2460,7 +2460,7 @@ func (vm *VM) negate(instruction Instruction, ip int) (int, error) {
 	default:
 		if result, handled, err := native.UnaryMinusValue(value); handled {
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return 0, vm.callPropagate(instruction, err)
 			}
 			vm.push(result)
 			return ip, nil
@@ -2521,11 +2521,11 @@ func prefixOperatorMethodName(op Op) (string, bool) {
 func (vm *VM) compare(instruction Instruction, ip int) (int, error) {
 	right, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	left, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	switch instruction.Op {
 	case OpLess, OpGreater, OpLessEqual, OpGreaterEqual:
@@ -2577,14 +2577,14 @@ func (vm *VM) compare(instruction Instruction, ip int) (int, error) {
 		opSymbol := map[Op]string{OpLess: "<", OpGreater: ">", OpLessEqual: "<=", OpGreaterEqual: ">="}[instruction.Op]
 		if result, handled, err := native.BinaryOperatorValue(opSymbol, left, right); handled {
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return 0, vm.callPropagate(instruction, err)
 			}
 			vm.push(result)
 			return ip, nil
 		}
 		cmp, err := native.NumericCompare(left, right)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		switch instruction.Op {
 		case OpLess:
@@ -2605,11 +2605,11 @@ func (vm *VM) compare(instruction Instruction, ip int) (int, error) {
 func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 	right, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	left, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	if instance, ok := left.(*runtime.Instance); ok {
 		if instance.Class.Module != vm.moduleName {
@@ -2646,11 +2646,11 @@ func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 func (vm *VM) identical(instruction Instruction) error {
 	right, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	left, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	vm.push(runtime.Bool{Value: valuesIdentical(left, right)})
 	return nil
@@ -2672,7 +2672,7 @@ func (vm *VM) makeError(instruction Instruction) error {
 	if argc == 1 {
 		value, err := vm.pop()
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		stringValue, ok := value.(runtime.String)
 		if !ok {
@@ -2704,7 +2704,7 @@ func (vm *VM) importFrom(instruction Instruction) error {
 		}
 		loaded, err := vm.moduleLoader.LoadModule(canonical, "")
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		module = loaded
 	}
@@ -2722,7 +2722,7 @@ func (vm *VM) importFrom(instruction Instruction) error {
 			if fn == nil && vm.statefulNative != nil {
 				value, err = vm.wrapStatefulNativeImport(canonical, name)
 				if err != nil {
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.callPropagate(instruction, err)
 				}
 			} else if fn != nil {
 				captured := fn
@@ -2799,7 +2799,7 @@ func (vm *VM) importModule(instruction Instruction) error {
 	}
 	module, err := vm.moduleLoader.LoadModule(canonical, alias)
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	return vm.setGlobal(instruction.Operands[2], module)
 }
@@ -2807,7 +2807,7 @@ func (vm *VM) importModule(instruction Instruction) error {
 func (vm *VM) throw(instruction Instruction, ip int) (int, error) {
 	value, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	errValue, ok := value.(runtime.Error)
 	if !ok {
@@ -2981,7 +2981,7 @@ func (vm *VM) catchException(instruction Instruction, ip int) (int, error) {
 	vm.pendingThrow = nil
 	if slot >= 0 {
 		if err := vm.setLocal(slot, caught); err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 	}
 	return ip, nil
@@ -2990,11 +2990,11 @@ func (vm *VM) catchException(instruction Instruction, ip int) (int, error) {
 func (vm *VM) binaryNumeric(instruction Instruction, ip int) (int, error) {
 	right, err := vm.popVM()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	left, err := vm.popVM()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	if left.Kind == runtime.VMKindSmallInt && right.Kind == runtime.VMKindSmallInt {
 		if err := vm.smallIntBinary(instruction, left.I64, right.I64); err != nil {
@@ -3078,7 +3078,7 @@ func (vm *VM) binaryNumericValues(instruction Instruction, left runtime.Value, r
 	}
 	if result, handled, err := native.BinaryOperatorValue(binaryOpSymbol(instruction.Op), left, right); handled {
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return nil
@@ -3132,7 +3132,7 @@ func (vm *VM) compareJumpIntFallback(instruction Instruction, ip int) (int, erro
 	}
 	value, err := vm.pop()
 	if err != nil {
-		return ip, vm.runtimeError(instruction, "%s", err.Error())
+		return ip, vm.callPropagate(instruction, err)
 	}
 	b, ok := value.(runtime.Bool)
 	if !ok {
@@ -3173,7 +3173,7 @@ func (vm *VM) intSelfArith(instruction Instruction) error {
 		return vm.runtimeError(instruction, "unknown int self-arith opcode")
 	}
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	var rhs runtime.Value
 	switch instruction.Op {
@@ -3187,7 +3187,7 @@ func (vm *VM) intSelfArith(instruction Instruction) error {
 		rhs = runtime.SmallInt{Value: rhsOperand}
 	}
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	subtract := false
 	switch instruction.Op {
@@ -3197,15 +3197,15 @@ func (vm *VM) intSelfArith(instruction Instruction) error {
 	}
 	result, err := addOrSubInt(lhs, rhs, subtract)
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	if isGlobal {
 		if err := vm.setGlobal(dst, result); err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 	} else {
 		if err := vm.setLocal(dst, result); err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 	}
 	vm.push(result)
@@ -3278,7 +3278,7 @@ func (vm *VM) updateIntSlot(instruction Instruction) error {
 		return vm.runtimeError(instruction, "unknown integer slot update opcode")
 	}
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	delta := int64(1)
 	if instruction.Op == OpDecLocalInt || instruction.Op == OpDecGlobalInt {
@@ -3295,18 +3295,18 @@ func (vm *VM) updateIntSlot(instruction Instruction) error {
 	} else {
 		nextVal, err := updatedIntValue(instruction, old.ToValue())
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		next = runtime.VMValueFromValue(nextVal)
 	}
 	switch instruction.Op {
 	case OpIncLocalInt, OpDecLocalInt:
 		if err := vm.setLocalVM(slot, next); err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 	case OpIncGlobalInt, OpDecGlobalInt:
 		if err := vm.setGlobalVM(slot, next); err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 	}
 	vm.pushVM(old)
@@ -3338,7 +3338,7 @@ func (vm *VM) appendListSlot(instruction Instruction) error {
 	}
 	value, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	slot := instruction.Operands[0]
 	var current runtime.Value
@@ -3351,7 +3351,7 @@ func (vm *VM) appendListSlot(instruction Instruction) error {
 		return vm.runtimeError(instruction, "unknown list append slot update opcode")
 	}
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	list, ok := current.(*runtime.List)
 	if !ok {
@@ -3367,11 +3367,11 @@ func (vm *VM) appendListSlot(instruction Instruction) error {
 	switch instruction.Op {
 	case OpAppendLocalList:
 		if err := vm.setLocal(slot, list); err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 	case OpAppendGlobalList:
 		if err := vm.setGlobal(slot, list); err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 	}
 	vm.push(list)
@@ -3604,7 +3604,7 @@ func (vm *VM) decimalBinary(instruction Instruction, l runtime.Decimal, r runtim
 	case OpPow:
 		value, err := decimalPow(l.Value, r.Value)
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		vm.push(runtime.Decimal{Value: value})
 	default:
@@ -3707,11 +3707,11 @@ func decimalPow(base *big.Rat, exponent *big.Rat) (*big.Rat, error) {
 func (vm *VM) add(instruction Instruction, ip int) (int, error) {
 	right, err := vm.popVM()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	left, err := vm.popVM()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	if left.Kind == runtime.VMKindSmallInt && right.Kind == runtime.VMKindSmallInt {
 		result := left.I64 + right.I64
@@ -3796,17 +3796,17 @@ func (vm *VM) contains(needle, container runtime.Value) (runtime.Value, error) {
 func (vm *VM) index(instruction Instruction) error {
 	index, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	left, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	switch value := left.(type) {
 	case *runtime.List:
 		i, err := indexInt(index)
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		if i < 0 {
 			i = len(value.Elements) + i
@@ -3818,7 +3818,7 @@ func (vm *VM) index(instruction Instruction) error {
 	case runtime.String:
 		i, err := indexInt(index)
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		runes := []rune(value.Value)
 		if i < 0 {
@@ -3831,7 +3831,7 @@ func (vm *VM) index(instruction Instruction) error {
 	case runtime.Bytes:
 		i, err := indexInt(index)
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		if i < 0 {
 			i = len(value.Value) + i
@@ -3851,7 +3851,7 @@ func (vm *VM) index(instruction Instruction) error {
 		if vm.hasInstanceMethod(value, "__index") {
 			result, err := vm.CallMethod(value, "__index", []runtime.Value{index})
 			if err != nil {
-				return vm.runtimeError(instruction, "%s", err.Error())
+				return vm.callPropagate(instruction, err)
 			}
 			vm.push(result)
 			return nil
@@ -3866,15 +3866,15 @@ func (vm *VM) index(instruction Instruction) error {
 func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 	newValue, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	index, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	left, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	switch value := left.(type) {
 	case *runtime.List:
@@ -3886,7 +3886,7 @@ func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 		}
 		i, err := indexInt(index)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		if i < 0 {
 			i = len(value.Elements) + i
@@ -3903,13 +3903,13 @@ func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 			if typed, ok := err.(vmTypedError); ok {
 				return vm.throwTyped(instruction, ip, typed.class, typed.message)
 			}
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		value.PutEntry(dictKeyFor(index), runtime.DictEntry{Key: index, Value: newValue})
 	case *runtime.Instance:
 		if vm.hasInstanceMethod(value, "__setIndex") {
 			if _, err := vm.CallMethod(value, "__setIndex", []runtime.Value{index, newValue}); err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return 0, vm.callPropagate(instruction, err)
 			}
 			vm.push(newValue)
 			return ip, nil
@@ -3925,26 +3925,26 @@ func (vm *VM) setIndex(instruction Instruction, ip int) (int, error) {
 func (vm *VM) slice(instruction Instruction) error {
 	stepValue, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	endValue, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	startValue, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	left, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	exclusive := instruction.Operands[0] != 0
 	switch value := left.(type) {
 	case *runtime.List:
 		indices, err := sliceIndices(startValue, endValue, stepValue, exclusive, len(value.Elements))
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		elements := make([]runtime.Value, len(indices))
 		for i, idx := range indices {
@@ -3955,7 +3955,7 @@ func (vm *VM) slice(instruction Instruction) error {
 		runes := []rune(value.Value)
 		indices, err := sliceIndices(startValue, endValue, stepValue, exclusive, len(runes))
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		out := make([]rune, len(indices))
 		for i, idx := range indices {
@@ -3965,7 +3965,7 @@ func (vm *VM) slice(instruction Instruction) error {
 	case runtime.Bytes:
 		indices, err := sliceIndices(startValue, endValue, stepValue, exclusive, len(value.Value))
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		out := make([]byte, len(indices))
 		for i, idx := range indices {
@@ -4131,7 +4131,7 @@ func sliceBounds(startValue runtime.Value, endValue runtime.Value, exclusive boo
 func (vm *VM) iterInit(instruction Instruction) error {
 	value, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	iter, err := vm.iteratorFor(instruction, value)
 	if err != nil {
@@ -4232,7 +4232,7 @@ func (vm *VM) iterNext(instruction Instruction) (bool, error) {
 	valueSlot := instruction.Operands[2]
 	value, err := vm.getLocal(iterSlot)
 	if err != nil {
-		return false, vm.runtimeError(instruction, "%s", err.Error())
+		return false, vm.callPropagate(instruction, err)
 	}
 	iter, ok := value.(*iteratorValue)
 	if !ok {
@@ -4247,7 +4247,7 @@ func (vm *VM) iterNext(instruction Instruction) (bool, error) {
 			return false, nil
 		}
 		if err := vm.setLocal(valueSlot, next); err != nil {
-			return false, vm.runtimeError(instruction, "%s", err.Error())
+			return false, vm.callPropagate(instruction, err)
 		}
 		return true, nil
 	}
@@ -4259,7 +4259,7 @@ func (vm *VM) iterNext(instruction Instruction) (bool, error) {
 		return false, nil
 	}
 	if err := vm.setLocal(valueSlot, next); err != nil {
-		return false, vm.runtimeError(instruction, "%s", err.Error())
+		return false, vm.callPropagate(instruction, err)
 	}
 	return true, nil
 }
@@ -4272,7 +4272,7 @@ func (vm *VM) raiseIteratorFault(instruction Instruction, err error) error {
 	if errors.As(err, &thrown) {
 		return vm.uncaughtThrowError(instruction, thrown.err)
 	}
-	return vm.runtimeError(instruction, "%s", err.Error())
+	return vm.callPropagate(instruction, err)
 }
 
 // advanceUserIterator drives one step of a user-defined iterator
@@ -4343,7 +4343,7 @@ func (vm *VM) userIteratorMethodPresence(iter *runtime.Instance, isForeign bool)
 func (vm *VM) withEnter(instruction Instruction) error {
 	value, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	instance, ok := value.(*runtime.Instance)
 	if !ok {
@@ -4391,7 +4391,7 @@ func (vm *VM) withEnter(instruction Instruction) error {
 func (vm *VM) withExit(instruction Instruction) error {
 	value, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	instance, ok := value.(*runtime.Instance)
 	if !ok {
@@ -4439,7 +4439,7 @@ func (vm *VM) execDel(instruction Instruction) error {
 	case 0:
 		v, err := vm.getLocal(slot)
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		value = v
 	case 1:
@@ -4468,7 +4468,7 @@ func (vm *VM) execDel(instruction Instruction) error {
 	switch kind {
 	case 0:
 		if err := vm.setLocal(slot, runtime.Null{}); err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 	case 1:
 		vm.globals[slot] = runtime.VMValueNull
@@ -4482,7 +4482,7 @@ func (vm *VM) iterClose(instruction Instruction) error {
 	}
 	value, err := vm.getLocal(instruction.Operands[0])
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	iter, ok := value.(*iteratorValue)
 	if !ok || iter.generator == nil {
@@ -4528,7 +4528,7 @@ func (vm *VM) typeAssert(instruction Instruction) error {
 	// types, so we pop, tag the copy, and push the tagged version.
 	if tagged, ok := vm.tagCollectionWithSpec(value, spec); ok {
 		if _, err := vm.pop(); err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		vm.push(tagged)
 	}
@@ -4605,13 +4605,13 @@ func (vm *VM) executeSelect(instruction Instruction, ip int) (int, error) {
 		if kinds[i] == "send" {
 			v, err := vm.pop()
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return 0, vm.callPropagate(instruction, err)
 			}
 			sendValues[i] = v
 		}
 		hVal, err := vm.pop()
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		h, ok := native.ChannelHandleFromValue(hVal)
 		if !ok {
@@ -4628,7 +4628,7 @@ func (vm *VM) executeSelect(instruction Instruction, ip int) (int, error) {
 	}
 	if kinds[chosen] == "recv" && bindingSlots[chosen] >= 0 {
 		if err := vm.setLocal(bindingSlots[chosen], recvValue); err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 	}
 	return bodyOffsets[chosen] - 1, nil
@@ -4650,7 +4650,7 @@ func (vm *VM) execRange(instruction Instruction, exclusive bool) error {
 	if argc == 3 {
 		stepVal, err := vm.pop()
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		s, ok := native.IntValueToBigInt(stepVal)
 		if !ok {
@@ -4660,7 +4660,7 @@ func (vm *VM) execRange(instruction Instruction, exclusive bool) error {
 	}
 	endVal, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	endBig, ok := native.IntValueToBigInt(endVal)
 	if !ok {
@@ -4671,7 +4671,7 @@ func (vm *VM) execRange(instruction Instruction, exclusive bool) error {
 	if argc >= 2 {
 		startVal, err := vm.pop()
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		s, ok := native.IntValueToBigInt(startVal)
 		if !ok {
@@ -4772,7 +4772,7 @@ func (vm *VM) unpackList(instruction Instruction) error {
 	}
 	value, err := vm.getLocal(instruction.Operands[0])
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	list, ok := value.(*runtime.List)
 	if !ok {
@@ -4783,7 +4783,7 @@ func (vm *VM) unpackList(instruction Instruction) error {
 	}
 	for i, slot := range instruction.Operands[1:] {
 		if err := vm.setLocal(slot, list.Elements[i]); err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 	}
 	return nil
@@ -4792,15 +4792,15 @@ func (vm *VM) unpackList(instruction Instruction) error {
 func (vm *VM) buildRange(instruction Instruction) error {
 	stepValue, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	endValue, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	startValue, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	// Char-range fast path: 'a'..'z' (single-character string operands)
 	// builds an eager list<string> of single-character entries rather
@@ -4878,7 +4878,7 @@ func (vm *VM) buildRange(instruction Instruction) error {
 func (vm *VM) popExitCode(instruction Instruction) (int, error) {
 	value, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	switch v := value.(type) {
 	case runtime.SmallInt:
@@ -5243,7 +5243,7 @@ func isBuiltinErrorChainParent(class string) string {
 func (vm *VM) popString(instruction Instruction, message string) (string, error) {
 	value, err := vm.pop()
 	if err != nil {
-		return "", vm.runtimeError(instruction, "%s", err.Error())
+		return "", vm.callPropagate(instruction, err)
 	}
 	stringValue, ok := value.(runtime.String)
 	if !ok {
@@ -5352,11 +5352,11 @@ func bitwiseMagicName(op Op) (string, bool) {
 func (vm *VM) bitwiseInfix(instruction Instruction, ip int) (int, error) {
 	right, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	left, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	if instance, ok := left.(*runtime.Instance); ok {
 		if methodName, ok := bitwiseMagicName(instruction.Op); ok {
@@ -5408,7 +5408,7 @@ func (vm *VM) bitwiseInfix(instruction Instruction, ip int) (int, error) {
 func (vm *VM) bitwiseNot(instruction Instruction, ip int) (int, error) {
 	value, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	if instance, ok := value.(*runtime.Instance); ok {
 		classInfo, ok := vm.classInfo(instance.Class.Name)
@@ -5738,6 +5738,15 @@ func (vm *VM) runtimeError(instruction Instruction, format string, args ...any) 
 	}
 }
 
+// callPropagate keeps a callee's sys.exit terminating instead of reframing it as a runtime fault.
+func (vm *VM) callPropagate(instruction Instruction, err error) error {
+	var exitErr ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr
+	}
+	return vm.runtimeError(instruction, "%s", err.Error())
+}
+
 // Prefers the thrown error's captured frames over the live snapshot so the trace shows the original throw site.
 func (vm *VM) uncaughtThrowError(instruction Instruction, thrown runtime.Error) error {
 	frames := thrown.TraceFrames
@@ -5795,5 +5804,5 @@ func (vm *VM) propagateModuleError(instruction Instruction, ip int, err error) (
 		vm.pendingThrow = &captured
 		return vm.jumpToExceptionHandler(instruction, ip)
 	}
-	return 0, vm.runtimeError(instruction, "%s", err.Error())
+	return 0, vm.callPropagate(instruction, err)
 }

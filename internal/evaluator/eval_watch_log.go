@@ -386,6 +386,9 @@ func (e *Evaluator) logMessage(call *ast.CallExpression, args []runtime.Value, l
 	if err != nil {
 		return nil, err
 	}
+	if logger.leveled != nil {
+		return runtime.Null{}, logger.leveled.WriteLevel(level, line)
+	}
 	_, err = io.WriteString(logger.writer, line+"\n")
 	return runtime.Null{}, err
 }

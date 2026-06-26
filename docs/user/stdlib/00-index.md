@@ -105,8 +105,9 @@ Infrastructure and data stores:
 
 Operations, introspection, and extension:
 
-- [Observability](observability.html): logging, metrics, tracing, profiling,
-  and custom log handlers.
+- [Logging](logging.html): structured logging to stdout, stderr, files,
+  streams, syslog, or custom handlers.
+- [Observability](observability.html): metrics, tracing, and profiling.
 - [Reflection And Testing](reflect-test.html): runtime metadata, docblocks,
   decorators, function/class/module reflection, and class-based testing.
 - [Environment and Extensions](env-ext.html): dotenv, external extension

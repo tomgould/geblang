@@ -853,6 +853,7 @@ var stdlibCatalog = map[string]moduleDoc{
 		"file":     fn([]string{"string path"}, "Logger", "Creates a file logger."),
 		"toStream": fn([]string{"IOStream stream"}, "Logger", "Creates a logger that writes JSON lines to the given IOStream. The stream's lifetime is owned by the caller - closing the logger does not close the stream."),
 		"custom":   fn([]string{"LogInterface handler"}, "Logger", "Creates a custom logger."),
+		"syslog":   fn([]string{"dict<string, any> opts"}, "Logger", "Creates an RFC 5424 syslog logger. opts: network (\"udp\" default | \"tcp\" | \"local\"), address (host:port for udp/tcp), facility (default \"user\"), app, hostname. Cross-platform; \"local\" is Unix-only."),
 		"info":     fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes an info log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger."),
 		"warn":     fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes a warning log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger."),
 		"error":    fn([]string{"string message", "dict<string, any> context = {}"}, "void", "Writes an error log. Pass a Logger as the first arg to target a specific sink; otherwise uses the default stderr logger."),

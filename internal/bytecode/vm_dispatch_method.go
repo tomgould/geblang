@@ -16,13 +16,13 @@ func (vm *VM) methodCallSpread(instruction Instruction, ip int) (int, error) {
 	staticArgCount := int(instruction.Operands[1])
 	spreadVal, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	staticArgs := make([]runtime.Value, staticArgCount)
 	for i := staticArgCount - 1; i >= 0; i-- {
 		val, err := vm.pop()
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		staticArgs[i] = val
 	}
@@ -49,7 +49,7 @@ func (vm *VM) methodCallSpread(instruction Instruction, ip int) (int, error) {
 	}
 	receiver, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	paramNames, err := vm.receiverParamNames(instruction, receiver, name)
 	if err != nil {
@@ -57,7 +57,7 @@ func (vm *VM) methodCallSpread(instruction Instruction, ip int) (int, error) {
 	}
 	args, names, err := spreadDictNamedArguments(spreadDict, staticArgs, paramNames)
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	return vm.dispatchNamedCall(instruction, ip, receiver, name, args, names)
 }
@@ -135,7 +135,7 @@ func (vm *VM) receiverParamNames(instruction Instruction, receiver runtime.Value
 			}
 			names, err := vm.moduleLoader.ModuleMethodParamNames(r.Class.Module, r.Class.Name, methodName)
 			if err != nil {
-				return nil, vm.runtimeError(instruction, "%s", err.Error())
+				return nil, vm.callPropagate(instruction, err)
 			}
 			return names, nil
 		}
@@ -264,7 +264,7 @@ func (vm *VM) propagateCallbackError(instruction Instruction, ip int, err error)
 	if errors.As(err, &rtErr) || errors.As(err, &wrErr) {
 		return 0, err
 	}
-	return 0, vm.runtimeError(instruction, "%s", err.Error())
+	return 0, vm.callPropagate(instruction, err)
 }
 
 func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
@@ -288,13 +288,13 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	for i := argc - 1; i >= 0; i-- {
 		value, err := vm.pop()
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		slots[i+1] = value
 	}
 	receiver, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	slots[0] = receiver
 	args := slots[1:]
@@ -390,7 +390,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 					if rerr := runtime.NewRecoverableError(err); rerr.Class == "TestSkip" {
 						return vm.throwRecoverableError(instruction, ip, err)
 					}
-					return 0, vm.runtimeError(instruction, "%s", err.Error())
+					return 0, vm.callPropagate(instruction, err)
 				}
 				vm.push(result)
 				return ip, nil
@@ -422,7 +422,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			return 0, err
 		}
 		if err := vm.ensureCallableDecorators(); err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
 			if vm.chunk.Functions[functionIndex].Async && !vm.syncMode {
@@ -431,7 +431,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			}
 			result, err := vm.callCallableWithForwardThis(decorated, args, instance)
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return 0, vm.callPropagate(instruction, err)
 			}
 			vm.push(result)
 			return ip, nil
@@ -480,7 +480,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if gen, ok := receiver.(*runtime.Generator); ok {
 		result, err := native.GeneratorMethod(gen, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -488,7 +488,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if arr, ok := receiver.(*runtime.NDArray); ok {
 		result, err := native.NDArrayMethod(arr, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -496,7 +496,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if node, ok := receiver.(*runtime.HtmlNode); ok {
 		result, err := native.HtmlNodeMethod(node, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -504,7 +504,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if dist, ok := receiver.(*runtime.Distribution); ok {
 		result, err := native.DistributionMethod(dist, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -512,7 +512,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if z, ok := receiver.(*runtime.Complex); ok {
 		result, err := native.ComplexMethod(z, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -528,7 +528,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if series, ok := receiver.(*runtime.DFSeries); ok {
 		result, err := native.DFSeriesMethod(series, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -536,7 +536,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if expr, ok := receiver.(*runtime.DFExpr); ok {
 		result, err := native.DFExprMethod(expr, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -544,7 +544,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if group, ok := receiver.(*runtime.DFGroupBy); ok {
 		result, err := native.DFGroupByMethod(group, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -552,7 +552,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if instant, ok := receiver.(runtime.DateTimeInstant); ok {
 		result, err := native.DateTimeInstantMethod(instant, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -560,7 +560,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if duration, ok := receiver.(runtime.DateTimeDuration); ok {
 		result, err := native.DateTimeDurationMethod(duration, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -568,7 +568,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if zone, ok := receiver.(runtime.DateTimeZone); ok {
 		result, err := native.DateTimeZoneMethod(zone, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -576,7 +576,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if urlValue, ok := receiver.(runtime.URLValue); ok {
 		result, err := native.URLMethod(urlValue, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -584,7 +584,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if headers, ok := receiver.(runtime.HTTPHeaders); ok {
 		result, err := vmHTTPHeadersMethod(headers, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -592,7 +592,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if cookie, ok := receiver.(runtime.HTTPCookie); ok {
 		result, err := native.HTTPCookieMethod(cookie, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -600,7 +600,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if tmpl, ok := receiver.(runtime.TemplateValue); ok {
 		result, err := native.TemplateMethod(tmpl, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -608,7 +608,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if engine, ok := receiver.(runtime.TemplateEngine); ok {
 		result, err := native.TemplateEngineMethod(engine, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -616,7 +616,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if errValue, ok := receiver.(runtime.Error); ok {
 		result, err := native.ErrorMethod(errValue, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -624,7 +624,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if trace, ok := receiver.(runtime.ErrorStackTrace); ok {
 		result, err := native.ErrorStackTraceMethod(trace, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -632,7 +632,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if frame, ok := receiver.(runtime.ErrorStackFrame); ok {
 		result, err := native.ErrorStackFrameMethod(frame, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -709,7 +709,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			}
 			result, err := vm.ConstructClassWithTypeArgs(class.Index, args, callTypeArgs)
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return 0, vm.callPropagate(instruction, err)
 			}
 			vm.push(result)
 			return ip, nil
@@ -738,12 +738,12 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			return 0, err
 		}
 		if err := vm.ensureCallableDecorators(); err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
 			result, err := vm.callCallable(decorated, args)
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return 0, vm.callPropagate(instruction, err)
 			}
 			vm.push(result)
 			return ip, nil
@@ -784,7 +784,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		}
 		if value, handled, err := runtime.EnumStaticMethod(enumDef, variantName, args); handled {
 			if err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return 0, vm.callPropagate(instruction, err)
 			}
 			vm.push(value)
 			return ip, nil
@@ -836,7 +836,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if errors.As(err, &rtErr) || errors.As(err, &wrErr) {
 				return 0, err
 			}
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		if handled {
 			vm.push(result)
@@ -846,7 +846,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 	if dict, ok := receiver.(runtime.Dict); ok {
 		result, handled, err := vm.dictCollectionsMethod(dict, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		if handled {
 			vm.push(result)
@@ -860,7 +860,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		}
 		result, err := caller.NativeObjectMethod(nativeObject, nameValue.Value, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -872,7 +872,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 				if errors.As(err, &typed) {
 					return vm.throwTyped(instruction, ip, typed.class, typed.message)
 				}
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return 0, vm.callPropagate(instruction, err)
 			}
 			vm.push(result)
 			return ip, nil
@@ -884,7 +884,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		if errors.As(err, &typed) {
 			return vm.throwTyped(instruction, ip, typed.class, typed.message)
 		}
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	vm.push(value)
 	return ip, nil
@@ -910,7 +910,7 @@ func (vm *VM) methodCallNamed(instruction Instruction, ip int) (int, error) {
 	for i := argc - 1; i >= 0; i-- {
 		value, err := vm.pop()
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		args[i] = value
 	}
@@ -928,7 +928,7 @@ func (vm *VM) methodCallNamed(instruction Instruction, ip int) (int, error) {
 	}
 	receiver, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	return vm.dispatchNamedCall(instruction, ip, receiver, nameValue.Value, args, names)
 }
@@ -972,7 +972,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 		}
 		result, err := vm.callCallable(bytecodeFunction, ordered)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -1054,7 +1054,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 		return 0, err
 	}
 	if err := vm.ensureCallableDecorators(); err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
 		if vm.chunk.Functions[functionIndex].Async && !vm.syncMode {
@@ -1063,7 +1063,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 		}
 		result, err := vm.callCallableWithForwardThis(decorated, ordered, instance)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil

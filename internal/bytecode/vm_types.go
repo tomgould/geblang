@@ -18,7 +18,7 @@ func (vm *VM) instanceOf(instruction Instruction) error {
 	}
 	value, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	// Resolve type parameter binding if target is a generic type param name.
 	if len(vm.frames) > 0 {
@@ -410,7 +410,7 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 	}
 	value, err := vm.pop()
 	if err != nil {
-		return 0, vm.runtimeError(instruction, "%s", err.Error())
+		return 0, vm.callPropagate(instruction, err)
 	}
 	// Class / interface / parent-chain widening cast: an Error or
 	// Instance is assignable to any ancestor in its chain, with the
@@ -436,7 +436,7 @@ func (vm *VM) cast(instruction Instruction, ip int) (int, error) {
 		}
 		if dunder := castDunderName(target); dunder != "" {
 			if result, handled, err := vm.invokeInstanceMethod(instance, dunder, nil); err != nil {
-				return 0, vm.runtimeError(instruction, "%s", err.Error())
+				return 0, vm.callPropagate(instruction, err)
 			} else if handled {
 				if err := checkCastDunderReturn(target, result); err != nil {
 					return vm.throwTyped(instruction, ip, "RuntimeError", err.Error())

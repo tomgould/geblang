@@ -156,7 +156,7 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 			if canPool {
 				vm.releaseCallArgsBuffer(args)
 			}
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		args[i] = value
 	}
@@ -168,7 +168,7 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 		}
 		result, err := vm.callCallable(decorated, args)
 		if err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 		vm.push(result)
 		return ip, nil
@@ -915,7 +915,7 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 	vm.pushLocalsStackFrame(frame, int(function.LocalCount), function.SharesParentFrame)
 	for i, slot := range function.ParamSlots {
 		if err := vm.setLocal(slot, args[i]); err != nil {
-			return 0, vm.runtimeError(instruction, "%s", err.Error())
+			return 0, vm.callPropagate(instruction, err)
 		}
 	}
 	// Infer type parameter bindings from param types and the bound local values.
@@ -1019,7 +1019,7 @@ func (vm *VM) nativeCall(instruction Instruction) error {
 				value, err := vm.pop()
 				if err != nil {
 					vm.releaseCallArgsBuffer(args)
-					return vm.runtimeError(instruction, "%s", err.Error())
+					return vm.callPropagate(instruction, err)
 				}
 				args[i] = value
 			}
@@ -1040,7 +1040,7 @@ func (vm *VM) nativeCall(instruction Instruction) error {
 	for i := int(argc) - 1; i >= 0; i-- {
 		value, err := vm.pop()
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		args[i] = value
 	}
@@ -1080,7 +1080,7 @@ func (vm *VM) nativeCallSpread(instruction Instruction) error {
 	}
 	spreadVal, err := vm.pop()
 	if err != nil {
-		return vm.runtimeError(instruction, "%s", err.Error())
+		return vm.callPropagate(instruction, err)
 	}
 	spreadList, ok := spreadVal.(*runtime.List)
 	if !ok {
@@ -1090,7 +1090,7 @@ func (vm *VM) nativeCallSpread(instruction Instruction) error {
 	for i := staticArgCount - 1; i >= 0; i-- {
 		value, err := vm.pop()
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		staticArgs[i] = value
 	}
@@ -1122,7 +1122,7 @@ func (vm *VM) nativeCallNamed(instruction Instruction) error {
 	for i := int(argc) - 1; i >= 0; i-- {
 		value, err := vm.pop()
 		if err != nil {
-			return vm.runtimeError(instruction, "%s", err.Error())
+			return vm.callPropagate(instruction, err)
 		}
 		args[i] = value
 	}
@@ -1176,7 +1176,7 @@ func (vm *VM) orderRuntimeArguments(instruction Instruction, function FunctionIn
 	}
 	result, err := argbinding.Order(sig, bargs)
 	if err != nil {
-		return nil, vm.runtimeError(instruction, "%s", err.Error())
+		return nil, vm.callPropagate(instruction, err)
 	}
 	ordered := make([]runtime.Value, len(result.Slots))
 	assigned := make([]bool, len(result.Slots))

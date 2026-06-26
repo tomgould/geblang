@@ -445,11 +445,17 @@ type webRoute struct {
 	handler runtime.Value
 }
 
+// leveledSink receives the log level too, for sinks (syslog) whose framing depends on severity.
+type leveledSink interface {
+	WriteLevel(level, line string) error
+}
+
 type loggerHandle struct {
 	target  string
 	writer  io.Writer
 	closer  io.Closer
 	handler *runtime.Instance
+	leveled leveledSink
 }
 
 type deferredCall struct {
@@ -1183,6 +1189,9 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 				return signal{}, err
 			}
 			value = evaluated
+			if exit, ok := value.(exitValue); ok {
+				return signal{exited: true, exitCode: exit.code}, nil
+			}
 			// Only enforce generic collection element types on declarations (e.g. list<int>, int[]).
 			// Scalar type coercions (float/decimal, int widening, etc.) are handled elsewhere.
 			if expectedType != nil && expectedType.Operator == "" {

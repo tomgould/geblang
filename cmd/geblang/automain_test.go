@@ -99,3 +99,76 @@ func helper(): string { return "h"; }
 		}
 	}
 }
+
+// TestSysExitPropagates checks sys.exit terminates cleanly with its code from an exported main and across a module boundary, on both backends.
+func TestSysExitPropagates(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "geblang")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build geblang: %v\n%s", err, out)
+	}
+
+	mainDir := t.TempDir()
+	exportMain := filepath.Join(mainDir, "exitmain.gb")
+	if err := os.WriteFile(exportMain, []byte(`module main;
+import sys;
+import io;
+export func main(list<string> args): int {
+    io.println("before");
+    sys.exit(5);
+    return 0;
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	crossDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(crossDir, "exithelper.gb"), []byte(`module exithelper;
+import sys;
+export func quit(): void { sys.exit(6); }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	crossMain := filepath.Join(crossDir, "main.gb")
+	if err := os.WriteFile(crossMain, []byte(`module main;
+import exithelper as h;
+export func main(list<string> args): int {
+    h.quit();
+    return 0;
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(args ...string) (string, int) {
+		out, err := exec.Command(bin, args...).CombinedOutput()
+		code := 0
+		if exit, ok := err.(*exec.ExitError); ok {
+			code = exit.ExitCode()
+		} else if err != nil {
+			t.Fatalf("run %v: %v\n%s", args, err, out)
+		}
+		return string(out), code
+	}
+
+	cases := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"export-main VM", []string{exportMain}, 5},
+		{"export-main eval", []string{"--disable-vm", exportMain}, 5},
+		{"cross-module VM", []string{crossMain}, 6},
+		{"cross-module eval", []string{"--disable-vm", crossMain}, 6},
+	}
+	for _, c := range cases {
+		out, code := run(c.args...)
+		if code != c.want {
+			t.Errorf("%s: exit code = %d, want %d; out=%q", c.name, code, c.want, out)
+		}
+		for _, bad := range []string{"uncaught", "cannot cast", "bytecode exited"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("%s: sys.exit surfaced as an error (%q); out=%q", c.name, bad, out)
+			}
+		}
+	}
+}

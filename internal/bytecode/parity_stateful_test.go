@@ -72,6 +72,38 @@ io.println(capture instanceof log.LogInterface);
 `, "error:custom:3\ntrue\n")
 }
 
+func TestParityLogSyslogUDP(t *testing.T) {
+	runParityStateful(t, `import io;
+import net;
+import log;
+import json;
+
+let srv = net.listenUdp("127.0.0.1:0");
+net.setDeadline(srv, 5000);
+let logger = log.syslog({
+    "network": "udp",
+    "address": net.localAddr(srv),
+    "app": "paritytest",
+    "hostname": "testhost",
+    "facility": "local0"
+});
+log.info(logger, "hello", {"k": "v"});
+let pkt = net.readFrom(srv, 4096);
+log.close(logger);
+net.close(srv);
+
+let frame = (pkt["data"] as bytes).toString();
+let body = frame.slice(frame.indexOf("{"), frame.length());
+let parts = frame.slice(0, frame.indexOf("{")).trim().split(" ");
+let doc = json.parse(body);
+io.println(parts[0]);
+io.println(parts[2]);
+io.println(parts[3]);
+io.println(doc["level"] as string);
+io.println(doc["message"] as string);
+`, "<134>1\ntesthost\nparitytest\ninfo\nhello\n")
+}
+
 func TestParityFileReadClose(t *testing.T) {
 	runParityStatefulWithFile(t, `import io;
 let h = io.open("TMPFILE", "r");
