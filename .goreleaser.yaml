@@ -5,10 +5,18 @@
 # The VS Code extension ships as a release asset too: run `make vscode-build`
 # first (it produces build/vscode/vsix/geblang.vsix), then release. Users can
 # then install it with `code --install-extension geblang-vscode-<version>.vsix`.
+# The release body is the version's section from docs/user/18-release-notes.md
+# (not the commit log): pass it with --release-notes.
 # Validate locally:  make vscode-build && goreleaser release --snapshot --clean --skip=publish
-# Publish a release:  make vscode-build && git tag v1.29.2 && GITHUB_TOKEN=... goreleaser release --clean
+# Publish a release:
+#   make vscode-build
+#   scripts/release-notes.sh 1.29.2 > /tmp/notes.md
+#   git tag 1.29.2 && GITHUB_TOKEN=... goreleaser release --clean --release-notes /tmp/notes.md
 # Published to github.com/dwgebler/geblang regardless of the local git remote.
 version: 2
+
+changelog:
+  disable: true
 
 project_name: geblang
 
