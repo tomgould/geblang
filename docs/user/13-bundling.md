@@ -230,12 +230,28 @@ gated call throws `PermissionError`, exactly as an unflagged `geblang run` would
 Alongside the binary, `geblang build` writes a `<output-path>.NOTICES.txt`
 file containing the third-party attribution notices for the components the
 binary embeds (the Geblang runtime and its dependencies). Ship this file with
-the binary to keep the distribution licence-compliant. It is a sidecar file
-rather than a built-in flag, so it never clashes with a `licenses`
-subcommand or argument your own program might define. The same applies to
-binaries produced by `gebweb build`, which delegates to `geblang build`.
+the binary to keep the distribution licence-compliant. The same notices are
+also available at runtime through the built-in `--notices` flag (below). The
+same applies to binaries produced by `gebweb build`, which delegates to
+`geblang build`.
 
-Pass arguments to the bundled program the same way you would any other binary:
+### Standard flags and program arguments
+
+Every built binary recognises a few standard flags, but only when one is the
+**first argument**:
+
+- `--help` / `-h` prints the binary's usage.
+- `--version` prints `<app> <version> (geblang <runtime-version>)`.
+- `--notices` prints the embedded third-party notices.
+
+Because these are double-dash flags checked only in first position, they never
+clash with a bare-word subcommand (such as a `licenses` or `version` command)
+or any argument your own program defines: those are forwarded unchanged. A
+literal `--` also forwards everything after it verbatim, so
+`./dist/myapp -- --version` passes `--version` to your program instead of
+printing the Geblang version.
+
+Otherwise, pass arguments the same way you would to any other binary:
 
 ```sh
 ./dist/myapp --port 8080 --verbose
