@@ -2,8 +2,11 @@
 # The gebweb CLI is released separately from github.com/dwgebler/gebweb (its own
 # repo + Go module); it is useless without the gebweb framework sources a project
 # installs via `geblang install`, so it does not belong in the geblang release.
-# Validate locally:  goreleaser release --snapshot --clean --skip=publish
-# Publish a release:  git tag v1.29.1 && GITHUB_TOKEN=... goreleaser release --clean
+# The VS Code extension ships as a release asset too: run `make vscode-build`
+# first (it produces build/vscode/vsix/geblang.vsix), then release. Users can
+# then install it with `code --install-extension geblang-vscode-<version>.vsix`.
+# Validate locally:  make vscode-build && goreleaser release --snapshot --clean --skip=publish
+# Publish a release:  make vscode-build && git tag v1.29.2 && GITHUB_TOKEN=... goreleaser release --clean
 # Published to github.com/dwgebler/geblang regardless of the local git remote.
 version: 2
 
@@ -50,3 +53,6 @@ release:
     name: geblang
   draft: true
   name_template: "Geblang {{ .Version }}"
+  extra_files:
+    - glob: ./build/vscode/vsix/geblang.vsix
+      name_template: "geblang-vscode-{{ .Version }}.vsix"

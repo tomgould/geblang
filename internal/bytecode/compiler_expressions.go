@@ -1017,6 +1017,7 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 							return err
 						}
 					}
+					c.emitPlantCallTypeBindings(expr, c.chunk.Functions[fnIndex].TypeParameters)
 					c.emitAt(OpCallResolvedMethod, expr.Token.Line, expr.Token.Column, fnIndex, int64(len(expr.Arguments)))
 					return nil
 				}

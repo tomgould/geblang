@@ -1941,6 +1941,159 @@ func (a *Analyzer) inferTypeBinding(paramType, actual typeInfo, paramSet map[str
 	}
 }
 
+// checkFunctionCallTypeArgs flags explicit call-site type arguments (firstMatch<float>(...)) that contradict the actual arguments.
+func (a *Analyzer) checkFunctionCallTypeArgs(call *ast.CallExpression, name string, overloads []methodInfo) {
+	if len(call.TypeArguments) == 0 {
+		return
+	}
+	args, ok := a.positionalArgTypes(call)
+	if !ok {
+		return
+	}
+	var generic *methodInfo
+	for i := range overloads {
+		if len(overloads[i].typeParams) == 0 || len(overloads[i].parameters) != len(args) {
+			continue
+		}
+		if generic != nil {
+			return // ambiguous; overload resolution reports it
+		}
+		dup := overloads[i]
+		generic = &dup
+	}
+	if generic == nil {
+		return
+	}
+	names := make([]string, len(generic.typeParams))
+	for i, tp := range generic.typeParams {
+		names[i] = tp.name
+	}
+	a.validateExplicitTypeArgs(name, call.Token, names, generic.parameters, args, call.TypeArguments)
+}
+
+// checkMethodCallTypeArgs applies the same explicit-type-argument validation to obj.method<float>(...) calls.
+func (a *Analyzer) checkMethodCallTypeArgs(call *ast.CallExpression) {
+	if len(call.TypeArguments) == 0 || a.classMethodSigs == nil {
+		return
+	}
+	selector, ok := call.Callee.(*ast.SelectorExpression)
+	if !ok || selector.Name == nil || selector.Optional {
+		return
+	}
+	receiverType := a.expressionTypeName(selector.Object)
+	if !receiverType.known || receiverType.nullable {
+		return
+	}
+	sigs, _, ok := a.classMethodSigs(receiverType.name, strings.ToLower(selector.Name.Value))
+	if !ok {
+		return
+	}
+	args, ok := a.positionalArgTypes(call)
+	if !ok {
+		return
+	}
+	var sig *MethodSignature
+	for i := range sigs {
+		if len(sigs[i].TypeParams) == 0 || sigs[i].Variadic || len(sigs[i].Params) != len(args) {
+			continue
+		}
+		if sig != nil {
+			return // ambiguous
+		}
+		dup := sigs[i]
+		sig = &dup
+	}
+	if sig == nil {
+		return
+	}
+	params := make([]typeInfo, len(sig.Params))
+	for i, pref := range sig.Params {
+		params[i] = a.typeInfoFromRef(pref)
+	}
+	a.validateExplicitTypeArgs(receiverType.name+"."+selector.Name.Value, selector.Name.Token, sig.TypeParams, params, args, call.TypeArguments)
+}
+
+// positionalArgTypes returns the inferred type of each call argument; ok=false when any argument is named or spread.
+func (a *Analyzer) positionalArgTypes(call *ast.CallExpression) ([]typeInfo, bool) {
+	for _, arg := range call.Arguments {
+		if arg.Name != nil || arg.Spread {
+			return nil, false
+		}
+	}
+	args := make([]typeInfo, len(call.Arguments))
+	for i, arg := range call.Arguments {
+		args[i] = a.expressionTypeName(arg.Value)
+	}
+	return args, true
+}
+
+// validateExplicitTypeArgs binds typeArgs to the named type params, substitutes them through params, and flags a mismatched actual argument.
+func (a *Analyzer) validateExplicitTypeArgs(name string, tok token.Token, typeParamNames []string, params, args []typeInfo, typeArgs []*ast.TypeRef) {
+	if len(typeArgs) > len(typeParamNames) {
+		a.errorAt(tok, "%s has %d type parameter(s) but %d type argument(s) were given", name, len(typeParamNames), len(typeArgs))
+		return
+	}
+	paramSet := map[string]bool{}
+	for _, n := range typeParamNames {
+		paramSet[strings.ToLower(n)] = true
+	}
+	bindings := map[string]typeInfo{}
+	for i, ref := range typeArgs {
+		if ref == nil || i >= len(typeParamNames) {
+			continue
+		}
+		if ti := a.typeInfoFromRef(ref); ti.known {
+			bindings[strings.ToLower(typeParamNames[i])] = ti
+		}
+	}
+	if len(bindings) == 0 {
+		return
+	}
+	for i, p := range params {
+		if i >= len(args) {
+			break
+		}
+		sub, ok := substituteTypeParam(p, bindings, paramSet)
+		if !ok || !sub.known || strings.EqualFold(sub.name, "any") {
+			continue
+		}
+		actual := args[i]
+		if !actual.known || actual.name == "null" || strings.EqualFold(actual.name, "any") {
+			continue
+		}
+		if !a.isAssignable(sub, actual) {
+			a.errorAt(tok, "%s: cannot pass %s as %s required by the explicit type argument", name, actual.display(), sub.display())
+			return
+		}
+	}
+}
+
+// substituteTypeParam replaces type-parameter references in ti (recursing through args, so list<T> becomes list<float>); ok=false if an unbound parameter is referenced.
+func substituteTypeParam(ti typeInfo, bindings map[string]typeInfo, paramSet map[string]bool) (typeInfo, bool) {
+	key := strings.ToLower(ti.name)
+	if paramSet[key] {
+		bound, ok := bindings[key]
+		if !ok {
+			return ti, false
+		}
+		bound.nullable = bound.nullable || ti.nullable
+		return bound, true
+	}
+	if len(ti.args) == 0 {
+		return ti, true
+	}
+	out := ti
+	out.args = make([]typeInfo, len(ti.args))
+	for i, arg := range ti.args {
+		sub, ok := substituteTypeParam(arg, bindings, paramSet)
+		if !ok {
+			return ti, false
+		}
+		out.args[i] = sub
+	}
+	return out, true
+}
+
 func (a *Analyzer) callArgumentsCompatible(args, parameters []typeInfo, minArgs int) bool {
 	if len(args) < minArgs || len(args) > len(parameters) {
 		return false
@@ -2050,11 +2203,13 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		a.checkTypedCollectionMethodCall(expr)
 		a.checkPrimitiveMethodCall(expr)
 		a.checkClassMethodCall(expr)
+		a.checkMethodCallTypeArgs(expr)
 		a.checkConstructorTypeArgs(expr)
 		a.checkDeprecatedCall(expr)
 		if ident, ok := expr.Callee.(*ast.Identifier); ok {
 			if overloads := a.functions[strings.ToLower(ident.Value)]; len(overloads) > 0 {
 				a.checkGenericCallInference(expr, ident.Value, overloads)
+				a.checkFunctionCallTypeArgs(expr, ident.Value, overloads)
 			}
 		}
 	case *ast.ListLiteral:

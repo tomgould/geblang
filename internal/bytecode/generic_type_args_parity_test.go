@@ -306,3 +306,45 @@ int n = opaque(7);
 io.println(n);
 `, "42\ncaught: wantInt expects int for parameter 'n', got string\nhi\n7\n")
 }
+
+// Explicit type args on a generic function call enforce the binding at runtime on both backends (a dynamic 'any' arg reaches the runtime check).
+func TestParityGenericFuncExplicitTypeArgRuntimeMismatch(t *testing.T) {
+	runParity(t, `import io;
+func identity<T>(T value): T { return value; }
+any x = 42;
+try {
+    let r = identity<string>(x);
+    io.println("no throw");
+} catch (RuntimeError e) {
+    io.println("caught: " + e.message);
+}
+`, "caught: identity expects T for parameter 'value', got int\n")
+}
+
+func TestParityGenericFuncExplicitTypeArgValid(t *testing.T) {
+	runParity(t, `import io;
+func identity<T>(T value): T { return value; }
+io.println(identity<string>("ok"));
+`, "ok\n")
+}
+
+// Explicit type args on a statically-resolvable generic method call now enforce at runtime on both backends (the VM previously ignored them).
+func TestParityGenericResolvedMethodExplicitTypeArgRuntimeMismatch(t *testing.T) {
+	runParity(t, `import io;
+class Repo { func pick<T>(T value): T { return value; } }
+any x = 42;
+try {
+    let r = Repo().pick<string>(x);
+    io.println("no throw");
+} catch (RuntimeError e) {
+    io.println("caught: " + e.message);
+}
+`, "caught: Repo.pick expects T for parameter 'value', got int\n")
+}
+
+func TestParityGenericResolvedMethodExplicitTypeArgValid(t *testing.T) {
+	runParity(t, `import io;
+class Repo { func pick<T>(T value): T { return value; } }
+io.println(Repo().pick<string>("ok"));
+`, "ok\n")
+}

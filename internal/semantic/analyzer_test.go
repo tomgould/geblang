@@ -774,6 +774,67 @@ Container<Sub> c = Container<Sub>();
 	}
 }
 
+func TestAnalyzerRejectsMismatchedFunctionCallTypeArg(t *testing.T) {
+	firstMatch := `func firstMatch<T>(list<T> items, callable pred): ?T {
+    for (item in items) { if (pred(item)) { return item; } }
+    return null;
+}
+list<int> xs = [1, 2, 3];
+`
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"float over list<int>", firstMatch + `let r = firstMatch<float>(xs, func(int n): bool { return n > 1; });`, "cannot pass list<int> as list<float>"},
+		{"string over list<int>", firstMatch + `let r = firstMatch<string>(xs, func(int n): bool { return n > 1; });`, "cannot pass list<int> as list<string>"},
+		{"bare-T parameter", `func identity<T>(T value): T { return value; }
+let r = identity<string>(42);`, "cannot pass int as string"},
+		{"too many type arguments", `func identity<T>(T value): T { return value; }
+let r = identity<int, string>(42);`, "type parameter"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			diagnostics := analyzeInput(t, c.input)
+			found := false
+			for _, d := range diagnostics {
+				if strings.Contains(d.Message, c.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("expected diagnostic containing %q, got: %v", c.want, diagnostics)
+			}
+		})
+	}
+}
+
+func TestAnalyzerAcceptsValidFunctionCallTypeArg(t *testing.T) {
+	firstMatch := `func firstMatch<T>(list<T> items, callable pred): ?T {
+    for (item in items) { if (pred(item)) { return item; } }
+    return null;
+}
+list<int> xs = [1, 2, 3];
+`
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"explicit arg matches element type", firstMatch + `let r = firstMatch<int>(xs, func(int n): bool { return n > 1; });`},
+		{"no explicit args, inference unaffected", firstMatch + `let r = firstMatch(xs, func(int n): bool { return n > 1; });`},
+		{"bare-T matching explicit arg", `func identity<T>(T value): T { return value; }
+let r = identity<string>("ok");`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			diagnostics := analyzeInput(t, c.input)
+			if len(diagnostics) != 0 {
+				t.Fatalf("expected no diagnostics, got: %v", diagnostics)
+			}
+		})
+	}
+}
+
 // TestAnalyzerAcceptsRawGenericAssignment verifies that when the actual value
 // carries no explicit type arguments (raw construction with inference), the
 // assignment to a parameterised target is allowed at compile time - the

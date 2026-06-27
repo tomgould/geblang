@@ -1,5 +1,16 @@
 # Release Notes
 
+## 1.29.2
+
+### Fixes
+
+- Explicit type arguments on a generic function or method call are now
+  validated. A type argument that contradicts the actual arguments, such as
+  `firstMatch<string>(listOfInts)`, is reported as an error rather than being
+  silently discarded. The binding is also enforced at runtime, so a
+  dynamically-typed argument that violates an explicit type argument throws,
+  with the evaluator and bytecode VM in agreement.
+
 ## 1.29.1
 
 ### Logging
