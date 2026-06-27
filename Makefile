@@ -14,6 +14,10 @@ VSCODE_IMAGE ?= geblang-vscode-artifacts
 VSCODE_CONTAINER ?= geblang-vscode-build-artifacts
 CODE ?= code
 
+# Geblang needs no cgo (pure-Go SQLite, purego FFI), so default CGO off for portable, glibc-independent binaries. Override with `make CGO_ENABLED=1`.
+CGO_ENABLED ?= 0
+export CGO_ENABLED
+
 # Full local build: run all tests, static-check the .gb corpus, install
 # the binary, regenerate the docs site, build + install the VS Code
 # extension, then run the benchmark suite. Each step is a separate
