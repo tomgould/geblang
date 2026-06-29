@@ -1291,7 +1291,50 @@ func (vm *VM) evalNativeCall(name string, args []runtime.Value) (runtime.Value, 
 	return vm.evalNativeCallWithNames(name, args, nil)
 }
 
+// bindNativeNamedArgs reorders named arguments to a native's declared parameter order; returns (reordered, true) when any name was present, or an error matching the evaluator when the native has no signature.
+func (vm *VM) bindNativeNamedArgs(name string, args []runtime.Value, names []string) ([]runtime.Value, bool, error) {
+	named := false
+	for _, n := range names {
+		if n != "" {
+			named = true
+			break
+		}
+	}
+	if !named {
+		return args, false, nil
+	}
+	module, function, _ := strings.Cut(name, ".")
+	sig, ok := native.NativeSignature(module, function)
+	if !ok {
+		return nil, false, fmt.Errorf("named arguments are only supported for Geblang functions and methods")
+	}
+	bargs := make([]argbinding.Arg, len(args))
+	for i := range args {
+		if i < len(names) {
+			bargs[i].Name = names[i]
+		}
+	}
+	result, err := argbinding.Order(sig, bargs)
+	if err != nil {
+		return nil, false, err
+	}
+	indices, err := argbinding.NativeArgOrder(sig, result)
+	if err != nil {
+		return nil, false, err
+	}
+	ordered := make([]runtime.Value, len(indices))
+	for k, idx := range indices {
+		ordered[k] = args[idx]
+	}
+	return ordered, true, nil
+}
+
 func (vm *VM) evalNativeCallWithNames(name string, args []runtime.Value, names []string) (runtime.Value, error) {
+	if reordered, bound, err := vm.bindNativeNamedArgs(name, args, names); err != nil {
+		return nil, err
+	} else if bound {
+		args, names = reordered, nil
+	}
 	if strings.HasPrefix(name, "collections.") {
 		return vm.collectionsNativeCall(name[len("collections."):], args)
 	}
@@ -1562,11 +1605,34 @@ func (vm *VM) wrapStatefulNativeArgs(module, function string, args []runtime.Val
 	if len(args) == 0 {
 		return args
 	}
+	share := httpShareHandler(module, function, args)
 	wrapped := make([]runtime.Value, len(args))
 	for i, arg := range args {
-		wrapped[i] = vm.wrapStatefulNativeValue(arg, serverHandlerArg(module, function, i))
+		wrapped[i] = vm.wrapStatefulNativeValue(arg, serverHandlerArg(module, function, i) && !share)
 	}
 	return wrapped
+}
+
+// httpShareHandler reports whether an http.serve/listen call set opts.shareHandler to share (not isolate) its handler.
+func httpShareHandler(module, function string, args []runtime.Value) bool {
+	if module != "http" || (function != "serve" && function != "listen") || len(args) < 3 {
+		return false
+	}
+	d, ok := args[2].(runtime.Dict)
+	if !ok {
+		return false
+	}
+	shared := false
+	d.ForEachEntry(func(_ string, e runtime.DictEntry) bool {
+		if k, ok := e.Key.(runtime.String); ok && k.Value == "shareHandler" {
+			if b, ok := e.Value.(runtime.Bool); ok {
+				shared = b.Value
+			}
+			return false
+		}
+		return true
+	})
+	return shared
 }
 
 // serverHandlerArg reports whether arg i of a stateful-native call is a direct
@@ -1895,6 +1961,8 @@ func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runt
 		if f.Module != vm.moduleName {
 			return vm.callCallableSlow(fn, args)
 		}
+		// Per-request isolation: deep-clone the closure's captured upvalues so concurrent invocations cannot share/race handler state (parity with the evaluator's CloneFunction).
+		f = runtime.CloneValue(f).(runtime.BytecodeClosure)
 		constants := make([]runtime.Value, 0, len(args)+2)
 		constants = append(constants, f)
 		constants = append(constants, args...)
@@ -1937,7 +2005,8 @@ func (vm *VM) overloadedValue(indices []int64) runtime.OverloadedFunction {
 		var native func(*runtime.Instance, []runtime.Value) (runtime.Value, error)
 		if loader != nil {
 			native = func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-				return loader.CallModuleFunction(bf, args, vm)
+				// caller=nil: an overloaded value can escape its creating VM and run on another goroutine, so it has no proven synchronous re-entry host (capturing vm could form a self-referential host chain).
+				return loader.CallModuleFunction(bf, args, nil)
 			}
 		} else {
 			native = func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {

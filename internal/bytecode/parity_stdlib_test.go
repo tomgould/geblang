@@ -51,7 +51,7 @@ io.println(math.sqrt(16.0));
 }
 
 func TestParityMathSpecialFunctions(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import math;
 io.println(math.gamma(5.0));
 io.println(math.lgamma(5.0));

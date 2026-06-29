@@ -30,11 +30,11 @@ func CatalogNativeSymbols() map[string]map[string]struct{} {
 	nativeSymbolsOnce.Do(func() {
 		out := make(map[string]map[string]struct{}, len(stdlibCatalog))
 		for moduleName, doc := range stdlibCatalog {
-			set := make(map[string]struct{}, len(doc.functions)+len(doc.classes))
-			for fn := range doc.functions {
+			set := make(map[string]struct{}, len(doc.Functions)+len(doc.Classes))
+			for fn := range doc.Functions {
 				set[fn] = struct{}{}
 			}
-			for cls := range doc.classes {
+			for cls := range doc.Classes {
 				set[cls] = struct{}{}
 			}
 			out[moduleName] = set

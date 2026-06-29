@@ -22,8 +22,8 @@ func TestCatalogDateTimeMethodsMatchEngine(t *testing.T) {
 		"Zone":     native.DateTimeZoneMethods,
 	}
 	for class, want := range cases {
-		got := make([]string, 0, len(dt.classMethods[class]))
-		for name := range dt.classMethods[class] {
+		got := make([]string, 0, len(dt.ClassMethods[class]))
+		for name := range dt.ClassMethods[class] {
 			got = append(got, name)
 		}
 		if !sameSet(got, want) {

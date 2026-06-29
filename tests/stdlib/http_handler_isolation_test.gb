@@ -1,0 +1,46 @@
+/**
+ * @title HTTP handler per-request isolation (1.30.0)
+ * @summary A bare http.listen / http.serve handler is isolated per request:
+ * its captured state is deep-cloned so concurrent requests cannot share or
+ * race it. opts.shareHandler opts into a shared handler (the captured graph
+ * is shared, not cloned), for frameworks that manage their own per-request
+ * isolation.
+ *
+ * Tagged "integration" (binds a local port).
+ */
+import test;
+import http;
+
+func countingHandler(): callable {
+    let state = {"n": 0};
+    return func(dict<string, any> req): dict<string, any> {
+        state["n"] = (state["n"] as int) + 1;
+        return {"status": 200, "body": (state["n"] as string), "headers": {}};
+    };
+}
+
+class HttpHandlerIsolationTest extends test.Test {
+    @tag("integration")
+    @test
+    func bareHandlerIsolatedPerRequest(): void {
+        let server = http.listen("127.0.0.1:0", countingHandler());
+        let base = "http://" + http.serverAddr(server);
+        let r1 = http.get(base + "/");
+        let r2 = http.get(base + "/");
+        http.close(server);
+        this.assertEquals("1", r1.text());
+        this.assertEquals("1", r2.text());
+    }
+
+    @tag("integration")
+    @test
+    func shareHandlerSharesState(): void {
+        let server = http.listen("127.0.0.1:0", countingHandler(), {"shareHandler": true});
+        let base = "http://" + http.serverAddr(server);
+        let r1 = http.get(base + "/");
+        let r2 = http.get(base + "/");
+        http.close(server);
+        this.assertEquals("1", r1.text());
+        this.assertEquals("2", r2.text());
+    }
+}

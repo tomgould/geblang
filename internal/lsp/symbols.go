@@ -226,17 +226,17 @@ func hoverContent(source string, line, char int) string {
 		if modName == word {
 			return "**" + word + "** - stdlib module"
 		}
-		if fn, ok := mod.functions[word]; ok {
-			return "```geblang\n" + fn.signature() + "\n```\n\n" + fn.doc
+		if fn, ok := mod.Functions[word]; ok {
+			return "```geblang\n" + fn.Signature() + "\n```\n\n" + fn.Doc
 		}
-		if doc, ok := mod.classes[word]; ok {
+		if doc, ok := mod.Classes[word]; ok {
 			return "```geblang\n" + word + "\n```\n\n" + doc
 		}
 	}
 
 	if fn, ok := globalBuiltinDoc(word); ok {
-		fn.name = word
-		return "```geblang\n" + fn.signature() + "\n```\n\n" + fn.doc
+		fn.Name = word
+		return "```geblang\n" + fn.Signature() + "\n```\n\n" + fn.Doc
 	}
 
 	return ""

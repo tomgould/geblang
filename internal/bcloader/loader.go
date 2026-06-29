@@ -254,10 +254,14 @@ func (l *Loader) restoreModuleGlobals(vm *bytecode.VM, module string) {
 // construction per cross-module call.
 func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.VM) (*bytecode.VM, *sync.Pool) {
 	// Re-entry: a still-active ancestor worker for this module on the same call chain (hence same goroutine) is reused so the nested call shares its live globals (nil pool marks the borrowed reuse).
+	steps := 0
 	for h := caller; h != nil; h = h.ReentryHost() {
 		if h.ReentryActive() && h.ModuleName() == module {
 			h.IncReentryDepth()
 			return h, nil
+		}
+		if steps++; steps > 4096 { // defensive: never loop on a malformed/cyclic host chain
+			break
 		}
 	}
 	var pool *sync.Pool
@@ -283,6 +287,10 @@ func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.
 	}
 	vm.RestoreFunctionDecoratorState(decorators)
 	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(module))
+	// A worker must never be its own re-entry host (a reacquired-from-pool worker passed as its own caller would otherwise form a self-loop).
+	if caller == vm {
+		caller = nil
+	}
 	vm.SetReentryHost(caller)
 	vm.SetReentryActive(true)
 	return vm, pool

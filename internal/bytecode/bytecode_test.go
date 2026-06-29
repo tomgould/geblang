@@ -339,7 +339,7 @@ func TestVMRunsNamedStatefulNativeBridge(t *testing.T) {
 	source := []byte(`import io;
 import ext;
 
-io.println(ext.call(1, "greet", name: "Geblang"));
+io.println(ext.call(function: "greet", conn: 1, args: "Geblang"));
 `)
 	program := parseProgram(t, string(source))
 	chunk, err := bytecode.Compile(program, source, "test")
@@ -354,11 +354,12 @@ io.println(ext.call(1, "greet", name: "Geblang"));
 	if err := vm.Run(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
+	// Named args bind to ext.call's parameters (conn, function, args) and reach the stateful native as reordered positional args, with no names forwarded.
 	if out.String() != "hello Geblang\n" {
 		t.Fatalf("output: got %q", out.String())
 	}
-	if len(fake.names) != 1 || len(fake.names[0]) != 3 || fake.names[0][2] != "name" {
-		t.Fatalf("named args: got %#v", fake.names)
+	if len(fake.names) != 1 || len(fake.names[0]) != 0 {
+		t.Fatalf("names should be cleared after binding: got %#v", fake.names)
 	}
 }
 

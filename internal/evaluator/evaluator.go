@@ -3195,11 +3195,60 @@ func (e *Evaluator) evalCallWithExpectedType(call *ast.CallExpression, env *runt
 		}
 		return nil, fmt.Errorf("unknown function %s.%s", module, name)
 	}
-	args, err := e.evalCallArguments(call, env)
+	effModule := module
+	if hasImportName {
+		effModule = canonical
+	}
+	args, err := e.evalNativeCallArguments(call, env, effModule, name)
 	if err != nil {
 		return nil, err
 	}
 	return function(call, args)
+}
+
+// evalNativeCallArguments evaluates a native call's arguments, binding named arguments to the native's declared parameter order; falls back to positional evaluation when there are no names, a spread is present, or the native has no signature.
+func (e *Evaluator) evalNativeCallArguments(call *ast.CallExpression, env *runtime.Environment, module, function string) ([]runtime.Value, error) {
+	hasNamed, hasSpread := false, false
+	for _, arg := range call.Arguments {
+		if arg.Name != nil {
+			hasNamed = true
+		}
+		if arg.Spread {
+			hasSpread = true
+		}
+	}
+	if !hasNamed || hasSpread {
+		return e.evalCallArguments(call, env)
+	}
+	sig, ok := native.NativeSignature(module, function)
+	if !ok {
+		return e.evalCallArguments(call, env)
+	}
+	values := make([]runtime.Value, len(call.Arguments))
+	bargs := make([]binding.Arg, len(call.Arguments))
+	for i, arg := range call.Arguments {
+		v, err := e.evalExpression(arg.Value, env)
+		if err != nil {
+			return nil, err
+		}
+		values[i] = v
+		if arg.Name != nil {
+			bargs[i].Name = arg.Name.Value
+		}
+	}
+	result, err := binding.Order(sig, bargs)
+	if err != nil {
+		return nil, err
+	}
+	indices, err := binding.NativeArgOrder(sig, result)
+	if err != nil {
+		return nil, err
+	}
+	ordered := make([]runtime.Value, len(indices))
+	for k, idx := range indices {
+		ordered[k] = values[idx]
+	}
+	return ordered, nil
 }
 
 func (e *Evaluator) moduleExportExists(module, name string, env *runtime.Environment) bool {

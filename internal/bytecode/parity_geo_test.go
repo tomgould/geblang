@@ -3,7 +3,7 @@ package bytecode_test
 import "testing"
 
 func TestParityGeo(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import geo;
 io.println(geo.haversineDistance(51.5074, -0.1278, 48.8566, 2.3522));
 io.println(geo.haversineDistance(51.5074, -0.1278, 48.8566, 2.3522, "mi"));

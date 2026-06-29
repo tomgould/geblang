@@ -145,13 +145,13 @@ vscode-install-wsl:
 	@VSIX_SRC=build/vscode/vsix/geblang.vsix; \
 	VSIX_TMP=/mnt/c/Windows/Temp/geblang.vsix; \
 	cp "$$VSIX_SRC" "$$VSIX_TMP" && \
-	$(CODE) --install-extension "$$(wslpath -w $$VSIX_TMP)"
+	NODE_OPTIONS="$$NODE_OPTIONS --no-deprecation" $(CODE) --install-extension "$$(wslpath -w $$VSIX_TMP)"
 
 vscode-install-native:
 	@bin="$(CODE)"; \
 	command -v "$$bin" >/dev/null 2>&1 || bin="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"; \
 	command -v "$$bin" >/dev/null 2>&1 || { echo "error: VS Code 'code' CLI not found; install it (VS Code: Command Palette > 'Shell Command: Install code command in PATH') or run: make vscode-install CODE=/path/to/code" >&2; exit 1; }; \
-	"$$bin" --install-extension build/vscode/vsix/geblang.vsix
+	NODE_OPTIONS="$$NODE_OPTIONS --no-deprecation" "$$bin" --install-extension build/vscode/vsix/geblang.vsix
 
 vscode-install:
 	@if [ -n "$$WSL_DISTRO_NAME" ]; then \

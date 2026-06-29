@@ -1,0 +1,27 @@
+/**
+ * @title String-cast dunder (__string)
+ * @summary A class defines `__string` so string interpolation and an
+ * `as string` cast render custom text instead of the default object form.
+ * (Geblang's string-cast hook is `__string`, not `toString`.)
+ */
+import io;
+
+class Money {
+    int cents;
+
+    func Money(int cents) {
+        this.cents = cents;
+    }
+
+    func __string(): string {
+        let dollars = this.cents // 100;
+        let rem = this.cents % 100;
+        let pad = rem < 10 ? "0" : "";
+        return "$" + (dollars as string) + "." + pad + (rem as string);
+    }
+}
+
+let price = Money(1995);
+io.println("${price}");
+io.println("Total: ${price}");
+io.println(price as string);

@@ -3,7 +3,7 @@ package bytecode_test
 import "testing"
 
 func TestParityStatsNormal(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import stats;
 let d = stats.normal(0.0, 1.0);
 io.println(d.pdf(0.0));
@@ -17,7 +17,7 @@ io.println(d.sample(3, {"seed": 1}));
 }
 
 func TestParityStatsClosedForm(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import stats;
 io.println(stats.uniform(0.0, 10.0).cdf(2.5));
 io.println(stats.uniform(0.0, 10.0).ppf(0.25));
@@ -30,7 +30,7 @@ io.println(stats.weibull(2.0, 1.0).mean());
 }
 
 func TestParityStatsGamma(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import stats;
 io.println(stats.gamma(2.0, 2.0).cdf(4.0));
 io.println(stats.gamma(2.0, 2.0).mean());
@@ -40,7 +40,7 @@ io.println(stats.chiSquared(3.0).ppf(0.5));
 }
 
 func TestParityStatsBetaFamily(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import stats;
 io.println(stats.beta(2.0, 3.0).cdf(0.5));
 io.println(stats.beta(2.0, 3.0).mean());
@@ -51,7 +51,7 @@ io.println(stats.f(5.0, 10.0).cdf(3.326));
 }
 
 func TestParityStatsDiscrete(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import stats;
 io.println(stats.binomial(20, 0.5).pdf(10.0));
 io.println(stats.binomial(20, 0.5).cdf(12.0));
@@ -63,7 +63,7 @@ io.println(stats.poisson(4.0).sample(3, {"seed": 7}));
 }
 
 func TestParityStatsSampleMean(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import stats;
 let s = stats.normal(5.0, 2.0).sample(20000, {"seed": 123});
 io.println(s.mean() > 4.8 && s.mean() < 5.2);
@@ -73,7 +73,7 @@ io.println(p.mean() > 3.8 && p.mean() < 4.2);
 }
 
 func TestParityStatsTTests(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import stats;
 io.println(stats.tTestOneSample([1, 2, 3, 4, 5], 2.0)["statistic"]);
 io.println(stats.tTestOneSample([1, 2, 3, 4, 5], 2.0)["pvalue"]);
@@ -84,7 +84,7 @@ io.println(stats.tTestPaired([1, 2, 3, 4], [2, 4, 6, 8])["statistic"]);
 }
 
 func TestParityStatsChiSquare(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import stats;
 io.println(stats.chiSquareTest([10, 20, 30, 40], [25, 25, 25, 25])["statistic"]);
 io.println(stats.chiSquareTest([10, 20, 30, 40], [25, 25, 25, 25])["df"]);
@@ -94,7 +94,7 @@ io.println(stats.chiSquareIndependence([[10, 20], [30, 40]])["df"]);
 }
 
 func TestParityStatsNonparametric(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import stats;
 io.println(stats.mannWhitneyU([1, 2, 3, 4], [5, 6, 7, 8])["statistic"]);
 io.println(stats.mannWhitneyU([1, 2, 3, 4], [5, 6, 7, 8])["pvalue"]);
@@ -103,7 +103,7 @@ io.println(stats.ksTest([1, 2, 3, 4, 5], [6, 7, 8, 9, 10])["statistic"]);
 }
 
 func TestParityStatsConfidenceIntervals(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import stats;
 io.println(stats.confidenceIntervalMean([1, 2, 3, 4, 5], 0.95)["low"]);
 io.println(stats.confidenceIntervalMean([1, 2, 3, 4, 5], 0.95)["high"]);
@@ -114,7 +114,7 @@ io.println(stats.confidenceIntervalDiffMeans([1, 2, 3, 4, 5], [2, 4, 6, 8, 10], 
 }
 
 func TestParityStatsLinregress(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import stats;
 let fit = stats.linregress([1, 2, 3, 4, 5], [2, 4, 5, 4, 5]);
 io.println(fit["slope"]);
@@ -126,7 +126,7 @@ io.println(fit["pvalue"]);
 }
 
 func TestParityStatsPolyfit(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import stats;
 let c = stats.polyfit([0, 1, 2, 3], [1, 3, 7, 13], 2);
 io.println(c[0]);
@@ -138,7 +138,7 @@ io.println(stats.polyval([2.0, 0.0, -1.0], 3.0));
 }
 
 func TestParityStatsDescriptive(t *testing.T) {
-	runParity(t, `import io;
+	runParityNumeric(t, `import io;
 import stats;
 io.println(stats.skewness([1, 2, 3, 4, 5]));
 io.println(stats.kurtosis([1, 2, 3, 4, 5]));

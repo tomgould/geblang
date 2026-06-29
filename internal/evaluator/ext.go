@@ -556,6 +556,8 @@ func extMarshalValue(v runtime.Value, slots *[][]byte) (interface{}, error) {
 		return nil, nil
 	case runtime.Bool:
 		return val.Value, nil
+	case runtime.SmallInt:
+		return val.Value, nil
 	case runtime.Int:
 		if val.Value == nil {
 			return 0, nil

@@ -417,3 +417,28 @@ io.println(total);
 io.println(gen.seenCount());
 `, "10\n5\n")
 }
+
+// Followup adversarial (CRITICAL regression): an overloaded value returned from a module (a loader-backed overload) and later invoked must not capture its creating VM as a re-entry host - doing so could form a self-referential host chain and hang the VM on a nested cross-module call. Covers the escaped overload + nested module call + concurrent invocation (run under -race).
+func TestParityEscapedOverloadReentrySafe(t *testing.T) {
+	mods := map[string]string{
+		"ohelper": "module ohelper;\nexport func compute(int x): int { return x + 1; }\n",
+		"opick":   "module opick;\nimport ohelper;\nfunc pick(int x): string { return \"int:\" + (ohelper.compute(x) as string); }\nfunc pick(string s): string { return \"str:\" + s; }\nexport func getPicker(): callable { return pick; }\n",
+	}
+	runMultiModuleParity(t, mods, `import io;
+import opick;
+let p = opick.getPicker();
+io.println(p(42));
+io.println(p("hi"));
+`, "int:43\nstr:hi\n")
+	runMultiModuleParity(t, mods, `import io;
+import async;
+import opick;
+let p = opick.getPicker();
+let ts = [];
+let i = 0;
+while (i < 20) { ts.push(async.run(func(): string { return p(7); })); i = i + 1; }
+let n = 0;
+for (t in ts) { if (async.await(t) == "int:8") { n = n + 1; } }
+io.println(n);
+`, "20\n")
+}

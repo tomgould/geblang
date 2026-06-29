@@ -32,7 +32,7 @@ func serveOnce(t *testing.T, debug bool) (int, string, string) {
 	e := New(io.Discard)
 	var errBuf bytes.Buffer
 	e.stderr = &errBuf
-	server := httptest.NewServer(e.httpHandler(throwingHandler(), nil, nil, 0, debug))
+	server := httptest.NewServer(e.httpHandler(throwingHandler(), nil, nil, 0, debug, false))
 	defer server.Close()
 	resp, err := http.Get(server.URL)
 	if err != nil {

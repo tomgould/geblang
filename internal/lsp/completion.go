@@ -89,8 +89,8 @@ func testMethodCompletionItems() []CompletionItem {
 		items = append(items, CompletionItem{
 			Label:         name,
 			Kind:          completionKindFunction,
-			Detail:        method.signature(),
-			Documentation: method.doc,
+			Detail:        method.Signature(),
+			Documentation: method.Doc,
 		})
 	}
 	return items
@@ -113,23 +113,23 @@ func (s *server) signatureHelp(params SignatureHelpParams) SignatureHelp {
 	if fn, ok := lookupClassMethod(source, module, name); ok {
 		return SignatureHelp{
 			Signatures: []SignatureInformation{{
-				Label:         fn.signature(),
-				Documentation: fn.doc,
-				Parameters:    parameterInformation(fn.params),
+				Label:         fn.Signature(),
+				Documentation: fn.Doc,
+				Parameters:    parameterInformation(fn.Params),
 			}},
 			ActiveSignature: 0,
-			ActiveParameter: activeParameter(argPrefix, len(fn.params)),
+			ActiveParameter: activeParameter(argPrefix, len(fn.Params)),
 		}
 	}
 	if fn, ok := lookupEnumStaticMethod(source, module, name); ok {
 		return SignatureHelp{
 			Signatures: []SignatureInformation{{
-				Label:         fn.signature(),
-				Documentation: fn.doc,
-				Parameters:    parameterInformation(fn.params),
+				Label:         fn.Signature(),
+				Documentation: fn.Doc,
+				Parameters:    parameterInformation(fn.Params),
 			}},
 			ActiveSignature: 0,
-			ActiveParameter: activeParameter(argPrefix, len(fn.params)),
+			ActiveParameter: activeParameter(argPrefix, len(fn.Params)),
 		}
 	}
 	fn, ok := lookupFunction(module, name)
@@ -138,12 +138,12 @@ func (s *server) signatureHelp(params SignatureHelpParams) SignatureHelp {
 	}
 	return SignatureHelp{
 		Signatures: []SignatureInformation{{
-			Label:         fn.signature(),
-			Documentation: fn.doc,
-			Parameters:    parameterInformation(fn.params),
+			Label:         fn.Signature(),
+			Documentation: fn.Doc,
+			Parameters:    parameterInformation(fn.Params),
 		}},
 		ActiveSignature: 0,
-		ActiveParameter: activeParameter(argPrefix, len(fn.params)),
+		ActiveParameter: activeParameter(argPrefix, len(fn.Params)),
 	}
 }
 
@@ -300,29 +300,29 @@ func moduleCompletionItems(module string) []CompletionItem {
 	if !ok {
 		return []CompletionItem{}
 	}
-	names := make([]string, 0, len(mod.functions)+len(mod.classes))
-	for name := range mod.functions {
+	names := make([]string, 0, len(mod.Functions)+len(mod.Classes))
+	for name := range mod.Functions {
 		names = append(names, name)
 	}
-	for name := range mod.classes {
+	for name := range mod.Classes {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	items := make([]CompletionItem, 0, len(names))
 	for _, name := range names {
-		if fn, ok := mod.functions[name]; ok {
+		if fn, ok := mod.Functions[name]; ok {
 			items = append(items, CompletionItem{
 				Label:         name,
 				Kind:          completionKindFunction,
-				Detail:        fn.signature(),
-				Documentation: fn.doc,
+				Detail:        fn.Signature(),
+				Documentation: fn.Doc,
 			})
 			continue
 		}
 		items = append(items, CompletionItem{
 			Label:  name,
 			Kind:   completionKindClass,
-			Detail: mod.classes[name],
+			Detail: mod.Classes[name],
 		})
 	}
 	return items
@@ -407,8 +407,8 @@ func classMethodCompletionItems(qualified string) []CompletionItem {
 		items = append(items, CompletionItem{
 			Label:         name,
 			Kind:          completionKindFunction,
-			Detail:        method.signature(),
-			Documentation: method.doc,
+			Detail:        method.Signature(),
+			Documentation: method.Doc,
 		})
 	}
 	return items
@@ -524,8 +524,8 @@ func enumStaticCompletionItems(info lspEnumInfo) []CompletionItem {
 		staticMethods = append(staticMethods, CompletionItem{
 			Label:         name,
 			Kind:          completionKindFunction,
-			Detail:        fn.signature(),
-			Documentation: fn.doc,
+			Detail:        fn.Signature(),
+			Documentation: fn.Doc,
 		})
 	}
 	return append(items, staticMethods...)
@@ -533,7 +533,7 @@ func enumStaticCompletionItems(info lspEnumInfo) []CompletionItem {
 
 func enumStaticFunctionDoc(info lspEnumInfo, name string) (functionDoc, bool) {
 	named := func(doc functionDoc) functionDoc {
-		doc.name = name
+		doc.Name = name
 		return doc
 	}
 	switch name {
@@ -640,8 +640,8 @@ func primitiveMethodCompletionItems(typ string) []CompletionItem {
 		items = append(items, CompletionItem{
 			Label:         name,
 			Kind:          completionKindFunction,
-			Detail:        method.signature(),
-			Documentation: method.doc,
+			Detail:        method.Signature(),
+			Documentation: method.Doc,
 		})
 	}
 	return items
@@ -772,12 +772,12 @@ func topLevelCompletionItems(prefix string) []CompletionItem {
 			continue
 		}
 		f := globalBuiltins[name]
-		f.name = name
+		f.Name = name
 		items = append(items, CompletionItem{
 			Label:         name,
 			Kind:          completionKindFunction,
-			Detail:        f.signature(),
-			Documentation: f.doc,
+			Detail:        f.Signature(),
+			Documentation: f.Doc,
 		})
 	}
 	if strings.HasPrefix(prefix, "_") || prefix == "" {
@@ -859,11 +859,11 @@ func lookupFunction(module, name string) (functionDoc, bool) {
 		if !ok {
 			return functionDoc{}, false
 		}
-		fn, ok := mod.functions[name]
+		fn, ok := mod.Functions[name]
 		return fn, ok
 	}
 	for _, mod := range stdlibCatalog {
-		if fn, ok := mod.functions[name]; ok {
+		if fn, ok := mod.Functions[name]; ok {
 			return fn, true
 		}
 	}

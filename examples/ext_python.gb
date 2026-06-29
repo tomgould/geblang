@@ -11,7 +11,7 @@ let conn = ext.load("python_example");
 
 io.println(ext.functions(conn).contains("greet") as string);
 io.println(ext.call(conn, "add", 19, 23) as string);
-io.println(ext.call(conn, "greet", name: "Geblang"));
+io.println(ext.call(conn, "greet", "Geblang"));
 io.println(ext.call(conn, "echo", bytes.fromHex("0102ff")).toHex());
 
 ext.close(conn);

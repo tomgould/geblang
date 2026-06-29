@@ -5,6 +5,8 @@
 # The VS Code extension ships as a release asset too: run `make vscode-build`
 # first (it produces build/vscode/vsix/geblang.vsix), then release. Users can
 # then install it with `code --install-extension geblang-vscode-<version>.vsix`.
+# The Claude Code skill (.claude/skills/geblang/) is zipped by the before-hook below
+# and shipped as geblang-claude-skill-<version>.zip (unzip into ~/.claude/skills).
 # The release body is the version's section from docs/user/18-release-notes.md
 # (not the commit log): pass it with --release-notes.
 # Validate locally:  make vscode-build && goreleaser release --snapshot --clean --skip=publish
@@ -19,6 +21,11 @@ changelog:
   disable: true
 
 project_name: geblang
+
+# Zip the Claude Code skill (.claude/skills/geblang/) into build/ so it can ship as a release asset.
+before:
+  hooks:
+    - "sh -c 'mkdir -p build && cd .claude/skills && rm -f ../../build/geblang-claude-skill.zip && zip -qr ../../build/geblang-claude-skill.zip geblang'"
 
 builds:
   - id: geblang
@@ -64,3 +71,5 @@ release:
   extra_files:
     - glob: ./build/vscode/vsix/geblang.vsix
       name_template: "geblang-vscode-{{ .Version }}.vsix"
+    - glob: ./build/geblang-claude-skill.zip
+      name_template: "geblang-claude-skill-{{ .Version }}.zip"

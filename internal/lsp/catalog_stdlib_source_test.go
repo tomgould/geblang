@@ -128,15 +128,15 @@ func TestCatalogCoversStdlibSourceExports(t *testing.T) {
 			return nil
 		}
 		for _, fn := range funcs {
-			if _, ok := cat.functions[fn]; !ok {
+			if _, ok := cat.Functions[fn]; !ok {
 				report(fn)
 			}
 		}
 		for cls, methods := range classes {
-			if _, ok := cat.classes[cls]; !ok {
+			if _, ok := cat.Classes[cls]; !ok {
 				report(cls)
 			}
-			cm := cat.classMethods[cls]
+			cm := cat.ClassMethods[cls]
 			for _, m := range methods {
 				if _, ok := cm[m]; !ok {
 					report(cls + "." + m)

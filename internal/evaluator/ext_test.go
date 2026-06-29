@@ -215,6 +215,17 @@ func TestExtMarshalList(t *testing.T) {
 	}
 }
 
+func TestExtMarshalSmallInt(t *testing.T) {
+	var slots [][]byte
+	got, err := extMarshalValue(runtime.SmallInt{Value: 19}, &slots)
+	if err != nil {
+		t.Fatalf("marshal SmallInt: %v", err)
+	}
+	if n, ok := got.(int64); !ok || n != 19 {
+		t.Fatalf("expected int64(19), got %T %v", got, got)
+	}
+}
+
 func TestExtMarshalRejectsUnsupportedValues(t *testing.T) {
 	var slots [][]byte
 	_, err := extMarshalValue(runtime.Type{Name: "Example"}, &slots)

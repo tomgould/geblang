@@ -10,6 +10,9 @@
   call (it sees the outer call's in-progress assignments). Module globals
   remain unsuitable for concurrent or transactional state; use `store.Store`
   or another explicit synchronized handle for those cases.
+- `http.serve`, `http.listen`, and `net.serve` accept an `opts.shareHandler`
+  flag: when true the handler is shared across requests instead of isolated
+  per request, for frameworks that manage their own per-request isolation.
 
 ### Performance
 
@@ -43,6 +46,10 @@
   construction VM.
 - Deserializing a class instance whose type defines methods no longer fails on
   the constructor's implicit receiver parameter.
+- A handler passed directly to `http.serve`, `http.listen`, or `net.serve` is
+  isolated per request on the bytecode backend: its captured state is
+  deep-cloned for each request, matching the evaluator. Previously the bytecode
+  backend shared the handler's captured state across concurrent requests.
 
 ## 1.29.2
 

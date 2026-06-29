@@ -1,0 +1,39 @@
+/**
+ * @title Named arguments on native functions
+ * @summary Named arguments bind to a native function's declared parameter
+ * names, in any order, the same way they do for user functions; an unknown or
+ * duplicated name is a runtime error.
+ */
+import test;
+import math;
+
+class NamedArgsNativeTest extends test.Test {
+    @test
+    func bindsAndReorders(): void {
+        this.assertEquals(8.0, math.pow(base: 2.0, exponent: 3.0));
+        this.assertEquals(8.0, math.pow(exponent: 3.0, base: 2.0));
+        this.assertEquals(5, math.max(right: 5, left: 3));
+    }
+
+    @test
+    func unknownNameErrors(): void {
+        let caught = false;
+        try {
+            math.pow(base: 2.0, zzz: 3.0);
+        } catch (Error e) {
+            caught = e.message.contains("no parameter zzz");
+        }
+        this.assertTrue(caught);
+    }
+
+    @test
+    func duplicateNameErrors(): void {
+        let caught = false;
+        try {
+            math.pow(base: 2.0, base: 3.0);
+        } catch (Error e) {
+            caught = e.message.contains("passed more than once");
+        }
+        this.assertTrue(caught);
+    }
+}

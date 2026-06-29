@@ -38,10 +38,10 @@ func forEachCatalogDoc(visit func(where, name string, f functionDoc)) {
 		}
 	}
 	for mod, d := range stdlibCatalog {
-		for n, f := range d.functions {
+		for n, f := range d.Functions {
 			visit(mod, n, f)
 		}
-		for cls, ms := range d.classMethods {
+		for cls, ms := range d.ClassMethods {
 			for n, f := range ms {
 				visit(mod+"."+cls, n, f)
 			}
@@ -57,13 +57,13 @@ func forEachCatalogDoc(visit func(where, name string, f functionDoc)) {
 func TestCatalogSignaturesWellFormed(t *testing.T) {
 	bad := []string{}
 	forEachCatalogDoc(func(where, name string, f functionDoc) {
-		if strings.TrimSpace(f.doc) == "" {
+		if strings.TrimSpace(f.Doc) == "" {
 			bad = append(bad, where+"."+name+": empty doc")
 		}
-		if strings.TrimSpace(f.result) == "" {
+		if strings.TrimSpace(f.Result) == "" {
 			bad = append(bad, where+"."+name+": empty result")
 		}
-		for _, p := range f.params {
+		for _, p := range f.Params {
 			if !paramWellFormed(p) {
 				bad = append(bad, where+"."+name+": malformed param "+strconv.Quote(p))
 			}
@@ -117,7 +117,7 @@ func TestCatalogHasNoPhantomNativeFunctions(t *testing.T) {
 		// a SUB-module (e.g. schema.validator.of) do not make schema.of resolve,
 		// so listing them under the parent's entry is a phantom. Class type names
 		// are catalogued for hover, not as module exports, so they are not checked.
-		for name := range d.functions {
+		for name := range d.Functions {
 			if isInternalMember(module, name) {
 				continue
 			}

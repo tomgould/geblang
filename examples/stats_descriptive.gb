@@ -1,0 +1,32 @@
+/**
+ * @title Descriptive and inferential statistics (stats)
+ * @summary Shape statistics (skewness, kurtosis) and correlation on data, a
+ * normal distribution (pdf / cdf), a one-sample t-test, and a linear
+ * regression - the everyday surface of the `stats` module.
+ */
+import io;
+import stats;
+
+let data = [2, 4, 4, 4, 5, 5, 7, 9];
+io.println("skewness: ${stats.skewness(data)}");
+io.println("kurtosis: ${stats.kurtosis(data)}");
+
+let x = [1, 2, 3, 4, 5];
+let y = [2, 4, 5, 4, 5];
+io.println("corrcoef: ${stats.corrcoef(x, y)}");
+
+let d = stats.normal(0.0, 1.0);
+io.println("pdf(0): ${d.pdf(0.0)}");
+io.println("cdf(1.96): ${d.cdf(1.96)}");
+
+let t = stats.tTestOneSample([1, 2, 3, 4, 5], 2.0);
+let tstat = t["statistic"];
+let tp = t["pvalue"];
+io.println("t statistic: ${tstat}");
+io.println("t pvalue: ${tp}");
+
+let fit = stats.linregress(x, y);
+let slope = fit["slope"];
+let intercept = fit["intercept"];
+io.println("slope: ${slope}");
+io.println("intercept: ${intercept}");

@@ -13,10 +13,10 @@ let cols = curses.maxX();
 
 let title = "Welcome to Geblang clib.curses";
 let sub   = "Press any key to exit.";
-let tr = rows / 2 - 1;
-let tc = (cols - title.length()) / 2;
-let sr = rows / 2 + 1;
-let sc = (cols - sub.length()) / 2;
+let tr = rows // 2 - 1;
+let tc = (cols - title.length()) // 2;
+let sr = rows // 2 + 1;
+let sc = (cols - sub.length()) // 2;
 
 curses.clear();
 curses.attrOn(curses.colorPair(1) | curses.A_BOLD);

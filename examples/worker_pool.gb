@@ -1,0 +1,44 @@
+/**
+ * @title Worker pool over a channel
+ * @summary A producer task feeds jobs into a buffered async.channel; several
+ * worker tasks pull jobs concurrently until the channel is closed (a drained
+ * recv returns null), tallying results in thread-safe AtomicInts. Shows
+ * async.run, async.channel (send / recv / close), and async.atomic.
+ */
+import io;
+import async;
+import async.channel as ch;
+import async.atomic as atomic;
+
+let jobs = ch.Channel<int>(16);
+let processed = atomic.AtomicInt(0);
+let sum = atomic.AtomicInt(0);
+
+let producer = async.run(func(): void {
+    for (int i = 1; i <= 100; i++) {
+        jobs.send(i);
+    }
+    jobs.close();
+});
+
+let workers = [];
+for (int w = 0; w < 4; w++) {
+    workers.push(async.run(func(): void {
+        while (true) {
+            let job = jobs.recv();
+            if (job == null) {
+                break;
+            }
+            processed.add(1);
+            sum.add(job as int);
+        }
+    }));
+}
+
+async.await(producer);
+for (t in workers) {
+    async.await(t);
+}
+
+io.println("processed: " + (processed.load() as string));
+io.println("sum: " + (sum.load() as string));

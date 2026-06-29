@@ -103,9 +103,13 @@ func (e *Evaluator) httpServe(call *ast.CallExpression, args []runtime.Value) (r
 	if err != nil {
 		return nil, err
 	}
+	share, err := parseShareHandler(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	server := &http.Server{
 		Addr:     addr.Value,
-		Handler:  e.httpHandler(handler, pool, tp, maxBody, serveDebugEnabled(debug)),
+		Handler:  e.httpHandler(handler, pool, tp, maxBody, serveDebugEnabled(debug), share),
 		ErrorLog: errLog,
 	}
 	if tlsCfg != nil {
@@ -161,11 +165,15 @@ func (e *Evaluator) httpListen(call *ast.CallExpression, args []runtime.Value) (
 	if err != nil {
 		return nil, err
 	}
+	share, err := parseShareHandler(serverOpts, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	listener, err := net.Listen("tcp", addr.Value)
 	if err != nil {
 		return nil, err
 	}
-	server := &http.Server{Handler: e.httpHandler(handler, pool, tp, maxBody, serveDebugEnabled(debug)), ErrorLog: errLog}
+	server := &http.Server{Handler: e.httpHandler(handler, pool, tp, maxBody, serveDebugEnabled(debug), share), ErrorLog: errLog}
 	handle := &httpServerHandle{server: server, listener: listener, done: make(chan error, 1), pool: pool, certPEM: certPEM}
 	e.httpServerMu.Lock()
 	e.nextHTTPServerID++
@@ -436,7 +444,7 @@ func waitHTTPServerDone(handle *httpServerHandle) error {
 	return err
 }
 
-func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool, tp *trustedProxies, maxBody int64, debug bool) http.Handler {
+func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool, tp *trustedProxies, maxBody int64, debug bool, shareHandler bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if pool != nil && !pool.IsUnbounded() {
 			if err := pool.Acquire(r.Context()); err != nil {
@@ -473,7 +481,7 @@ func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool,
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		response, err := e.callHTTPHandler(handler, r, body, tp)
+		response, err := e.callHTTPHandler(handler, r, body, tp, shareHandler)
 		if err != nil {
 			headline, rendered := serveErrorParts(err)
 			if debug {
@@ -489,15 +497,12 @@ func (e *Evaluator) httpHandler(handler runtime.Function, pool *concurrent.Pool,
 	})
 }
 
-func (e *Evaluator) callHTTPHandler(handler runtime.Function, request *http.Request, body []byte, tp *trustedProxies) (runtime.Value, error) {
-	// Per-request isolation: always run in a child evaluator (isolates eval-side
-	// dispatch state across concurrent requests). An eval-runtime handler is
-	// deep-cloned; a VM-runtime handler is a native trampoline that isolates the
-	// VM side itself (callCallableIsolated).
+func (e *Evaluator) callHTTPHandler(handler runtime.Function, request *http.Request, body []byte, tp *trustedProxies, shareHandler bool) (runtime.Value, error) {
+	// Per-request isolation: a child evaluator isolates eval-side dispatch state; an eval handler is also deep-cloned (shareHandler opts out; a VM handler is a trampoline that isolates itself).
 	child := e.childForCallback()
 	defer child.Cleanup()
 	callbackHandler := handler
-	if handler.Native == nil {
+	if handler.Native == nil && !shareHandler {
 		callbackHandler = runtime.CloneFunction(handler)
 	}
 	requestArg, err := child.httpRequestArgument(callbackHandler, request, body, tp)
@@ -585,6 +590,23 @@ func parseDebugFlag(opts runtime.Value, label string) (bool, error) {
 	b, ok := v.(runtime.Bool)
 	if !ok {
 		return false, fmt.Errorf("%s opts.debug must be a bool", label)
+	}
+	return b.Value, nil
+}
+
+// parseShareHandler reads opts.shareHandler: when true the handler is invoked shared (not cloned per request), for frameworks that manage their own per-request isolation.
+func parseShareHandler(opts runtime.Value, label string) (bool, error) {
+	dict, ok := opts.(runtime.Dict)
+	if !ok {
+		return false, nil
+	}
+	v, ok := dictField(dict, "shareHandler")
+	if !ok {
+		return false, nil
+	}
+	b, ok := v.(runtime.Bool)
+	if !ok {
+		return false, fmt.Errorf("%s opts.shareHandler must be a bool", label)
 	}
 	return b.Value, nil
 }

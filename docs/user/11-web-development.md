@@ -137,6 +137,12 @@ The model has two halves:
   one set of controllers, one database pool, one configuration, reused by every
   request.
 
+A bare handler can opt into the shared model with an option:
+`http.serve(handler, {"shareHandler": true})` (also `http.listen` / `net.serve`).
+The handler and its captured state are then shared across requests instead of
+cloned per request - this is how a framework keeps one application graph. When a
+handler is shared, the `store.Store` rule below applies.
+
 Shared is the useful default for the framework path, but it comes with one
 rule: **do not mutate a plain `dict`, `list`, `set`, or object that is shared
 across requests.** Two requests writing the same container at the same instant

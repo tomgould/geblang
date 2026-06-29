@@ -1,0 +1,34 @@
+/**
+ * @title Closures and higher-order functions
+ * @summary A function returning a function that captures and mutates state
+ * (a counter factory), a function taking another function, and map / filter /
+ * reduce with function arguments.
+ */
+import io;
+
+func makeCounter(int start): callable {
+    let count = start;
+    return func(): int {
+        count = count + 1;
+        return count;
+    };
+}
+
+let next = makeCounter(10);
+io.println(next() as string);
+io.println(next() as string);
+io.println(next() as string);
+
+func applyTwice(callable f, int x): int {
+    return f(f(x));
+}
+let inc = func(int n): int { return n + 1; };
+io.println(applyTwice(inc, 5) as string);
+
+let nums = [1, 2, 3, 4, 5, 6];
+let doubled = nums.map(func(int n): int { return n * 2; });
+let evens = nums.filter(func(int n): bool { return n % 2 == 0; });
+let total = nums.reduce(func(int acc, int n): int { return acc + n; }, 0);
+io.println("${doubled}");
+io.println("${evens}");
+io.println(total as string);
