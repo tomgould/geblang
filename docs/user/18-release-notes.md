@@ -13,6 +13,10 @@
 - `http.serve`, `http.listen`, and `net.serve` accept an `opts.shareHandler`
   flag: when true the handler is shared across requests instead of isolated
   per request, for frameworks that manage their own per-request isolation.
+- Native (built-in) functions accept named arguments, the same as user
+  functions: an argument may be passed by parameter name, in any order (for
+  example `math.pow(base: 2.0, exponent: 3.0)`), identically on both backends.
+  An unknown or duplicated parameter name is a runtime error.
 
 ### Performance
 
@@ -50,6 +54,14 @@
   isolated per request on the bytecode backend: its captured state is
   deep-cloned for each request, matching the evaluator. Previously the bytecode
   backend shared the handler's captured state across concurrent requests.
+- A handler defined in a different module from its `http.serve`, `http.listen`,
+  or `net.serve` call is now isolated per request on the bytecode backend too;
+  it was still shared across requests.
+- Deep-cloning a value that contains a reference cycle (for example a dict that
+  holds itself) no longer recurses without bound; this could happen during
+  per-request handler isolation.
+- The `messaging` module (RabbitMQ and Kafka) runs on the bytecode backend;
+  those calls previously failed there with `unsupported native call`.
 
 ## 1.29.2
 
