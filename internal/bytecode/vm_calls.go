@@ -1765,16 +1765,9 @@ func bridgedParameters(params []runtime.ParameterMetadata) []ast.Parameter {
 	return out
 }
 
+// isStatefulNativeModule shares the compiler's canonical stateful-module list so the VM's bridge decision cannot drift from it (the drift that left amqp/kafka compilable but "unsupported native call" at runtime).
 func isStatefulNativeModule(module string) bool {
-	switch module {
-	case "io", "sys", "secrets", "process", "procnative", "sshnative",
-		"http", "websocket", "smtp", "web", "db", "ext", "ffinative", "net", "test", "log", "watch",
-		"csv", "schema", "serde", "metrics", "trace", "profile", "path", "async", "dotenv", "cli",
-		"dataframe", "onnx", "browser":
-		return true
-	default:
-		return false
-	}
+	return isStatefulBytecodeBuiltinModule(module)
 }
 
 func isStatefulNativeCall(module, function string) bool {

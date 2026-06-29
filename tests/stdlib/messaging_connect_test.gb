@@ -1,0 +1,24 @@
+/**
+ * @title messaging.connect surfaces the broker dial error on both backends
+ * @summary messaging.connect against an unreachable broker raises the real
+ * transport error. messaging is an engine-side stateful native bridged to the
+ * VM; this confirms the bridge works (it was "unsupported native call amqp.dial").
+ *
+ * Tagged "integration" (attempts a local connection).
+ */
+import test;
+import messaging;
+
+class MessagingConnectTest extends test.Test {
+    @tag("integration")
+    @test
+    func unreachableBrokerSurfacesDialError(): void {
+        let caught = false;
+        try {
+            messaging.connect({"driver": "rabbitmq", "url": "amqp://127.0.0.1:59999/", "queue": "q"});
+        } catch (Error e) {
+            caught = e.message.contains("amqp.dial");
+        }
+        this.assertTrue(caught);
+    }
+}

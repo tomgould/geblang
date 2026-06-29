@@ -1,0 +1,28 @@
+/**
+ * @title Message queue (messaging) - publish and receive
+ * @summary The backend-agnostic messaging surface: connect to a broker, publish
+ * a message, and receive it. The same code targets RabbitMQ, Kafka, STOMP, SQS,
+ * or SNS by changing the `driver`. Requires a running broker (RabbitMQ at
+ * amqp://localhost here); with none reachable it prints a note and exits cleanly.
+ */
+import io;
+import messaging;
+
+try {
+    let q = messaging.connect({
+        "driver": "rabbitmq",
+        "url": "amqp://localhost/",
+        "queue": "demo-jobs",
+    });
+    q.publish({"task": "resize", "id": 1});
+    q.publish({"task": "resize", "id": 2});
+
+    let first = q.receive(1000);
+    let second = q.receive(1000);
+    io.println("received: ${first}");
+    io.println("received: ${second}");
+
+    q.close();
+} catch (Error e) {
+    io.println("messaging needs a running broker (RabbitMQ/Kafka/STOMP/SQS/SNS); skipped: ${e.message}");
+}
