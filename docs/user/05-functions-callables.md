@@ -401,6 +401,26 @@ Order order = load("o-123");    # expected type selects Order overload
 # load("x");                    # ambiguous without an expected return type
 ```
 
+An overloaded function used as a value carries all of its overloads. Calling it
+through that value (for example as a callback) selects from the positional
+arguments supplied at runtime, including arity, defaults, variadics, unions,
+nullability, and exact runtime type names:
+
+```gb
+func scale(int x): int        { return x * 2; }
+func scale(int x, int y): int { return x + y; }
+
+func apply(any f, int v): int { return f(v); }
+
+apply(scale, 5);   # 10 - the one-argument overload is selected at the call
+```
+
+A callable value has no named-argument syntax or surrounding expected return
+type, so those direct-call tie breakers are unavailable. Class/interface
+subtype matching for an overloaded callback is also currently less complete on
+the bytecode backend than direct-call matching; prefer an exact parameter type
+or a non-overloaded adapter when passing such a callback.
+
 Overloading works in the same way for class methods (see the Classes chapter).
 Named overloads improve error messages: when a call fails you will see which
 name and which expected types did not match.

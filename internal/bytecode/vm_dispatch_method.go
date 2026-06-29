@@ -147,7 +147,7 @@ func (vm *VM) receiverParamNames(instruction Instruction, receiver runtime.Value
 		if !ok || len(indices) != 1 {
 			return nil, vm.runtimeError(instruction, "cannot use dict spread with method %s.%s", r.Class.Name, methodName)
 		}
-		fn := vm.chunk.Functions[indices[0]]
+		fn := vm.curMod.Chunk.Functions[indices[0]]
 		if len(fn.ParamNames) > 0 {
 			return fn.ParamNames[1:], nil
 		}
@@ -156,18 +156,18 @@ func (vm *VM) receiverParamNames(instruction Instruction, receiver runtime.Value
 		if r.Module != vm.moduleName {
 			return nil, vm.runtimeError(instruction, "cannot use dict spread with a cross-module function value")
 		}
-		if int(r.Index) >= len(vm.chunk.Functions) {
+		if int(r.Index) >= len(vm.curMod.Chunk.Functions) {
 			return nil, vm.runtimeError(instruction, "function index out of range")
 		}
-		return vm.chunk.Functions[r.Index].ParamNames, nil
+		return vm.curMod.Chunk.Functions[r.Index].ParamNames, nil
 	case runtime.BytecodeClosure:
 		if r.Module != vm.moduleName {
 			return nil, vm.runtimeError(instruction, "cannot use dict spread with a cross-module closure")
 		}
-		if int(r.FunctionIndex) >= len(vm.chunk.Functions) {
+		if int(r.FunctionIndex) >= len(vm.curMod.Chunk.Functions) {
 			return nil, vm.runtimeError(instruction, "closure function index out of range")
 		}
-		fn := vm.chunk.Functions[r.FunctionIndex]
+		fn := vm.curMod.Chunk.Functions[r.FunctionIndex]
 		offset := int(fn.UpvalueCount)
 		if offset > len(fn.ParamNames) {
 			offset = len(fn.ParamNames)
@@ -195,7 +195,7 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 	}
 	functionIndex := instruction.Operands[0]
 	argc := int(instruction.Operands[1])
-	if functionIndex < 0 || int(functionIndex) >= len(vm.chunk.Functions) {
+	if functionIndex < 0 || int(functionIndex) >= len(vm.curMod.Chunk.Functions) {
 		return 0, vm.runtimeError(instruction, "function index out of range")
 	}
 	n := len(vm.stack)
@@ -203,7 +203,7 @@ func (vm *VM) callResolvedMethod(instruction Instruction, ip int) (int, error) {
 		return 0, vm.fatalError(instruction, "stack underflow")
 	}
 	base := n - argc - 1
-	function := &vm.chunk.Functions[functionIndex]
+	function := &vm.curMod.Chunk.Functions[functionIndex]
 	if function.IsGenerator && !vm.generatorExecution {
 		callArgs := make([]runtime.Value, argc+1)
 		for i := 0; i <= argc; i++ {
@@ -356,7 +356,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, nameValue.Value, instance, vm.wrapStatefulNativeArgs("", "", args))
+			result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, nameValue.Value, instance, vm.wrapStatefulNativeArgs("", "", args), vm)
 			if err != nil {
 				var notFound *runtime.MethodNotFoundError
 				if errors.As(err, &notFound) {
@@ -380,7 +380,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 					return 0, err
 				}
 				callArgs := []runtime.Value{instance, runtime.String{Value: nameValue.Value}, &runtime.List{Elements: args}}
-				return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, nil)
+				return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], callArgs, nil)
 			}
 			if result, handled, err := vm.callBuiltinParentMethod(classInfo, instance, nameValue.Value, args); handled {
 				if err != nil {
@@ -401,7 +401,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			// handles the lookup and execution.
 			if module, parentClass, ok := vm.crossModuleBoundary(classInfo); ok && vm.moduleLoader != nil {
 				if _, err := vm.moduleLoader.LoadModule(module, module); err == nil {
-					result, err := vm.moduleLoader.CallParentInModule(module, parentClass, nameValue.Value, instance, args)
+					result, err := vm.moduleLoader.CallParentInModule(module, parentClass, nameValue.Value, instance, args, vm)
 					if err == nil {
 						vm.push(result)
 						return ip, nil
@@ -425,7 +425,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			return 0, vm.callPropagate(instruction, err)
 		}
 		if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
-			if vm.chunk.Functions[functionIndex].Async && !vm.syncMode {
+			if vm.curMod.Chunk.Functions[functionIndex].Async && !vm.syncMode {
 				vm.push(vm.startAsyncCallableWithForwardThis(decorated, args, instance))
 				return ip, nil
 			}
@@ -436,11 +436,11 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			vm.push(result)
 			return ip, nil
 		}
-		if vm.chunk.Functions[functionIndex].IsGenerator && !vm.generatorExecution {
+		if vm.curMod.Chunk.Functions[functionIndex].IsGenerator && !vm.generatorExecution {
 			vm.push(vm.lazyGenerator(functionIndex, slots))
 			return ip, nil
 		}
-		nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], slots, nil)
+		nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], slots, nil)
 		if err != nil {
 			return 0, err
 		}
@@ -518,7 +518,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		return ip, nil
 	}
 	if frame, ok := receiver.(*runtime.DataFrame); ok {
-		result, err := native.DataFrameMethod(frame, nameValue.Value, args)
+		result, err := native.DataFrameMethod(frame, nameValue.Value, args, vm.invokeCallable)
 		if err != nil {
 			return vm.propagateCallbackError(instruction, ip, err)
 		}
@@ -653,7 +653,12 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.CallModuleFunction(function, vm.wrapStatefulNativeArgs("", "", args))
+			// A cross-module async function call yields a Task (the worker runs the body synchronously), matching the evaluator.
+			if function.Async && !vm.syncMode {
+				vm.push(vm.startAsyncCallable(function, args))
+				return ip, nil
+			}
+			result, err := vm.moduleLoader.CallModuleFunction(function, vm.wrapStatefulNativeArgs("", "", args), vm)
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -664,7 +669,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs("", "", args), callTypeArgs)
+			result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs("", "", args), callTypeArgs, vm)
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -696,7 +701,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			 * chunk. Main-chunk classes have Module="" so the check
 			 * looks at both directions. */
 			if class.Module != vm.moduleName && vm.moduleLoader != nil {
-				result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs("", "", args), callTypeArgs)
+				result, err := vm.moduleLoader.ConstructModuleClass(class, vm.wrapStatefulNativeArgs("", "", args), callTypeArgs, vm)
 				if err != nil {
 					return vm.propagateModuleError(instruction, ip, err)
 				}
@@ -718,7 +723,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.CallModuleStaticMethod(class, nameValue.Value, vm.wrapStatefulNativeArgs("", "", args))
+			result, err := vm.moduleLoader.CallModuleStaticMethod(class, nameValue.Value, vm.wrapStatefulNativeArgs("", "", args), vm)
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -748,7 +753,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			vm.push(result)
 			return ip, nil
 		}
-		return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], args, nil)
+		return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], args, nil)
 	}
 	if closure, ok := receiver.(runtime.BytecodeClosure); ok {
 		if nameValue.Value != "__invoke" {
@@ -762,11 +767,16 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.CallModuleClosure(closure, vm.wrapStatefulNativeArgs("", "", args))
+			result, err := vm.moduleLoader.CallModuleClosure(closure, vm.wrapStatefulNativeArgs("", "", args), vm)
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
 			vm.push(result)
+			return ip, nil
+		}
+		// An async function invoked as a value/callback yields a Task, matching the evaluator and the direct-call path.
+		if !vm.syncMode && int(closure.FunctionIndex) >= 0 && int(closure.FunctionIndex) < len(vm.curMod.Chunk.Functions) && vm.curMod.Chunk.Functions[closure.FunctionIndex].Async {
+			vm.push(vm.startAsyncCallable(closure, args))
 			return ip, nil
 		}
 		return vm.startClosureFunction(instruction, ip, closure, args)
@@ -803,7 +813,7 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
 			fn := runtime.BytecodeFunction{Module: variant.Enum.Module, Index: indices[0]}
-			result, err := vm.moduleLoader.CallModuleFunction(fn, slots)
+			result, err := vm.moduleLoader.CallModuleFunction(fn, slots, vm)
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -814,11 +824,11 @@ func (vm *VM) methodCall(instruction Instruction, ip int) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if vm.chunk.Functions[functionIndex].IsGenerator && !vm.generatorExecution {
+		if vm.curMod.Chunk.Functions[functionIndex].IsGenerator && !vm.generatorExecution {
 			vm.push(vm.lazyGenerator(functionIndex, slots))
 			return ip, nil
 		}
-		return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], slots, nil)
+		return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], slots, nil)
 	}
 	if list, ok := receiver.(*runtime.List); ok {
 		result, handled, err := vm.listHigherOrderMethod(instruction, list, nameValue.Value, args)
@@ -962,10 +972,10 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 		if methodName != "__invoke" {
 			return 0, vm.runtimeError(instruction, "function has no method %s", methodName)
 		}
-		if int(bytecodeFunction.Index) >= len(vm.chunk.Functions) {
+		if int(bytecodeFunction.Index) >= len(vm.curMod.Chunk.Functions) {
 			return 0, vm.runtimeError(instruction, "function index out of range")
 		}
-		function := vm.chunk.Functions[bytecodeFunction.Index]
+		function := vm.curMod.Chunk.Functions[bytecodeFunction.Index]
 		ordered, err := vm.orderRuntimeArguments(instruction, function, args, names, 0)
 		if err != nil {
 			return 0, err
@@ -985,17 +995,17 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.CallModuleClosure(closure, vm.wrapStatefulNativeArgs("", "", args))
+			result, err := vm.moduleLoader.CallModuleClosure(closure, vm.wrapStatefulNativeArgs("", "", args), vm)
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
 			vm.push(result)
 			return ip, nil
 		}
-		if int(closure.FunctionIndex) >= len(vm.chunk.Functions) {
+		if int(closure.FunctionIndex) >= len(vm.curMod.Chunk.Functions) {
 			return 0, vm.runtimeError(instruction, "closure function index out of range")
 		}
-		function := vm.chunk.Functions[closure.FunctionIndex]
+		function := vm.curMod.Chunk.Functions[closure.FunctionIndex]
 		paramOffset := int(function.UpvalueCount)
 		ordered, err := vm.orderRuntimeArguments(instruction, function, args, names, paramOffset)
 		if err != nil {
@@ -1034,7 +1044,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 		if oerr != nil {
 			return 0, vm.runtimeError(instruction, "%s", oerr.Error())
 		}
-		result, cerr := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, methodName, instance, ordered)
+		result, cerr := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, methodName, instance, ordered, vm)
 		if cerr != nil {
 			return vm.propagateModuleError(instruction, ip, cerr)
 		}
@@ -1057,7 +1067,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 		return 0, vm.callPropagate(instruction, err)
 	}
 	if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
-		if vm.chunk.Functions[functionIndex].Async && !vm.syncMode {
+		if vm.curMod.Chunk.Functions[functionIndex].Async && !vm.syncMode {
 			vm.push(vm.startAsyncCallableWithForwardThis(decorated, ordered, instance))
 			return ip, nil
 		}
@@ -1069,7 +1079,7 @@ func (vm *VM) dispatchNamedCall(instruction Instruction, ip int, receiver runtim
 		return ip, nil
 	}
 	callArgs := append([]runtime.Value{instance}, ordered...)
-	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, nil)
+	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], callArgs, nil)
 	if err != nil {
 		return 0, err
 	}

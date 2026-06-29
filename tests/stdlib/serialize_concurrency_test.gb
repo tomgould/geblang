@@ -1,0 +1,42 @@
+/**
+ * @title Concurrent serialization and deserialization
+ * @summary __serialize and json.parseAs run safely under task concurrency:
+ * each callback dispatches on its own isolated execution, so concurrent
+ * encode/decode of user classes produces correct results.
+ */
+import test;
+import json;
+import async.tasks as task;
+
+class Box {
+    int v;
+    func Box(int v) { this.v = v; }
+    func __serialize(): any { return {"boxed": this.v}; }
+}
+
+class Point {
+    int x;
+    int y;
+    func Point(int x, int y) { this.x = x; this.y = y; }
+}
+
+class SerializeConcurrencyTest extends test.Test {
+    @test
+    func concurrentSerialize(): void {
+        let xs = [1, 2, 3, 4, 5, 6, 7, 8];
+        let out = task.map(xs, func(int x): string { return json.stringify(Box(x)); }, {"concurrency": 4});
+        this.assertEquals("{\"boxed\":1}", out[0]);
+        this.assertEquals("{\"boxed\":4}", out[3]);
+        this.assertEquals("{\"boxed\":8}", out[7]);
+    }
+
+    @test
+    func concurrentDeserialize(): void {
+        let xs = ["{\"x\":1,\"y\":2}", "{\"x\":3,\"y\":4}", "{\"x\":5,\"y\":6}", "{\"x\":7,\"y\":8}"];
+        let out = task.map(xs, func(string s): int {
+            let p = json.parseAs(s, Point);
+            return p.x + p.y;
+        }, {"concurrency": 4});
+        this.assertEquals([3, 7, 11, 15], out);
+    }
+}

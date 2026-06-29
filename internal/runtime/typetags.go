@@ -52,6 +52,17 @@ func ValueSatisfiesHierarchyLeaf(value Value, leaf string) bool {
 				return true
 			}
 		}
+	case EnumVariant:
+		if v.Enum != nil {
+			if strings.EqualFold(v.Enum.Name, leaf) {
+				return true
+			}
+			for _, iface := range v.Enum.Implements {
+				if strings.EqualFold(iface, leaf) {
+					return true
+				}
+			}
+		}
 	}
 	return false
 }

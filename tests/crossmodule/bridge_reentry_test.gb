@@ -1,0 +1,17 @@
+/**
+ * @title Cross-module re-entry through a bridged callback
+ * @summary A module hands a callback to a native higher-order function which
+ * invokes it; the callback re-enters the module and shares the in-flight
+ * worker's live globals, identically on both backends.
+ */
+import test;
+import bridge_donor;
+
+class BridgeReentryTest extends test.Test {
+    @test
+    func nativeHofCallbackReentersModule(): void {
+        let out = bridge_donor.mapBumping([1, 2, 3]);
+        this.assertEquals([2, 4, 6], out);
+        this.assertEquals(3, bridge_donor.current());
+    }
+}

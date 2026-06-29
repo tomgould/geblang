@@ -1,0 +1,31 @@
+/**
+ * @title Cross-module class hierarchy
+ * @summary instanceof, overloaded-callback subtype matching, and inherited
+ * __serialize all see a parent declared in another module.
+ */
+import test;
+import json;
+import hier_base;
+import hier_derived;
+
+func describe(hier_base.Shape s): string { return "shape"; }
+func describe(int n): string { return "int"; }
+
+class CrossModuleHierarchyTest extends test.Test {
+    @test
+    func instanceofCrossModuleParent(): void {
+        this.assertTrue(hier_derived.Circle() instanceof hier_base.Shape);
+    }
+
+    @test
+    func overloadedCallbackMatchesCrossModuleSubtype(): void {
+        let f = describe;
+        this.assertEquals("shape", f(hier_derived.Circle()));
+        this.assertEquals("int", f(7));
+    }
+
+    @test
+    func inheritedCrossModuleSerialize(): void {
+        this.assertEquals("{\"entity_id\":5}", json.stringify(hier_derived.User(5, "alice")));
+    }
+}

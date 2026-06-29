@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"geblang/internal/ast"
 	"geblang/internal/bytecode"
@@ -27,22 +28,63 @@ type Options struct {
 	LookupBuiltin func(canonical, alias string) *runtime.Module
 }
 
+// moduleRecord is a loaded module's published state, stored once and read lock-free. globalsVM is mutated in place under globalsMu (cross-module global write-back); the record pointer is stable.
+type moduleRecord struct {
+	module         *runtime.Module
+	chunk          bytecode.Chunk
+	globalsVM      []runtime.VMValue
+	decorators     bytecode.FunctionDecoratorState
+	ifaceFallbacks bytecode.InterfaceFallbackState
+}
+
+// reentrantMutex serializes module loads across goroutines but lets a load's own goroutine re-enter for nested imports; load-time only, so the goid lookup cost is irrelevant.
+type reentrantMutex struct {
+	sem   chan struct{}
+	owner atomic.Int64
+	count int
+}
+
+func newReentrantMutex() *reentrantMutex { return &reentrantMutex{sem: make(chan struct{}, 1)} }
+
+func (m *reentrantMutex) Lock() {
+	gid := native.GoroutineID()
+	if m.owner.Load() == gid {
+		m.count++
+		return
+	}
+	m.sem <- struct{}{}
+	m.owner.Store(gid)
+	m.count = 1
+}
+
+func (m *reentrantMutex) Unlock() {
+	m.count--
+	if m.count == 0 {
+		m.owner.Store(0)
+		<-m.sem
+	}
+}
+
 // Loader implements bytecode.ModuleLoader for a host VM.
 type Loader struct {
-	stdout      io.Writer
+	stdout io.Writer
+	// modulePaths is augmented under loadLock during a load for nested resolution; basePaths is the stable list dispatch workers read without locking.
 	modulePaths []string
+	basePaths   []string
 	stateful    bytecode.StatefulNativeCaller
 	opts        Options
 
-	modules    map[string]*runtime.Module
-	chunks     map[string]bytecode.Chunk
-	globals    map[string][]runtime.Value
-	decorators map[string]bytecode.FunctionDecoratorState
-	// ifaceFallbacks snapshots each sub-module's interface-default tables; module "" reads live from mainVM.
-	ifaceFallbacks map[string]bytecode.InterfaceFallbackState
+	// records holds one *moduleRecord per canonical module; reads are lock-free, loads serialize on loadLock.
+	records sync.Map
+	// runtimeClasses caches the built *runtime.Class per "module.Class" so a cross-module parent chain is materialised once (immutable).
+	runtimeClasses sync.Map
 	mainVM         *bytecode.VM
-	loading        map[string]bool
-	vmPools        sync.Map
+	// loadLock serializes cross-goroutine loads (so the shared modulePaths mutation and cycle set stay safe) while allowing nested same-goroutine loads.
+	loadLock *reentrantMutex
+	loading  map[string]bool
+	vmPools  sync.Map
+	// globalsMu serializes the restore-from / write-back-to a record's globalsVM so concurrent cross-module calls don't race the slice; module-global writes persist with lost-update semantics under concurrency (use a thread-safe handle for shared state).
+	globalsMu sync.Mutex
 	// mainChunk is the entry chunk so cross-module reflect lookups resolve user-script classes.
 	mainChunk    bytecode.Chunk
 	hasMainChunk bool
@@ -51,17 +93,28 @@ type Loader struct {
 // New builds a loader; stateful may be nil and supplied later via SetStateful.
 func New(stdout io.Writer, modulePaths []string, stateful bytecode.StatefulNativeCaller, opts Options) *Loader {
 	return &Loader{
-		stdout:         stdout,
-		modulePaths:    append([]string(nil), modulePaths...),
-		stateful:       stateful,
-		opts:           opts,
-		modules:        map[string]*runtime.Module{},
-		chunks:         map[string]bytecode.Chunk{},
-		globals:        map[string][]runtime.Value{},
-		decorators:     map[string]bytecode.FunctionDecoratorState{},
-		ifaceFallbacks: map[string]bytecode.InterfaceFallbackState{},
-		loading:        map[string]bool{},
+		stdout:      stdout,
+		modulePaths: append([]string(nil), modulePaths...),
+		basePaths:   append([]string(nil), modulePaths...),
+		stateful:    stateful,
+		opts:        opts,
+		loadLock:    newReentrantMutex(),
+		loading:     map[string]bool{},
 	}
+}
+
+func (l *Loader) recordFor(module string) (*moduleRecord, bool) {
+	if v, ok := l.records.Load(module); ok {
+		return v.(*moduleRecord), true
+	}
+	return nil, false
+}
+
+func (l *Loader) chunkValue(module string) (bytecode.Chunk, bool) {
+	if rec, ok := l.recordFor(module); ok {
+		return rec.chunk, true
+	}
+	return bytecode.Chunk{}, false
 }
 
 var _ bytecode.ModuleLoader = (*Loader)(nil)
@@ -76,7 +129,10 @@ func (l *Loader) SetMainVM(vm *bytecode.VM) { l.mainVM = vm }
 func (l *Loader) SetStateful(s bytecode.StatefulNativeCaller) { l.stateful = s }
 
 // SetModulePaths replaces the module search paths used to resolve imports.
-func (l *Loader) SetModulePaths(paths []string) { l.modulePaths = append([]string(nil), paths...) }
+func (l *Loader) SetModulePaths(paths []string) {
+	l.modulePaths = append([]string(nil), paths...)
+	l.basePaths = append([]string(nil), paths...)
+}
 
 func (l *Loader) lookupBuiltin(canonical, alias string) *runtime.Module {
 	if l.opts.LookupBuiltin == nil {
@@ -86,21 +142,26 @@ func (l *Loader) lookupBuiltin(canonical, alias string) *runtime.Module {
 }
 
 func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, error) {
-	if module, ok := l.modules[canonical]; ok {
-		return module, nil
+	if rec, ok := l.recordFor(canonical); ok {
+		return rec.module, nil
+	}
+	// Serialize cross-goroutine loads (keeps the shared modulePaths mutation + cycle set safe); nested same-goroutine loads re-enter.
+	l.loadLock.Lock()
+	defer l.loadLock.Unlock()
+	if rec, ok := l.recordFor(canonical); ok {
+		return rec.module, nil
 	}
 	path, err := modules.NewResolver(l.modulePaths).Resolve(canonical)
 	if err != nil {
 		if native := l.lookupBuiltin(canonical, alias); native != nil {
-			// Cache so repeated loads are a map hit, not a reconstruct.
-			l.modules[canonical] = native
+			l.records.Store(canonical, &moduleRecord{module: native})
 			return native, nil
 		}
 		return nil, err
 	}
 	if l.loading[path] {
 		if native := l.lookupBuiltin(canonical, alias); native != nil {
-			l.modules[canonical] = native
+			l.records.Store(canonical, &moduleRecord{module: native})
 			return native, nil
 		}
 		return nil, fmt.Errorf("circular import detected for %s", canonical)
@@ -150,11 +211,13 @@ func (l *Loader) LoadModule(canonical string, alias string) (*runtime.Module, er
 			module.Exports[name] = class
 		}
 	}
-	l.modules[canonical] = module
-	l.chunks[canonical] = chunk
-	l.globals[canonical] = vm.GlobalsSnapshot()
-	l.decorators[canonical] = vm.FunctionDecoratorState()
-	l.ifaceFallbacks[canonical] = vm.InterfaceFallbackState()
+	l.records.Store(canonical, &moduleRecord{
+		module:         module,
+		chunk:          chunk,
+		globalsVM:      vm.GlobalsSnapshotVM(),
+		decorators:     vm.FunctionDecoratorState(),
+		ifaceFallbacks: vm.InterfaceFallbackState(),
+	})
 	return module, nil
 }
 
@@ -163,22 +226,40 @@ func (l *Loader) ifaceFallbackStateFor(module string) bytecode.InterfaceFallback
 	if module == "" && l.mainVM != nil {
 		return l.mainVM.InterfaceFallbackState()
 	}
-	return l.ifaceFallbacks[module]
+	if rec, ok := l.recordFor(module); ok {
+		return rec.ifaceFallbacks
+	}
+	return bytecode.InterfaceFallbackState{}
 }
 
-// Entry-chunk globals come live from the main VM so a cross-module dispatch sees its imports.
-func (l *Loader) globalsFor(module string) []runtime.Value {
+// restoreModuleGlobals loads a worker's globals: the entry chunk reads live from the main VM; a sub-module restores its live module globals (mutations persist via releaseModuleVM's write-back).
+func (l *Loader) restoreModuleGlobals(vm *bytecode.VM, module string) {
 	if module == "" && l.mainVM != nil {
-		return l.mainVM.GlobalsSnapshot()
+		vm.RestoreGlobals(l.mainVM.GlobalsSnapshot())
+		return
 	}
-	return l.globals[module]
+	rec, ok := l.recordFor(module)
+	if !ok {
+		return
+	}
+	vm.SetPersistGlobals(true)
+	l.globalsMu.Lock()
+	vm.RestoreGlobalsVM(rec.globalsVM)
+	l.globalsMu.Unlock()
 }
 
 // moduleVM returns a pooled (or fresh) host VM bound to the module's
 // chunk and configured with the module's canonical state. Hosts carry
 // per-call configuration only; pooling them avoids a full VM
 // construction per cross-module call.
-func (l *Loader) moduleVM(module string, chunk bytecode.Chunk) (*bytecode.VM, *sync.Pool) {
+func (l *Loader) moduleVM(module string, chunk bytecode.Chunk, caller *bytecode.VM) (*bytecode.VM, *sync.Pool) {
+	// Re-entry: a still-active ancestor worker for this module on the same call chain (hence same goroutine) is reused so the nested call shares its live globals (nil pool marks the borrowed reuse).
+	for h := caller; h != nil; h = h.ReentryHost() {
+		if h.ReentryActive() && h.ModuleName() == module {
+			h.IncReentryDepth()
+			return h, nil
+		}
+	}
 	var pool *sync.Pool
 	if p, ok := l.vmPools.Load(module); ok {
 		pool = p.(*sync.Pool)
@@ -193,21 +274,41 @@ func (l *Loader) moduleVM(module string, chunk bytecode.Chunk) (*bytecode.VM, *s
 		vm.ResetForReuse()
 	}
 	vm.SetModuleName(module)
-	vm.SetModulePaths(l.modulePaths)
+	vm.SetModulePaths(l.basePaths)
 	vm.SetStatefulNativeCaller(l.stateful)
-	vm.RestoreGlobals(l.globalsFor(module))
-	vm.RestoreFunctionDecoratorState(l.decorators[module])
+	l.restoreModuleGlobals(vm, module)
+	var decorators bytecode.FunctionDecoratorState
+	if rec, ok := l.recordFor(module); ok {
+		decorators = rec.decorators
+	}
+	vm.RestoreFunctionDecoratorState(decorators)
 	vm.RestoreInterfaceFallbackState(l.ifaceFallbackStateFor(module))
+	vm.SetReentryHost(caller)
+	vm.SetReentryActive(true)
 	return vm, pool
 }
 
-func releaseModuleVM(pool *sync.Pool, vm *bytecode.VM, err error) {
+func (l *Loader) releaseModuleVM(pool *sync.Pool, vm *bytecode.VM, err error) {
+	if pool == nil { // borrowed reuse; the owner release persists + recycles.
+		vm.DecReentryDepth()
+		return
+	}
+	// Persist module-global writes even when the call threw: the evaluator mutates its live environment immediately, so a write before a throw must survive (the dirty slots already hold only the pre-throw writes).
+	if module := vm.ModuleName(); module != "" {
+		if rec, ok := l.recordFor(module); ok {
+			l.globalsMu.Lock()
+			vm.PersistDirtyGlobals(rec.globalsVM)
+			l.globalsMu.Unlock()
+		}
+	}
+	vm.SetReentryActive(false)
+	vm.SetReentryHost(nil)
 	if err == nil && vm.Recyclable() {
 		pool.Put(vm)
 	}
 }
 
-func (l *Loader) CallModuleFunction(function runtime.BytecodeFunction, args []runtime.Value) (runtime.Value, error) {
+func (l *Loader) CallModuleFunction(function runtime.BytecodeFunction, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if function.Module == "" {
 		if !l.hasMainChunk {
@@ -215,19 +316,19 @@ func (l *Loader) CallModuleFunction(function runtime.BytecodeFunction, args []ru
 		}
 		chunk = l.mainChunk
 	} else {
-		c, ok := l.chunks[function.Module]
+		c, ok := l.chunkValue(function.Module)
 		if !ok {
 			return nil, fmt.Errorf("module %s is not loaded", function.Module)
 		}
 		chunk = c
 	}
-	vm, pool := l.moduleVM(function.Module, chunk)
-	result, err := vm.CallFunction(function.Index, args)
-	releaseModuleVM(pool, vm, err)
+	vm, pool := l.moduleVM(function.Module, chunk, caller)
+	result, err := vm.CallFunctionFast(function.Index, args)
+	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }
 
-func (l *Loader) CallModuleClosure(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
+func (l *Loader) CallModuleClosure(closure runtime.BytecodeClosure, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if closure.Module == "" {
 		// Closures created in the entry script carry Module="".
@@ -239,19 +340,19 @@ func (l *Loader) CallModuleClosure(closure runtime.BytecodeClosure, args []runti
 		}
 		chunk = l.mainChunk
 	} else {
-		c, ok := l.chunks[closure.Module]
+		c, ok := l.chunkValue(closure.Module)
 		if !ok {
 			return nil, fmt.Errorf("module %s is not loaded", closure.Module)
 		}
 		chunk = c
 	}
-	vm, pool := l.moduleVM(closure.Module, chunk)
-	result, err := vm.CallClosure(closure, args)
-	releaseModuleVM(pool, vm, err)
+	vm, pool := l.moduleVM(closure.Module, chunk, caller)
+	result, err := vm.CallClosureFast(closure, args)
+	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }
 
-func (l *Loader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value, typeArgs []string) (runtime.Value, error) {
+func (l *Loader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value, typeArgs []string, caller *bytecode.VM) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if class.Module == "" {
 		if !l.hasMainChunk {
@@ -259,15 +360,15 @@ func (l *Loader) ConstructModuleClass(class runtime.BytecodeClass, args []runtim
 		}
 		chunk = l.mainChunk
 	} else {
-		c, ok := l.chunks[class.Module]
+		c, ok := l.chunkValue(class.Module)
 		if !ok {
 			return nil, fmt.Errorf("module %s is not loaded", class.Module)
 		}
 		chunk = c
 	}
-	vm, pool := l.moduleVM(class.Module, chunk)
-	result, err := vm.ConstructClassWithTypeArgs(class.Index, args, typeArgs)
-	releaseModuleVM(pool, vm, err)
+	vm, pool := l.moduleVM(class.Module, chunk, caller)
+	result, err := vm.ConstructClassFast(class.Index, args, typeArgs)
+	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }
 
@@ -281,15 +382,15 @@ func (l *Loader) ConstructorsForModuleClass(class runtime.BytecodeClass) (runtim
 		}
 		chunk = l.mainChunk
 	} else {
-		c, ok := l.chunks[class.Module]
+		c, ok := l.chunkValue(class.Module)
 		if !ok {
 			return nil, fmt.Errorf("module %s is not loaded", class.Module)
 		}
 		chunk = c
 	}
-	vm, pool := l.moduleVM(class.Module, chunk)
+	vm, pool := l.moduleVM(class.Module, chunk, nil)
 	result, err := vm.ReflectConstructorsForChunkClass(class)
-	releaseModuleVM(pool, vm, err)
+	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }
 
@@ -301,15 +402,15 @@ func (l *Loader) FieldsForModuleClass(class runtime.BytecodeClass) (runtime.Valu
 		}
 		chunk = l.mainChunk
 	} else {
-		c, ok := l.chunks[class.Module]
+		c, ok := l.chunkValue(class.Module)
 		if !ok {
 			return nil, fmt.Errorf("module %s is not loaded", class.Module)
 		}
 		chunk = c
 	}
-	vm, pool := l.moduleVM(class.Module, chunk)
+	vm, pool := l.moduleVM(class.Module, chunk, nil)
 	result, err := vm.ReflectFieldsForChunkClass(class)
-	releaseModuleVM(pool, vm, err)
+	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }
 
@@ -324,30 +425,30 @@ func (l *Loader) DeserializeModuleClass(class runtime.BytecodeClass, value runti
 		}
 		chunk = l.mainChunk
 	} else {
-		c, ok := l.chunks[class.Module]
+		c, ok := l.chunkValue(class.Module)
 		if !ok {
 			return nil, fmt.Errorf("module %s is not loaded", class.Module)
 		}
 		chunk = c
 	}
-	vm, pool := l.moduleVM(class.Module, chunk)
+	vm, pool := l.moduleVM(class.Module, chunk, nil)
 	result, err := vm.DeserializeIntoChunkClass(class, value)
-	releaseModuleVM(pool, vm, err)
+	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }
 
-func (l *Loader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value) (runtime.Value, error) {
-	chunk, ok := l.chunks[class.Module]
+func (l *Loader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
+	chunk, ok := l.chunkValue(class.Module)
 	if !ok {
 		return nil, fmt.Errorf("module %s is not loaded", class.Module)
 	}
-	vm, pool := l.moduleVM(class.Module, chunk)
-	result, err := vm.CallStaticMethod(class.Index, methodName, args)
-	releaseModuleVM(pool, vm, err)
+	vm, pool := l.moduleVM(class.Module, chunk, caller)
+	result, err := vm.CallStaticMethodFast(class.Index, methodName, args)
+	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }
 
-func (l *Loader) CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+func (l *Loader) CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if module == "" {
 		if !l.hasMainChunk {
@@ -355,15 +456,15 @@ func (l *Loader) CallParentInModule(module string, className string, methodName 
 		}
 		chunk = l.mainChunk
 	} else {
-		c, ok := l.chunks[module]
+		c, ok := l.chunkValue(module)
 		if !ok {
 			return nil, fmt.Errorf("module %s is not loaded", module)
 		}
 		chunk = c
 	}
-	vm, pool := l.moduleVM(module, chunk)
+	vm, pool := l.moduleVM(module, chunk, caller)
 	result, err := vm.CallMethodAs(className, instance, methodName, args)
-	releaseModuleVM(pool, vm, err)
+	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }
 
@@ -375,7 +476,7 @@ func (l *Loader) ImmutableFieldsForModuleClass(module string, className string) 
 		}
 		chunk = l.mainChunk
 	} else {
-		c, ok := l.chunks[module]
+		c, ok := l.chunkValue(module)
 		if !ok {
 			return nil
 		}
@@ -396,7 +497,7 @@ func (l *Loader) chunkFor(module string) (bytecode.Chunk, bool) {
 		}
 		return l.mainChunk, true
 	}
-	c, ok := l.chunks[module]
+	c, ok := l.chunkValue(module)
 	return c, ok
 }
 
@@ -463,9 +564,9 @@ func (l *Loader) CallModuleStaticMethodByName(module, className, methodName stri
 		}
 		for ci := chunk.Classes[i]; ; {
 			if _, present := ci.StaticMethods[strings.ToLower(methodName)]; present {
-				vm, pool := l.moduleVM(module, chunk)
-				result, err := vm.CallStaticMethod(int64(i), methodName, args)
-				releaseModuleVM(pool, vm, err)
+				vm, pool := l.moduleVM(module, chunk, nil)
+				result, err := vm.CallStaticMethodFast(int64(i), methodName, args)
+				l.releaseModuleVM(pool, vm, err)
 				return result, true, err
 			}
 			if ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(chunk.Classes) {
@@ -540,7 +641,7 @@ func (l *Loader) ModuleMethodParamNames(module string, className string, methodN
 		}
 		chunk = l.mainChunk
 	} else {
-		c, ok := l.chunks[module]
+		c, ok := l.chunkValue(module)
 		if !ok {
 			return nil, fmt.Errorf("module %s is not loaded", module)
 		}
@@ -549,7 +650,7 @@ func (l *Loader) ModuleMethodParamNames(module string, className string, methodN
 	return chunk.MethodParamNames(className, methodName)
 }
 
-func (l *Loader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+func (l *Loader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if module == "" {
 		// Main-chunk classes carry Module="". Sub-VMs running stdlib
@@ -562,7 +663,7 @@ func (l *Loader) CallModuleMethod(module string, className string, methodName st
 		}
 		chunk = l.mainChunk
 	} else {
-		c, ok := l.chunks[module]
+		c, ok := l.chunkValue(module)
 		if !ok {
 			// Native modules (http, process, ...) carry no Geblang chunk, so an
 			// unresolved method on one of their class instances is simply
@@ -575,9 +676,9 @@ func (l *Loader) CallModuleMethod(module string, className string, methodName st
 		}
 		chunk = c
 	}
-	vm, pool := l.moduleVM(module, chunk)
-	result, err := vm.CallMethod(instance, methodName, args)
-	releaseModuleVM(pool, vm, err)
+	vm, pool := l.moduleVM(module, chunk, caller)
+	result, err := vm.CallMethodFast(instance, methodName, args)
+	l.releaseModuleVM(pool, vm, err)
 	return result, err
 }
 
@@ -599,9 +700,10 @@ func (l *Loader) ListAllClasses() []runtime.Value {
 			})
 		}
 	}
-	for module, chunk := range l.chunks {
-		appendChunkClasses(module, chunk)
-	}
+	l.records.Range(func(k, v any) bool {
+		appendChunkClasses(k.(string), v.(*moduleRecord).chunk)
+		return true
+	})
 	// Entry chunk too, so reflect.classes() from an imported module sees it.
 	if l.hasMainChunk {
 		appendChunkClasses("", l.mainChunk)
@@ -617,7 +719,7 @@ func (l *Loader) LookupModuleInterface(module, name string) (bytecode.InterfaceI
 		}
 		chunk = l.mainChunk
 	} else {
-		c, ok := l.chunks[module]
+		c, ok := l.chunkValue(module)
 		if !ok {
 			return bytecode.InterfaceInfo{}, false
 		}
@@ -634,66 +736,108 @@ func (l *Loader) LookupModuleInterface(module, name string) (bytecode.InterfaceI
 // FindFunctionByName scans every loaded module's chunk for an
 // exported function by name. Returns nil when no match.
 func (l *Loader) FindFunctionByName(name string) (runtime.Value, bool) {
-	for moduleName, module := range l.modules {
+	var found runtime.Value
+	var ok bool
+	l.records.Range(func(_, v any) bool {
+		module := v.(*moduleRecord).module
 		if module == nil {
-			continue
+			return true
 		}
-		if value, ok := module.Exports[name]; ok {
-			switch v := value.(type) {
+		if value, has := module.Exports[name]; has {
+			switch fn := value.(type) {
 			case runtime.Function, runtime.OverloadedFunction, runtime.BytecodeFunction, runtime.DecoratorTarget:
-				_ = moduleName
-				return v, true
+				found, ok = fn, true
+				return false
 			}
 		}
-	}
-	return nil, false
+		return true
+	})
+	return found, ok
 }
 
 // FindClassByName scans every loaded module's chunk for a class with
 // the given bare name and returns a BytecodeClass value bound to that
 // chunk. Used by reflect.class(name) so framework helpers can resolve
 // a user class without needing the originating module on import.
-func (l *Loader) FindClassByName(name string) (runtime.Value, bool) {
-	key := strings.ToLower(name)
-	for moduleName, chunk := range l.chunks {
-		for idx, classInfo := range chunk.Classes {
-			if strings.EqualFold(classInfo.Name, name) || strings.ToLower(classInfo.Name) == key {
-				return runtime.BytecodeClass{
-					Name:             classInfo.Name,
-					Doc:              classInfo.Doc,
-					Index:            int64(idx),
-					Module:           moduleName,
-					Parent:           classInfo.ParentName,
-					Fields:           append([]string(nil), classInfo.FieldNames...),
-					Interfaces:       append([]string(nil), classInfo.Implements...),
-					Decorators:       classInfo.Decorators,
-					MethodDecorators: classInfo.MethodDecorators,
-					StaticDecorators: classInfo.StaticDecorators,
-					DefLine:          classInfo.DefLine,
-					DefColumn:        classInfo.DefColumn,
-				}, true
-			}
-		}
-	}
-	if l.hasMainChunk {
-		for idx, classInfo := range l.mainChunk.Classes {
-			if strings.EqualFold(classInfo.Name, name) || strings.ToLower(classInfo.Name) == key {
-				return runtime.BytecodeClass{
-					Name:             classInfo.Name,
-					Doc:              classInfo.Doc,
-					Index:            int64(idx),
-					Module:           "",
-					Parent:           classInfo.ParentName,
-					Fields:           append([]string(nil), classInfo.FieldNames...),
-					Interfaces:       append([]string(nil), classInfo.Implements...),
-					Decorators:       classInfo.Decorators,
-					MethodDecorators: classInfo.MethodDecorators,
-					StaticDecorators: classInfo.StaticDecorators,
-					DefLine:          classInfo.DefLine,
-					DefColumn:        classInfo.DefColumn,
-				}, true
-			}
+func classFromChunk(chunk bytecode.Chunk, module, name, key string) (runtime.Value, bool) {
+	for idx, classInfo := range chunk.Classes {
+		if strings.EqualFold(classInfo.Name, name) || strings.ToLower(classInfo.Name) == key {
+			return runtime.BytecodeClass{
+				Name:             classInfo.Name,
+				Doc:              classInfo.Doc,
+				Index:            int64(idx),
+				Module:           module,
+				Parent:           classInfo.ParentName,
+				Fields:           append([]string(nil), classInfo.FieldNames...),
+				Interfaces:       append([]string(nil), classInfo.Implements...),
+				Decorators:       classInfo.Decorators,
+				MethodDecorators: classInfo.MethodDecorators,
+				StaticDecorators: classInfo.StaticDecorators,
+				DefLine:          classInfo.DefLine,
+				DefColumn:        classInfo.DefColumn,
+			}, true
 		}
 	}
 	return nil, false
+}
+
+func (l *Loader) FindClassByName(name string) (runtime.Value, bool) {
+	key := strings.ToLower(name)
+	var result runtime.Value
+	var ok bool
+	l.records.Range(func(k, v any) bool {
+		if r, found := classFromChunk(v.(*moduleRecord).chunk, k.(string), name, key); found {
+			result, ok = r, true
+			return false
+		}
+		return true
+	})
+	if ok {
+		return result, true
+	}
+	if l.hasMainChunk {
+		return classFromChunk(l.mainChunk, "", name, key)
+	}
+	return nil, false
+}
+
+func (l *Loader) PersistModuleGlobals(vm *bytecode.VM) {
+	module := vm.ModuleName()
+	if module == "" {
+		return
+	}
+	if rec, ok := l.recordFor(module); ok {
+		l.globalsMu.Lock()
+		vm.PersistDirtyGlobals(rec.globalsVM)
+		l.globalsMu.Unlock()
+	}
+}
+
+func (l *Loader) RuntimeClassFor(module string, className string) (*runtime.Class, bool) {
+	cacheKey := module + "." + className
+	if v, ok := l.runtimeClasses.Load(cacheKey); ok {
+		rc, _ := v.(*runtime.Class)
+		return rc, rc != nil
+	}
+	chunk, ok := l.chunkValue(module)
+	if !ok {
+		l.runtimeClasses.Store(cacheKey, (*runtime.Class)(nil))
+		return nil, false
+	}
+	idx := -1
+	for i := range chunk.Classes {
+		if strings.EqualFold(chunk.Classes[i].Name, className) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		l.runtimeClasses.Store(cacheKey, (*runtime.Class)(nil))
+		return nil, false
+	}
+	vm, pool := l.moduleVM(module, chunk, nil)
+	rc := vm.RuntimeClassValue(int64(idx))
+	l.releaseModuleVM(pool, vm, nil)
+	l.runtimeClasses.Store(cacheKey, rc)
+	return rc, rc != nil
 }

@@ -1,0 +1,17 @@
+/**
+ * @title Forward reference to a later top-level const
+ * @summary A function may reference a top-level const/let declared later in the file.
+ */
+import test;
+
+func computeA(): int { return base + computeB(); }
+func computeB(): int { return offset; }
+const base = 100;
+let offset = 23;
+
+class ForwardConstTest extends test.Test {
+    @test
+    func functionResolvesLaterConst(): void {
+        this.assertEquals(123, computeA());
+    }
+}

@@ -289,6 +289,7 @@ implementations share the same interface:
 
 | Constructor | Description |
 |-------------|-------------|
+| `cache.memoryCacheStore(ttl)` | In-process store; fast, no dependency, cleared on restart |
 | `cache.fileCacheStore(directory, ttl)` | File-backed store; `ttl` is in seconds |
 | `cache.redisCacheStore(client, prefix, ttl)` | Redis-backed; `client` from the `redis` module |
 | `cache.databaseCacheStore(conn, table, ttl)` | SQL-backed; call `.install()` once to create the table |

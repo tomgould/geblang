@@ -72,10 +72,11 @@ server-side statements), MySQL uses the binary protocol's prepare/execute
 pair, and SQLite binds through its prepared-statement C API. Parameter
 values are never interpolated into SQL text.
 
-SQLite connections default to a five-second `busy_timeout` on every pooled
-connection so concurrent access waits instead of failing with
-`database is locked`; pass your own `busy_timeout` or `_pragma` DSN parameter
-to override.
+A file-backed SQLite database gets server-friendly defaults on every pooled
+connection: WAL journal mode, `synchronous(NORMAL)`, and a five-second
+`busy_timeout` (so concurrent access waits instead of failing with
+`database is locked`). `:memory:` databases, and any DSN that already carries a
+`_pragma` or `busy_timeout` parameter, keep their own settings.
 
 For a file-backed SQLite database, the options-dict form accepts tuning keys
 that map to per-connection pragmas applied at connect time:
@@ -90,9 +91,10 @@ that map to per-connection pragmas applied at connect time:
 | `mmapSizeMb: N` | `mmap_size(N MiB)` | Memory-mapped I/O size. |
 | `tempStoreMemory: true` | `temp_store(MEMORY)` | Keep temp tables and indices in memory. |
 
-Each option is explicit; `wal: true` sets only `journal_mode`, so pair it with
-`synchronous: "NORMAL"` yourself. These keys are ignored for `:memory:`
-databases (the pragmas only matter for a file). Run `connection.optimize()`
+A file database already uses WAL and `synchronous(NORMAL)` by default; these
+options tune or override that (for example `wal: false`, or
+`synchronous: "FULL"`). They are ignored for `:memory:` databases (the pragmas
+only matter for a file). Run `connection.optimize()`
 (`PRAGMA optimize`) periodically, or before closing a long-lived connection, to
 let SQLite refresh its query-planner statistics.
 

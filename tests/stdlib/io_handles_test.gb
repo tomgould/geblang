@@ -87,6 +87,7 @@ class IoHandlesTest extends test.Test {
         this.assertFalse(io.stat(p)["isSymlink"] as bool);
         this.assertTrue(io.lstat(path.join(dir, "lnk"))["isSymlink"] as bool);
         this.assertFalse(io.stat(path.join(dir, "lnk"))["isSymlink"] as bool);
+        this.assertTrue((io.stat(p)["modUnixNano"] as int) > 0);
         io.remove(dir);
     }
 

@@ -104,6 +104,15 @@ io.println(doc["message"] as string);
 `, "<134>1\ntesthost\nparitytest\ninfo\nhello\n")
 }
 
+// A file database gets the WAL journal default identically on both backends.
+func TestParitySqliteWalDefault(t *testing.T) {
+	runParityStatefulWithFile(t, `import db;
+import io;
+let c = db.Connection("sqlite", "TMPFILE");
+io.println(c.query("PRAGMA journal_mode").toList()[0]["journal_mode"]);
+`, "", "wal\n")
+}
+
 func TestParityFileReadClose(t *testing.T) {
 	runParityStatefulWithFile(t, `import io;
 let h = io.open("TMPFILE", "r");

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1155,8 +1156,23 @@ func (e *Evaluator) writeHTTPResponseValue(w http.ResponseWriter, response runti
 	} else if _, ok := response.(runtime.Null); !ok {
 		body = runtime.String{Value: response.Inspect()}
 	}
+	// A known-length body gets an explicit Content-Length so the response is not chunked and the connection can be kept alive (the cached-page and static-asset hot paths).
+	if n := httpBodyByteLen(body); n >= 0 && w.Header().Get("Content-Length") == "" {
+		w.Header().Set("Content-Length", strconv.Itoa(n))
+	}
 	w.WriteHeader(status)
 	_ = e.writeHTTPBody(w, body)
+}
+
+// httpBodyByteLen returns the byte length of a fully-buffered body, or -1 when the length is not known up front (e.g. a streamed file handle).
+func httpBodyByteLen(body runtime.Value) int {
+	switch b := body.(type) {
+	case runtime.String:
+		return len(b.Value)
+	case runtime.Bytes:
+		return len(b.Value)
+	}
+	return -1
 }
 
 func (e *Evaluator) writeHTTPBody(w http.ResponseWriter, body runtime.Value) error {

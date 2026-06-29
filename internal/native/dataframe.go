@@ -252,7 +252,8 @@ func dfConcat(frames []*runtime.DataFrame) (*runtime.DataFrame, error) {
 }
 
 // DataFrameMethod is the single DataFrame dispatcher shared by both backends.
-func DataFrameMethod(frame *runtime.DataFrame, name string, args []runtime.Value) (runtime.Value, error) {
+// DataFrameMethod dispatches a dataframe method. invoke is the caller backend's callable invoker, passed explicitly (filterFn is its only user) so no process-global goroutine-keyed invoker lookup is needed.
+func DataFrameMethod(frame *runtime.DataFrame, name string, args []runtime.Value, invoke CallableInvokerFunc) (runtime.Value, error) {
 	switch name {
 	case "shape":
 		return &runtime.List{Elements: []runtime.Value{
@@ -356,9 +357,12 @@ func DataFrameMethod(frame *runtime.DataFrame, name string, args []runtime.Value
 		if len(args) != 1 {
 			return nil, fmt.Errorf("dataframe.filterFn expects a predicate function")
 		}
+		if invoke == nil {
+			return nil, fmt.Errorf("dataframe.filterFn: no callable invoker available")
+		}
 		var idx []int
 		for i := 0; i < frame.Rows(); i++ {
-			res, err := InvokeCallable(args[0], []runtime.Value{dfRowDict(frame, i)})
+			res, err := invoke(args[0], []runtime.Value{dfRowDict(frame, i)})
 			if err != nil {
 				return nil, err
 			}

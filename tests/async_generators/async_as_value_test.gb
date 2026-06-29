@@ -1,0 +1,26 @@
+/**
+ * @title Async function as a value
+ * @summary Calling an async function via a variable or as a callback returns a Task.
+ */
+import test;
+import async;
+
+async func triple(int x): int { return x * 3; }
+func apply(callable f, int v): any { return f(v); }
+
+class AsyncAsValueTest extends test.Test {
+    @test
+    func asValueReturnsTask(): void {
+        let f = triple;
+        let t = f(4);
+        this.assertEquals("Task", "${typeof(t)}");
+        this.assertEquals(12, async.await(t));
+    }
+
+    @test
+    func asCallbackReturnsTask(): void {
+        let t = apply(triple, 5);
+        this.assertEquals("Task", "${typeof(t)}");
+        this.assertEquals(15, async.await(t));
+    }
+}

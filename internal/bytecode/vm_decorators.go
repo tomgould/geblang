@@ -19,7 +19,14 @@ func (vm *VM) applyCallableDecorators() error {
 	defer func() {
 		vm.applyingDecorators = false
 	}()
-	for index, function := range vm.chunk.Functions {
+	// Restore leaves these nil for an undecorated module; lazy decorator application (this path) writes them.
+	if vm.decoratedFuncs == nil {
+		vm.decoratedFuncs = map[int64]runtime.Value{}
+	}
+	if vm.methodReceiverFuncs == nil {
+		vm.methodReceiverFuncs = map[int64]bool{}
+	}
+	for index, function := range vm.curMod.Chunk.Functions {
 		current, decorated, err := vm.applyCallableDecoratorsForFunction(int64(index), function)
 		if err != nil {
 			return err
@@ -159,16 +166,16 @@ func (vm *VM) decoratorWrapperCompatible(original FunctionInfo, target string, w
 func (vm *VM) callableArityRange(value runtime.Value) (int, int, bool, bool) {
 	switch callable := value.(type) {
 	case runtime.BytecodeFunction:
-		if callable.Index < 0 || int(callable.Index) >= len(vm.chunk.Functions) {
+		if callable.Index < 0 || int(callable.Index) >= len(vm.curMod.Chunk.Functions) {
 			return 0, 0, false, false
 		}
-		min, max, variadic := bytecodeFunctionArityRange(vm.chunk.Functions[callable.Index], 0)
+		min, max, variadic := bytecodeFunctionArityRange(vm.curMod.Chunk.Functions[callable.Index], 0)
 		return min, max, variadic, true
 	case runtime.BytecodeClosure:
-		if callable.FunctionIndex < 0 || int(callable.FunctionIndex) >= len(vm.chunk.Functions) {
+		if callable.FunctionIndex < 0 || int(callable.FunctionIndex) >= len(vm.curMod.Chunk.Functions) {
 			return 0, 0, false, false
 		}
-		info := vm.chunk.Functions[callable.FunctionIndex]
+		info := vm.curMod.Chunk.Functions[callable.FunctionIndex]
 		min, max, variadic := bytecodeFunctionArityRange(info, int(info.UpvalueCount))
 		return min, max, variadic, true
 	default:
@@ -203,7 +210,7 @@ func (vm *VM) decoratorFunctionIndices(name string) []int64 {
 	}
 	var indices []int64
 	lowerName := strings.ToLower(name)
-	for index, function := range vm.chunk.Functions {
+	for index, function := range vm.curMod.Chunk.Functions {
 		if strings.EqualFold(function.Name, lowerName) {
 			indices = append(indices, int64(index))
 		}
@@ -213,10 +220,10 @@ func (vm *VM) decoratorFunctionIndices(name string) []int64 {
 
 func (vm *VM) bytecodeFunctionValue(index int64, raw bool) runtime.BytecodeFunction {
 	function := runtime.BytecodeFunction{Index: index, Raw: raw}
-	if index < 0 || int(index) >= len(vm.chunk.Functions) {
+	if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) {
 		return function
 	}
-	info := vm.chunk.Functions[index]
+	info := vm.curMod.Chunk.Functions[index]
 	function.Module = vm.moduleName
 	function.Name = info.Name
 	function.Doc = info.Doc

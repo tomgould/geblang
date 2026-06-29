@@ -1,0 +1,13 @@
+module counter_donor;
+
+let total = 0;
+
+export func reset(): void { total = 0; }
+export func add(int n): int { total = total + n; return total; }
+export func current(): int { return total; }
+export func setTo(int n): void { total = n; }
+export func failAfterWrite(): void { total = 99; throw RuntimeError("boom"); }
+export func bump(): void { total = total + 1; }
+export func outerCb(callable cb): int { total = 1; cb(); return total; }
+export func bumpThrows(): void { total = total + 100; throw RuntimeError("x"); }
+export func outerCatches(callable cb): int { total = 1; try { cb(); } catch (Error e) { total = total + 10; } return total; }

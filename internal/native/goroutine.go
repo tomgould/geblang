@@ -11,6 +11,9 @@ import (
 // Used as a stable per-goroutine key for request-scoped state; ids are unique
 // among live goroutines (reused only after one exits), so callers must clear
 // their entry when the goroutine's work ends.
+// GoroutineID exposes the calling goroutine's id for load-time use (module-load serialization / cycle detection), never the per-call hot path.
+func GoroutineID() int64 { return sysGoroutineID() }
+
 func sysGoroutineID() int64 {
 	var buf [64]byte
 	n := runtime.Stack(buf[:], false)

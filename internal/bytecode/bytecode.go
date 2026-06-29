@@ -317,6 +317,8 @@ const (
 	// OpZRange is OpRange with an exclusive end and a 1-arg form
 	// (zrange(n) ranges 0..n). Argument count operand is 1, 2, or 3.
 	OpZRange
+	// OpMakeOverloaded builds a runtime.OverloadedFunction value from its operand function indices, so an overloaded function used as a value keeps every overload for call-time selection.
+	OpMakeOverloaded
 )
 
 type Instruction struct {

@@ -1,0 +1,17 @@
+/**
+ * @title Cross-module generator global write-back
+ * @summary A generator body's module-global mutations are visible after consumption.
+ */
+import test;
+import gen_donor;
+
+class GeneratorGlobalTest extends test.Test {
+    @test
+    func generatorGlobalWritesPersist(): void {
+        gen_donor.reset();
+        int total = 0;
+        for (x in gen_donor.count(5)) { total = total + (x as int); }
+        this.assertEquals(10, total);
+        this.assertEquals(5, gen_donor.seenCount());
+    }
+}

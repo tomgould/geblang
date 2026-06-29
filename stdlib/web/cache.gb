@@ -5,6 +5,7 @@ import datetime;
 import db;
 import io;
 import json;
+import store;
 
 func cacheExpired(dict<string, any> payload): bool {
     if (!payload.hasKey("expiresAt")) {
@@ -120,6 +121,49 @@ export class FileCacheStore {
 ## Creates a file-backed cache store.
 export func fileCacheStore(string directory, int ttl): FileCacheStore {
     return FileCacheStore(directory, ttl);
+}
+
+## Cache store backed by an in-process thread-safe map; fast, no external dependency, cleared on restart.
+export class MemoryCacheStore {
+    any store;
+    int ttl;
+
+    func MemoryCacheStore(int ttl) {
+        this.store = store.Store();
+        this.ttl = ttl;
+    }
+
+    func get(string name): any {
+        let payload = this.store.get(name);
+        if (payload == null) {
+            return null;
+        }
+        let value = cacheValueFromPayload(payload as string);
+        if (value == null) {
+            this.store.delete(name);
+        }
+        return value;
+    }
+
+    func set(string name, any value): bool {
+        this.store.set(name, cachePayload(value, this.ttl));
+        return true;
+    }
+
+    func delete(string name): bool {
+        bool existed = this.store.has(name);
+        this.store.delete(name);
+        return existed;
+    }
+
+    func has(string name): bool {
+        return this.get(name) != null;
+    }
+}
+
+## Creates an in-process (in-memory) cache store backed by a thread-safe map.
+export func memoryCacheStore(int ttl): MemoryCacheStore {
+    return MemoryCacheStore(ttl);
 }
 
 ## Cache store backed by a database table with cache_key, data, and expiry columns.

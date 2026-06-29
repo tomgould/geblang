@@ -1,0 +1,15 @@
+/**
+ * @title Cross-module defer on throw
+ * @summary A cross-module callee's defer runs when its throw propagates to the caller.
+ */
+import test;
+import defer_donor;
+
+class CrossModuleDeferTest extends test.Test {
+    @test
+    func deferRunsWhenThrowCrossesModule(): void {
+        defer_donor.reset();
+        this.assertThrows(func(): void { defer_donor.throwsWithDefer(); });
+        this.assertEquals(51, defer_donor.tally());
+    }
+}

@@ -36,15 +36,7 @@ func registerXML(r *Registry) {
 		return ParseResult(true, value, nil), nil
 	})
 	r.Register("xml", "parseAs", func(args []runtime.Value) (runtime.Value, error) {
-		text, class, err := parseAsArgs(args, "xml.parseAs")
-		if err != nil {
-			return nil, err
-		}
-		value, parseErr := ParseXML(text)
-		if parseErr != nil {
-			return nil, fmt.Errorf("%s", parseErr.Message)
-		}
-		return deserializeIntoClass(class, value)
+		return xmlParseAsCtx(ConversionContext{}, args)
 	})
 	r.Register("xml", "stringify", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 1 {
@@ -67,4 +59,16 @@ func registerXML(r *Registry) {
 		}
 		return ValidationResult(true, nil), nil
 	})
+}
+
+func xmlParseAsCtx(ctx ConversionContext, args []runtime.Value) (runtime.Value, error) {
+	text, class, err := parseAsArgs(args, "xml.parseAs")
+	if err != nil {
+		return nil, err
+	}
+	value, parseErr := ParseXML(text)
+	if parseErr != nil {
+		return nil, fmt.Errorf("%s", parseErr.Message)
+	}
+	return deserializeIntoClassCtx(ctx, class, value)
 }

@@ -1,0 +1,7 @@
+module defer_donor;
+import io;
+let log = 0;
+export func reset(): void { log = 0; }
+export func tally(): int { return log; }
+func clean(): void { log = log + 50; }
+export func throwsWithDefer(): void { defer clean(); log = 1; throw RuntimeError("boom"); }

@@ -469,10 +469,10 @@ func (vm *VM) selectRuntimeFunctionWith(instruction Instruction, name string, in
 	 * just verify arity + types directly on the lone candidate. */
 	if len(indices) == 1 {
 		index := indices[0]
-		if index < 0 || int(index) >= len(vm.chunk.Functions) {
+		if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) {
 			return 0, vm.runtimeError(instruction, "method index out of range")
 		}
-		function := vm.chunk.Functions[index]
+		function := vm.curMod.Chunk.Functions[index]
 		min, max, variadic := bytecodeFunctionArityRange(function, paramOffset)
 		if len(args) < min || (!variadic && len(args) > max) {
 			return 0, vm.runtimeError(instruction, "no matching overload for %s", name)
@@ -484,10 +484,10 @@ func (vm *VM) selectRuntimeFunctionWith(instruction Instruction, name string, in
 	}
 	matches := []int64{}
 	for _, index := range indices {
-		if index < 0 || int(index) >= len(vm.chunk.Functions) {
+		if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) {
 			return 0, vm.runtimeError(instruction, "method index out of range")
 		}
-		function := vm.chunk.Functions[index]
+		function := vm.curMod.Chunk.Functions[index]
 		min, max, variadic := bytecodeFunctionArityRange(function, paramOffset)
 		if len(args) < min || (!variadic && len(args) > max) {
 			continue
@@ -500,7 +500,7 @@ func (vm *VM) selectRuntimeFunctionWith(instruction Instruction, name string, in
 	if len(matches) > 1 && len(inherited) > 0 {
 		kept := matches[:0]
 		for _, index := range matches {
-			if vm.runtimeArgumentsMatchWith(vm.chunk.Functions[index], args, paramOffset, inherited) {
+			if vm.runtimeArgumentsMatchWith(vm.curMod.Chunk.Functions[index], args, paramOffset, inherited) {
 				kept = append(kept, index)
 			}
 		}
@@ -521,14 +521,14 @@ func (vm *VM) selectRuntimeNamedFunction(instruction Instruction, name string, i
 	matches := []int64{}
 	orderedMatches := [][]runtime.Value{}
 	for _, index := range indices {
-		if index < 0 || int(index) >= len(vm.chunk.Functions) {
+		if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) {
 			return 0, nil, vm.runtimeError(instruction, "method index out of range")
 		}
-		ordered, err := vm.orderRuntimeArguments(instruction, vm.chunk.Functions[index], args, names, paramOffset)
+		ordered, err := vm.orderRuntimeArguments(instruction, vm.curMod.Chunk.Functions[index], args, names, paramOffset)
 		if err != nil {
 			continue
 		}
-		if !vm.runtimeArgumentsMatch(vm.chunk.Functions[index], ordered, paramOffset) {
+		if !vm.runtimeArgumentsMatch(vm.curMod.Chunk.Functions[index], ordered, paramOffset) {
 			continue
 		}
 		matches = append(matches, index)

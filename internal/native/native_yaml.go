@@ -32,29 +32,10 @@ func registerYAML(r *Registry) {
 		return ParseResult(true, value, nil), nil
 	})
 	r.Register("yaml", "stringify", func(args []runtime.Value) (runtime.Value, error) {
-		if len(args) != 1 {
-			return nil, fmt.Errorf("yaml.stringify expects exactly one argument")
-		}
-		encoded, err := ValueToYAML(args[0])
-		if err != nil {
-			return nil, err
-		}
-		data, err := yamllib.Marshal(encoded)
-		if err != nil {
-			return nil, err
-		}
-		return runtime.String{Value: strings.TrimSuffix(string(data), "\n")}, nil
+		return yamlStringifyCtx(ConversionContext{}, args)
 	})
 	r.Register("yaml", "parseAs", func(args []runtime.Value) (runtime.Value, error) {
-		text, class, err := parseAsArgs(args, "yaml.parseAs")
-		if err != nil {
-			return nil, err
-		}
-		value, parseErr := ParseYAMLText(text)
-		if parseErr != nil {
-			return nil, fmt.Errorf("%s", parseErr.Message)
-		}
-		return deserializeIntoClass(class, value)
+		return yamlParseAsCtx(ConversionContext{}, args)
 	})
 	r.Register("yaml", "validate", func(args []runtime.Value) (runtime.Value, error) {
 		text, err := singleString(args, "yaml.validate")
@@ -75,4 +56,31 @@ func registerYAML(r *Registry) {
 		}
 		return ValidationResult(true, nil), nil
 	})
+}
+
+func yamlStringifyCtx(ctx ConversionContext, args []runtime.Value) (runtime.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("yaml.stringify expects exactly one argument")
+	}
+	encoded, err := ValueToYAMLCtx(ctx, args[0])
+	if err != nil {
+		return nil, err
+	}
+	data, err := yamllib.Marshal(encoded)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.String{Value: strings.TrimSuffix(string(data), "\n")}, nil
+}
+
+func yamlParseAsCtx(ctx ConversionContext, args []runtime.Value) (runtime.Value, error) {
+	text, class, err := parseAsArgs(args, "yaml.parseAs")
+	if err != nil {
+		return nil, err
+	}
+	value, parseErr := ParseYAMLText(text)
+	if parseErr != nil {
+		return nil, fmt.Errorf("%s", parseErr.Message)
+	}
+	return deserializeIntoClassCtx(ctx, class, value)
 }

@@ -10,13 +10,14 @@ type Function func(args []runtime.Value) (runtime.Value, error)
 
 type Registry struct {
 	functions map[string]Function
-	// patches overlays functions for the duration of a test;
-	// CallKey checks here first, falls back to functions. Used by
-	// test.mock(...) to swap out stdlib implementations with
-	// user-supplied callables. The engine clears patches
-	// automatically between @test methods.
+	// patches overlays functions during a test (test.mock); CallKey checks it first, cleared between @test methods.
 	patches map[string]Function
+	// convCtx is this backend's serialize/deserialize context for the conversion natives; set once at construction, read per call (no process-global).
+	convCtx ConversionContext
 }
+
+// SetConversionContext installs this backend's serialize/deserialize callbacks for the conversion natives.
+func (r *Registry) SetConversionContext(ctx ConversionContext) { r.convCtx = ctx }
 
 func NewRegistry() *Registry {
 	return &Registry{functions: map[string]Function{}, patches: map[string]Function{}}
@@ -64,12 +65,19 @@ func (r *Registry) LookupKey(key string) Function {
 	if _, patched := r.patches[key]; patched {
 		return nil
 	}
+	// Conversion natives carry this backend's context; the cached wrapper reads r.convCtx at call time, so the VM fast path stays per-backend.
+	if isConversionKey(key) {
+		return func(args []runtime.Value) (runtime.Value, error) { return callConversion(r.convCtx, key, args) }
+	}
 	return r.functions[key]
 }
 
 func (r *Registry) CallKey(key string, args []runtime.Value) (runtime.Value, error) {
 	if patch, ok := r.patches[key]; ok {
 		return patch(args)
+	}
+	if isConversionKey(key) {
+		return callConversion(r.convCtx, key, args)
 	}
 	fn, ok := r.functions[key]
 	if !ok {
@@ -341,7 +349,7 @@ var pureBuiltins = map[string]map[string]struct{}{
 		"mannWhitneyU": {}, "ksTest": {},
 		"confidenceIntervalMean": {}, "confidenceIntervalProportion": {}, "confidenceIntervalDiffMeans": {},
 		"linregress": {},
-		"polyfit": {}, "polyval": {},
+		"polyfit":    {}, "polyval": {},
 		"skewness": {}, "kurtosis": {}, "covariance": {}, "corrcoef": {},
 	},
 	"physics": {

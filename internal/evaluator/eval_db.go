@@ -853,15 +853,12 @@ func (e *Evaluator) takeStmtHandle(value runtime.Value) (*dbStmtHandle, error) {
 	return stmt, nil
 }
 
-// sqliteDSNWithBusyTimeout defaults busy_timeout for every pooled
-// connection (a PRAGMA exec would reach only one); override by passing
-// any _pragma or busy_timeout in the DSN. :memory: stays untouched
-// (each pooled conn owns a private database; BUSY cannot occur).
-func sqliteDSNWithBusyTimeout(dsn string) string {
+// sqliteDSNWithDefaults gives a file DSN server-friendly defaults (WAL, synchronous NORMAL, busy_timeout 5s); :memory: and DSNs with explicit _pragma/busy_timeout are left as-is.
+func sqliteDSNWithDefaults(dsn string) string {
 	if dsn == ":memory:" || strings.Contains(dsn, "busy_timeout") || strings.Contains(dsn, "_pragma") {
 		return dsn
 	}
-	const pragma = "_pragma=busy_timeout(5000)"
+	const pragma = "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	out := dsn
 	if !strings.HasPrefix(out, "file:") {
 		out = "file:" + out
@@ -882,7 +879,7 @@ func (e *Evaluator) sqliteDSNWithOptions(call *ast.CallExpression, dsn string, a
 		}
 	}
 	if !hasOptions || dsn == ":memory:" || sqliteIsPrivateMemory(dsn) {
-		return sqliteDSNWithBusyTimeout(dsn), nil
+		return sqliteDSNWithDefaults(dsn), nil
 	}
 	pragmas := []string{}
 	if !strings.Contains(dsn, "busy_timeout") && !strings.Contains(dsn, "_pragma") {
@@ -895,18 +892,24 @@ func (e *Evaluator) sqliteDSNWithOptions(call *ast.CallExpression, dsn string, a
 			busyMs = int64(n)
 		}
 		pragmas = append(pragmas, fmt.Sprintf("busy_timeout(%d)", busyMs))
-	}
-	if b, ok := dictBoolField(options, "wal"); ok && b {
-		pragmas = append(pragmas, "journal_mode(WAL)")
-	}
-	if s, ok := dictStringField(options, "synchronous"); ok {
-		up := strings.ToUpper(s)
-		switch up {
+		// File databases default to WAL + synchronous(NORMAL); wal:false opts out, an explicit synchronous overrides.
+		wal := true
+		if b, ok := dictBoolField(options, "wal"); ok {
+			wal = b
+		}
+		if wal {
+			pragmas = append(pragmas, "journal_mode(WAL)")
+		}
+		sync := "NORMAL"
+		if s, ok := dictStringField(options, "synchronous"); ok {
+			sync = strings.ToUpper(s)
+		}
+		switch sync {
 		case "OFF", "NORMAL", "FULL", "EXTRA":
 		default:
 			return "", fmt.Errorf("%s synchronous must be OFF, NORMAL, FULL, or EXTRA", call.Callee.String())
 		}
-		pragmas = append(pragmas, "synchronous("+up+")")
+		pragmas = append(pragmas, "synchronous("+sync+")")
 	}
 	if b, ok := dictBoolField(options, "foreignKeys"); ok && b {
 		pragmas = append(pragmas, "foreign_keys(ON)")
@@ -929,7 +932,7 @@ func (e *Evaluator) sqliteDSNWithOptions(call *ast.CallExpression, dsn string, a
 		pragmas = append(pragmas, "temp_store(MEMORY)")
 	}
 	if len(pragmas) == 0 {
-		return sqliteDSNWithBusyTimeout(dsn), nil
+		return sqliteDSNWithDefaults(dsn), nil
 	}
 	out := dsn
 	if !strings.HasPrefix(out, "file:") {

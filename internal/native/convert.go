@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"geblang/internal/runtime"
@@ -30,63 +29,28 @@ type InstanceInvokerFunc func(instance *runtime.Instance, method string, args []
 // to turn a parsed value into a class instance.
 type ClassDeserializerFunc func(class runtime.Value, value runtime.Value) (runtime.Value, error)
 
-type instanceInvokerCell struct{ fn InstanceInvokerFunc }
-type classDeserializerCell struct{ fn ClassDeserializerFunc }
-
-var (
-	instanceInvokerPtr   atomic.Pointer[instanceInvokerCell]
-	classDeserializerPtr atomic.Pointer[classDeserializerCell]
-)
-
-// SetInstanceInvoker installs the active backend's instance invoker.
-// Safe to call concurrently with other backends starting up.
-func SetInstanceInvoker(fn InstanceInvokerFunc) {
-	instanceInvokerPtr.Store(&instanceInvokerCell{fn: fn})
+// ConversionContext carries the active backend's serialize/deserialize callbacks; each backend builds its own and threads it through the convert ops, so concurrent backends never cross-dispatch and no partially built VM is published.
+type ConversionContext struct {
+	InstanceInvoker   InstanceInvokerFunc
+	ClassDeserializer ClassDeserializerFunc
 }
 
-// GetInstanceInvoker returns the currently installed invoker, or nil.
-func GetInstanceInvoker() InstanceInvokerFunc {
-	if c := instanceInvokerPtr.Load(); c != nil {
-		return c.fn
-	}
-	return nil
-}
-
-// SetClassDeserializer installs the active backend's class deserializer.
-func SetClassDeserializer(fn ClassDeserializerFunc) {
-	classDeserializerPtr.Store(&classDeserializerCell{fn: fn})
-}
-
-// GetClassDeserializer returns the currently installed deserializer, or nil.
-func GetClassDeserializer() ClassDeserializerFunc {
-	if c := classDeserializerPtr.Load(); c != nil {
-		return c.fn
-	}
-	return nil
-}
-
-func invokeInstanceSerialize(instance *runtime.Instance) (runtime.Value, bool, error) {
-	fn := GetInstanceInvoker()
-	if fn == nil {
+func invokeInstanceSerialize(ctx ConversionContext, instance *runtime.Instance) (runtime.Value, bool, error) {
+	if ctx.InstanceInvoker == nil {
 		return nil, false, nil
 	}
-	if result, ok, err := fn(instance, "__serialize", nil); ok || err != nil {
+	if result, ok, err := ctx.InstanceInvoker(instance, "__serialize", nil); ok || err != nil {
 		return result, ok, err
 	}
-	return fn(instance, "__serialize__", nil)
+	return ctx.InstanceInvoker(instance, "__serialize__", nil)
 }
 
-// instanceToSerializable converts a class instance to a
-// dict-like map suitable for downstream stringify converters.
-// Prefers __serialize__ when defined, else dumps "public" fields
-// (those not prefixed with "_" or "__"). The recurse callback
-// converts each contained value via the caller's format-specific
-// converter (ValueToJSON, ValueToTOML, etc.).
-func instanceToSerializable(instance *runtime.Instance, recurse func(runtime.Value) (any, error)) (any, error) {
+// instanceToSerializable prefers __serialize, else dumps public fields; recurse converts contained values via the caller's ctx converter.
+func instanceToSerializable(ctx ConversionContext, instance *runtime.Instance, recurse func(runtime.Value) (any, error)) (any, error) {
 	if instance == nil {
 		return nil, nil
 	}
-	if value, called, err := invokeInstanceSerialize(instance); err != nil {
+	if value, called, err := invokeInstanceSerialize(ctx, instance); err != nil {
 		return nil, err
 	} else if called {
 		return recurse(value)
@@ -344,9 +308,13 @@ func JSONToValue(value any) (runtime.Value, error) {
 // underlying byte slab instead of every call paying for a fresh
 // allocation + grow cycle.
 func EncodeJSONValue(value runtime.Value) (string, error) {
+	return EncodeJSONValueCtx(ConversionContext{}, value)
+}
+
+func EncodeJSONValueCtx(ctx ConversionContext, value runtime.Value) (string, error) {
 	buf := jsonEncodeBufPool.Get().(*bytes.Buffer)
 	buf.Reset()
-	if err := encodeJSONValueInto(buf, value); err != nil {
+	if err := encodeJSONValueInto(ctx, buf, value); err != nil {
 		jsonEncodeBufPool.Put(buf)
 		return "", err
 	}
@@ -376,7 +344,7 @@ var jsonDictPairsPool = sync.Pool{
 	},
 }
 
-func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
+func encodeJSONValueInto(ctx ConversionContext, buf *bytes.Buffer, value runtime.Value) error {
 	switch v := value.(type) {
 	case runtime.Null:
 		buf.WriteString("null")
@@ -428,7 +396,7 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 			if i > 0 {
 				buf.WriteByte(',')
 			}
-			if err := encodeJSONValueInto(buf, item); err != nil {
+			if err := encodeJSONValueInto(ctx, buf, item); err != nil {
 				return err
 			}
 		}
@@ -479,7 +447,7 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 					return false
 				}
 				buf.WriteByte(':')
-				if err := encodeJSONValueInto(buf, entry.Value); err != nil {
+				if err := encodeJSONValueInto(ctx, buf, entry.Value); err != nil {
 					keyErr = err
 					return false
 				}
@@ -514,7 +482,7 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 				return err
 			}
 			buf.WriteByte(':')
-			if err := encodeJSONValueInto(buf, p.value); err != nil {
+			if err := encodeJSONValueInto(ctx, buf, p.value); err != nil {
 				*pairsPtr = pairs[:0]
 				jsonDictPairsPool.Put(pairsPtr)
 				return err
@@ -525,7 +493,7 @@ func encodeJSONValueInto(buf *bytes.Buffer, value runtime.Value) error {
 		buf.WriteByte('}')
 		return nil
 	case *runtime.Instance:
-		converted, err := instanceToSerializable(v, ValueToJSON)
+		converted, err := instanceToSerializable(ctx, v, func(x runtime.Value) (any, error) { return ValueToJSONCtx(ctx, x) })
 		if err != nil {
 			return err
 		}
@@ -632,6 +600,11 @@ func jsonStringIsSafe(s string) bool {
 
 // ValueToJSON converts a runtime.Value to a plain Go value suitable for JSON encoding.
 func ValueToJSON(value runtime.Value) (any, error) {
+	return ValueToJSONCtx(ConversionContext{}, value)
+}
+
+// ValueToJSONCtx is ValueToJSON with the backend's serialize context for instance __serialize dispatch.
+func ValueToJSONCtx(ctx ConversionContext, value runtime.Value) (any, error) {
 	switch value := value.(type) {
 	case runtime.Null:
 		return nil, nil
@@ -655,7 +628,7 @@ func ValueToJSON(value runtime.Value) (any, error) {
 	case *runtime.List:
 		items := make([]any, 0, len(value.Elements))
 		for _, item := range value.Elements {
-			converted, err := ValueToJSON(item)
+			converted, err := ValueToJSONCtx(ctx, item)
 			if err != nil {
 				return nil, err
 			}
@@ -670,7 +643,7 @@ func ValueToJSON(value runtime.Value) (any, error) {
 			if !ok {
 				return nil, fmt.Errorf("json.stringify only supports dicts with string keys")
 			}
-			converted, err := ValueToJSON(entry.Value)
+			converted, err := ValueToJSONCtx(ctx, entry.Value)
 			if err != nil {
 				return nil, err
 			}
@@ -678,7 +651,7 @@ func ValueToJSON(value runtime.Value) (any, error) {
 		}
 		return items, nil
 	case *runtime.Instance:
-		return instanceToSerializable(value, ValueToJSON)
+		return instanceToSerializable(ctx, value, func(x runtime.Value) (any, error) { return ValueToJSONCtx(ctx, x) })
 	default:
 		return nil, fmt.Errorf("json.stringify does not support %s", value.TypeName())
 	}
@@ -719,6 +692,11 @@ func ValueToTemplateData(value runtime.Value) (any, error) {
 
 // ValueToTOML converts a runtime.Value to a plain Go value suitable for TOML encoding.
 func ValueToTOML(value runtime.Value) (any, error) {
+	return ValueToTOMLCtx(ConversionContext{}, value)
+}
+
+// ValueToTOMLCtx is ValueToTOML with the backend's serialize context for instance __serialize dispatch.
+func ValueToTOMLCtx(ctx ConversionContext, value runtime.Value) (any, error) {
 	switch value := value.(type) {
 	case runtime.Null:
 		return nil, fmt.Errorf("toml.stringify does not support null")
@@ -742,7 +720,7 @@ func ValueToTOML(value runtime.Value) (any, error) {
 	case *runtime.List:
 		items := make([]any, 0, len(value.Elements))
 		for _, item := range value.Elements {
-			converted, err := ValueToTOML(item)
+			converted, err := ValueToTOMLCtx(ctx, item)
 			if err != nil {
 				return nil, err
 			}
@@ -757,7 +735,7 @@ func ValueToTOML(value runtime.Value) (any, error) {
 			if !ok {
 				return nil, fmt.Errorf("toml.stringify only supports dicts with string keys")
 			}
-			converted, err := ValueToTOML(entry.Value)
+			converted, err := ValueToTOMLCtx(ctx, entry.Value)
 			if err != nil {
 				return nil, err
 			}
@@ -765,7 +743,7 @@ func ValueToTOML(value runtime.Value) (any, error) {
 		}
 		return items, nil
 	case *runtime.Instance:
-		return instanceToSerializable(value, ValueToTOML)
+		return instanceToSerializable(ctx, value, func(x runtime.Value) (any, error) { return ValueToTOMLCtx(ctx, x) })
 	default:
 		return nil, fmt.Errorf("toml.stringify does not support %s", value.TypeName())
 	}
@@ -773,6 +751,11 @@ func ValueToTOML(value runtime.Value) (any, error) {
 
 // ValueToYAML converts a runtime.Value to a plain Go value suitable for YAML encoding.
 func ValueToYAML(value runtime.Value) (any, error) {
+	return ValueToYAMLCtx(ConversionContext{}, value)
+}
+
+// ValueToYAMLCtx is ValueToYAML with the backend's serialize context for instance __serialize dispatch.
+func ValueToYAMLCtx(ctx ConversionContext, value runtime.Value) (any, error) {
 	switch value := value.(type) {
 	case runtime.Null:
 		return nil, nil
@@ -796,7 +779,7 @@ func ValueToYAML(value runtime.Value) (any, error) {
 	case *runtime.List:
 		items := make([]any, 0, len(value.Elements))
 		for _, item := range value.Elements {
-			converted, err := ValueToYAML(item)
+			converted, err := ValueToYAMLCtx(ctx, item)
 			if err != nil {
 				return nil, err
 			}
@@ -811,7 +794,7 @@ func ValueToYAML(value runtime.Value) (any, error) {
 			if !ok {
 				return nil, fmt.Errorf("yaml.stringify only supports dicts with string keys")
 			}
-			converted, err := ValueToYAML(entry.Value)
+			converted, err := ValueToYAMLCtx(ctx, entry.Value)
 			if err != nil {
 				return nil, err
 			}
@@ -819,7 +802,7 @@ func ValueToYAML(value runtime.Value) (any, error) {
 		}
 		return items, nil
 	case *runtime.Instance:
-		return instanceToSerializable(value, ValueToYAML)
+		return instanceToSerializable(ctx, value, func(x runtime.Value) (any, error) { return ValueToYAMLCtx(ctx, x) })
 	default:
 		return nil, fmt.Errorf("yaml.stringify does not support %s", value.TypeName())
 	}

@@ -1171,6 +1171,7 @@ func fileInfoDict(name string, info os.FileInfo) runtime.Dict {
 	putDict(entries, "isFile", runtime.Bool{Value: info.Mode().IsRegular()})
 	putDict(entries, "isSymlink", runtime.Bool{Value: info.Mode()&os.ModeSymlink != 0})
 	putDict(entries, "modUnix", runtime.NewInt64(info.ModTime().Unix()))
+	putDict(entries, "modUnixNano", runtime.NewInt64(info.ModTime().UnixNano()))
 	return runtime.Dict{Entries: entries}
 }
 

@@ -16,7 +16,7 @@ func (vm *VM) constructClass(instruction Instruction, ip int) (int, error) {
 	}
 	classIndex := instruction.Operands[0]
 	argc := int(instruction.Operands[1])
-	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
 		return 0, vm.runtimeError(instruction, "class index out of range")
 	}
 	args := make([]runtime.Value, argc)
@@ -31,7 +31,7 @@ func (vm *VM) constructClass(instruction Instruction, ip int) (int, error) {
 }
 
 func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex int64, args []runtime.Value, raw bool) (int, error) {
-	classInfo := vm.chunk.Classes[classIndex]
+	classInfo := vm.curMod.Chunk.Classes[classIndex]
 	// Consumed before field initializers can inherit or clear them.
 	explicitBindings := vm.pendingTypeBindings
 	vm.pendingTypeBindings = nil
@@ -47,7 +47,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 				if err != nil {
 					return 0, vm.callPropagate(instruction, err)
 				}
-				classInfo := vm.chunk.Classes[classIndex]
+				classInfo := vm.curMod.Chunk.Classes[classIndex]
 				if instance, ok := result.(*runtime.Instance); ok && instance != nil && instance.Class != nil && instance.Class.Name != classInfo.Name {
 					instance.ExtraTypeNames = append(instance.ExtraTypeNames, classInfo.Name)
 				}
@@ -62,28 +62,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 		return vm.jumpToExceptionHandler(instruction, ip)
 	}
 	instance := &runtime.Instance{
-		Class: &runtime.Class{
-			Name:           classInfo.Name,
-			Module:         vm.moduleName,
-			TypeParameters: append([]string(nil), classInfo.TypeParameters...),
-			Methods:        vm.runtimeMethodWrappers(classIndex),
-			MethodMetadata: vm.classFunctionMetadata(classInfo.Methods, "method", 1),
-			StaticMetadata: vm.classFunctionMetadata(classInfo.StaticMethods, "staticMethod", 0),
-			// Link the parent runtime.Class so cross-module
-			// `instanceof Parent` and `reflect.parent(instance)`
-			// can walk the chain regardless of which chunk holds
-			// the parent's ClassInfo.
-			Parent:     vm.runtimeClassForParent(classInfo),
-			Implements: vm.runtimeInterfacesForClass(classInfo),
-			// Populate runtime.Class.Fields with field metadata
-			// (name + optional decorators) so cross-chunk reflect
-			// from a sub-VM can read the originating chunk's
-			// declarations even when the bytecode ClassInfo isn't
-			// reachable. Type-info on the field is left nil here;
-			// reflectFieldsResult re-derives type strings from the
-			// chunk when present.
-			Fields: vm.runtimeFieldsForClass(classInfo),
-		},
+		Class:  vm.RuntimeClassValue(classIndex),
 		Fields: map[string]runtime.Value{},
 	}
 	// Cross-module constructions have no following OpSetTypeBindings.
@@ -96,8 +75,8 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 	// Inherit type bindings from each parent's extends-clause arguments
 	// (`class Sub extends Base<string>` propagates {T: "string"} to Sub).
 	// Walk the chain via ParentIndex so multi-level inheritance composes.
-	for ci := classInfo; ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(vm.chunk.Classes); {
-		parent := vm.chunk.Classes[ci.ParentIndex]
+	for ci := classInfo; ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(vm.curMod.Chunk.Classes); {
+		parent := vm.curMod.Chunk.Classes[ci.ParentIndex]
 		if len(ci.ParentArguments) > 0 && len(parent.TypeParameters) > 0 {
 			if instance.TypeBindings == nil {
 				instance.TypeBindings = map[string]string{}
@@ -145,7 +124,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 		return 0, err
 	}
 	if len(explicitBindings) > 0 {
-		fn := &vm.chunk.Functions[functionIndex]
+		fn := &vm.curMod.Chunk.Functions[functionIndex]
 		for i, arg := range args {
 			pi := i + 1 // slot 0 is the instance
 			if fn.Variadic && pi >= len(fn.ParamTypes)-1 {
@@ -171,7 +150,7 @@ func (vm *VM) constructClassWithArgs(instruction Instruction, ip int, classIndex
 		vm.pendingTypeBindings = explicitBindings
 	}
 	callArgs := append([]runtime.Value{instance}, args...)
-	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, instance)
+	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], callArgs, instance)
 	if err != nil {
 		return 0, err
 	}
@@ -276,10 +255,11 @@ func literalExpressionForValue(v runtime.Value) ast.Expression {
 }
 
 func (vm *VM) runtimeMethodWrappers(classIndex int64) map[string][]runtime.Function {
-	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
 		return nil
 	}
-	classInfo := vm.chunk.Classes[classIndex]
+	classInfo := vm.curMod.Chunk.Classes[classIndex]
+	loader := vm.moduleLoader
 	methods := map[string][]runtime.Function{}
 	for key, indices := range classInfo.Methods {
 		methodKey := key
@@ -289,9 +269,24 @@ func (vm *VM) runtimeMethodWrappers(classIndex int64) map[string][]runtime.Funct
 		}
 		name := methodKey
 		firstIndex := methodIndices[0]
-		if firstIndex >= 0 && int(firstIndex) < len(vm.chunk.Functions) && vm.chunk.Functions[firstIndex].Name != "" {
-			name = vm.chunk.Functions[firstIndex].Name
+		if firstIndex >= 0 && int(firstIndex) < len(vm.curMod.Chunk.Functions) && vm.curMod.Chunk.Functions[firstIndex].Name != "" {
+			name = vm.curMod.Chunk.Functions[firstIndex].Name
 		}
+		if loader != nil {
+			// Data-only dispatch: the wrapper closes over the loader (not this VM), so it pins nothing and routes each call to an exclusive worker.
+			methods[methodKey] = []runtime.Function{{
+				Name:   name,
+				Target: "method",
+				Native: func(this *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+					if this == nil || this.Class == nil {
+						return nil, fmt.Errorf("method receiver is not available")
+					}
+					return loader.CallModuleMethod(this.Class.Module, this.Class.Name, methodKey, this, args, nil)
+				},
+			}}
+			continue
+		}
+		// No loader (single-VM context): the wrapper closes over this VM, so keep it out of the pool while an instance can still call it.
 		vm.noteEscape()
 		methods[methodKey] = []runtime.Function{{
 			Name:   name,
@@ -319,10 +314,10 @@ func (vm *VM) runtimeMethodWrappers(classIndex int64) map[string][]runtime.Funct
 }
 
 func (vm *VM) initializeFields(instruction Instruction, instance *runtime.Instance, classIndex int64) error {
-	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
 		return vm.runtimeError(instruction, "class index out of range")
 	}
-	classInfo := vm.chunk.Classes[classIndex]
+	classInfo := vm.curMod.Chunk.Classes[classIndex]
 	if classInfo.ParentIndex >= 0 {
 		if err := vm.initializeFields(instruction, instance, classInfo.ParentIndex); err != nil {
 			return err
@@ -516,7 +511,7 @@ func (vm *VM) getField(instruction Instruction, ip int) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}}, nil)
+		return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}}, nil)
 	}
 	return 0, vm.runtimeError(instruction, "%s has no field %s", instance.Class.Name, name)
 }
@@ -603,7 +598,7 @@ func (vm *VM) setField(instruction Instruction, ip int) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}, value}, value)
+		return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance, runtime.String{Value: name}, value}, value)
 	}
 	instance.SetField(name, value)
 	vm.push(value)
@@ -621,8 +616,8 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 		return 0, err
 	}
 	// Check if the parent is a builtin error class (ParentIndex == -1, ParentName set).
-	if classIndex >= 0 && int(classIndex) < len(vm.chunk.Classes) {
-		classInfo := vm.chunk.Classes[classIndex]
+	if classIndex >= 0 && int(classIndex) < len(vm.curMod.Chunk.Classes) {
+		classInfo := vm.curMod.Chunk.Classes[classIndex]
 		if isBuiltinErrorClass(classInfo.ParentName) {
 			// Capture the message from the first string argument for use in OpReturn.
 			if len(args) >= 1 {
@@ -648,7 +643,7 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 			if _, err := vm.moduleLoader.LoadModule(module, module); err != nil {
 				return 0, vm.runtimeError(instruction, "load parent module %s: %s", module, err.Error())
 			}
-			if _, err := vm.moduleLoader.CallParentInModule(module, parentClass, parentClass, instance, args); err != nil {
+			if _, err := vm.moduleLoader.CallParentInModule(module, parentClass, parentClass, instance, args, vm); err != nil {
 				return 0, vm.callPropagate(instruction, err)
 			}
 			for _, f := range vm.moduleLoader.ImmutableFieldsForModuleClass(module, parentClass) {
@@ -677,7 +672,7 @@ func (vm *VM) callParentConstructor(instruction Instruction, ip int) (int, error
 		return 0, err
 	}
 	callArgs := append([]runtime.Value{instance}, args...)
-	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, runtime.Null{})
+	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], callArgs, runtime.Null{})
 	if err == nil && len(parent.ImmutableFields) > 0 && len(vm.frames) > 0 {
 		vm.frames[len(vm.frames)-1].immutableFieldsToLock = parent.ImmutableFields
 		vm.frames[len(vm.frames)-1].lockInstance = instance
@@ -706,28 +701,28 @@ func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
 	// `parent.method()`: lookup starts at the parent. Search the same-chunk
 	// parent chain first; on a miss, hop to a cross-module ancestor (which may
 	// sit above same-chunk intermediates, hence crossModuleBoundary).
-	if classIndex >= 0 && int(classIndex) < len(vm.chunk.Classes) {
-		classInfo := vm.chunk.Classes[classIndex]
-		if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.chunk.Classes) {
-			parent := vm.chunk.Classes[classInfo.ParentIndex]
+	if classIndex >= 0 && int(classIndex) < len(vm.curMod.Chunk.Classes) {
+		classInfo := vm.curMod.Chunk.Classes[classIndex]
+		if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.curMod.Chunk.Classes) {
+			parent := vm.curMod.Chunk.Classes[classInfo.ParentIndex]
 			if indices, ok := vm.lookupMethod(parent, name.Value); ok {
 				functionIndex, err := vm.selectRuntimeFunction(instruction, name.Value, indices, args, 1)
 				if err != nil {
 					return 0, err
 				}
 				callArgs := append([]runtime.Value{instance}, args...)
-				return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, nil)
+				return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], callArgs, nil)
 			}
 		}
 		boundary := classInfo
-		if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.chunk.Classes) {
-			boundary = vm.chunk.Classes[classInfo.ParentIndex]
+		if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.curMod.Chunk.Classes) {
+			boundary = vm.curMod.Chunk.Classes[classInfo.ParentIndex]
 		}
 		if module, parentClass, ok := vm.crossModuleBoundary(boundary); ok && vm.moduleLoader != nil {
 			if _, err := vm.moduleLoader.LoadModule(module, module); err != nil {
 				return 0, vm.runtimeError(instruction, "load parent module %s: %s", module, err.Error())
 			}
-			result, err := vm.moduleLoader.CallParentInModule(module, parentClass, name.Value, instance, args)
+			result, err := vm.moduleLoader.CallParentInModule(module, parentClass, name.Value, instance, args, vm)
 			if err == nil {
 				vm.push(result)
 				return ip, nil
@@ -751,7 +746,7 @@ func (vm *VM) callParentMethod(instruction Instruction, ip int) (int, error) {
 		return 0, err
 	}
 	callArgs := append([]runtime.Value{instance}, args...)
-	return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], callArgs, nil)
+	return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], callArgs, nil)
 }
 
 func (vm *VM) popInstanceAndArgs(instruction Instruction, argc int) (*runtime.Instance, []runtime.Value, error) {
@@ -789,8 +784,8 @@ func splitQualifiedClassName(qualified string) (string, string, bool) {
 // ancestor sits above one or more local intermediates, not just the direct parent.
 func (vm *VM) crossModuleBoundary(classInfo ClassInfo) (string, string, bool) {
 	top := classInfo
-	for top.ParentIndex >= 0 && int(top.ParentIndex) < len(vm.chunk.Classes) {
-		top = vm.chunk.Classes[top.ParentIndex]
+	for top.ParentIndex >= 0 && int(top.ParentIndex) < len(vm.curMod.Chunk.Classes) {
+		top = vm.curMod.Chunk.Classes[top.ParentIndex]
 	}
 	if strings.Contains(top.ParentName, ".") {
 		return splitQualifiedClassName(top.ParentName)
@@ -799,14 +794,14 @@ func (vm *VM) crossModuleBoundary(classInfo ClassInfo) (string, string, bool) {
 }
 
 func (vm *VM) parentClassInfo(instruction Instruction, classIndex int64) (ClassInfo, error) {
-	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
 		return ClassInfo{}, vm.runtimeError(instruction, "class index out of range")
 	}
-	parentIndex := vm.chunk.Classes[classIndex].ParentIndex
-	if parentIndex < 0 || int(parentIndex) >= len(vm.chunk.Classes) {
-		return ClassInfo{}, vm.runtimeError(instruction, "%s has no parent class", vm.chunk.Classes[classIndex].Name)
+	parentIndex := vm.curMod.Chunk.Classes[classIndex].ParentIndex
+	if parentIndex < 0 || int(parentIndex) >= len(vm.curMod.Chunk.Classes) {
+		return ClassInfo{}, vm.runtimeError(instruction, "%s has no parent class", vm.curMod.Chunk.Classes[classIndex].Name)
 	}
-	return vm.chunk.Classes[parentIndex], nil
+	return vm.curMod.Chunk.Classes[parentIndex], nil
 }
 
 func (vm *VM) getStaticValue(instruction Instruction, ip int) (int, error) {
@@ -815,30 +810,30 @@ func (vm *VM) getStaticValue(instruction Instruction, ip int) (int, error) {
 	}
 	classIndex := instruction.Operands[0]
 	nameIndex := instruction.Operands[1]
-	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
 		return 0, vm.runtimeError(instruction, "class index out of range")
 	}
 	name, err := vm.constantStringAt(instruction, nameIndex, "static value name must be string")
 	if err != nil {
 		return 0, err
 	}
-	constantIndex, ok := vm.lookupStaticValue(vm.chunk.Classes[classIndex], name)
+	constantIndex, ok := vm.lookupStaticValue(vm.curMod.Chunk.Classes[classIndex], name)
 	if !ok {
 		// Same-chunk walk exhausted: the static may live on a cross-module ancestor.
-		if module, parentClass, boundary := vm.crossModuleBoundary(vm.chunk.Classes[classIndex]); boundary && vm.moduleLoader != nil {
+		if module, parentClass, boundary := vm.crossModuleBoundary(vm.curMod.Chunk.Classes[classIndex]); boundary && vm.moduleLoader != nil {
 			if value, found := vm.moduleLoader.StaticValueForModuleClass(module, parentClass, name); found {
 				vm.push(value)
 				return ip, nil
 			}
 		}
-		if indices, ok := vm.lookupStaticMethod(vm.chunk.Classes[classIndex], "__getStatic"); ok {
+		if indices, ok := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], "__getStatic"); ok {
 			functionIndex, err := vm.selectRuntimeFunction(instruction, "__getStatic", indices, []runtime.Value{runtime.String{Value: name}}, 0)
 			if err != nil {
 				return 0, err
 			}
-			return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}}, nil)
+			return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}}, nil)
 		}
-		return 0, vm.runtimeError(instruction, "unknown static member %s.%s", vm.chunk.Classes[classIndex].Name, name)
+		return 0, vm.runtimeError(instruction, "unknown static member %s.%s", vm.curMod.Chunk.Classes[classIndex].Name, name)
 	}
 	if constantIndex < 0 || int(constantIndex) >= vm.constantsLen() {
 		return 0, vm.runtimeError(instruction, "static value constant out of range")
@@ -853,7 +848,7 @@ func (vm *VM) setStaticValue(instruction Instruction, ip int) (int, error) {
 	}
 	classIndex := instruction.Operands[0]
 	nameIndex := instruction.Operands[1]
-	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
 		return 0, vm.runtimeError(instruction, "class index out of range")
 	}
 	name, err := vm.constantStringAt(instruction, nameIndex, "static value name must be string")
@@ -867,7 +862,7 @@ func (vm *VM) setStaticValue(instruction Instruction, ip int) (int, error) {
 	// Statics live in an overlay keyed by their declared constant-pool
 	// index; the pool itself stays immutable so chunks can share it.
 	for ci := classIndex; ci >= 0; {
-		classInfo := vm.chunk.Classes[ci]
+		classInfo := vm.curMod.Chunk.Classes[ci]
 		if constIdx, present := classInfo.StaticValues[name]; present && constIdx >= 0 && int(constIdx) < vm.constantsLen() {
 			vm.writeStaticValue(constIdx, value)
 			vm.push(value)
@@ -875,14 +870,14 @@ func (vm *VM) setStaticValue(instruction Instruction, ip int) (int, error) {
 		}
 		ci = classInfo.ParentIndex
 	}
-	if indices, ok := vm.lookupStaticMethod(vm.chunk.Classes[classIndex], "__setStatic"); ok {
+	if indices, ok := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], "__setStatic"); ok {
 		functionIndex, err := vm.selectRuntimeFunction(instruction, "__setStatic", indices, []runtime.Value{runtime.String{Value: name}, value}, 0)
 		if err != nil {
 			return 0, err
 		}
-		return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}, value}, nil)
+		return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}, value}, nil)
 	}
-	return 0, vm.runtimeError(instruction, "unknown static member %s.%s", vm.chunk.Classes[classIndex].Name, name)
+	return 0, vm.runtimeError(instruction, "unknown static member %s.%s", vm.curMod.Chunk.Classes[classIndex].Name, name)
 }
 
 func (vm *VM) callStaticMethod(instruction Instruction, ip int) (int, error) {
@@ -892,7 +887,7 @@ func (vm *VM) callStaticMethod(instruction Instruction, ip int) (int, error) {
 	classIndex := instruction.Operands[0]
 	nameIndex := instruction.Operands[1]
 	argc := int(instruction.Operands[2])
-	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
 		return 0, vm.runtimeError(instruction, "class index out of range")
 	}
 	name, err := vm.constantStringAt(instruction, nameIndex, "static method name must be string")
@@ -917,7 +912,7 @@ func (vm *VM) callStaticMethodSpread(instruction Instruction, ip int) (int, erro
 	classIndex := instruction.Operands[0]
 	nameIndex := instruction.Operands[1]
 	staticArgCount := int(instruction.Operands[2])
-	if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
 		return 0, vm.runtimeError(instruction, "class index out of range")
 	}
 	name, err := vm.constantStringAt(instruction, nameIndex, "static method name must be string")
@@ -944,11 +939,11 @@ func (vm *VM) callStaticMethodSpread(instruction Instruction, ip int) (int, erro
 	if !ok {
 		return 0, vm.runtimeError(instruction, "spread argument must be a list or dict")
 	}
-	indices, found := vm.lookupStaticMethod(vm.chunk.Classes[classIndex], name)
+	indices, found := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], name)
 	if !found || len(indices) != 1 {
-		return 0, vm.runtimeError(instruction, "cannot use dict spread with static method %s.%s", vm.chunk.Classes[classIndex].Name, name)
+		return 0, vm.runtimeError(instruction, "cannot use dict spread with static method %s.%s", vm.curMod.Chunk.Classes[classIndex].Name, name)
 	}
-	fn := vm.chunk.Functions[indices[0]]
+	fn := vm.curMod.Chunk.Functions[indices[0]]
 	args, names, err := spreadDictNamedArguments(spreadDict, staticArgs, fn.ParamNames)
 	if err != nil {
 		return 0, vm.callPropagate(instruction, err)
@@ -961,10 +956,10 @@ func (vm *VM) callStaticMethodSpread(instruction Instruction, ip int) (int, erro
 }
 
 func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classIndex int64, name string, args []runtime.Value) (int, error) {
-	indices, ok := vm.lookupStaticMethod(vm.chunk.Classes[classIndex], name)
+	indices, ok := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], name)
 	if !ok {
 		// Same-chunk walk exhausted: the static method may live on a cross-module ancestor.
-		if module, parentClass, boundary := vm.crossModuleBoundary(vm.chunk.Classes[classIndex]); boundary && vm.moduleLoader != nil {
+		if module, parentClass, boundary := vm.crossModuleBoundary(vm.curMod.Chunk.Classes[classIndex]); boundary && vm.moduleLoader != nil {
 			if result, found, err := vm.moduleLoader.CallModuleStaticMethodByName(module, parentClass, name, args); found {
 				if err != nil {
 					return 0, vm.callPropagate(instruction, err)
@@ -973,21 +968,21 @@ func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classInd
 				return ip, nil
 			}
 		}
-		if fallbackIndices, ok := vm.lookupStaticMethod(vm.chunk.Classes[classIndex], "__callStatic"); ok {
+		if fallbackIndices, ok := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], "__callStatic"); ok {
 			functionIndex, err := vm.selectRuntimeFunction(instruction, "__callStatic", fallbackIndices, []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}}, 0)
 			if err != nil {
 				return 0, err
 			}
-			return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}}, nil)
+			return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{runtime.String{Value: name}, &runtime.List{Elements: args}}, nil)
 		}
-		return 0, vm.runtimeError(instruction, "unknown static method %s.%s", vm.chunk.Classes[classIndex].Name, name)
+		return 0, vm.runtimeError(instruction, "unknown static method %s.%s", vm.curMod.Chunk.Classes[classIndex].Name, name)
 	}
 	functionIndex, err := vm.selectRuntimeFunction(instruction, name, indices, args, 0)
 	if err != nil {
 		return 0, err
 	}
 	if decorated, ok := vm.decoratedFuncs[functionIndex]; ok {
-		if vm.chunk.Functions[functionIndex].Async && !vm.syncMode {
+		if vm.curMod.Chunk.Functions[functionIndex].Async && !vm.syncMode {
 			vm.push(vm.startAsyncCallable(decorated, args))
 			return ip, nil
 		}
@@ -998,7 +993,7 @@ func (vm *VM) callStaticMethodWithArgs(instruction Instruction, ip int, classInd
 		vm.push(result)
 		return ip, nil
 	}
-	return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], args, nil)
+	return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], args, nil)
 }
 
 // inheritInstanceTypeBindings merges instance.TypeBindings into the current top call frame,
@@ -1022,11 +1017,11 @@ func (vm *VM) classInfo(name string) (ClassInfo, bool) {
 	if cached, ok := vm.classInfoNameCache[name]; ok {
 		return cached, true
 	}
-	index, ok := vm.classIndex[strings.ToLower(name)]
-	if !ok || index < 0 || index >= len(vm.chunk.Classes) {
+	index, ok := vm.curMod.classIndex[strings.ToLower(name)]
+	if !ok || index < 0 || index >= len(vm.curMod.Chunk.Classes) {
 		return ClassInfo{}, false
 	}
-	info := vm.chunk.Classes[index]
+	info := vm.curMod.Chunk.Classes[index]
 	if vm.classInfoNameCache == nil {
 		vm.classInfoNameCache = make(map[string]ClassInfo, 8)
 	}
@@ -1101,8 +1096,8 @@ func (vm *VM) lookupMethodLowerUncached(classInfo ClassInfo, lowered string) ([]
 	if indices, ok := classInfo.Methods[lowered]; ok {
 		return indices, true
 	}
-	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.chunk.Classes) {
-		return vm.lookupMethodLowerUncached(vm.chunk.Classes[classInfo.ParentIndex], lowered)
+	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.curMod.Chunk.Classes) {
+		return vm.lookupMethodLowerUncached(vm.curMod.Chunk.Classes[classInfo.ParentIndex], lowered)
 	}
 	return nil, false
 }
@@ -1119,11 +1114,11 @@ type extraField struct {
 
 // Walks the parent chain so a subclass inherits an ancestor's interface default.
 func (vm *VM) lookupInterfaceFallback(className, methodName string) (crossModuleDefault, bool) {
-	idx, ok := vm.classIndex[strings.ToLower(className)]
+	idx, ok := vm.curMod.classIndex[strings.ToLower(className)]
 	if !ok {
 		return crossModuleDefault{}, false
 	}
-	for ci := int64(idx); ci >= 0 && int(ci) < len(vm.chunk.Classes); ci = vm.chunk.Classes[ci].ParentIndex {
+	for ci := int64(idx); ci >= 0 && int(ci) < len(vm.curMod.Chunk.Classes); ci = vm.curMod.Chunk.Classes[ci].ParentIndex {
 		if fallback, ok := vm.interfaceFallbacks[ci][methodName]; ok {
 			return fallback, true
 		}
@@ -1141,7 +1136,7 @@ func (vm *VM) callInterfaceDefault(instruction Instruction, ip int, instance *ru
 	}
 	fn := runtime.BytecodeFunction{Module: fallback.module, Index: fallback.index}
 	callArgs := append([]runtime.Value{instance}, args...)
-	result, err := vm.moduleLoader.CallModuleFunction(fn, callArgs)
+	result, err := vm.moduleLoader.CallModuleFunction(fn, callArgs, vm)
 	if err != nil {
 		return vm.propagateModuleErrorReturn(instruction, ip, err)
 	}
@@ -1158,7 +1153,7 @@ func (vm *VM) callInterfaceDefaultValue(instance *runtime.Instance, methodName s
 		return nil, false, nil
 	}
 	fn := runtime.BytecodeFunction{Module: fallback.module, Index: fallback.index}
-	result, err := vm.moduleLoader.CallModuleFunction(fn, append([]runtime.Value{instance}, args...))
+	result, err := vm.moduleLoader.CallModuleFunction(fn, append([]runtime.Value{instance}, args...), vm)
 	return result, true, err
 }
 
@@ -1255,8 +1250,8 @@ func (vm *VM) classAbstractnessReason(classInfo ClassInfo) (string, bool) {
 		}
 	}
 	walk(classInfo)
-	for ci := classInfo; ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(vm.chunk.Classes); {
-		ci = vm.chunk.Classes[ci.ParentIndex]
+	for ci := classInfo; ci.ParentIndex >= 0 && int(ci.ParentIndex) < len(vm.curMod.Chunk.Classes); {
+		ci = vm.curMod.Chunk.Classes[ci.ParentIndex]
 		walk(ci)
 	}
 	// Same-chunk walk exhausted: abstract methods may be declared on a
@@ -1307,8 +1302,8 @@ func (vm *VM) lookupStaticValue(classInfo ClassInfo, name string) (int64, bool) 
 	if index, ok := classInfo.StaticValues[name]; ok {
 		return index, true
 	}
-	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.chunk.Classes) {
-		return vm.lookupStaticValue(vm.chunk.Classes[classInfo.ParentIndex], name)
+	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.curMod.Chunk.Classes) {
+		return vm.lookupStaticValue(vm.curMod.Chunk.Classes[classInfo.ParentIndex], name)
 	}
 	return 0, false
 }
@@ -1317,8 +1312,8 @@ func (vm *VM) lookupStaticMethod(classInfo ClassInfo, name string) ([]int64, boo
 	if indices, ok := classInfo.StaticMethods[strings.ToLower(name)]; ok {
 		return indices, true
 	}
-	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.chunk.Classes) {
-		return vm.lookupStaticMethod(vm.chunk.Classes[classInfo.ParentIndex], name)
+	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.curMod.Chunk.Classes) {
+		return vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classInfo.ParentIndex], name)
 	}
 	return nil, false
 }
@@ -1328,8 +1323,8 @@ func (vm *VM) classMatches(classInfo ClassInfo, target string) bool {
 	if strings.EqualFold(classInfo.Name, target) {
 		return true
 	}
-	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.chunk.Classes) {
-		return vm.classMatches(vm.chunk.Classes[classInfo.ParentIndex], target)
+	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.curMod.Chunk.Classes) {
+		return vm.classMatches(vm.curMod.Chunk.Classes[classInfo.ParentIndex], target)
 	}
 	// Same-chunk walk exhausted: a cross-module ancestor may still match.
 	if module, parentClass, ok := vm.crossModuleBoundary(classInfo); ok && vm.moduleLoader != nil {
@@ -1376,21 +1371,38 @@ func (vm *VM) buildRuntimeInterface(name string, seen map[string]bool) *runtime.
 // recursively so the full chain is reachable via Go pointers - this
 // lets cross-module `instanceof` / `reflect.parent` find ancestors
 // without falling back to the chunk-local classIndex.
-func (vm *VM) runtimeClassForParent(classInfo ClassInfo) *runtime.Class {
-	if classInfo.ParentIndex < 0 || int(classInfo.ParentIndex) >= len(vm.chunk.Classes) {
+// RuntimeClassValue builds the runtime.Class for a class at classIndex in the executing chunk, with its full ancestor chain (crossing module boundaries via the loader). The loader calls it to materialise a cross-module parent so instanceof / overload / inherited-dunder lookups can walk the whole hierarchy by pointer.
+func (vm *VM) RuntimeClassValue(classIndex int64) *runtime.Class {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
 		return nil
 	}
-	parentInfo := vm.chunk.Classes[classInfo.ParentIndex]
+	classInfo := vm.curMod.Chunk.Classes[classIndex]
 	return &runtime.Class{
-		Name:           parentInfo.Name,
+		Name:           classInfo.Name,
 		Module:         vm.moduleName,
-		TypeParameters: append([]string(nil), parentInfo.TypeParameters...),
-		Methods:        vm.runtimeMethodWrappers(classInfo.ParentIndex),
-		MethodMetadata: vm.classFunctionMetadata(parentInfo.Methods, "method", 1),
-		StaticMetadata: vm.classFunctionMetadata(parentInfo.StaticMethods, "staticMethod", 0),
-		Parent:         vm.runtimeClassForParent(parentInfo),
-		Implements:     vm.runtimeInterfacesForClass(parentInfo),
+		TypeParameters: append([]string(nil), classInfo.TypeParameters...),
+		Methods:        vm.runtimeMethodWrappers(classIndex),
+		MethodMetadata: vm.classFunctionMetadata(classInfo.Methods, "method", 1),
+		StaticMetadata: vm.classFunctionMetadata(classInfo.StaticMethods, "staticMethod", 0),
+		Parent:         vm.runtimeClassForParent(classInfo),
+		Implements:     vm.runtimeInterfacesForClass(classInfo),
+		Fields:         vm.runtimeFieldsForClass(classInfo),
 	}
+}
+
+func (vm *VM) runtimeClassForParent(classInfo ClassInfo) *runtime.Class {
+	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.curMod.Chunk.Classes) {
+		return vm.RuntimeClassValue(classInfo.ParentIndex)
+	}
+	// Cross-module parent: resolve its runtime.Class through the loader (cached) so the chain crosses the module boundary instead of truncating to nil.
+	if classInfo.ParentIndex < 0 && vm.moduleLoader != nil && strings.Contains(classInfo.ParentName, ".") {
+		if module, parentClass, ok := splitQualifiedClassName(classInfo.ParentName); ok {
+			if rc, found := vm.moduleLoader.RuntimeClassFor(module, parentClass); found {
+				return rc
+			}
+		}
+	}
+	return nil
 }
 
 // runtimeClassMatches walks an instance's runtime.Class parent chain
@@ -1435,8 +1447,8 @@ func (vm *VM) classImplements(classInfo ClassInfo, target string) bool {
 			return true
 		}
 	}
-	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.chunk.Classes) {
-		return vm.classImplements(vm.chunk.Classes[classInfo.ParentIndex], target)
+	if classInfo.ParentIndex >= 0 && int(classInfo.ParentIndex) < len(vm.curMod.Chunk.Classes) {
+		return vm.classImplements(vm.curMod.Chunk.Classes[classInfo.ParentIndex], target)
 	}
 	return false
 }

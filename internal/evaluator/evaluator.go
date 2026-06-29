@@ -33,6 +33,7 @@ import (
 	"geblang/internal/concurrent"
 	"geblang/internal/desugar"
 	"geblang/internal/native"
+	"geblang/internal/overload"
 	"geblang/internal/runtime"
 
 	tomllib "github.com/BurntSushi/toml"
@@ -545,20 +546,35 @@ func NewWithArgs(stdout io.Writer, args []string) *Evaluator {
 	return NewWithArgsAndModulePaths(stdout, args, nil)
 }
 
-func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []string) *Evaluator {
+func newEvaluatorCore(stdout io.Writer, args []string, modulePaths []string) *Evaluator {
 	if stdout == nil {
 		stdout = io.Discard
 	}
 	e := &Evaluator{stdout: stdout, stderr: os.Stderr, stdin: os.Stdin, imports: map[string]bool{}, importNames: map[string]string{}, modulePaths: append([]string(nil), modulePaths...), modules: map[string]*runtime.Module{}, loading: map[string]bool{}, modulePrograms: map[string]*ast.Program{}, manifests: map[string]*packageManifest{}, typeAliases: map[string]*ast.TypeRef{}, maxCallDepth: DefaultMaxCallDepth, args: append([]string(nil), args...), dbs: map[int64]*sql.DB{}, dbDrivers: map[int64]string{}, txs: map[int64]*dbTxHandle{}, stmts: map[int64]*dbStmtHandle{}, dbRows: map[int64]*dbRowsHandle{}, files: map[int64]*os.File{}, bufReaders: map[int64]*bufio.Reader{}, buffers: map[int64]*bytes.Buffer{}, streams: map[int64]*ioStreamHandle{}, processes: map[int64]*processHandle{}, loggers: map[int64]*loggerHandle{}, metrics: map[string]float64{}, metricRegistry: map[string]*metricsEntry{}, traces: map[int64]*traceSpan{}, watches: map[int64]*watchHandle{}, webApps: map[int64]*webApp{}, websockets: map[int64]*wsHandle{}, amqpConns: map[int64]*amqp091.Connection{}, amqpChans: map[int64]*amqp091.Channel{}, kafkaWriters: map[int64]*kafkago.Writer{}, kafkaReaders: map[int64]*kafkaReaderHandle{}, netHandles: map[int64]*netHandle{}, netServers: map[int64]*netServerHandle{}, sshClients: map[int64]*sshClientHandle{}, sshSessions: map[int64]*sshSessionHandle{}, sshTunnels: map[int64]*sshTunnelHandle{}, httpServers: map[int64]*httpServerHandle{}, httpStreams: map[int64]*httpStreamHandle{}, httpClientHandles: map[int64]*httpClientHandle{}, httpCookieJars: map[int64]http.CookieJar{}, httpFetchStreams: map[int64]*httpFetchStreamHandle{}, httpResponseStreams: map[int64]*httpResponseStreamHandle{}, onnxSessions: map[int64]*native.ONNXSession{}, browsers: map[int64]*cdp.Browser{}, pages: map[int64]*cdp.Page{}, jsonReaders: map[int64]*jsonStreamReader{}, xmlReaders: map[int64]*xmlStreamReader{}, csvReaders: map[int64]*csvStreamReader{}, yamlReaders: map[int64]*yamlStreamReader{}, extConns: map[int64]*extHandle{}, ffi: newFFIState(), natives: native.NewBuiltinRegistry(), errorClassParents: map[string]string{}, errorSentinels: map[string]*runtime.Class{}, globalClasses: map[string]*runtime.Class{}, globalFunctions: map[string]runtime.Function{}, decoratedClassIdents: map[string]string{}}
 	e.builtins = e.builtinModules()
-	// Register an InstanceInvoker so native code (e.g.
-	// convert.go's __serialize__ dispatch) can call class
-	// methods. Latest-writer-wins; both backends populate this
-	// at startup. See bytecode.NewVM for the VM counterpart.
-	native.SetInstanceInvoker(e.invokeInstanceMethod)
-	native.SetClassDeserializer(e.deserializeIntoClass)
-	native.SetCallableInvoker(e.callValue)
+	e.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: e.isolatedInstanceInvoker, ClassDeserializer: e.isolatedClassDeserializer})
 	return e
+}
+
+// NewWithArgsAndModulePaths builds a root evaluator; newEvaluatorCore installs its serialize/deserialize context on its own native registry, so concurrent or independent evaluators never cross-dispatch.
+func NewWithArgsAndModulePaths(stdout io.Writer, args []string, modulePaths []string) *Evaluator {
+	return newEvaluatorCore(stdout, args, modulePaths)
+}
+
+// isolatedInstanceInvoker dispatches a native instance callback (e.g. __serialize) on a fresh child evaluator so concurrent calls never share the root's mutable call state. lookupMethod is read-only, so the existence check avoids a child clone for instances without the method.
+func (e *Evaluator) isolatedInstanceInvoker(instance *runtime.Instance, method string, args []runtime.Value) (runtime.Value, bool, error) {
+	if instance == nil || instance.Class == nil {
+		return nil, false, nil
+	}
+	if _, ok := lookupMethod(instance.Class, method); !ok {
+		return nil, false, nil
+	}
+	return e.childForCallback().invokeInstanceMethod(instance, method, args)
+}
+
+// isolatedClassDeserializer deserializes on a fresh child evaluator for the same reason.
+func (e *Evaluator) isolatedClassDeserializer(classValue runtime.Value, value runtime.Value) (runtime.Value, error) {
+	return e.childForCallback().deserializeIntoClass(classValue, value)
 }
 
 // deserializeIntoClass implements native.ClassDeserializer for
@@ -580,8 +596,11 @@ func evalFieldTypeInfos(class *runtime.Class) []native.FieldTypeInfo {
 // resolveDeserializeClass resolves a field's declared class name to a
 // class value for nested parseAs via the cross-module class registry.
 func (e *Evaluator) resolveDeserializeClass(name string) (runtime.Value, bool) {
-	if class, ok := e.globalClasses[name]; ok {
-		return class, true
+	// Walk the parent chain: a per-call callback child has empty globalClasses and resolves nested classes against the root that declared them.
+	for cur := e; cur != nil; cur = cur.parent {
+		if class, ok := cur.globalClasses[name]; ok {
+			return class, true
+		}
 	}
 	return nil, false
 }
@@ -758,7 +777,7 @@ func (e *Evaluator) CallBuiltin(module, name string, args []runtime.Value, argNa
 }
 
 func (e *Evaluator) childForCallback() *Evaluator {
-	child := NewWithArgsAndModulePaths(e.stdout, e.args, e.modulePaths)
+	child := newEvaluatorCore(e.stdout, e.args, e.modulePaths)
 	child.stderr = e.stderr
 	child.stdin = e.stdin
 	child.stdinReader = e.stdinReader
@@ -4055,7 +4074,7 @@ func (e *Evaluator) evalMethodCallExpression(receiver runtime.Value, name string
 		return native.ComplexMethod(z, name, args)
 	}
 	if frame, ok := receiver.(*runtime.DataFrame); ok {
-		return native.DataFrameMethod(frame, name, args)
+		return native.DataFrameMethod(frame, name, args, e.callValue)
 	}
 	if series, ok := receiver.(*runtime.DFSeries); ok {
 		return native.DFSeriesMethod(series, name, args)
@@ -5657,8 +5676,6 @@ func (e *Evaluator) startAsyncFunction(fn runtime.Function, args []runtime.Value
 	child.pendingEnumThis = e.enumThisForChild
 	runtime.AsyncEnter()
 	go func() {
-		gid := native.RegisterCallableInvoker(child.callValue)
-		defer native.UnregisterCallableInvoker(gid)
 		defer runtime.AsyncLeave()
 		value, err := child.applyFunctionWithThisSync(fn, args, this)
 		if exit, ok := value.(exitValue); ok && err == nil {
@@ -6732,12 +6749,11 @@ func (e *Evaluator) callValue(fn runtime.Value, args []runtime.Value) (runtime.V
 	case runtime.Function:
 		return e.applyFunction(f, args)
 	case runtime.OverloadedFunction:
-		for _, overload := range f.Overloads {
-			if len(overload.Parameters) == len(args) {
-				return e.applyFunction(overload, args)
-			}
+		chosen, err := overload.Select(f.Name, f.Overloads, args)
+		if err != nil {
+			return nil, err
 		}
-		return nil, fmt.Errorf("no matching overload for %s with %d arguments", f.Name, len(args))
+		return e.applyFunction(chosen, args)
 	case runtime.DecoratorTarget:
 		if f.Callable != nil {
 			return e.callValue(f.Callable, args)

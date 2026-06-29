@@ -246,9 +246,13 @@ func (c *Compiler) compileExpressionInner(expr ast.Expression) error {
 				}, expr.Token.Line, expr.Token.Column)
 				return nil
 			}
-			// Allow a named top-level function to be used as a value via a zero-upvalue closure.
+			// A named top-level function used as a value: one overload becomes a zero-upvalue closure; several become an OverloadedFunction so call-time selection sees every overload.
 			if indices, found := c.funcs[strings.ToLower(expr.Value)]; found && len(indices) > 0 {
-				c.emitAt(OpMakeClosure, expr.Token.Line, expr.Token.Column, indices[len(indices)-1], 0)
+				if len(indices) > 1 {
+					c.emitAt(OpMakeOverloaded, expr.Token.Line, expr.Token.Column, indices...)
+				} else {
+					c.emitAt(OpMakeClosure, expr.Token.Line, expr.Token.Column, indices[0], 0)
+				}
 				return nil
 			}
 			if runtime.IsBuiltinTypeName(expr.Value) {

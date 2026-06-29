@@ -1,5 +1,49 @@
 # Release Notes
 
+## 1.30.0
+
+### Changed
+
+- Module-level variables mutated by a function call across a module boundary
+  now persist on the bytecode backend, including a call that throws (the
+  assignments it made before the throw are kept) and a synchronous re-entrant
+  call (it sees the outer call's in-progress assignments). Module globals
+  remain unsuitable for concurrent or transactional state; use `store.Store`
+  or another explicit synchronized handle for those cases.
+
+### Performance
+
+- Cross-module function, method, constructor, and static-method calls
+  are substantially faster on the bytecode backend.
+
+### Fixes
+
+- `instanceof`, an inherited `__serialize`, and overloaded-callback selection
+  now work for a class that extends, or is declared in, another module; the
+  bytecode backend previously resolved only same-module hierarchies.
+- An overloaded function used as a value (passed to a callback or stored in a
+  variable) now retains all overloads and selects by positional arity,
+  defaults, variadics, and runtime types, including module-qualified and
+  user-generic parameter types (for example `Box<Dog>` versus `Box<Animal>`).
+  Previously the bytecode backend could keep only the last overload and could
+  not disambiguate generic parameters.
+- An async function returns a Task when it is passed as a value, used as a
+  callback, or called across a module boundary, matching a direct async call.
+  Previously the bytecode backend could run it synchronously and return the
+  raw value.
+- A `defer` inside a function that throws across a module boundary now runs as
+  the error propagates to the caller.
+- A function body may reference a top-level `const` or `let` declared later in
+  the same file.
+- A generator that mutates a module-level variable writes the change back when
+  it is consumed.
+- Concurrent calls to already-loaded modules run on isolated workers, dispatch
+  of an already-loaded module is race-free while another module lazily loads,
+  and method dispatch on a returned instance no longer retains its
+  construction VM.
+- Deserializing a class instance whose type defines methods no longer fails on
+  the constructor's implicit receiver parameter.
+
 ## 1.29.2
 
 ### Fixes

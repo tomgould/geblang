@@ -204,9 +204,9 @@ exports.
 
 ### Module-level mutable state across calls
 
-Treat a module's top-level `let`/typed variables as **initialised-once state**,
-not as a shared mutable store written by one exported function and read back by
-another from a different module.
+A module's top-level `let`/typed variables are **persistent module state**.
+After a successful exported-function call completes, later calls, including
+calls from other modules, observe its assignments on both runtimes.
 
 ```gb
 module counter;
@@ -219,32 +219,35 @@ export func get(): int { return n; }
 import counter;
 counter.bump();
 counter.bump();
-io.println(counter.get());   # do NOT rely on this being 2
+io.println(counter.get());   # 2 on both `geblang test` and a built binary
 ```
 
-Reading module-level constants and variables from an exported function is always
-fine. Mutating one and expecting the change to persist across later cross-module
-calls is **not portable between the runtimes**: the evaluator (`geblang test`)
-shares a single module environment, so it returns `2`, while the bytecode VM
-(`geblang run`, `geblang build`) runs each cross-module call against a fresh copy
-of the module's initialised state and returns `0`. The VM isolates module state
-per call on purpose - it is what keeps concurrent request handlers and async
-tasks from racing on shared module globals.
-
-The practical trap: a program that leans on mutable module globals can pass
-under `geblang test` (evaluator) and then behave differently as a built binary
-(VM). For state that genuinely needs to be shared and mutated, use an explicit,
-concurrency-safe holder - `store.Store` (see the async chapter) - or keep the
-state inside an instance you pass around, rather than a bare module variable:
+Module-level state is **shared mutable state**, so the usual concurrency rule
+applies: two requests or async tasks mutating the same module global at the same
+time race, and a contended write can be lost. For state that is shared and
+mutated across concurrent tasks or requests, use an explicit concurrency-safe
+holder such as `store.Store` (see the async chapter). An instance can hold state
+for one owner, but sharing a mutable instance across goroutines still requires
+synchronisation:
 
 ```gb
-# safe: state lives on an instance, not a module global
+# suitable for one owner; do not mutate one shared instance concurrently
 class Counter {
     int n = 0;
     func bump(): void { this.n = this.n + 1; }
     func get(): int { return this.n; }
 }
 ```
+
+The bytecode backend commits reassigned module-global slots when a
+cross-module call returns, including a call that throws (assignments made
+before the throw are kept, matching the evaluator). A synchronous re-entrant
+call into the same module (through a callback, on one goroutine) sees the outer
+call's pending assignments. An async task runs on its own goroutine and sees a
+committed snapshot, not the live globals, so writes from a task are not
+guaranteed to be observed by the caller. Do not use module globals for
+concurrent or transactional coordination; use an explicit concurrency-safe
+state object (for example `store.Store`).
 
 ### Init Blocks
 

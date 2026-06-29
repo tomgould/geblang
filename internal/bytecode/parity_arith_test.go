@@ -408,3 +408,14 @@ io.println([1, 2, 3].contains(2.0f));
 io.println(3 != 3.0f);
 `, "5.5\n5.5\n2.5\n5.5000000000\ntrue\nfalse\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\n")
 }
+
+// Followup adversarial: a function body that forward-references a top-level const (or let) declared later in the file resolves on both backends (the VM compiler now pre-allocates the global slot in the hoist pass).
+func TestParityForwardConstReference(t *testing.T) {
+	runParity(t, `import io;
+func use(): int { return h + tail(); }
+func tail(): int { return extra; }
+const h = 42;
+let extra = 8;
+io.println(use() as string);
+`, "50\n")
+}

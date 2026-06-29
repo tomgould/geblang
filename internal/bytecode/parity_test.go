@@ -1994,6 +1994,66 @@ io.println(Leaf().describe());
 	}
 }
 
+// Regression: callee mutation of a cross-module dict/list/nested arg must be visible to the caller on both backends.
+func TestParityCrossModuleContainerMutation(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "mutator.gb"), []byte(`module mutator;
+export func setFlag(dict<string, any> d): void { d["flag"] = true; }
+export func pushAll(list<any> xs): void { xs.push(99); }
+export func mutateInner(dict<string, any> d): void { (d["items"] as list<any>).push(99); }
+`), 0o644); err != nil {
+		t.Fatalf("write mutator: %v", err)
+	}
+	source := `import io;
+import mutator;
+let d = {"value": 1};
+mutator.setFlag(d);
+io.println(d.contains("flag"));
+let xs = [1, 2];
+mutator.pushAll(xs);
+io.println(xs.length());
+let nested = {"items": [1]};
+mutator.mutateInner(nested);
+io.println((nested["items"] as list<any>).length());
+`
+	p := parser.New(lexer.New(source))
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		t.Fatalf("parse: %v", p.Errors())
+	}
+	want := "true\n3\n2\n"
+
+	var evOut bytes.Buffer
+	ev := evaluator.NewWithArgsAndModulePaths(&evOut, nil, []string{dir})
+	if _, err := ev.Eval(program); err != nil {
+		t.Fatalf("evaluator: %v", err)
+	}
+	if evOut.String() != want {
+		t.Fatalf("evaluator output: got %q, want %q", evOut.String(), want)
+	}
+
+	chunk, err := bytecode.Compile(program, []byte(source), "parity")
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var vmOut bytes.Buffer
+	stateful := evaluator.NewWithArgsAndModulePaths(&vmOut, nil, []string{dir})
+	loader := newHarnessLoader(&vmOut, stateful)
+	loader.SetModulePaths([]string{dir})
+	loader.SetMainChunk(chunk)
+	vm := bytecode.NewVMWithModuleLoader(chunk, &vmOut, loader)
+	loader.SetMainVM(vm)
+	vm.SetModulePaths([]string{dir})
+	vm.SetStatefulNativeCaller(stateful)
+	stateful.SetMethodDispatcher(vm)
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm: %v", err)
+	}
+	if vmOut.String() != want {
+		t.Fatalf("vm output: got %q, want %q", vmOut.String(), want)
+	}
+}
+
 // TestParityAliasedNativeImportShadowedByLocal verifies that an
 // aliased-import name shadowed by a local variable still dispatches to
 // the local (selector becomes a method call on the value), preserving

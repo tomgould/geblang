@@ -3,29 +3,23 @@ package native
 import (
 	"fmt"
 	"strings"
-	"sync"
 
 	"geblang/internal/runtime"
 )
 
-var (
-	stringBuilderMu      sync.Mutex
-	stringBuilderHandles = map[int64]*strings.Builder{}
-	stringBuilderNextID  int64
-)
+// stringBuilderCell holds the builder behind a pointer: the handle is GC-reclaimed when unreferenced, and dispose nils b so use-after-dispose is caught.
+type stringBuilderCell struct{ b *strings.Builder }
 
 func sbLookup(arg runtime.Value, label string) (*strings.Builder, error) {
 	obj, ok := arg.(runtime.NativeObject)
 	if !ok || obj.Kind != "StringBuilder" {
 		return nil, fmt.Errorf("%s expects a StringBuilder handle", label)
 	}
-	stringBuilderMu.Lock()
-	defer stringBuilderMu.Unlock()
-	b, ok := stringBuilderHandles[obj.ID]
-	if !ok {
+	cell, ok := obj.Payload.(*stringBuilderCell)
+	if !ok || cell.b == nil {
 		return nil, fmt.Errorf("%s: unknown StringBuilder handle", label)
 	}
-	return b, nil
+	return cell.b, nil
 }
 
 func registerStringBuilder(r *Registry) {
@@ -42,16 +36,11 @@ func registerStringBuilder(r *Registry) {
 		default:
 			return nil, fmt.Errorf("strbuilder.new expects 0 or 1 arguments")
 		}
-		b := &strings.Builder{}
+		cell := &stringBuilderCell{b: &strings.Builder{}}
 		if initial != "" {
-			b.WriteString(initial)
+			cell.b.WriteString(initial)
 		}
-		stringBuilderMu.Lock()
-		stringBuilderNextID++
-		id := stringBuilderNextID
-		stringBuilderHandles[id] = b
-		stringBuilderMu.Unlock()
-		return runtime.NativeObject{Kind: "StringBuilder", ID: id}, nil
+		return runtime.NativeObject{Kind: "StringBuilder", Payload: cell}, nil
 	})
 	r.Register("strbuilder", "append", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) != 2 {
@@ -123,9 +112,10 @@ func registerStringBuilder(r *Registry) {
 		if !ok || obj.Kind != "StringBuilder" {
 			return nil, fmt.Errorf("strbuilder.dispose expects a StringBuilder handle")
 		}
-		stringBuilderMu.Lock()
-		delete(stringBuilderHandles, obj.ID)
-		stringBuilderMu.Unlock()
+		// Nil the builder so use-after-dispose is caught; the cell is GC-reclaimed once unreferenced.
+		if cell, ok := obj.Payload.(*stringBuilderCell); ok {
+			cell.b = nil
+		}
 		return runtime.Null{}, nil
 	})
 }

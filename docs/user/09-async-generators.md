@@ -187,18 +187,16 @@ two are wasted work. "Execute as a unit" is exactly that: `async.scope` starts
 the three together, hands you every result once they are all in, and cancels the
 rest the moment one fails.
 
-Coming from PHP, this is worth pinning down, because one half is familiar and
-one half is not. Geblang keeps the part you rely on: each web request is handled
-in its own isolated copy of state, so one request can never see another's
-in-flight changes - shared-nothing, with no globals bleeding across requests.
-What differs is lifetime. PHP discards the whole world at the end of every
-request, so a "background task" simply cannot outlive it and "is something still
-running?" never comes up. A Geblang server is one long-lived process, so a task
-you spawn keeps running on its own goroutine until it finishes - it is not torn
-down when the handler returns. `async.scope` gives you back PHP's tidy
-"everything is done when this returns" guarantee for a block of parallel work:
-wait for the tasks, stop them all if one fails, and never let them outlive the
-scope.
+Coming from PHP, this is worth pinning down. A handler passed directly to
+`http.serve`, `http.listen`, or `net.serve` gets an isolated copy of its
+captured state for each request. Router and framework applications instead
+share their application graph so services and connection pools persist; shared
+mutable values must use `store.Store` or another concurrency-safe handle. PHP
+discards the whole process state after every request, but a Geblang server is
+long-lived, so a task you spawn keeps running on its goroutine until it
+finishes. `async.scope` gives a block of parallel work the tidy "everything is
+done when this returns" guarantee: wait for the tasks, stop them all if one
+fails, and never let them outlive the scope.
 
 ## High-Level Task Helpers (`async.tasks`)
 

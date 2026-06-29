@@ -729,6 +729,8 @@ type Function struct {
 	DefinitionModule string
 	DefinitionLine   int
 	DefinitionColumn int
+	// BridgeInvoke (host typed any to avoid a runtime->bytecode import cycle) runs a bridged callback threading the invoking worker as a synchronous re-entry host; nil for non-bridged functions.
+	BridgeInvoke func(host any, args []Value) (Value, error)
 }
 
 func (v Function) TypeName() string { return "func" }
@@ -932,6 +934,8 @@ func (v BytecodeClass) Inspect() string {
 type NativeObject struct {
 	Kind string
 	ID   int64
+	// Payload optionally holds a GC-managed native value (e.g. a string builder) so the handle needs no global registry entry.
+	Payload any
 }
 
 func (v NativeObject) TypeName() string { return v.Kind }

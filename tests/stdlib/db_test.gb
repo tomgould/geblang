@@ -13,6 +13,14 @@ import path;
 class DbTest extends test.Test {
 
     @test
+    func fileDatabaseDefaultsToWal(): void {
+        let dir = io.tempDir("waltest-");
+        let c = db.Connection("sqlite", dir + "/t.db");
+        let mode = c.query("PRAGMA journal_mode").toList()[0]["journal_mode"];
+        this.assertEquals("wal", (mode as string).lower());
+    }
+
+    @test
     func concurrentMemoryWritesShareOneDb(): void {
         /* A private :memory: db is pinned to one connection, so concurrent
          * async writes all land in the same database rather than each seeing

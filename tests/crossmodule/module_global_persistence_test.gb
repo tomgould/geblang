@@ -1,0 +1,54 @@
+/**
+ * @title Cross-module module-global persistence
+ * @summary A module's own top-level state persists across cross-module calls,
+ * identically on both backends (a counter counts).
+ */
+import test;
+import counter_donor;
+
+class ModuleGlobalPersistenceTest extends test.Test {
+    @test
+    func moduleGlobalPersistsAcrossCalls(): void {
+        counter_donor.reset();
+        this.assertEquals(2, counter_donor.add(2));
+        this.assertEquals(5, counter_donor.add(3));
+        this.assertEquals(5, counter_donor.current());
+    }
+
+    @test
+    func writeOnlyAssignmentPersists(): void {
+        counter_donor.reset();
+        counter_donor.setTo(7);
+        this.assertEquals(7, counter_donor.current());
+    }
+
+    @test
+    func writeBeforeThrowPersists(): void {
+        counter_donor.reset();
+        this.assertThrows(func(): void { counter_donor.failAfterWrite(); });
+        this.assertEquals(99, counter_donor.current());
+    }
+
+    @test
+    func synchronousReentrySeesLiveGlobals(): void {
+        counter_donor.reset();
+        let r = counter_donor.outerCb(func(): void { counter_donor.bump(); });
+        this.assertEquals(2, r);
+        this.assertEquals(2, counter_donor.current());
+    }
+
+    @test
+    func reentryThrowCaughtInOuterFunction(): void {
+        counter_donor.reset();
+        this.assertEquals(111, counter_donor.outerCatches(func(): void { counter_donor.bumpThrows(); }));
+    }
+
+    @test
+    func reentryThrowPropagatesToCaller(): void {
+        counter_donor.reset();
+        this.assertThrows(func(): void {
+            counter_donor.outerCb(func(): void { counter_donor.bumpThrows(); });
+        });
+        this.assertEquals(101, counter_donor.current());
+    }
+}

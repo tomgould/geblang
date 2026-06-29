@@ -1,0 +1,7 @@
+module hier_derived;
+import hier_base;
+export class Circle extends hier_base.Shape { }
+export class User extends hier_base.Entity {
+    string name;
+    func User(int id, string name) { parent(id); this.name = name; }
+}

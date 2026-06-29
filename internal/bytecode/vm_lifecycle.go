@@ -16,13 +16,9 @@ func NewVM(chunk Chunk, stdout io.Writer) *VM {
 		classIndex[strings.ToLower(classInfo.Name)] = i
 	}
 	initialDefers := make([][]deferredAction, 1, 64)
-	// Pre-allocate the operand stack to a reasonable size so the first ~1000
-	// stack pushes (typical for non-pathological programs) don't trigger
-	// slice growth. 1024 entries × 32 bytes (VMValue) = 32 KB; cheap.
+	// Pre-allocate stack; 1024 entries x 32 bytes = 32 KB, avoids early growth.
 	initialStack := make([]runtime.VMValue, 0, 1024)
-	// Pre-size globals and top-level locals to the compiled chunk's
-	// known counts so the VM-internal hot helpers can skip bounds checks.
-	// 256 is the historical minimum; round up to that floor.
+	// Pre-size globals/locals from compiled counts; 256 is the historical minimum.
 	globalSize := int(chunk.GlobalCount)
 	if globalSize < 256 {
 		globalSize = 256
@@ -32,35 +28,28 @@ func NewVM(chunk Chunk, stdout io.Writer) *VM {
 		localsCap = 256
 	}
 	if meta := chunk.sharedMeta; meta != nil {
-		// Shared-meta fast path: the chunk carries once-prepared
-		// (memoised) functions, the class index, and type-assert
-		// specs; this VM shares them read-only instead of detaching
-		// and re-deriving per construction.
+		// Shared-meta path: reuse the memoised functions, class index, and type-assert specs.
 		meta.prepare(chunk)
 		chunk.Functions = meta.preparedFunctions
 		vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), dirtyGlobals: make([]bool, globalSize), localsStack: make([]runtime.VMValue, 0, localsCap), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: meta.classIndex, natives: native.NewBuiltinRegistry(), nativeCache: make([]native.Function, len(chunk.Constants)), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, interfaceFallbacks: map[int64]map[string]crossModuleDefault{}, interfaceExtraFields: map[int64][]extraField{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
 		vm.typeAssertSpecs = meta.typeAssertSpecs
 		vm.requiresCallSitePolymorphism = meta.requiresCallSitePolymorphism
-		native.SetInstanceInvoker(vm.invokeInstanceMethod)
-		native.SetClassDeserializer(vm.deserializeIntoClass)
-		native.SetCallableInvoker(vm.invokeCallable)
+		vm.curMod = &ModuleContext{Chunk: chunk, classIndex: meta.classIndex}
+		vm.curGlobals = vm.globals
+		vm.instanceInvokerFn = vm.invokeInstanceMethod
+		vm.classDeserializerFn = vm.deserializeIntoClass
+		vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn})
 		return vm
 	}
-	// Detach Functions so prepareFunctionTypeMetadata can mutate the
-	// per-VM metadata (typeParamSet, paramTypeSpecs, etc.) without
-	// racing concurrent VMs that share the same source chunk.
+	// Detach Functions so per-VM metadata mutations don't race concurrent VMs sharing the chunk.
 	chunk.Functions = append([]FunctionInfo(nil), chunk.Functions...)
 	vm := &VM{chunk: chunk, stdout: stdout, globals: make([]runtime.VMValue, globalSize), dirtyGlobals: make([]bool, globalSize), localsStack: make([]runtime.VMValue, 0, localsCap), stack: initialStack, maxCallDepth: DefaultMaxCallDepth, frames: make([]callFrame, 0, 256), defers: initialDefers, classIndex: classIndex, natives: native.NewBuiltinRegistry(), nativeCache: make([]native.Function, len(chunk.Constants)), decoratedFuncs: map[int64]runtime.Value{}, decoratedClasses: map[int64]runtime.Value{}, rawFunctionCalls: map[int64]bool{}, methodReceiverFuncs: map[int64]bool{}, interfaceFallbacks: map[int64]map[string]crossModuleDefault{}, interfaceExtraFields: map[int64][]extraField{}, typeSpecCache: map[string]vmTypeSpec{}, runInlineExitDepth: -1}
+	vm.curMod = &ModuleContext{Chunk: chunk, classIndex: classIndex}
+	vm.curGlobals = vm.globals
 	vm.prepareFunctionTypeMetadata()
-	// Register an InstanceInvoker so native code (e.g.
-	// convert.go's __serialize__ dispatch) can call class
-	// methods. Latest-writer-wins is intentional: when both
-	// backends initialize in the same process, only one is
-	// actively running serialization through native code at a
-	// time.
-	native.SetInstanceInvoker(vm.invokeInstanceMethod)
-	native.SetClassDeserializer(vm.deserializeIntoClass)
-	native.SetCallableInvoker(vm.invokeCallable)
+	vm.instanceInvokerFn = vm.invokeInstanceMethod
+	vm.classDeserializerFn = vm.deserializeIntoClass
+	vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn})
 	return vm
 }
 
@@ -200,7 +189,61 @@ func (vm *VM) resolveDeserializeClass(name string) (runtime.Value, bool) {
 func NewVMWithModuleLoader(chunk Chunk, stdout io.Writer, loader ModuleLoader) *VM {
 	vm := NewVM(chunk, stdout)
 	vm.moduleLoader = loader
+	// Conversion context set on this VM's own registry after moduleLoader is assigned; serialize/deserialize routes through the loader (a fresh exclusive worker per call) with no process-global, so no partially built VM is ever published.
+	vm.instanceInvokerFn = loaderInstanceInvoker(loader)
+	vm.classDeserializerFn = loaderClassDeserializer(loader)
+	vm.natives.SetConversionContext(native.ConversionContext{InstanceInvoker: vm.instanceInvokerFn, ClassDeserializer: vm.classDeserializerFn})
 	return vm
+}
+
+// loaderInstanceInvoker dispatches an instance method (e.g. __serialize) through the loader; the existence check reads the immutable Class.Methods (incl. inherited) so a non-__serialize value never acquires a worker.
+func loaderInstanceInvoker(loader ModuleLoader) native.InstanceInvokerFunc {
+	return func(instance *runtime.Instance, method string, args []runtime.Value) (runtime.Value, bool, error) {
+		if instance == nil || instance.Class == nil {
+			return nil, false, nil
+		}
+		if !classHasMethod(instance.Class, method) {
+			return nil, false, nil
+		}
+		result, err := loader.CallModuleMethod(instance.Class.Module, instance.Class.Name, method, instance, args, nil)
+		if err != nil {
+			return nil, false, err
+		}
+		return result, true, nil
+	}
+}
+
+// classHasMethod walks the immutable class + parent chain (race-safe) for a method, so inherited dunders like __serialize are found without touching a VM's mutable lookup cache.
+func classHasMethod(class *runtime.Class, method string) bool {
+	lower := strings.ToLower(method)
+	for c := class; c != nil; c = c.Parent {
+		if len(c.Methods[lower]) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// loaderClassDeserializer deserializes into a class on a loader worker; a reflect-style class target resolves through FindClassByName.
+func loaderClassDeserializer(loader ModuleLoader) native.ClassDeserializerFunc {
+	return func(classValue runtime.Value, value runtime.Value) (runtime.Value, error) {
+		class, ok := classValue.(runtime.BytecodeClass)
+		if !ok {
+			target, isTarget := classValue.(runtime.DecoratorTarget)
+			if !isTarget || target.Target != "class" || target.Class == nil {
+				return nil, fmt.Errorf("deserialize: expected class, got %s", classValue.TypeName())
+			}
+			resolved, found := loader.FindClassByName(target.Class.Name)
+			if !found {
+				return nil, fmt.Errorf("deserialize: expected class, got %s", classValue.TypeName())
+			}
+			class, ok = resolved.(runtime.BytecodeClass)
+			if !ok {
+				return nil, fmt.Errorf("deserialize: expected class, got %s", classValue.TypeName())
+			}
+		}
+		return loader.DeserializeModuleClass(class, value)
+	}
 }
 
 // Cleanup invokes the destructor of every tracked instance whose
@@ -264,17 +307,51 @@ func (vm *VM) GlobalsSnapshot() []runtime.Value {
 	return out
 }
 
-// RestoreGlobals replaces the globals slice with a converted copy of
-// the caller-provided []runtime.Value.
+// RestoreGlobals replaces the globals with a converted copy of the caller-provided []runtime.Value.
 func (vm *VM) RestoreGlobals(globals []runtime.Value) {
 	if cap(vm.globals) >= len(globals) {
 		vm.globals = vm.globals[:len(globals)]
 	} else {
 		vm.globals = make([]runtime.VMValue, len(globals))
 	}
+	vm.curGlobals = vm.globals
 	for i, v := range globals {
 		vm.globals[i] = runtime.VMValueFromValue(v)
 	}
+}
+
+// PersistDirtyGlobals copies the slots this run reassigned back into dst (the loader's live module globals), so cross-module module-global writes persist across calls. The caller serializes access to dst.
+func (vm *VM) PersistDirtyGlobals(dst []runtime.VMValue) {
+	n := len(dst)
+	if len(vm.globals) < n {
+		n = len(vm.globals)
+	}
+	if len(vm.dirtyGlobals) < n {
+		n = len(vm.dirtyGlobals)
+	}
+	for i := 0; i < n; i++ {
+		if vm.dirtyGlobals[i] {
+			dst[i] = vm.globals[i]
+		}
+	}
+}
+
+// GlobalsSnapshotVM returns a copy of the raw VM globals, avoiding the VMValue<->Value round-trip a loader pays restoring an immutable module snapshot every cross-module call.
+func (vm *VM) GlobalsSnapshotVM() []runtime.VMValue {
+	out := make([]runtime.VMValue, len(vm.globals))
+	copy(out, vm.globals)
+	return out
+}
+
+// RestoreGlobalsVM copies a pre-converted VMValue snapshot into the globals buffer (memmove), the fast path for a stable immutable module snapshot.
+func (vm *VM) RestoreGlobalsVM(globals []runtime.VMValue) {
+	if cap(vm.globals) >= len(globals) {
+		vm.globals = vm.globals[:len(globals)]
+	} else {
+		vm.globals = make([]runtime.VMValue, len(globals))
+	}
+	copy(vm.globals, globals)
+	vm.curGlobals = vm.globals
 }
 
 // restoreGlobalsVM is the VM-internal fast path used when one VM hands
@@ -282,6 +359,7 @@ func (vm *VM) RestoreGlobals(globals []runtime.Value) {
 // directly without round-tripping through runtime.Value.
 func (vm *VM) restoreGlobalsVM(globals []runtime.VMValue) {
 	vm.globals = append(vm.globals[:0], globals...)
+	vm.curGlobals = vm.globals
 }
 
 func (vm *VM) FunctionDecoratorState() FunctionDecoratorState {
@@ -294,13 +372,22 @@ func (vm *VM) FunctionDecoratorState() FunctionDecoratorState {
 }
 
 func (vm *VM) RestoreFunctionDecoratorState(state FunctionDecoratorState) {
-	vm.decoratedFuncs = copyRuntimeValueMap(state.decorated)
-	if state.decoratedClasses != nil {
-		vm.decoratedClasses = copyRuntimeValueMap(state.decoratedClasses)
-	}
 	vm.decoratorsApplied = state.applied
-	if state.methodReceiverFuncs != nil {
+	// nil, not an empty-map copy: an undecorated module restores these every cross-module call, and a pooled worker only reads them (decoratorsApplied is true, so it never populates them).
+	if len(state.decorated) > 0 {
+		vm.decoratedFuncs = copyRuntimeValueMap(state.decorated)
+	} else {
+		vm.decoratedFuncs = nil
+	}
+	if len(state.decoratedClasses) > 0 {
+		vm.decoratedClasses = copyRuntimeValueMap(state.decoratedClasses)
+	} else {
+		vm.decoratedClasses = nil
+	}
+	if len(state.methodReceiverFuncs) > 0 {
 		vm.methodReceiverFuncs = copyBoolMap(state.methodReceiverFuncs)
+	} else {
+		vm.methodReceiverFuncs = nil
 	}
 }
 
@@ -340,14 +427,7 @@ func (vm *VM) RestoreInterfaceFallbackState(state InterfaceFallbackState) {
 
 func (vm *VM) noteEscape() { vm.escapedRefs.Add(1) }
 
-// resetForReuse clears the per-run mutable state of a wrapper VM so a
-// pooled instance can serve another call over the same template chunk
-// (Functions/Classes/meta identical; the caller re-points Constants and
-// Instructions and re-applies its per-call setup). Chunk-shape caches
-// (nativeCache, nameLowerCache, class/method lookup caches,
-// typeSpecCache) are deliberately kept.
-// ResetForReuse clears per-run state so a pooled VM can host another
-// call against the same chunk.
+// ResetForReuse clears per-run state so a pooled VM can host another call against the same chunk.
 func (vm *VM) ResetForReuse() { vm.resetForReuse() }
 
 // Recyclable reports whether this VM handed out no vm-capturing
@@ -381,14 +461,15 @@ func (vm *VM) resetForReuse() {
 	vm.generatorExecution = false
 	vm.generatorYield = nil
 	vm.generatorDone = nil
-	vm.interfaceFallbacks = map[int64]map[string]crossModuleDefault{}
-	vm.interfaceExtraFields = map[int64][]extraField{}
+	// nil, not a fresh map: the loader path overwrites these via RestoreInterfaceFallbackState and the wrapper-callVM path only reads them; only class-definition (load) writes them, never a pooled worker.
+	vm.interfaceFallbacks = nil
+	vm.interfaceExtraFields = nil
 	vm.bridgeActive.Store(false)
 	vm.escapedRefs.Store(0)
-	// The global native hooks must point at a live VM for this chunk.
-	native.SetInstanceInvoker(vm.invokeInstanceMethod)
-	native.SetClassDeserializer(vm.deserializeIntoClass)
-	native.SetCallableInvoker(vm.invokeCallable)
+	vm.reentryHost = nil
+	vm.reentryActive = false
+	vm.reentryDepth = 0
+	vm.curMod.Chunk = vm.chunk
 }
 
 func (vm *VM) prepareFunctionTypeMetadata() {
@@ -540,6 +621,32 @@ func (vm *VM) popLocalsStackFrame(frame *callFrame) {
 
 func (vm *VM) SetModuleName(name string) {
 	vm.moduleName = name
+}
+
+func (vm *VM) ModuleName() string {
+	return vm.moduleName
+}
+
+func (vm *VM) ReentryHost() *VM        { return vm.reentryHost }
+func (vm *VM) SetReentryHost(h *VM)    { vm.reentryHost = h }
+func (vm *VM) ReentryActive() bool     { return vm.reentryActive }
+func (vm *VM) SetReentryActive(b bool) { vm.reentryActive = b }
+func (vm *VM) IncReentryDepth()        { vm.reentryDepth++ }
+func (vm *VM) DecReentryDepth() int    { vm.reentryDepth--; return vm.reentryDepth }
+
+// activeReentryHost returns the nearest borrowed-active worker reachable from vm (vm itself when active), the host a bridged callback re-enters through.
+func (vm *VM) activeReentryHost() *VM {
+	for h := vm; h != nil; h = h.reentryHost {
+		if h.reentryActive {
+			return h
+		}
+	}
+	return nil
+}
+
+// SetPersistGlobals enables dirty-slot tracking on the lock-free setGlobal path so a loader worker's module-global writes can be written back after the call.
+func (vm *VM) SetPersistGlobals(on bool) {
+	vm.persistGlobals = on
 }
 
 func (vm *VM) SetModulePaths(paths []string) {

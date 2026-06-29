@@ -510,9 +510,11 @@ bracket-depth-aware helpers.
 ```go
 type VM struct {
     chunk             Chunk
+    curMod            *ModuleContext
     stdout            io.Writer
     stack             []runtime.VMValue // operand stack (tagged union)
     globals           []runtime.VMValue // indexed by global slot
+    curGlobals        []runtime.VMValue
     localsStack       []runtime.VMValue // all frames' locals in one slice
     currentFrameBP    int               // base pointer: this frame's slot 0
     frames            []callFrame       // call stack
@@ -529,6 +531,9 @@ type VM struct {
 Locals for every active frame live in a single `localsStack`; each frame's
 slot `n` is `localsStack[currentFrameBP + n]`. A call advances the base
 pointer rather than copying a per-frame slice (see Call frame, below).
+`curMod` currently identifies the chunk metadata used by opcode helpers and
+`curGlobals` aliases the execution's globals. They are execution-local views,
+not a mechanism for switching one active VM between modules.
 
 The stack / locals / globals slices hold `runtime.VMValue`
 (`internal/runtime/vmvalue.go`), a 32-byte tagged union with an inline
@@ -678,7 +683,45 @@ actions in reverse order.
 
 `OpImportModule` calls `ModuleLoader.LoadModule(canonical, alias)`. The loader
 compiles (or loads from cache) the target module's chunk, runs it in a fresh VM,
-and returns the exported `runtime.Module`. Modules are cached after first load.
+captures its initialized globals and decorator/interface state, and returns the
+exported `runtime.Module`. Modules are cached after first load.
+
+An imported callable retains its declaring module and function/class index.
+Calling it from another chunk routes through the module loader. The loader owns
+a `sync.Pool` per module and acquires one exclusive worker VM for each active
+call. It resets the worker, restores the module's live globals and runtime
+metadata, enters supported synchronous callables directly, and returns a clean,
+non-escaped worker to the pool. This removes synthetic wrapper-bytecode
+construction while preserving the rule that mutable VM execution state is
+owned by one goroutine.
+
+Direct entry covers ordinary synchronous functions, closures, constructors,
+instance methods, and static methods. Decorated, raw, generator, async, and
+other special cases retain fallback paths where their lifetime or dispatch
+semantics require them. A generator or async task creates its own execution
+before its goroutine starts; a suspended or running task must never refer to a
+worker that has returned to a pool.
+
+A cross-module call writes its dirty global slots back to the loader's
+canonical module record, so a later call observes them. This includes a call
+that throws: the assignments it made before the throw are still written back,
+matching the evaluator's immediate mutation. A synchronous re-entrant call
+(host -> module -> callback -> back into the same module, all on one goroutine)
+shares the in-flight worker and so observes the outer call's pending
+assignments; a generator's module-global writes are written back when it
+finishes. Snapshot and write-back copies are serialized, but execution occurs
+outside that lock, and an async task runs on its own goroutine against a
+committed snapshot rather than the live globals: contended writes have
+lost-update semantics. Module globals are therefore unsuitable for concurrent
+or transactional coordination; share state across tasks through a thread-safe
+primitive such as `store.Store`.
+
+Published module records and VM pools are concurrency-safe, and cross-module
+dispatch reads a stable snapshot of the base search paths, so dispatching an
+already-loaded module is race-free even while another module lazily loads on a
+different goroutine. Loads themselves serialize on the loader's load lock;
+loading the module graph before accepting concurrent work remains the simplest
+model.
 
 ---
 
@@ -1015,19 +1058,26 @@ compilation error that triggered the fallback.
 
 ### Bytecode module loader
 
-The VM calls into a `ModuleLoader` implementation (`bytecodeModuleLoader` in
-`main.go`) for each `OpImportModule` instruction. The loader:
+The VM calls into the `ModuleLoader` implementation (`bcloader.Loader` in
+`internal/bcloader`) for each `OpImportModule` instruction. The loader:
 
 1. Resolves the module name to a file path via `modules.Resolver`.
 2. Reads and parses the source file.
 3. Compiles it to a `Chunk` (or loads from the `.gbc` cache).
-4. Creates a fresh `VM`, runs the chunk, and collects the exported values.
+4. Creates a VM, runs the chunk once, and collects the exported values and
+   load-time state.
 5. Caches the resulting `runtime.Module` so subsequent imports of the same
    module in the same process return the cached value.
 
 For modules that use stateful native functions (HTTP, database, etc.) the loader
 holds a shared `evaluator.Evaluator` instance and routes `StatefulNativeCaller`
 calls through it.
+
+Cross-module calls after loading acquire an exclusive VM from the declaring
+module's pool. Supported synchronous callables use direct external entry;
+fallback cases use the established wrapper path. Workers are reset and restored
+from the module's live globals before use, write back any reassigned globals on
+release, and only recyclable workers are returned to the pool.
 
 ---
 

@@ -227,19 +227,19 @@ func (l fakeModuleLoader) LoadModule(canonical string, alias string) (*runtime.M
 	return l.module, nil
 }
 
-func (l fakeModuleLoader) CallModuleFunction(function runtime.BytecodeFunction, args []runtime.Value) (runtime.Value, error) {
+func (l fakeModuleLoader) CallModuleFunction(function runtime.BytecodeFunction, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	return runtime.Null{}, fmt.Errorf("unexpected module function call %s", function.Name)
 }
 
-func (l fakeModuleLoader) CallModuleClosure(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
+func (l fakeModuleLoader) CallModuleClosure(closure runtime.BytecodeClosure, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	return runtime.Null{}, fmt.Errorf("unexpected module closure call %s", closure.Name)
 }
 
-func (l fakeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value, typeArgs []string) (runtime.Value, error) {
+func (l fakeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value, typeArgs []string, caller *bytecode.VM) (runtime.Value, error) {
 	return runtime.Null{}, fmt.Errorf("unexpected module class construction %s", class.Name)
 }
 
-func (l fakeModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value) (runtime.Value, error) {
+func (l fakeModuleLoader) CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	return runtime.Null{}, fmt.Errorf("unexpected module static method call %s.%s", class.Name, methodName)
 }
 
@@ -247,11 +247,11 @@ func (l fakeModuleLoader) ModuleMethodParamNames(module string, className string
 	return nil, fmt.Errorf("fake loader has no module method metadata")
 }
 
-func (l fakeModuleLoader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+func (l fakeModuleLoader) CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	return runtime.Null{}, fmt.Errorf("unexpected module method call %s.%s", className, methodName)
 }
 
-func (l fakeModuleLoader) CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+func (l fakeModuleLoader) CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	return runtime.Null{}, fmt.Errorf("unexpected cross-module parent call %s.%s", className, methodName)
 }
 
@@ -262,6 +262,12 @@ func (l fakeModuleLoader) ImmutableFieldsForModuleClass(module string, className
 func (l fakeModuleLoader) FindClassByName(name string) (runtime.Value, bool) {
 	return nil, false
 }
+
+func (l fakeModuleLoader) RuntimeClassFor(module string, className string) (*runtime.Class, bool) {
+	return nil, false
+}
+
+func (l fakeModuleLoader) PersistModuleGlobals(vm *bytecode.VM) {}
 
 func (l fakeModuleLoader) FindFunctionByName(name string) (runtime.Value, bool) {
 	return nil, false

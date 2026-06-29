@@ -17,15 +17,12 @@ import (
 )
 
 type VM struct {
-	chunk   Chunk
-	stdout  io.Writer
-	stderr  io.Writer
-	stack   []runtime.VMValue
-	globals []runtime.VMValue
-	// invokerScoped marks that this VM has claimed callable dispatch for the
-	// goroutine, so nested Run() calls (e.g. a map/filter callback per element)
-	// skip the claim.
-	invokerScoped bool
+	chunk      Chunk
+	stdout     io.Writer
+	stderr     io.Writer
+	stack      []runtime.VMValue
+	globals    []runtime.VMValue
+	curGlobals []runtime.VMValue // always aliases globals; future: per-module slice on cross-module frames
 	// globalsMu guards bulk operations on the globals slice used by the
 	// wrap-bridge: setGlobal writes and the snapshot-in / per-slot
 	// write-back done when a wrapped callable fires on a different
@@ -38,6 +35,11 @@ type VM struct {
 	// parent rather than slicecopying the entire backing array (which
 	// races the parent's lock-free OpGetGlobal on unrelated slots).
 	dirtyGlobals []bool
+	// persistGlobals makes the lock-free setGlobal fast path record dirty slots so a loader worker's module-global writes can be written back (cross-module module-global persistence).
+	persistGlobals bool
+	// Cached bound-method closures re-registered every reset; taking the bound method per call allocates.
+	instanceInvokerFn   native.InstanceInvokerFunc
+	classDeserializerFn native.ClassDeserializerFunc
 	// bridgeActive is set once a wrap-bridge worker is, or could become,
 	// alive against this VM's globals. While false, setGlobalVM /
 	// setGlobal can write without taking globalsMu because no concurrent
@@ -66,12 +68,17 @@ type VM struct {
 	defers            [][]deferredAction
 	exceptionHandlers []exceptionHandler
 	pendingThrow      *runtime.Error
+	curMod            *ModuleContext
 	moduleLoader      ModuleLoader
 	moduleName        string
-	modulePaths       []string
-	statefulNative    StatefulNativeCaller
-	classIndex        map[string]int
-	natives           *native.Registry
+	// reentry* implement goid-free same-call-chain re-entry detection for the module loader: reentryHost links a borrowed worker to the worker that borrowed it (nil for roots), reentryActive marks a worker borrowed and executing for a module, reentryDepth balances nested reuse before release.
+	reentryHost    *VM
+	reentryActive  bool
+	reentryDepth   int
+	modulePaths    []string
+	statefulNative StatefulNativeCaller
+	classIndex     map[string]int
+	natives        *native.Registry
 	// nil entries fall through to evalNativeCall (statefuls / errors.is).
 	nativeCache          []native.Function
 	syncMode             bool // when true, async functions are called synchronously
@@ -138,6 +145,10 @@ type VM struct {
 	// function invocation on the same VM without rebuilding the chunk.
 	runEntryIP         int
 	runInlineExitDepth int // -1 = top-level (exit on OpReturn with frames==0); >=0 = inline (exit when frames drops to this)
+	// runHandlerBaseline is the exception-handler count owned by enclosing executions; a nested direct run (incl. a shared-worker re-entry) must not unwind into handlers below it - a throw with none above propagates out.
+	runHandlerBaseline int
+	// runDeferBaseline is the deferred-group count owned by enclosing executions; an uncaught throw propagating out of this run runs its own frames' defers down to here, not the enclosing run's.
+	runDeferBaseline   int
 	runSuppressCleanup bool
 	// Tracks whether Run() is currently executing the dispatch loop on
 	// this goroutine. callBytecodeInline relies on this being true so
@@ -152,14 +163,14 @@ type VM struct {
 
 type ModuleLoader interface {
 	LoadModule(canonical string, alias string) (*runtime.Module, error)
-	CallModuleFunction(function runtime.BytecodeFunction, args []runtime.Value) (runtime.Value, error)
-	CallModuleClosure(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error)
+	CallModuleFunction(function runtime.BytecodeFunction, args []runtime.Value, caller *VM) (runtime.Value, error)
+	CallModuleClosure(closure runtime.BytecodeClosure, args []runtime.Value, caller *VM) (runtime.Value, error)
 	// ConstructModuleClass constructs class in its home chunk. typeArgs
 	// carries the call site's positional explicit `<TypeArgs>` (nil when
 	// none); the home VM zips them against the class's type parameters.
-	ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value, typeArgs []string) (runtime.Value, error)
-	CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value) (runtime.Value, error)
-	CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error)
+	ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value, typeArgs []string, caller *VM) (runtime.Value, error)
+	CallModuleStaticMethod(class runtime.BytecodeClass, methodName string, args []runtime.Value, caller *VM) (runtime.Value, error)
+	CallModuleMethod(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *VM) (runtime.Value, error)
 	// ModuleMethodParamNames exposes a cross-module method's declared
 	// parameter names so dict spread can order named args at the call site.
 	ModuleMethodParamNames(module string, className string, methodName string) ([]string, error)
@@ -168,7 +179,7 @@ type ModuleLoader interface {
 	// className is looked up in the target chunk regardless of
 	// instance.Class.Name, which is necessary because instance is a
 	// subclass declared in another chunk.
-	CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value) (runtime.Value, error)
+	CallParentInModule(module string, className string, methodName string, instance *runtime.Instance, args []runtime.Value, caller *VM) (runtime.Value, error)
 	// ImmutableFieldsForModuleClass returns the set-once `@immutable`
 	// field names declared on a class in another module, so a subclass
 	// can lock them after its cross-module parent constructor runs.
@@ -178,6 +189,10 @@ type ModuleLoader interface {
 	// Used by reflect.class so framework code can resolve a user
 	// class regardless of which module declared it.
 	FindClassByName(name string) (runtime.Value, bool)
+	// RuntimeClassFor builds + caches the runtime.Class for a class in another module so a cross-module subclass's parent chain is reachable by pointer.
+	RuntimeClassFor(module string, className string) (*runtime.Class, bool)
+	// PersistModuleGlobals writes a worker's dirty module-global slots back to its module record (used when a generator worker finishes outside the normal acquire/release cycle).
+	PersistModuleGlobals(vm *VM)
 	// FindFunctionByName looks up a function by its bare name
 	// across every loaded module. Returns nil when nothing matches.
 	FindFunctionByName(name string) (runtime.Value, bool)
@@ -463,7 +478,7 @@ func (vm *VM) invokeInstanceMethod(instance *runtime.Instance, method string, ar
 		if vm.moduleLoader == nil || len(instance.Class.Methods[strings.ToLower(method)]) == 0 {
 			return nil, false, nil
 		}
-		result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, method, instance, args)
+		result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, method, instance, args, vm)
 		if err != nil {
 			return nil, false, err
 		}
@@ -500,13 +515,6 @@ func (vm *VM) displayString(value runtime.Value) (string, error) {
 }
 
 func (vm *VM) Run() (err error) {
-	// Claim callable dispatch for this VM on the outermost Run only, so a
-	// callback invoked per element does not pay the cost on every nested Run.
-	if !vm.invokerScoped {
-		vm.invokerScoped = true
-		prev, had := native.SwapCallableInvoker(vm.invokeCallable)
-		defer func() { native.RestoreCallableInvoker(prev, had); vm.invokerScoped = false }()
-	}
 	if !vm.runSuppressCleanup {
 		// Mirror the evaluator's behaviour: after a script finishes
 		// (success, exit, or runtime error) drain the destructor
@@ -525,10 +533,8 @@ func (vm *VM) Run() (err error) {
 	oldInDispatch := vm.inDispatchLoop
 	vm.inDispatchLoop = true
 	defer func() { vm.inDispatchLoop = oldInDispatch }()
-	// Hoist instructions slice into a local so each iteration reads from
-	// a stable register-resident pointer instead of dereferencing
-	// vm.chunk.Instructions through the VM struct on every fetch.
-	instructions := vm.chunk.Instructions
+	// Hoist instructions so the dispatch loop reads from a stable pointer.
+	instructions := vm.curMod.Chunk.Instructions
 	// A runtime fault returned by the dispatch loop is routed to the
 	// nearest active try/catch (parity with the evaluator); fatal and
 	// unhandled faults terminate. On a catch, the loop re-enters at the
@@ -601,7 +607,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				target = vm.localsStack
 				offset = vm.currentFrameBP
 			} else {
-				target = vm.globals
+				target = vm.curGlobals
 			}
 			idx := int(slot) + offset
 			if idx >= len(target) {
@@ -652,7 +658,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				target = vm.localsStack
 				offset = vm.currentFrameBP
 			} else {
-				target = vm.globals
+				target = vm.curGlobals
 			}
 			idx := int(slot) + offset
 			if idx >= len(target) {
@@ -896,8 +902,8 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 		case OpIncGlobalInt, OpDecGlobalInt:
 			slot := instruction.Operands[0]
-			if slot >= 0 && int(slot) < len(vm.globals) && !vm.bridgeActive.Load() {
-				cur := vm.globals[slot]
+			if slot >= 0 && int(slot) < len(vm.curGlobals) && !vm.bridgeActive.Load() {
+				cur := vm.curGlobals[slot]
 				if cur.Kind == runtime.VMKindSmallInt {
 					delta := int64(1)
 					if instruction.Op == OpDecGlobalInt {
@@ -905,7 +911,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 					}
 					nv := cur.I64 + delta
 					if (cur.I64^nv)&(delta^nv) >= 0 {
-						vm.globals[slot] = runtime.VMValueSmallInt(nv)
+						vm.curGlobals[slot] = runtime.VMValueSmallInt(nv)
 						vm.pushVM(cur)
 						continue
 					}
@@ -1121,8 +1127,8 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 		case OpGetGlobal:
 			slot := instruction.Operands[0]
-			if int(slot) < len(vm.globals) {
-				value := vm.globals[slot]
+			if int(slot) < len(vm.curGlobals) {
+				value := vm.curGlobals[slot]
 				if value.Kind != runtime.VMKindBoxed && value.Kind != runtime.VMKindUnset {
 					vm.pushVM(value)
 					continue
@@ -1139,10 +1145,13 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
-			if int(slot) < len(vm.globals) && !vm.bridgeActive.Load() {
-				cur := vm.globals[slot]
+			if int(slot) < len(vm.curGlobals) && !vm.bridgeActive.Load() {
+				cur := vm.curGlobals[slot]
 				if cur.Kind != runtime.VMKindBoxed {
-					vm.globals[slot] = value
+					vm.curGlobals[slot] = value
+					if vm.persistGlobals && int(slot) < len(vm.dirtyGlobals) {
+						vm.dirtyGlobals[slot] = true
+					}
 					vm.pushVM(value)
 					continue
 				}
@@ -1499,8 +1508,8 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				return vm.fatalError(*instruction, "define class instruction has invalid operands")
 			}
 			classIndex := instruction.Operands[0]
-			if classIndex >= 0 && int(classIndex) < len(vm.chunk.Classes) {
-				classInfo := vm.chunk.Classes[classIndex]
+			if classIndex >= 0 && int(classIndex) < len(vm.curMod.Chunk.Classes) {
+				classInfo := vm.curMod.Chunk.Classes[classIndex]
 				classValue, decorated, err := vm.applyCallableDecoratorsForClass(classIndex, classInfo)
 				if err != nil {
 					return vm.runtimeError(*instruction, "%s", err.Error())
@@ -1652,7 +1661,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			funcIndex := instruction.Operands[0]
 			upvalueCount := instruction.Operands[1]
-			if funcIndex < 0 || int(funcIndex) >= len(vm.chunk.Functions) {
+			if funcIndex < 0 || int(funcIndex) >= len(vm.curMod.Chunk.Functions) {
 				return vm.runtimeError(*instruction, "closure function index out of range")
 			}
 			if int64(len(instruction.Operands))-2 != upvalueCount {
@@ -1681,10 +1690,8 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				}
 				upvalues[i] = cell
 			}
-			fn := vm.chunk.Functions[funcIndex]
-			// Capture the enclosing generic frame's type bindings so the
-			// closure can resolve T-typed parameters and instanceof T
-			// checks against the outer call site's concrete bindings.
+			fn := vm.curMod.Chunk.Functions[funcIndex]
+			// Capture enclosing generic frame's type bindings for T-typed params and instanceof T in the closure.
 			var capturedBindings map[string]string
 			if len(vm.frames) > 0 {
 				if outer := vm.frames[len(vm.frames)-1].typeBindings; len(outer) > 0 {
@@ -1701,6 +1708,16 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 				Upvalues:      upvalues,
 				TypeBindings:  capturedBindings,
 			})
+		case OpMakeOverloaded:
+			if len(instruction.Operands) == 0 {
+				return vm.fatalError(*instruction, "make overloaded instruction has no operands")
+			}
+			for _, idx := range instruction.Operands {
+				if idx < 0 || int(idx) >= len(vm.curMod.Chunk.Functions) {
+					return vm.runtimeError(*instruction, "overloaded function index out of range")
+				}
+			}
+			vm.push(vm.overloadedValue(instruction.Operands))
 		case OpMakeError:
 			if err := vm.makeError(*instruction); err != nil {
 				return err
@@ -1807,7 +1824,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			funcIdx := instruction.Operands[0]
 			argc := instruction.Operands[1]
-			if funcIdx < 0 || int(funcIdx) >= len(vm.chunk.Functions) {
+			if funcIdx < 0 || int(funcIdx) >= len(vm.curMod.Chunk.Functions) {
 				return vm.runtimeError(*instruction, "defer func call function index out of range")
 			}
 			args := make([]runtime.Value, argc)
@@ -2162,7 +2179,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			funcIndex := instruction.Operands[0]
 			staticArgCount := int(instruction.Operands[1])
-			if funcIndex < 0 || int(funcIndex) >= len(vm.chunk.Functions) {
+			if funcIndex < 0 || int(funcIndex) >= len(vm.curMod.Chunk.Functions) {
 				return vm.runtimeError(*instruction, "function index out of range")
 			}
 			spreadVal, err := vm.pop()
@@ -2180,7 +2197,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			if ok {
 				combined := append(staticArgs, spreadList.Elements...)
-				nextIP, err := vm.startFunction(*instruction, ip, &vm.chunk.Functions[funcIndex], combined, nil)
+				nextIP, err := vm.startFunction(*instruction, ip, &vm.curMod.Chunk.Functions[funcIndex], combined, nil)
 				if err != nil {
 					return err
 				}
@@ -2191,15 +2208,15 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if !ok {
 				return vm.runtimeError(*instruction, "spread argument must be a list or dict")
 			}
-			args, names, err := spreadDictNamedArguments(spreadDict, staticArgs, vm.chunk.Functions[funcIndex].ParamNames)
+			args, names, err := spreadDictNamedArguments(spreadDict, staticArgs, vm.curMod.Chunk.Functions[funcIndex].ParamNames)
 			if err != nil {
 				return vm.runtimeError(*instruction, "%s", err.Error())
 			}
-			ordered, err := vm.orderRuntimeArguments(*instruction, vm.chunk.Functions[funcIndex], args, names, 0)
+			ordered, err := vm.orderRuntimeArguments(*instruction, vm.curMod.Chunk.Functions[funcIndex], args, names, 0)
 			if err != nil {
 				return err
 			}
-			nextIP, err := vm.startFunction(*instruction, ip, &vm.chunk.Functions[funcIndex], ordered, nil)
+			nextIP, err := vm.startFunction(*instruction, ip, &vm.curMod.Chunk.Functions[funcIndex], ordered, nil)
 			if err != nil {
 				return err
 			}
@@ -2210,7 +2227,7 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			}
 			classIndex := instruction.Operands[0]
 			staticArgCount := int(instruction.Operands[1])
-			if classIndex < 0 || int(classIndex) >= len(vm.chunk.Classes) {
+			if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
 				return vm.runtimeError(*instruction, "class index out of range")
 			}
 			spreadVal, err := vm.pop()
@@ -2238,11 +2255,11 @@ func (vm *VM) dispatchLoop(instructions []Instruction, inlineExitDepth int) erro
 			if !ok {
 				return vm.runtimeError(*instruction, "spread argument must be a list or dict")
 			}
-			classInfo := vm.chunk.Classes[classIndex]
+			classInfo := vm.curMod.Chunk.Classes[classIndex]
 			if len(classInfo.ConstructorIndices) != 1 {
 				return vm.runtimeError(*instruction, "cannot use dict spread without a single constructor on %s", classInfo.Name)
 			}
-			ctor := vm.chunk.Functions[classInfo.ConstructorIndices[0]]
+			ctor := vm.curMod.Chunk.Functions[classInfo.ConstructorIndices[0]]
 			ctorParams := ctor.ParamNames
 			if len(ctorParams) > 0 {
 				ctorParams = ctorParams[1:] // skip the receiver slot
@@ -2483,7 +2500,7 @@ func (vm *VM) callPrefixOperatorMethod(instruction Instruction, ip int, value ru
 		if vm.moduleLoader == nil {
 			return 0, true, vm.runtimeError(instruction, "bytecode module loader is not configured")
 		}
-		result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, methodName, instance, nil)
+		result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, methodName, instance, nil, vm)
 		if err != nil {
 			nextIP, perr := vm.propagateModuleError(instruction, ip, err)
 			return nextIP, true, perr
@@ -2503,7 +2520,7 @@ func (vm *VM) callPrefixOperatorMethod(instruction Instruction, ip int, value ru
 	if err != nil {
 		return 0, true, err
 	}
-	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance}, nil)
+	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance}, nil)
 	return nextIP, true, err
 }
 
@@ -2565,7 +2582,7 @@ func (vm *VM) compare(instruction Instruction, ip int) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, at.arg}, nil)
+			nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance, at.arg}, nil)
 			if err != nil {
 				return 0, err
 			}
@@ -2620,7 +2637,7 @@ func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 			if vm.moduleLoader == nil {
 				return 0, vm.runtimeError(instruction, "bytecode module loader is not configured")
 			}
-			result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, "__eq", instance, vm.wrapStatefulNativeArgs("", "", []runtime.Value{right}))
+			result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, "__eq", instance, vm.wrapStatefulNativeArgs("", "", []runtime.Value{right}), vm)
 			if err != nil {
 				return vm.propagateModuleError(instruction, ip, err)
 			}
@@ -2636,7 +2653,7 @@ func (vm *VM) equal(instruction Instruction, ip int) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
+			return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
 		}
 	}
 	vm.push(runtime.Bool{Value: valuesEqual(left, right)})
@@ -2921,7 +2938,13 @@ func (vm *VM) rethrow(instruction Instruction, ip int) (int, error) {
 }
 
 func (vm *VM) jumpToExceptionHandler(instruction Instruction, ip int) (int, error) {
-	if len(vm.exceptionHandlers) == 0 {
+	if len(vm.exceptionHandlers) <= vm.runHandlerBaseline {
+		// Run this run's frames' defers before the uncaught throw propagates out (e.g. across a module boundary, where the caller's worker resumes); runDefers leaves vm.frames for the trace.
+		for len(vm.defers) > vm.runDeferBaseline {
+			if derr := vm.runDefers(instruction); derr != nil {
+				return 0, derr
+			}
+		}
 		return 0, vm.uncaughtThrowError(instruction, *vm.pendingThrow)
 	}
 	handler := vm.exceptionHandlers[len(vm.exceptionHandlers)-1]
@@ -3493,7 +3516,7 @@ func (vm *VM) callBinaryOperatorMethod(instruction Instruction, ip int, left run
 		if vm.moduleLoader == nil {
 			return 0, true, vm.runtimeError(instruction, "bytecode module loader is not configured")
 		}
-		result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, methodName, instance, vm.wrapStatefulNativeArgs("", "", []runtime.Value{right}))
+		result, err := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, methodName, instance, vm.wrapStatefulNativeArgs("", "", []runtime.Value{right}), vm)
 		if err != nil {
 			nextIP, perr := vm.propagateModuleError(instruction, ip, err)
 			return nextIP, true, perr
@@ -3513,7 +3536,7 @@ func (vm *VM) callBinaryOperatorMethod(instruction Instruction, ip int, left run
 	if err != nil {
 		return 0, true, err
 	}
-	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
+	nextIP, err := vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
 	return nextIP, true, err
 }
 
@@ -4355,7 +4378,7 @@ func (vm *VM) withEnter(instruction Instruction) error {
 		// Cross-module instance: dispatch via the module loader.
 		if vm.moduleLoader != nil && instance.Class.Module != vm.moduleName {
 			for _, name := range []string{"__enter", "__enter__"} {
-				result, cerr := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, name, instance, nil)
+				result, cerr := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, name, instance, nil, vm)
 				var notFound *runtime.MethodNotFoundError
 				if errors.As(cerr, &notFound) {
 					continue
@@ -4402,7 +4425,7 @@ func (vm *VM) withExit(instruction Instruction) error {
 		// Cross-module instance: dispatch via the module loader.
 		if vm.moduleLoader != nil && instance.Class.Module != vm.moduleName {
 			for _, name := range []string{"__exit", "__exit__"} {
-				_, cerr := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, name, instance, nil)
+				_, cerr := vm.moduleLoader.CallModuleMethod(instance.Class.Module, instance.Class.Name, name, instance, nil, vm)
 				var notFound *runtime.MethodNotFoundError
 				if errors.As(cerr, &notFound) {
 					continue
@@ -4443,10 +4466,10 @@ func (vm *VM) execDel(instruction Instruction) error {
 		}
 		value = v
 	case 1:
-		if slot < 0 || int(slot) >= len(vm.globals) {
+		if slot < 0 || int(slot) >= len(vm.curGlobals) {
 			return vm.runtimeError(instruction, "del: global slot out of range")
 		}
-		value = vm.globals[slot].ToValue()
+		value = vm.curGlobals[slot].ToValue()
 	default:
 		return vm.runtimeError(instruction, "del: unknown binding kind %d", kind)
 	}
@@ -4471,7 +4494,7 @@ func (vm *VM) execDel(instruction Instruction) error {
 			return vm.callPropagate(instruction, err)
 		}
 	case 1:
-		vm.globals[slot] = runtime.VMValueNull
+		vm.curGlobals[slot] = runtime.VMValueNull
 	}
 	return nil
 }
@@ -5081,14 +5104,14 @@ func (vm *VM) Exports() (map[string]runtime.Value, error) {
 // at the given index, memoised in nameLowerCache so the lookup amortises
 // to a slice read on the hot method-dispatch path.
 func (vm *VM) constantsLen() int {
-	return len(vm.chunk.Constants) + len(vm.constantsExtra)
+	return len(vm.curMod.Chunk.Constants) + len(vm.constantsExtra)
 }
 
 func (vm *VM) constantValue(index int64) runtime.Value {
-	if base := vm.chunk.Constants; int(index) < len(base) {
+	if base := vm.curMod.Chunk.Constants; int(index) < len(base) {
 		return base[index]
 	}
-	return vm.constantsExtra[int(index)-len(vm.chunk.Constants)]
+	return vm.constantsExtra[int(index)-len(vm.curMod.Chunk.Constants)]
 }
 
 func sameInstructionBase(a, b []Instruction) bool {
@@ -5105,7 +5128,7 @@ func (vm *VM) lowerConstantName(index int64, original string) string {
 	if index < 0 {
 		return strings.ToLower(original)
 	}
-	if int(index) >= len(vm.chunk.Constants) {
+	if int(index) >= len(vm.curMod.Chunk.Constants) {
 		// Extras-tail constant (wrapper call argument): not cacheable.
 		return strings.ToLower(original)
 	}
@@ -5114,9 +5137,8 @@ func (vm *VM) lowerConstantName(index int64, original string) string {
 			return lowered
 		}
 	} else {
-		// Grow lazily; at worst this happens once per distinct
-		// method-name constant.
-		grown := make([]string, len(vm.chunk.Constants))
+		// Grow cache to match constants pool size.
+		grown := make([]string, len(vm.curMod.Chunk.Constants))
 		copy(grown, vm.nameLowerCache)
 		vm.nameLowerCache = grown
 	}
@@ -5209,8 +5231,8 @@ func (vm *VM) errorParentChain(classInfo ClassInfo) []string {
 		}
 		visited[current.ParentName] = true
 		parents = append(parents, current.ParentName)
-		if classIndex, ok := vm.classIndex[strings.ToLower(current.ParentName)]; ok && int(classIndex) < len(vm.chunk.Classes) {
-			current = vm.chunk.Classes[classIndex]
+		if classIndex, ok := vm.curMod.classIndex[strings.ToLower(current.ParentName)]; ok && int(classIndex) < len(vm.curMod.Chunk.Classes) {
+			current = vm.curMod.Chunk.Classes[classIndex]
 			continue
 		}
 		// Cross-chunk or built-in parent - extend via the static
@@ -5369,7 +5391,7 @@ func (vm *VM) bitwiseInfix(instruction Instruction, ip int) (int, error) {
 				if err != nil {
 					return 0, err
 				}
-				return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
+				return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance, right}, nil)
 			}
 		}
 	}
@@ -5420,7 +5442,7 @@ func (vm *VM) bitwiseNot(instruction Instruction, ip int) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			return vm.startPrevalidatedFunction(instruction, ip, &vm.chunk.Functions[functionIndex], []runtime.Value{instance}, nil)
+			return vm.startPrevalidatedFunction(instruction, ip, &vm.curMod.Chunk.Functions[functionIndex], []runtime.Value{instance}, nil)
 		}
 	}
 	intVal, ok := native.IntValueToBigInt(value)
@@ -5437,43 +5459,40 @@ func (vm *VM) bitwiseNot(instruction Instruction, ip int) (int, error) {
 }
 
 func (vm *VM) setGlobal(slot int64, value runtime.Value) error {
-	if int(slot) >= len(vm.globals) {
+	if int(slot) >= len(vm.curGlobals) {
 		if err := ensureSlot(&vm.globals, slot, "global"); err != nil {
 			return err
 		}
+		vm.curGlobals = vm.globals
 	}
 	if !vm.bridgeActive.Load() {
-		vm.globals[slot] = runtime.VMValueFromValue(value)
+		vm.curGlobals[slot] = runtime.VMValueFromValue(value)
 		return nil
 	}
 	vm.globalsMu.Lock()
-	vm.globals[slot] = runtime.VMValueFromValue(value)
+	vm.curGlobals[slot] = runtime.VMValueFromValue(value)
 	vm.markGlobalDirtyLocked(int(slot))
 	vm.globalsMu.Unlock()
 	return nil
 }
 
 func (vm *VM) setGlobalVM(slot int64, value runtime.VMValue) error {
-	// vm.globals is pre-sized to chunk.GlobalCount at NewVM. Hot path
-	// can assume slot is in range. The defensive grow only fires when
-	// a caller passes a slot beyond what the chunk advertised, which
-	// would indicate either bytecode corruption or a runtime synthesis
-	// path that hasn't claimed its slots upfront.
-	if int(slot) >= len(vm.globals) {
+	if int(slot) >= len(vm.curGlobals) {
 		if err := ensureSlot(&vm.globals, slot, "global"); err != nil {
 			return err
 		}
+		vm.curGlobals = vm.globals
 	}
-	// Fast path: no wrap-bridge worker can be touching this VM's
-	// globals, so the write is safe without locking or dirty tracking.
-	// bridgeActive flips false->true on this same goroutine before any
-	// worker is observable, so a single atomic Load here is sufficient.
+	// Fast path: no wrap-bridge worker can be touching this VM's globals.
 	if !vm.bridgeActive.Load() {
-		vm.globals[slot] = value
+		vm.curGlobals[slot] = value
+		if vm.persistGlobals && int(slot) < len(vm.dirtyGlobals) {
+			vm.dirtyGlobals[slot] = true
+		}
 		return nil
 	}
 	vm.globalsMu.Lock()
-	vm.globals[slot] = value
+	vm.curGlobals[slot] = value
 	vm.markGlobalDirtyLocked(int(slot))
 	vm.globalsMu.Unlock()
 	return nil
@@ -5495,19 +5514,20 @@ func (vm *VM) markGlobalDirtyLocked(slot int) {
 }
 
 func (vm *VM) getGlobal(slot int64) (runtime.Value, error) {
-	if int(slot) >= len(vm.globals) {
+	if int(slot) >= len(vm.curGlobals) {
 		if err := ensureSlot(&vm.globals, slot, "global"); err != nil {
 			return nil, err
 		}
+		vm.curGlobals = vm.globals
 	}
-	value := vm.globals[slot]
+	value := vm.curGlobals[slot]
 	if value.Kind == runtime.VMKindUnset {
 		return nil, fmt.Errorf("global is undefined")
 	}
 	if value.Kind == runtime.VMKindBoxed {
 		if acc, ok := value.Boxed.(*runtime.StringAccumulator); ok {
 			s := acc.Materialize()
-			vm.globals[slot] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: s}
+			vm.curGlobals[slot] = runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: s}
 			return s, nil
 		}
 	}
@@ -5515,19 +5535,20 @@ func (vm *VM) getGlobal(slot int64) (runtime.Value, error) {
 }
 
 func (vm *VM) getGlobalVM(slot int64) (runtime.VMValue, error) {
-	if int(slot) >= len(vm.globals) {
+	if int(slot) >= len(vm.curGlobals) {
 		if err := ensureSlot(&vm.globals, slot, "global"); err != nil {
 			return runtime.VMValueNull, err
 		}
+		vm.curGlobals = vm.globals
 	}
-	value := vm.globals[slot]
+	value := vm.curGlobals[slot]
 	if value.Kind == runtime.VMKindUnset {
 		return runtime.VMValueNull, fmt.Errorf("global is undefined")
 	}
 	if value.Kind == runtime.VMKindBoxed {
 		if acc, ok := value.Boxed.(*runtime.StringAccumulator); ok {
 			materialized := runtime.VMValue{Kind: runtime.VMKindBoxed, Boxed: acc.Materialize()}
-			vm.globals[slot] = materialized
+			vm.curGlobals[slot] = materialized
 			return materialized, nil
 		}
 	}

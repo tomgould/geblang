@@ -1,0 +1,39 @@
+/**
+ * @title Serialize/deserialize dispatch through the active backend
+ * @summary json.stringify dispatches a class __serialize, and json.parseAs
+ * rebuilds a class, through the running backend's own conversion context.
+ */
+import test;
+import json;
+
+class Point {
+    int x;
+    int y;
+    func Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+    func __serialize(): dict<string, any> {
+        return {"x": this.x, "y": this.y};
+    }
+}
+
+class SerializeContextTest extends test.Test {
+    @test
+    func stringifyCallsSerialize(): void {
+        this.assertEquals("{\"x\":1,\"y\":2}", json.stringify(Point(1, 2)));
+    }
+
+    @test
+    func parseAsRebuildsClass(): void {
+        let p = json.parseAs("{\"x\":3,\"y\":4}", Point);
+        this.assertEquals(3, p.x);
+        this.assertEquals(4, p.y);
+    }
+
+    @test
+    func roundTrips(): void {
+        let p = json.parseAs(json.stringify(Point(8, 9)), Point);
+        this.assertEquals(17, p.x + p.y);
+    }
+}

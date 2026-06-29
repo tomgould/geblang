@@ -5,6 +5,7 @@ import (
 	"geblang/internal/ast"
 	argbinding "geblang/internal/binding"
 	"geblang/internal/native"
+	"geblang/internal/overload"
 	"geblang/internal/runtime"
 	"sort"
 	"strings"
@@ -23,10 +24,10 @@ func (vm *VM) tailCall(instruction Instruction) (int, error) {
 	}
 	index := instruction.Operands[0]
 	argc := instruction.Operands[1]
-	if index < 0 || int(index) >= len(vm.chunk.Functions) {
+	if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) {
 		return 0, vm.runtimeError(instruction, "tail call function index out of range")
 	}
-	function := vm.chunk.Functions[index]
+	function := vm.curMod.Chunk.Functions[index]
 	if len(vm.frames) == 0 {
 		return 0, vm.runtimeError(instruction, "tail call without an active frame")
 	}
@@ -109,10 +110,10 @@ func (vm *VM) call(instruction Instruction, ip int) (int, error) {
 	}
 	index := instruction.Operands[0]
 	argc := instruction.Operands[1]
-	if index < 0 || int(index) >= len(vm.chunk.Functions) {
+	if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) {
 		return 0, vm.runtimeError(instruction, "function index out of range")
 	}
-	function := &vm.chunk.Functions[index]
+	function := &vm.curMod.Chunk.Functions[index]
 	if !vm.requiresCallSitePolymorphism {
 		n := len(vm.stack)
 		if int(argc) > n {
@@ -194,8 +195,6 @@ func (vm *VM) startAsyncFunction(index int64, args []runtime.Value) *runtime.Tas
 	worker := vm.spawnAsyncWorker()
 	runtime.AsyncEnter()
 	go func() {
-		gid := native.RegisterCallableInvoker(worker.invokeCallable)
-		defer native.UnregisterCallableInvoker(gid)
 		defer runtime.AsyncLeave()
 		result, err := worker.CallFunction(index, args)
 		task.Complete(result, err)
@@ -225,6 +224,20 @@ func (parent *VM) spawnAsyncWorker() *VM {
 	return worker
 }
 
+// enableGeneratorPersist turns on dirty-global tracking for a module worker's generator so its module-global writes can be written back when it finishes.
+func (vm *VM) enableGeneratorPersist(callVM *VM) {
+	if vm.moduleLoader != nil && callVM.ModuleName() != "" {
+		callVM.SetPersistGlobals(true)
+	}
+}
+
+// persistGeneratorGlobals writes a finished generator worker's dirty module globals back to its module record, matching the evaluator's shared-environment semantics.
+func (vm *VM) persistGeneratorGlobals(callVM *VM) {
+	if vm.moduleLoader != nil && callVM.ModuleName() != "" {
+		vm.moduleLoader.PersistModuleGlobals(callVM)
+	}
+}
+
 func (vm *VM) lazyGenerator(index int64, args []runtime.Value) *runtime.Generator {
 	vm.noteEscape()
 	items := make(chan vmGeneratorItem)
@@ -239,9 +252,12 @@ func (vm *VM) lazyGenerator(index int64, args []runtime.Value) *runtime.Generato
 			callVM.generatorExecution = true
 			callVM.generatorYield = items
 			callVM.generatorDone = doneCh
+			vm.enableGeneratorPersist(callVM)
 			go func() {
 				defer close(items)
-				if _, err := callVM.CallFunction(index, args); err != nil {
+				_, err := callVM.CallFunction(index, args)
+				vm.persistGeneratorGlobals(callVM)
+				if err != nil {
 					select {
 					case items <- vmGeneratorItem{err: err}:
 					case <-doneCh:
@@ -284,9 +300,12 @@ func (vm *VM) lazyClosureGenerator(closure runtime.BytecodeClosure, args []runti
 			callVM.generatorExecution = true
 			callVM.generatorYield = items
 			callVM.generatorDone = doneCh
+			vm.enableGeneratorPersist(callVM)
 			go func() {
 				defer close(items)
-				if _, err := callVM.callCallable(closure, args); err != nil {
+				_, err := callVM.callCallable(closure, args)
+				vm.persistGeneratorGlobals(callVM)
+				if err != nil {
 					select {
 					case items <- vmGeneratorItem{err: err}:
 					case <-doneCh:
@@ -329,8 +348,6 @@ func (vm *VM) startAsyncCallableWithForwardThis(fn runtime.Value, args []runtime
 	}
 	runtime.AsyncEnter()
 	go func() {
-		gid := native.RegisterCallableInvoker(worker.invokeCallable)
-		defer native.UnregisterCallableInvoker(gid)
 		defer runtime.AsyncLeave()
 		result, err := worker.callCallable(fn, args)
 		task.Complete(result, err)
@@ -985,10 +1002,10 @@ func (vm *VM) startFunctionWithValidation(instruction Instruction, ip int, funct
 }
 
 func (vm *VM) startClosureFunction(instruction Instruction, ip int, closure runtime.BytecodeClosure, args []runtime.Value) (int, error) {
-	if int(closure.FunctionIndex) >= len(vm.chunk.Functions) {
+	if int(closure.FunctionIndex) >= len(vm.curMod.Chunk.Functions) {
 		return 0, vm.runtimeError(instruction, "closure function index out of range")
 	}
-	function := &vm.chunk.Functions[closure.FunctionIndex]
+	function := &vm.curMod.Chunk.Functions[closure.FunctionIndex]
 	if function.IsGenerator && !vm.generatorExecution {
 		vm.push(vm.lazyClosureGenerator(closure, args))
 		return ip, nil
@@ -1591,6 +1608,13 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtim
 				}
 				return vm.callCallableSlow(callable, args)
 			},
+			BridgeInvoke: func(host any, args []runtime.Value) (runtime.Value, error) {
+				if isolated {
+					return vm.callCallableIsolated(callable, args)
+				}
+				h, _ := host.(*VM)
+				return vm.callCallableSlowHosted(callable, args, h)
+			},
 		}
 	case runtime.BytecodeClosure:
 		vm.bridgeActive.Store(true)
@@ -1604,20 +1628,44 @@ func (vm *VM) wrapStatefulNativeValue(value runtime.Value, isolated bool) runtim
 				}
 				return vm.callCallableSlow(callable, args)
 			},
+			BridgeInvoke: func(host any, args []runtime.Value) (runtime.Value, error) {
+				if isolated {
+					return vm.callCallableIsolated(callable, args)
+				}
+				h, _ := host.(*VM)
+				return vm.callCallableSlowHosted(callable, args, h)
+			},
 		}
 	case *runtime.List:
-		elements := make([]runtime.Value, len(callable.Elements))
-		for i, element := range callable.Elements {
-			elements[i] = vm.wrapStatefulNativeValue(element, false)
+		// Share the list (reference semantics like the evaluator); bridge nested closures in place.
+		for i := range callable.Elements {
+			switch callable.Elements[i].(type) {
+			case runtime.BytecodeFunction, runtime.BytecodeClosure:
+				callable.Elements[i] = vm.wrapStatefulNativeValue(callable.Elements[i], false)
+			case *runtime.List, runtime.Dict:
+				vm.wrapStatefulNativeValue(callable.Elements[i], false)
+			}
 		}
-		return &runtime.List{Elements: elements}
+		return callable
 	case runtime.Dict:
-		entries := make(map[string]runtime.DictEntry, callable.Len())
+		// Share the dict; bridge nested closures in place so callee mutations stay visible.
+		var rewriteKeys []string
+		var rewriteVals []runtime.Value
 		callable.ForEachEntry(func(key string, entry runtime.DictEntry) bool {
-			entries[key] = runtime.DictEntry{Key: entry.Key, Value: vm.wrapStatefulNativeValue(entry.Value, false)}
+			switch entry.Value.(type) {
+			case runtime.BytecodeFunction, runtime.BytecodeClosure:
+				rewriteKeys = append(rewriteKeys, key)
+				rewriteVals = append(rewriteVals, vm.wrapStatefulNativeValue(entry.Value, false))
+			case *runtime.List, runtime.Dict:
+				vm.wrapStatefulNativeValue(entry.Value, false)
+			}
 			return true
 		})
-		return runtime.Dict{Entries: entries}
+		for i, key := range rewriteKeys {
+			e, _ := callable.GetEntry(key)
+			callable.PutEntry(key, runtime.DictEntry{Key: e.Key, Value: rewriteVals[i]})
+		}
+		return callable
 	default:
 		return value
 	}
@@ -1694,7 +1742,7 @@ func (vm *VM) reorderMethodNamedArgs(instruction Instruction, instance *runtime.
 	if err != nil {
 		return nil, err
 	}
-	function := vm.chunk.Functions[idx]
+	function := vm.curMod.Chunk.Functions[idx]
 	return vm.orderRuntimeArguments(instruction, function, args, names, 1)
 }
 
@@ -1715,10 +1763,10 @@ func (vm *VM) reorderCallableNamedArgs(instruction Instruction, callee runtime.V
 	default:
 		return args, nil
 	}
-	if funcIdx < 0 || int(funcIdx) >= len(vm.chunk.Functions) {
+	if funcIdx < 0 || int(funcIdx) >= len(vm.curMod.Chunk.Functions) {
 		return args, nil
 	}
-	function := vm.chunk.Functions[funcIdx]
+	function := vm.curMod.Chunk.Functions[funcIdx]
 	offset := 0
 	if closure, ok := callee.(runtime.BytecodeClosure); ok {
 		offset = len(closure.Upvalues)
@@ -1749,10 +1797,10 @@ func (vm *VM) readArgNames(instruction Instruction, nameOperands []int64) ([]str
 // target is a BytecodeFunction or no-upvalue BytecodeClosure in the same
 // module. Returns the function's return value and pops it off the stack.
 func (vm *VM) callBytecodeInline(funcIndex int64, args []runtime.Value) (runtime.Value, error) {
-	if funcIndex < 0 || int(funcIndex) >= len(vm.chunk.Functions) {
+	if funcIndex < 0 || int(funcIndex) >= len(vm.curMod.Chunk.Functions) {
 		return nil, fmt.Errorf("function index out of range")
 	}
-	function := &vm.chunk.Functions[funcIndex]
+	function := &vm.curMod.Chunk.Functions[funcIndex]
 	if function.IsGenerator || function.Async {
 		return nil, fmt.Errorf("inline call does not support generator/async functions")
 	}
@@ -1807,10 +1855,13 @@ func (vm *VM) callBytecodeInline(funcIndex int64, args []runtime.Value) (runtime
 // the callback can fire on a different goroutine than the VM dispatch
 // loop and inline state mutations would race.
 func (vm *VM) callCallableSlow(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
-	old := vm.inDispatchLoop
-	vm.inDispatchLoop = false
-	defer func() { vm.inDispatchLoop = old }()
-	return vm.callCallable(fn, args)
+	// Force the non-inline path without mutating the shared vm.inDispatchLoop, which a callback on another goroutine would race.
+	return vm.callCallableMode(fn, args, false)
+}
+
+// callCallableSlowHosted runs a bridged callback threading the invoking worker as the synchronous re-entry host so a module call inside the callback reuses that module's in-flight worker.
+func (vm *VM) callCallableSlowHosted(fn runtime.Value, args []runtime.Value, reentryHost *VM) (runtime.Value, error) {
+	return vm.callCallableModeHosted(fn, args, false, reentryHost)
 }
 
 // callCallableIsolated runs a per-request server-handler callback on a fresh
@@ -1839,7 +1890,7 @@ func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runt
 		}
 		wrapper = append(wrapper, Instruction{Op: OpCall, Operands: []int64{f.Index, int64(len(args))}})
 		wrapper = append(wrapper, Instruction{Op: OpReturn})
-		return vm.runWrapperWithRawCall(args, wrapper, -1, true)
+		return vm.runWrapperWithRawCall(args, wrapper, -1, true, nil)
 	case runtime.BytecodeClosure:
 		if f.Module != vm.moduleName {
 			return vm.callCallableSlow(fn, args)
@@ -1856,27 +1907,102 @@ func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runt
 		}
 		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
 		wrapper = append(wrapper, Instruction{Op: OpReturn})
-		return vm.runWrapperWithRawCall(constants, wrapper, -1, true)
+		return vm.runWrapperWithRawCall(constants, wrapper, -1, true, nil)
 	default:
 		return vm.callCallableSlow(fn, args)
 	}
 }
 
 func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	return vm.callCallableMode(fn, args, vm.inDispatchLoop)
+}
+
+// callCallableMode dispatches a callable; allowInline (the owning goroutine's dispatch-loop state, passed explicitly so cross-goroutine callbacks never read/write the shared flag) gates the inline fast path.
+// overloadedValue builds a runtime.OverloadedFunction from function indices in this chunk; each overload routes through the loader (an exclusive worker per call, never reading the parent VM's dispatch state) so the value is safe to invoke from another goroutine.
+func (vm *VM) overloadedValue(indices []int64) runtime.OverloadedFunction {
+	loader := vm.moduleLoader
+	if loader == nil {
+		// No-loader overloads capture vm; keep the host VM out of the pool while the value can still call into it.
+		vm.noteEscape()
+	}
+	moduleName := vm.moduleName
+	overloads := make([]runtime.Function, 0, len(indices))
+	name := ""
+	for _, idx := range indices {
+		fi := &vm.curMod.Chunk.Functions[idx]
+		if name == "" {
+			name = fi.Name
+		}
+		bf := runtime.BytecodeFunction{Module: moduleName, Index: idx}
+		var native func(*runtime.Instance, []runtime.Value) (runtime.Value, error)
+		if loader != nil {
+			native = func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+				return loader.CallModuleFunction(bf, args, vm)
+			}
+		} else {
+			native = func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
+				return vm.callCallable(bf, args)
+			}
+		}
+		overloads = append(overloads, runtime.Function{
+			Name:           fi.Name,
+			Parameters:     overloadParams(fi),
+			TypeParameters: fi.TypeParameters,
+			Native:         native,
+		})
+	}
+	return runtime.OverloadedFunction{Name: name, Overloads: overloads}
+}
+
+// overloadParams reconstructs ast parameters from a FunctionInfo so the shared selector sees the same names, types, defaults, and variadic flag as the evaluator's overloads.
+func overloadParams(fi *FunctionInfo) []ast.Parameter {
+	params := make([]ast.Parameter, len(fi.ParamNames))
+	for i := range fi.ParamNames {
+		var typ *ast.TypeRef
+		if i < len(fi.ParamTypes) && fi.ParamTypes[i] != "" {
+			typ = &ast.TypeRef{Name: fi.ParamTypes[i]}
+		}
+		var def ast.Expression
+		if i < len(fi.DefaultConstants) && fi.DefaultConstants[i] >= 0 {
+			def = &ast.Identifier{Value: "_"}
+		}
+		params[i] = ast.Parameter{
+			Name:     &ast.Identifier{Value: fi.ParamNames[i]},
+			Type:     typ,
+			Default:  def,
+			Variadic: fi.Variadic && i == len(fi.ParamNames)-1,
+		}
+	}
+	return params
+}
+
+func (vm *VM) callCallableMode(fn runtime.Value, args []runtime.Value, allowInline bool) (runtime.Value, error) {
+	return vm.callCallableModeHosted(fn, args, allowInline, nil)
+}
+
+func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, allowInline bool, reentryHost *VM) (runtime.Value, error) {
 	switch f := fn.(type) {
 	case runtime.Function:
+		if f.BridgeInvoke != nil {
+			if host := vm.activeReentryHost(); host != nil {
+				return f.BridgeInvoke(host, args)
+			}
+		}
 		if f.Native == nil {
 			return nil, fmt.Errorf("runtime function is not callable by VM")
 		}
 		return f.Native(nil, args)
 	case runtime.OverloadedFunction:
-		for _, overload := range f.Overloads {
-			if len(overload.Parameters) == len(args) {
-				return vm.callCallable(overload, args)
-			}
+		chosen, err := overload.Select(f.Name, f.Overloads, args)
+		if err != nil {
+			return nil, err
 		}
-		return nil, fmt.Errorf("no matching overload for %s with %d arguments", f.Name, len(args))
+		return vm.callCallableModeHosted(chosen, args, allowInline, reentryHost)
 	case runtime.BytecodeFunction:
+		// An async function invoked as a value/callback yields a Task (the worker runs the body synchronously via syncMode), matching the evaluator and the direct-call path.
+		if f.Async && !vm.syncMode {
+			return vm.startAsyncCallable(f, args), nil
+		}
 		if f.Module != vm.moduleName {
 			// Cross-chunk function reference - the Index resolves
 			// against the defining chunk's function table, not ours.
@@ -1885,7 +2011,7 @@ func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Valu
 			if vm.moduleLoader == nil {
 				return nil, fmt.Errorf("bytecode module loader is not configured")
 			}
-			return vm.moduleLoader.CallModuleFunction(f, vm.wrapStatefulNativeArgs("", "", args))
+			return vm.moduleLoader.CallModuleFunction(f, vm.wrapStatefulNativeArgs("", "", args), vm)
 		}
 		if f.Raw {
 			if vm.methodReceiverFuncs[f.Index] {
@@ -1896,11 +2022,14 @@ func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Valu
 			}
 			return vm.CallFunctionRaw(f.Index, args)
 		}
-		if vm.inDispatchLoop && !vm.requiresCallSitePolymorphism {
+		if allowInline && !vm.requiresCallSitePolymorphism {
 			return vm.callBytecodeInline(f.Index, args)
 		}
 		return vm.CallFunction(f.Index, args)
 	case runtime.BytecodeClosure:
+		if !vm.syncMode && f.Module == vm.moduleName && int(f.FunctionIndex) >= 0 && int(f.FunctionIndex) < len(vm.curMod.Chunk.Functions) && vm.curMod.Chunk.Functions[f.FunctionIndex].Async {
+			return vm.startAsyncCallable(f, args), nil
+		}
 		if f.Module != vm.moduleName {
 			// The closure was created in a different chunk - its
 			// FunctionIndex resolves against that chunk's function
@@ -1911,9 +2040,9 @@ func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Valu
 			if vm.moduleLoader == nil {
 				return nil, fmt.Errorf("bytecode module loader is not configured")
 			}
-			return vm.moduleLoader.CallModuleClosure(f, vm.wrapStatefulNativeArgs("", "", args))
+			return vm.moduleLoader.CallModuleClosure(f, vm.wrapStatefulNativeArgs("", "", args), vm)
 		}
-		if vm.inDispatchLoop && len(f.Upvalues) == 0 && f.TypeBindings == nil && !vm.requiresCallSitePolymorphism {
+		if allowInline && len(f.Upvalues) == 0 && f.TypeBindings == nil && !vm.requiresCallSitePolymorphism {
 			return vm.callBytecodeInline(f.FunctionIndex, args)
 		}
 		constants := make([]runtime.Value, 0, len(args)+2)
@@ -1928,7 +2057,7 @@ func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Valu
 		}
 		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
 		wrapper = append(wrapper, Instruction{Op: OpReturn})
-		return vm.runWrapper(constants, wrapper)
+		return vm.runWrapperWithRawCall(constants, wrapper, -1, false, reentryHost)
 	case *runtime.Instance:
 		constants := make([]runtime.Value, 0, len(args)+2)
 		constants = append(constants, f)
@@ -1942,7 +2071,7 @@ func (vm *VM) callCallable(fn runtime.Value, args []runtime.Value) (runtime.Valu
 		}
 		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
 		wrapper = append(wrapper, Instruction{Op: OpReturn})
-		return vm.runWrapper(constants, wrapper)
+		return vm.runWrapperWithRawCall(constants, wrapper, -1, false, reentryHost)
 	default:
 		return nil, fmt.Errorf("value is not callable")
 	}
@@ -1964,6 +2093,118 @@ func (vm *VM) CallFunction(index int64, args []runtime.Value) (runtime.Value, er
 	return vm.runWrapper(args, wrapper)
 }
 
+// CallFunctionFast enters a cross-module free function directly (no synthetic wrapper bytecode / derived call VM) when it is sync, undecorated, non-generator and non-raw; otherwise it falls back to the wrapper path with identical results.
+func (vm *VM) CallFunctionFast(index int64, args []runtime.Value) (runtime.Value, error) {
+	if vm.directEntryEligible(index) {
+		return vm.executeFunctionDirect(index, args)
+	}
+	return vm.CallFunction(index, args)
+}
+
+func (vm *VM) directEntryEligible(index int64) bool {
+	if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) {
+		return false
+	}
+	function := &vm.curMod.Chunk.Functions[index]
+	if function.IsGenerator || function.Async {
+		return false
+	}
+	if err := vm.ensureCallableDecorators(); err != nil {
+		return false
+	}
+	_, decorated := vm.decoratedFuncs[index]
+	return !decorated
+}
+
+// executeFunctionDirect pushes the callee's frame directly on this idle, exclusively-owned worker VM and runs to completion, mirroring callBytecodeInline as the outermost run (cleanup fires once, matching the wrapper-callVM path). startFunction applies arg validation / defaults / variadic.
+// enterDirectRun snapshots the inline-run baselines (entry IP, frame exit depth, exception-handler count) for a nested direct execution and returns a restore closure; the handler baseline keeps a nested re-entry on a shared worker from unwinding into the enclosing execution's exception handlers.
+func (vm *VM) enterDirectRun() func() {
+	oldEntryIP := vm.runEntryIP
+	oldExitDepth := vm.runInlineExitDepth
+	oldHandlerBaseline := vm.runHandlerBaseline
+	oldDeferBaseline := vm.runDeferBaseline
+	entryHandlers := len(vm.exceptionHandlers)
+	entryDefers := len(vm.defers)
+	vm.runHandlerBaseline = entryHandlers
+	vm.runDeferBaseline = entryDefers
+	return func() {
+		vm.runEntryIP = oldEntryIP
+		vm.runInlineExitDepth = oldExitDepth
+		vm.runHandlerBaseline = oldHandlerBaseline
+		vm.runDeferBaseline = oldDeferBaseline
+		if len(vm.exceptionHandlers) > entryHandlers {
+			vm.exceptionHandlers = vm.exceptionHandlers[:entryHandlers]
+		}
+		if len(vm.defers) > entryDefers {
+			vm.defers = vm.defers[:entryDefers]
+		}
+	}
+}
+
+func (vm *VM) executeFunctionDirect(index int64, args []runtime.Value) (runtime.Value, error) {
+	function := &vm.curMod.Chunk.Functions[index]
+	baseline := len(vm.frames)
+	defer vm.enterDirectRun()()
+	nextIP, err := vm.startFunction(Instruction{}, 0, function, args, nil)
+	if err != nil {
+		return nil, err
+	}
+	vm.runEntryIP = nextIP + 1
+	vm.runInlineExitDepth = baseline
+	if err := vm.Run(); err != nil {
+		return nil, err
+	}
+	result, perr := vm.popVM()
+	if perr != nil {
+		return nil, perr
+	}
+	return result.ToValue(), nil
+}
+
+// CallClosureFast enters a cross-module closure directly (no wrapper) when its function is sync, undecorated and non-generator; otherwise falls back to the wrapper/inline path with identical results.
+func (vm *VM) CallClosureFast(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
+	if vm.closureDirectEligible(closure) {
+		return vm.executeClosureDirect(closure, args)
+	}
+	return vm.callCallable(closure, args)
+}
+
+func (vm *VM) closureDirectEligible(closure runtime.BytecodeClosure) bool {
+	index := closure.FunctionIndex
+	if index < 0 || int(index) >= len(vm.curMod.Chunk.Functions) {
+		return false
+	}
+	function := &vm.curMod.Chunk.Functions[index]
+	if function.IsGenerator || function.Async {
+		return false
+	}
+	if err := vm.ensureCallableDecorators(); err != nil {
+		return false
+	}
+	_, decorated := vm.decoratedFuncs[index]
+	return !decorated
+}
+
+// executeClosureDirect pushes the closure's frame directly on this idle, exclusively-owned worker VM (startClosureFunction binds upvalues + type bindings) and runs to completion, mirroring executeFunctionDirect.
+func (vm *VM) executeClosureDirect(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
+	baseline := len(vm.frames)
+	defer vm.enterDirectRun()()
+	nextIP, err := vm.startClosureFunction(Instruction{}, 0, closure, args)
+	if err != nil {
+		return nil, err
+	}
+	vm.runEntryIP = nextIP + 1
+	vm.runInlineExitDepth = baseline
+	if err := vm.Run(); err != nil {
+		return nil, err
+	}
+	result, perr := vm.popVM()
+	if perr != nil {
+		return nil, perr
+	}
+	return result.ToValue(), nil
+}
+
 func (vm *VM) CallFunctionRaw(index int64, args []runtime.Value) (runtime.Value, error) {
 	if index < 0 || int(index) >= len(vm.chunk.Functions) {
 		return nil, fmt.Errorf("function index out of range")
@@ -1974,7 +2215,7 @@ func (vm *VM) CallFunctionRaw(index int64, args []runtime.Value) (runtime.Value,
 	}
 	wrapper = append(wrapper, Instruction{Op: OpCall, Operands: []int64{index, int64(len(args))}})
 	wrapper = append(wrapper, Instruction{Op: OpReturn})
-	return vm.runWrapperWithRawCall(args, wrapper, index, false)
+	return vm.runWrapperWithRawCall(args, wrapper, index, false, nil)
 }
 
 func (vm *VM) CallClosure(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
@@ -2074,6 +2315,10 @@ func (vm *VM) DeserializeIntoChunkClass(class runtime.BytecodeClass, value runti
 	ctor := vm.chunk.Functions[ctorIndex]
 	args := make([]runtime.Value, 0, len(ctor.ParamNames))
 	for _, paramName := range ctor.ParamNames {
+		// Skip the implicit "this" receiver the compiler prepends to constructor parameter lists.
+		if paramName == "this" {
+			continue
+		}
 		key := runtime.String{Value: paramName}
 		entry, hit := dict.GetEntry(native.DictKey(key))
 		if !hit {
@@ -2151,6 +2396,41 @@ func (vm *VM) ConstructClassWithTypeArgs(index int64, args []runtime.Value, type
 	return vm.runWrapper(extended, wrapper)
 }
 
+// ConstructClassFast constructs a cross-module class by directly running OpConstructClass + the constructor frame on the exclusive worker VM (no synthetic wrapper bytecode / derived call VM), for a non-decorated class; decorated classes fall back to the wrapper path.
+func (vm *VM) ConstructClassFast(index int64, args []runtime.Value, typeArgs []string) (runtime.Value, error) {
+	if index >= 0 && int(index) < len(vm.curMod.Chunk.Classes) {
+		if err := vm.ensureCallableDecorators(); err == nil {
+			if _, decorated := vm.decoratedClasses[index]; !decorated {
+				return vm.executeConstructDirect(index, args, typeArgs)
+			}
+		}
+	}
+	return vm.ConstructClassWithTypeArgs(index, args, typeArgs)
+}
+
+// executeConstructDirect builds the instance + runs its constructor directly on this idle, exclusively-owned worker VM. constructClassWithArgs pushes a constructor frame (run it) or leaves the instance/result on the stack (no-ctor); detect via the frame depth.
+func (vm *VM) executeConstructDirect(index int64, args []runtime.Value, typeArgs []string) (runtime.Value, error) {
+	baseline := len(vm.frames)
+	defer vm.enterDirectRun()()
+	vm.stageTypeArgsAsBindings(index, typeArgs)
+	nextIP, err := vm.constructClassWithArgs(Instruction{}, 0, index, args, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(vm.frames) > baseline {
+		vm.runEntryIP = nextIP + 1
+		vm.runInlineExitDepth = baseline
+		if err := vm.Run(); err != nil {
+			return nil, err
+		}
+	}
+	result, perr := vm.popVM()
+	if perr != nil {
+		return nil, perr
+	}
+	return result.ToValue(), nil
+}
+
 func (vm *VM) ConstructClass(index int64, args []runtime.Value) (runtime.Value, error) {
 	if index < 0 || int(index) >= len(vm.chunk.Classes) {
 		return nil, fmt.Errorf("class index out of range")
@@ -2184,7 +2464,7 @@ func (vm *VM) CallMethodAs(className string, instance *runtime.Instance, name st
 		} else {
 			if module, parentClass, mok := vm.crossModuleBoundary(classInfo); mok && vm.moduleLoader != nil {
 				if _, lerr := vm.moduleLoader.LoadModule(module, module); lerr == nil {
-					return vm.moduleLoader.CallParentInModule(module, parentClass, name, instance, args)
+					return vm.moduleLoader.CallParentInModule(module, parentClass, name, instance, args, vm)
 				}
 			}
 			return nil, &runtime.MethodNotFoundError{Class: className, Method: name}
@@ -2208,8 +2488,11 @@ func (vm *VM) CallMethodAs(className string, instance *runtime.Instance, name st
 }
 
 func (vm *VM) CallMethod(instance *runtime.Instance, name string, args []runtime.Value) (runtime.Value, error) {
-	if nativeMethods := instance.Class.Methods[strings.ToLower(name)]; len(nativeMethods) > 0 && nativeMethods[0].Native != nil {
-		return nativeMethods[0].Native(instance, args)
+	// Only a foreign-class instance dispatches via the trampoline wrapper; a local instance resolves directly (the wrapper routes cross-module to the loader, so using it on the instance's own module VM would recurse).
+	if instance.Class.Module != vm.moduleName {
+		if nativeMethods := instance.Class.Methods[strings.ToLower(name)]; len(nativeMethods) > 0 && nativeMethods[0].Native != nil {
+			return nativeMethods[0].Native(instance, args)
+		}
 	}
 	classInfo, ok := vm.classInfo(instance.Class.Name)
 	if !ok {
@@ -2219,7 +2502,7 @@ func (vm *VM) CallMethod(instance *runtime.Instance, name string, args []runtime
 	if !ok {
 		if module, parentClass, mok := vm.crossModuleBoundary(classInfo); mok && vm.moduleLoader != nil {
 			if _, lerr := vm.moduleLoader.LoadModule(module, module); lerr == nil {
-				return vm.moduleLoader.CallParentInModule(module, parentClass, name, instance, args)
+				return vm.moduleLoader.CallParentInModule(module, parentClass, name, instance, args, vm)
 			}
 		}
 		if result, handled, derr := vm.callInterfaceDefaultValue(instance, strings.ToLower(name), args); handled {
@@ -2242,6 +2525,42 @@ func (vm *VM) CallMethod(instance *runtime.Instance, name string, args []runtime
 	}
 	callArgs := append([]runtime.Value{instance}, args...)
 	return vm.CallFunction(functionIndex, callArgs)
+}
+
+// CallMethodFast enters a cross-module instance method directly (no method-wrapper / derived call VM) when it resolves to a sync, undecorated, non-generator method; otherwise it falls back to CallMethod (wrapper, decorators, cross-module-parent / interface-default resolution).
+func (vm *VM) CallMethodFast(instance *runtime.Instance, name string, args []runtime.Value) (runtime.Value, error) {
+	if idx, ok := vm.methodDirectIndex(instance, name, args); ok {
+		callArgs := append([]runtime.Value{instance}, args...)
+		return vm.executeFunctionDirect(idx, callArgs)
+	}
+	return vm.CallMethod(instance, name, args)
+}
+
+// methodDirectIndex resolves a directly-enterable method to its function index, returning ok=false for anything CallMethod must handle (unknown class/method, overload error, decorated, generator, async).
+func (vm *VM) methodDirectIndex(instance *runtime.Instance, name string, args []runtime.Value) (int64, bool) {
+	classInfo, ok := vm.classInfo(instance.Class.Name)
+	if !ok {
+		return 0, false
+	}
+	indices, ok := vm.lookupMethod(classInfo, name)
+	if !ok {
+		return 0, false
+	}
+	functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 1)
+	if err != nil {
+		return 0, false
+	}
+	if err := vm.ensureCallableDecorators(); err != nil {
+		return 0, false
+	}
+	function := &vm.curMod.Chunk.Functions[functionIndex]
+	if function.IsGenerator || function.Async {
+		return 0, false
+	}
+	if _, decorated := vm.decoratedFuncs[functionIndex]; decorated {
+		return 0, false
+	}
+	return functionIndex, true
 }
 
 func (vm *VM) CallStaticMethod(classIndex int64, name string, args []runtime.Value) (runtime.Value, error) {
@@ -2268,11 +2587,44 @@ func (vm *VM) CallStaticMethod(classIndex int64, name string, args []runtime.Val
 	return vm.CallFunction(functionIndex, args)
 }
 
-func (vm *VM) runWrapper(args []runtime.Value, wrapper []Instruction) (runtime.Value, error) {
-	return vm.runWrapperWithRawCall(args, wrapper, -1, false)
+// CallStaticMethodFast enters a cross-module static method directly on the exclusive worker VM (no wrapper) when it resolves to a sync, undecorated, non-generator method; otherwise it falls back to CallStaticMethod.
+func (vm *VM) CallStaticMethodFast(classIndex int64, name string, args []runtime.Value) (runtime.Value, error) {
+	if idx, ok := vm.staticDirectIndex(classIndex, name, args); ok {
+		return vm.executeFunctionDirect(idx, args)
+	}
+	return vm.CallStaticMethod(classIndex, name, args)
 }
 
-func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction, rawIndex int64, isolated bool) (runtime.Value, error) {
+func (vm *VM) staticDirectIndex(classIndex int64, name string, args []runtime.Value) (int64, bool) {
+	if classIndex < 0 || int(classIndex) >= len(vm.curMod.Chunk.Classes) {
+		return 0, false
+	}
+	indices, ok := vm.lookupStaticMethod(vm.curMod.Chunk.Classes[classIndex], name)
+	if !ok {
+		return 0, false
+	}
+	functionIndex, err := vm.selectRuntimeFunction(Instruction{}, name, indices, args, 0)
+	if err != nil {
+		return 0, false
+	}
+	if err := vm.ensureCallableDecorators(); err != nil {
+		return 0, false
+	}
+	function := &vm.curMod.Chunk.Functions[functionIndex]
+	if function.IsGenerator || function.Async {
+		return 0, false
+	}
+	if _, decorated := vm.decoratedFuncs[functionIndex]; decorated {
+		return 0, false
+	}
+	return functionIndex, true
+}
+
+func (vm *VM) runWrapper(args []runtime.Value, wrapper []Instruction) (runtime.Value, error) {
+	return vm.runWrapperWithRawCall(args, wrapper, -1, false, nil)
+}
+
+func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction, rawIndex int64, isolated bool, reentryHost *VM) (runtime.Value, error) {
 	chunk := vm.chunk
 	meta := vm.chunk.sharedMeta
 	var callVM *VM
@@ -2299,6 +2651,7 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 				copy(pooled.chunk.Instructions[len(base):], translated)
 			} else {
 				pooled.chunk.Instructions = appendWrapper(base, translated)
+				pooled.curMod.Chunk.Instructions = pooled.chunk.Instructions
 				pooled.wrapperBase = base
 			}
 			pooled.stdout = vm.stdout
@@ -2351,6 +2704,8 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 	if callVM == nil {
 		callVM = NewVMWithModuleLoader(chunk, vm.stdout, vm.moduleLoader)
 	}
+	// Chain a synchronous same-goroutine module re-entry from inside this callback to the live worker that invoked it (nil when not re-entering).
+	callVM.reentryHost = reentryHost
 	// The callVM is a wrap-bridge worker: its setGlobalVM writes feed the
 	// write-back loop below, so it must take the locked + dirty-tracking
 	// path even if no further wrap fires inside it.

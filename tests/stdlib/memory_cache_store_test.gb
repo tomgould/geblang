@@ -1,0 +1,21 @@
+/**
+ * @title MemoryCacheStore (web.cache)
+ * @summary In-process cache store: set / get / has / delete round-trip.
+ */
+import test;
+import web.cache as cache;
+
+class MemoryCacheStoreTest extends test.Test {
+    @test
+    func setGetHasDelete(): void {
+        let s = cache.memoryCacheStore(3600);
+        this.assertTrue(s.get("missing") == null);
+        this.assertFalse(s.has("missing"));
+        s.set("k", {"body": "hello"});
+        this.assertTrue(s.has("k"));
+        this.assertEquals("hello", (s.get("k") as dict<string, any>)["body"] as string);
+        this.assertTrue(s.delete("k"));
+        this.assertTrue(s.get("k") == null);
+        this.assertFalse(s.has("k"));
+    }
+}

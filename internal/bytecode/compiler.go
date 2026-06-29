@@ -250,6 +250,8 @@ func CompileWithOptions(program *ast.Program, source []byte, compilerVersion str
 			if msg := c.claimGlobalKind(decl.Name.Value, "var", ""); msg != "" {
 				return Chunk{}, fmt.Errorf("line %d:%d: %s", decl.Token.Line, decl.Token.Column, msg)
 			}
+			// Pre-allocate the global slot so a function body compiled before this declaration can resolve a forward reference to it, matching the evaluator.
+			c.globalSlot(decl.Name.Value)
 		}
 		if imp, ok := stmt.(*ast.ImportStatement); ok {
 			if alias := imp.ModuleName(); alias != "" {

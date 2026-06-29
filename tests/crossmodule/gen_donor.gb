@@ -1,0 +1,8 @@
+module gen_donor;
+let seen = 0;
+export func reset(): void { seen = 0; }
+export func count(int n): generator<int> {
+    let i = 0;
+    while (i < n) { seen = seen + 1; yield i; i = i + 1; }
+}
+export func seenCount(): int { return seen; }

@@ -1,0 +1,7 @@
+module hier_base;
+export class Shape { func kind(): string { return "shape"; } }
+export class Entity {
+    int id;
+    func Entity(int id) { this.id = id; }
+    func __serialize(): dict<string, any> { return {"entity_id": this.id}; }
+}

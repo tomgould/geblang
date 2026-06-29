@@ -1,0 +1,21 @@
+/**
+ * @title Overloaded callback with user-generic parameters
+ * @summary Box<Dog> vs Box<Animal> overloads are selected by their type binding.
+ */
+import test;
+
+class Animal {}
+class Dog extends Animal {}
+class Box<T> { T item; func Box(T item) { this.item = item; } }
+
+func receive(Box<Dog> b): string { return "boxDog"; }
+func receive(Box<Animal> b): string { return "boxAnimal"; }
+
+class UserGenericOverloadTest extends test.Test {
+    @test
+    func selectsByTypeBinding(): void {
+        let f = receive;
+        this.assertEquals("boxDog", f(Box<Dog>(Dog())));
+        this.assertEquals("boxAnimal", f(Box<Animal>(Animal())));
+    }
+}

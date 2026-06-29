@@ -1,0 +1,12 @@
+module bridge_donor;
+
+import collections;
+
+let total = 0;
+
+export func bump(): void { total = total + 1; }
+export func current(): int { return total; }
+export func mapBumping(int[] xs): int[] {
+    total = 0;
+    return collections.map(xs, func(int x): int { bump(); return x + total; });
+}

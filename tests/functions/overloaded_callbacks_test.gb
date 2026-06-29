@@ -1,0 +1,100 @@
+/**
+ * @title Overloaded functions as first-class values
+ * @summary An overloaded function used as a value keeps every overload; calling
+ * it (a callback) selects by the same rules as a direct call: arity, parameter
+ * type, defaults/variadics, with no-match and ambiguous-match errors.
+ */
+import test;
+import async.tasks as task;
+
+func pick(int x): bool { return x > 2; }
+func pick(int x, int y): bool { return x > y; }
+
+func choose(int x): string { return "int"; }
+func choose(string x): string { return "str"; }
+
+func amb(int x): string { return "one"; }
+func amb(int x, int y = 9): string { return "two"; }
+
+func vary(string s): string { return "str"; }
+func vary(int... xs): string { return "ints:" + (xs.length() as string); }
+
+func dbl(int x): int { return x * 2; }
+func dbl(int x, int y): int { return x + y; }
+
+func apply1(any cb, any v): any { return cb(v); }
+func apply3(any cb, int a, int b, int c): any { return cb(a, b, c); }
+
+class Animal { }
+class Dog extends Animal { }
+interface Speaker { func speak(): string; }
+class Parrot implements Speaker { func speak(): string { return "squawk"; } }
+
+func kind(Animal a): string { return "animal"; }
+func kind(string s): string { return "string"; }
+
+func voice(Speaker s): string { return "speaker"; }
+func voice(int n): string { return "int"; }
+
+func shape(list<int> xs): string { return "ints"; }
+func shape(list<string> xs): string { return "strs"; }
+
+class OverloadedCallbackTest extends test.Test {
+    @test
+    func selectsByArity(): void {
+        this.assertEquals(true, apply1(pick, 5));
+        this.assertEquals(false, apply1(pick, 1));
+    }
+
+    @test
+    func selectsByType(): void {
+        this.assertEquals("int", apply1(choose, 5));
+        this.assertEquals("str", apply1(choose, "hi"));
+    }
+
+    @test
+    func callbackMatchesDirectCall(): void {
+        this.assertEquals(choose(5), apply1(choose, 5));
+        this.assertEquals(choose("hi"), apply1(choose, "hi"));
+    }
+
+    @test
+    func selectsVariadicOverload(): void {
+        this.assertEquals("str", apply1(vary, "x"));
+        this.assertEquals("ints:3", apply3(vary, 1, 2, 3));
+    }
+
+    @test
+    func callbackMatchesClassSubtype(): void {
+        this.assertEquals("animal", apply1(kind, Dog()));
+        this.assertEquals("string", apply1(kind, "hi"));
+    }
+
+    @test
+    func callbackMatchesInterface(): void {
+        this.assertEquals("speaker", apply1(voice, Parrot()));
+        this.assertEquals("int", apply1(voice, 7));
+    }
+
+    @test
+    func callbackMatchesGenericCollectionElement(): void {
+        this.assertEquals("ints", apply1(shape, [1, 2, 3]));
+        this.assertEquals("strs", apply1(shape, ["a", "b"]));
+    }
+
+    @test
+    func noMatchingOverloadThrows(): void {
+        this.assertThrows(func(): void { apply1(choose, true); });
+    }
+
+    @test
+    func ambiguousOverloadThrows(): void {
+        this.assertThrows(func(): void { apply1(amb, 5); });
+    }
+
+    @test
+    func concurrentCallbackSelectsPerWorker(): void {
+        let r = task.map([1, 2, 3, 4], dbl, {"concurrency": 2});
+        this.assertEquals([2, 4, 6, 8], r);
+    }
+}

@@ -213,17 +213,6 @@ func isClassValue(value runtime.Value) bool {
 	return false
 }
 
-// deserializeIntoClass delegates to the active backend's
-// ClassDeserializer. Returns an error when no backend has
-// registered one.
-func deserializeIntoClass(class runtime.Value, value runtime.Value) (runtime.Value, error) {
-	fn := GetClassDeserializer()
-	if fn == nil {
-		return nil, fmt.Errorf("class deserialization is unavailable: no active interpreter")
-	}
-	return fn(class, value)
-}
-
 func singleBytes(args []runtime.Value, label string) ([]byte, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s expects exactly one argument", label)

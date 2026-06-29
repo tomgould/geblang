@@ -1,0 +1,7 @@
+module mutator_donor;
+
+export func setFlag(dict<string, any> d): void { d["flag"] = true; }
+
+export func pushAll(list<any> xs): void { xs.push(99); }
+
+export func mutateInner(dict<string, any> d): void { (d["items"] as list<any>).push(99); }

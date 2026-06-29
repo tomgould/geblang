@@ -175,7 +175,7 @@ trade looks like this:
 |---------|-------------------|---------|
 | Types at runtime | Erased; `as` casts are unchecked assertions | Reified; casts are checked, `instanceof list<int>` works, APIs can validate against real types |
 | Parallelism | Single-threaded event loop; worker threads are separate isolates with message passing | Goroutine-backed tasks across all cores; `async.run` is true parallelism with shared typed values |
-| Request isolation | One shared mutable module scope for every in-flight request | Shared-nothing per request by default; cross-request state is an explicit, synchronised opt-in |
+| Request state | One shared mutable module scope for every in-flight request | Bare handlers are isolated per request; routers share an explicit application graph and concurrency-safe services |
 | Blocking code | Blocks the event loop; everything must be async-aware | Blocks one goroutine; no function colouring, any code can be awaited |
 | Toolchain | tsc + bundler + package manager + runtime, each configured separately | One binary: run, test, check, format, LSP, debug, bundle |
 | Dependencies | `node_modules`, transitive sprawl, supply-chain surface | Batteries-included stdlib (HTTP server/client with TLS and LetsEncrypt, database, Redis, JSON/YAML/XML/CSV, crypto, templating, queues); packages exist but most services need few or none |
@@ -355,13 +355,12 @@ What that means against the neighbours:
   its goroutine; there is no function colouring, and `await` works on
   anything.
 - **No per-request process model.** PHP gets isolation by tearing the
-  world down after every request. Geblang's HTTP server keeps the
-  process resident but runs each request handler in an isolated copy
-  of the runtime state, so one request can never observe another's
-  in-flight mutations - PHP's shared-nothing safety at goroutine
-  throughput. Cross-request state (counters, caches, sessions) is an
-  explicit opt-in through a synchronised store, never an accident of
-  module scope.
+  world down after every request. Geblang keeps the process resident.
+  A handler passed directly to `http.serve`, `http.listen`, or
+  `net.serve` receives an isolated copy of its captured state. Router
+  and framework applications instead share their application graph,
+  which keeps services and pools reusable; mutable cross-request state
+  belongs in `store.Store` or another concurrency-safe handle.
 
 Generators, channels (`async.channel`'s `Channel<T>`), `select`, worker pools, and
 structured fan-out (`async.all`, `http.fetchAll` with a concurrency
@@ -401,7 +400,7 @@ chapter covers the full surface.
 
 ## Status
 
-Geblang is at version 1.29.2 and under active development, with
+Geblang is at version 1.30.0 and under active development, with
 regular minor releases since 1.0 (see the release notes chapter for
 the full history). The bytecode VM is the default execution path; the
 tree-walking evaluator backs the test runner and acts as a
