@@ -27,4 +27,10 @@ class ImportedReflectTest extends test.Test {
         this.assertTrue(loc != null);
         this.assertEquals("reflectmod", loc["module"]);
     }
+
+    @test
+    func missingMethodOnImportedInstanceReturnsNull(): void {
+        let widget = reflectmod.Widget(1);
+        this.assertTrue(reflect.method(widget, "missing") == null);
+    }
 }

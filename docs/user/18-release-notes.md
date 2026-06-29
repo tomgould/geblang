@@ -1,5 +1,13 @@
 # Release Notes
 
+## 1.30.1
+
+### Fixes
+
+- `reflect.method(instance, name)` now returns `null` on the bytecode backend
+  when `instance` belongs to another module and the method does not exist,
+  matching the evaluator instead of reporting `unknown class`.
+
 ## 1.30.0
 
 ### Changed

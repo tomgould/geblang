@@ -457,6 +457,9 @@ func (vm *VM) reflectMethodNativeCall(fn string, args []runtime.Value) (runtime.
 			if target, ok := reflectedRuntimeInstanceMethod(fn, key, value); ok {
 				return target, nil
 			}
+			if value.Class.Module != vm.moduleName {
+				return runtime.Null{}, nil
+			}
 			return nil, fmt.Errorf("reflect.%s unknown class %s", fn, value.Class.Name)
 		}
 		classInfo := vm.chunk.Classes[classIndex]

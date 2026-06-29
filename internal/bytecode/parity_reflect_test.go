@@ -56,6 +56,21 @@ io.println(staticMethod("user"));
 `, "hi Ada\nroute\nkind:user\n")
 }
 
+func TestParityReflectMethodsOnCrossModuleCacheStores(t *testing.T) {
+	runParityWithStdlib(t, `import io;
+import reflect;
+import web.cache as cache;
+
+let memory = cache.memoryCacheStore(300);
+io.println(reflect.methods(memory).contains("supportsTags"));
+io.println(reflect.method(memory, "supportsTags") == null);
+
+let redis = cache.redisCacheStore(null, "test:", 300);
+io.println(reflect.methods(redis).contains("supportsTags"));
+io.println(redis.supportsTags());
+`, "false\ntrue\ntrue\ntrue\n")
+}
+
 func TestParityReflectNamedFunctionAndClassHandles(t *testing.T) {
 	runParity(t, `import io;
 import reflect;

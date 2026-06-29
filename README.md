@@ -1,7 +1,7 @@
 # Geblang
 
 Geblang is a statically-typed, general-purpose scripting language implemented in
-Go. Current version: **1.30.0**. It combines the ergonomics of PHP and Python
+Go. Current version: **1.30.1**. It combines the ergonomics of PHP and Python
 with strong static typing, generics, decorators, async, and runtime reflection.
 
 If you are coming from:
@@ -232,11 +232,12 @@ list_functional  node               24         23         24  166616670000
   `async.all` / `async.timeout` combinators. `http.serve`,
   `http.listen`, and `net.serve` follow Go's standard server model:
   each request runs on its own goroutine, so a server fields many
-  requests in parallel with no extra code. Handler state is isolated
-  per request on both backends (the evaluator runs each request in a
-  child evaluator with a cloned handler; the VM isolates its own
-  dispatch), so concurrent requests never race on shared mutable
-  state. An optional bounded-concurrency pool (`opts.maxConcurrent`,
+  requests in parallel with no extra code. A handler passed directly
+  to one of those server functions is isolated per request on both
+  backends. Router and framework dispatch instead share the application
+  graph across requests; shared mutable values must use `store.Store`
+  or another concurrency-safe handle. An optional bounded-concurrency
+  pool (`opts.maxConcurrent`,
   `opts.queueSize`, `opts.onOverload`) caps in-flight handlers and
   applies backpressure on overload: reject with 503, queue and wait,
   or drop the connection.
