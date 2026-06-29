@@ -442,3 +442,14 @@ for (t in ts) { if (async.await(t) == "int:8") { n = n + 1; } }
 io.println(n);
 `, "20\n")
 }
+
+// Followup review 3 (regression from the escaped-overload fix): a SYNCHRONOUS overload-as-value call within its active module must observe the module's live in-progress globals (the caller=nil escaped fix had stripped the active host for synchronous calls too).
+func TestParityOverloadSyncSeesLiveGlobals(t *testing.T) {
+	mods := map[string]string{
+		"odonor": "module odonor;\nlet state = 0;\nfunc read(int ignored): int { return state; }\nfunc read(string ignored): int { return state + 100; }\nexport func run(): int {\n    state = 7;\n    let callback = read;\n    return callback(1);\n}\n",
+	}
+	runMultiModuleParity(t, mods, `import io;
+import odonor;
+io.println(odonor.run());
+`, "7\n")
+}

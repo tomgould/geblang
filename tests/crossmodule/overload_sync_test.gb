@@ -1,0 +1,15 @@
+/**
+ * @title Synchronous overloaded-callback sees live module globals
+ * @summary An overloaded function taken as a value and called synchronously
+ * within its active module observes that module's in-progress global writes,
+ * not a committed snapshot (parity with the bytecode VM).
+ */
+import test;
+import overload_sync_donor as donor;
+
+class OverloadSyncTest extends test.Test {
+    @test
+    func seesLiveGlobal(): void {
+        this.assertEquals(7, donor.run());
+    }
+}

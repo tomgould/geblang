@@ -522,6 +522,25 @@ time a slow handler or a memory ceiling matters, and don't reach for a
 custom reactor until you have measurements proving the Go scheduler is
 the bottleneck (it usually isn't).
 
+### Handler isolation (`shareHandler`)
+
+By default each request (`http.serve` / `http.listen`) or connection
+(`net.serve`) gets an isolated copy of the handler: its captured state is
+deep-cloned, so concurrent invocations cannot see or race each other's
+mutations. Set `shareHandler: true` in the opts dict to share one handler
+across all invocations instead - this is how a framework keeps a single
+application graph (one router, one pool, one config):
+
+```geblang
+http.serve(":8080", handler, {"shareHandler": true});
+http.listen(":8080", handler, {"shareHandler": true});
+net.serve("127.0.0.1", 9000, handler, {"shareHandler": true});
+```
+
+When a handler is shared, do not mutate a plain `dict`, `list`, `set`, or
+object reachable from more than one invocation; use a `store.Store` for
+shared mutable state. Both backends behave identically.
+
 ### Server request and response objects
 
 A handler receives a plain request dict by default. To opt into a rich

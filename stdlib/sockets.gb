@@ -105,7 +105,8 @@ export func serve(string host, int port, any handler): Listener {
     let wrapped = func(dict<string, any> raw): any {
         return handler(socketFromDict(raw));
     };
-    let raw = net.serve(host, port, wrapped);
+    # shareHandler: sockets deliberately shares the handler so module-global mutations propagate (documented above); the user owns any concurrency discipline.
+    let raw = net.serve(host, port, wrapped, {"shareHandler": true});
     return Listener(
         raw["handle"] as int,
         raw["localAddr"] as string

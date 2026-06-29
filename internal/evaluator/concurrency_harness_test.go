@@ -2,10 +2,7 @@ package evaluator
 
 // Phase 4 HTTP/server high-concurrency harness (evaluator path). Measures raw
 // http.serve throughput and latency, exercises the worker-pool overload path,
-// and pins the evaluator's per-request handler-state isolation. The VM (default
-// runtime) shares handler state instead and crashes under concurrency; that
-// divergence is reproduced by the subprocess test in cmd/geblang. Findings live
-// in docs/http-concurrency-evaluation.md.
+// and pins per-request handler-state isolation; the VM now isolates per request too, so both backends are concurrency-safe by default. See docs/http-concurrency-evaluation.md.
 //
 // Benchmarks: go test -bench BenchmarkHTTPServe -run x ./internal/evaluator
 
@@ -245,11 +242,7 @@ func TestHTTPServerWorkerPoolOverload(t *testing.T) {
 // of the handler closure (callbackEvaluator -> CloneFunction), so a singleton
 // captured by the handler is copied per request. State therefore does NOT
 // persist across requests on the evaluator (a counter stays at 1), which is
-// also why the evaluator does not race on shared Geblang state. The bytecode VM
-// (the default `geblang` runtime) does NOT clone and shares the state, which
-// both persists and crashes under concurrency - see the VM repro in
-// cmd/geblang and docs/http-concurrency-evaluation.md. This test pins the
-// evaluator side of that divergence.
+// also why the evaluator does not race on shared Geblang state. The bytecode VM now isolates handler state per request too, so both backends are concurrency-safe by default. See docs/http-concurrency-evaluation.md.
 func TestServerHandlerStateIsolation(t *testing.T) {
 	e := New(io.Discard)
 	storeClass := &gruntime.Class{Name: "Store", Fields: []gruntime.Field{{Name: "n"}}}

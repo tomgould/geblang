@@ -138,7 +138,8 @@ The model has two halves:
   request.
 
 A bare handler can opt into the shared model with an option:
-`http.serve(handler, {"shareHandler": true})` (also `http.listen` / `net.serve`).
+`http.serve(addr, handler, {"shareHandler": true})` (also `http.listen` and
+`net.serve(host, port, handler, {"shareHandler": true})`).
 The handler and its captured state are then shared across requests instead of
 cloned per request - this is how a framework keeps one application graph. When a
 handler is shared, the `store.Store` rule below applies.

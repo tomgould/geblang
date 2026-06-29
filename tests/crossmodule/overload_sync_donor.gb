@@ -1,0 +1,9 @@
+module overload_sync_donor;
+let state = 0;
+func read(int ignored): int { return state; }
+func read(string ignored): int { return state + 100; }
+export func run(): int {
+    state = 7;
+    let callback = read;
+    return callback(1);
+}

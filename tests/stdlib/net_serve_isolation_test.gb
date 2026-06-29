@@ -1,0 +1,52 @@
+/**
+ * @title net.serve isolates its handler per connection (shares under shareHandler)
+ * @summary By default net.serve clones the handler per connection so concurrent
+ * sockets do not share captured state; opts.shareHandler keeps one shared handler.
+ * Same behaviour on both backends.
+ *
+ * Tagged "integration" (binds a local port).
+ */
+import test;
+import net;
+import io;
+
+func netCounter(): callable {
+    let state = {"n": 0};
+    return func(dict<string, any> sock): void {
+        state["n"] = (state["n"] as int) + 1;
+        io.write(sock["stream"], state["n"] as string);
+        io.close(sock["stream"]);
+    };
+}
+
+class NetServeIsolationTest extends test.Test {
+    func hitTwice(dict<string, any> server): list<string> {
+        let parts = (server["localAddr"] as string).split(":");
+        let port = parts[parts.length() - 1] as int;
+        let a = net.dial("127.0.0.1", port);
+        let first = io.readAll(a["stream"]);
+        let b = net.dial("127.0.0.1", port);
+        let second = io.readAll(b["stream"]);
+        return [first, second];
+    }
+
+    @tag("integration")
+    @test
+    func isolatedByDefault(): void {
+        let server = net.serve("127.0.0.1", 0, netCounter());
+        let r = this.hitTwice(server);
+        net.closeListener(server["handle"]);
+        this.assertEquals("1", r[0]);
+        this.assertEquals("1", r[1]);
+    }
+
+    @tag("integration")
+    @test
+    func sharedWithShareHandler(): void {
+        let server = net.serve("127.0.0.1", 0, netCounter(), {"shareHandler": true});
+        let r = this.hitTwice(server);
+        net.closeListener(server["handle"]);
+        this.assertEquals("1", r[0]);
+        this.assertEquals("2", r[1]);
+    }
+}

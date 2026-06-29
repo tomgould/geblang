@@ -1605,7 +1605,7 @@ func (vm *VM) wrapStatefulNativeArgs(module, function string, args []runtime.Val
 	if len(args) == 0 {
 		return args
 	}
-	share := httpShareHandler(module, function, args)
+	share := serverShareHandler(module, function, args)
 	wrapped := make([]runtime.Value, len(args))
 	for i, arg := range args {
 		wrapped[i] = vm.wrapStatefulNativeValue(arg, serverHandlerArg(module, function, i) && !share)
@@ -1613,12 +1613,19 @@ func (vm *VM) wrapStatefulNativeArgs(module, function string, args []runtime.Val
 	return wrapped
 }
 
-// httpShareHandler reports whether an http.serve/listen call set opts.shareHandler to share (not isolate) its handler.
-func httpShareHandler(module, function string, args []runtime.Value) bool {
-	if module != "http" || (function != "serve" && function != "listen") || len(args) < 3 {
+// serverShareHandler reports whether an http.serve/listen or net.serve call set opts.shareHandler to share (not isolate) its handler; opts sits after the handler, whose position differs per server.
+func serverShareHandler(module, function string, args []runtime.Value) bool {
+	optsIdx := -1
+	switch {
+	case module == "http" && (function == "serve" || function == "listen"):
+		optsIdx = 2
+	case module == "net" && function == "serve":
+		optsIdx = 3
+	}
+	if optsIdx < 0 || len(args) <= optsIdx {
 		return false
 	}
-	d, ok := args[2].(runtime.Dict)
+	d, ok := args[optsIdx].(runtime.Dict)
 	if !ok {
 		return false
 	}
@@ -1949,13 +1956,17 @@ func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runt
 		}
 		wrapper = append(wrapper, Instruction{Op: OpCall, Operands: []int64{f.Index, int64(len(args))}})
 		wrapper = append(wrapper, Instruction{Op: OpReturn})
-		return vm.runWrapperWithRawCall(args, wrapper, -1, true, nil)
+		return vm.runWrapperWithRawCall(args, wrapper, -1, true, nil, nil)
 	case runtime.BytecodeClosure:
 		if f.Module != vm.moduleName {
 			return vm.callCallableSlow(fn, args)
 		}
-		// Per-request isolation: deep-clone the closure's captured upvalues so concurrent invocations cannot share/race handler state (parity with the evaluator's CloneFunction).
-		f = runtime.CloneValue(f).(runtime.BytecodeClosure)
+		// Per-request isolation: clone the closure's upvalues AND the globals through one cloneState so a value aliased by both a global and an upvalue stays one shared object (parity with the evaluator's CloneFunction).
+		vm.globalsMu.Lock()
+		snapshot := append([]runtime.VMValue(nil), vm.globals...)
+		vm.globalsMu.Unlock()
+		clonedGlobals, clonedF := runtime.CloneIsolated(snapshot, f)
+		f = clonedF.(runtime.BytecodeClosure)
 		constants := make([]runtime.Value, 0, len(args)+2)
 		constants = append(constants, f)
 		constants = append(constants, args...)
@@ -1968,7 +1979,7 @@ func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runt
 		}
 		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
 		wrapper = append(wrapper, Instruction{Op: OpReturn})
-		return vm.runWrapperWithRawCall(constants, wrapper, -1, true, nil)
+		return vm.runWrapperWithRawCall(constants, wrapper, -1, true, nil, clonedGlobals)
 	default:
 		return vm.callCallableSlow(fn, args)
 	}
@@ -1996,10 +2007,15 @@ func (vm *VM) overloadedValue(indices []int64) runtime.OverloadedFunction {
 		}
 		bf := runtime.BytecodeFunction{Module: moduleName, Index: idx}
 		var native func(*runtime.Instance, []runtime.Value) (runtime.Value, error)
+		var bridge func(any, []runtime.Value) (runtime.Value, error)
 		if loader != nil {
+			// caller=nil: an escaped or cross-goroutine invocation has no proven synchronous re-entry host (capturing vm could form a self-referential host chain).
 			native = func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
-				// caller=nil: an overloaded value can escape its creating VM and run on another goroutine, so it has no proven synchronous re-entry host (capturing vm could form a self-referential host chain).
 				return loader.CallModuleFunction(bf, args, nil)
+			}
+			// A synchronous invocation threads the proven active worker so the call sees the module's live (in-progress) globals, matching the evaluator.
+			bridge = func(host any, args []runtime.Value) (runtime.Value, error) {
+				return loader.CallModuleFunction(bf, args, host.(*VM))
 			}
 		} else {
 			native = func(_ *runtime.Instance, args []runtime.Value) (runtime.Value, error) {
@@ -2011,6 +2027,7 @@ func (vm *VM) overloadedValue(indices []int64) runtime.OverloadedFunction {
 			Parameters:     overloadParams(fi),
 			TypeParameters: fi.TypeParameters,
 			Native:         native,
+			BridgeInvoke:   bridge,
 		})
 	}
 	return runtime.OverloadedFunction{Name: name, Overloads: overloads}
@@ -2119,7 +2136,7 @@ func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, all
 		}
 		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
 		wrapper = append(wrapper, Instruction{Op: OpReturn})
-		return vm.runWrapperWithRawCall(constants, wrapper, -1, false, reentryHost)
+		return vm.runWrapperWithRawCall(constants, wrapper, -1, false, reentryHost, nil)
 	case *runtime.Instance:
 		constants := make([]runtime.Value, 0, len(args)+2)
 		constants = append(constants, f)
@@ -2133,7 +2150,7 @@ func (vm *VM) callCallableModeHosted(fn runtime.Value, args []runtime.Value, all
 		}
 		wrapper = append(wrapper, Instruction{Op: OpMethodCall, Operands: []int64{methodNameIndex, int64(len(args))}})
 		wrapper = append(wrapper, Instruction{Op: OpReturn})
-		return vm.runWrapperWithRawCall(constants, wrapper, -1, false, reentryHost)
+		return vm.runWrapperWithRawCall(constants, wrapper, -1, false, reentryHost, nil)
 	default:
 		return nil, fmt.Errorf("value is not callable")
 	}
@@ -2277,7 +2294,7 @@ func (vm *VM) CallFunctionRaw(index int64, args []runtime.Value) (runtime.Value,
 	}
 	wrapper = append(wrapper, Instruction{Op: OpCall, Operands: []int64{index, int64(len(args))}})
 	wrapper = append(wrapper, Instruction{Op: OpReturn})
-	return vm.runWrapperWithRawCall(args, wrapper, index, false, nil)
+	return vm.runWrapperWithRawCall(args, wrapper, index, false, nil, nil)
 }
 
 func (vm *VM) CallClosure(closure runtime.BytecodeClosure, args []runtime.Value) (runtime.Value, error) {
@@ -2683,10 +2700,10 @@ func (vm *VM) staticDirectIndex(classIndex int64, name string, args []runtime.Va
 }
 
 func (vm *VM) runWrapper(args []runtime.Value, wrapper []Instruction) (runtime.Value, error) {
-	return vm.runWrapperWithRawCall(args, wrapper, -1, false, nil)
+	return vm.runWrapperWithRawCall(args, wrapper, -1, false, nil, nil)
 }
 
-func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction, rawIndex int64, isolated bool, reentryHost *VM) (runtime.Value, error) {
+func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction, rawIndex int64, isolated bool, reentryHost *VM, preCloned []runtime.VMValue) (runtime.Value, error) {
 	chunk := vm.chunk
 	meta := vm.chunk.sharedMeta
 	var callVM *VM
@@ -2782,15 +2799,15 @@ func (vm *VM) runWrapperWithRawCall(args []runtime.Value, wrapper []Instruction,
 	// invoked from a worker goroutine doesn't race with the parent's
 	// setGlobal writes.
 	if isolated {
-		// Per-request isolation: deep-clone the globals so reference values
-		// (instances, lists, dicts) are copied, not shared. Shallow-copy the
-		// slice under the lock, then clone outside it (the host is parked in
-		// the accept loop and other request goroutines only read, so the clone
-		// races nothing).
-		vm.globalsMu.Lock()
-		snapshot := append([]runtime.VMValue(nil), vm.globals...)
-		vm.globalsMu.Unlock()
-		callVM.restoreGlobalsVM(runtime.CloneVMValues(snapshot))
+		// Per-request isolation: deep-clone the globals so reference values are copied, not shared. preCloned (when the caller already cloned globals together with the callable through one cloneState, preserving upvalue/global alias identity) is used as-is; otherwise snapshot under the lock and clone outside it.
+		if preCloned != nil {
+			callVM.restoreGlobalsVM(preCloned)
+		} else {
+			vm.globalsMu.Lock()
+			snapshot := append([]runtime.VMValue(nil), vm.globals...)
+			vm.globalsMu.Unlock()
+			callVM.restoreGlobalsVM(runtime.CloneVMValues(snapshot))
+		}
 	} else {
 		vm.globalsMu.Lock()
 		callVM.restoreGlobalsVM(vm.globals)

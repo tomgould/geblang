@@ -469,6 +469,14 @@ func (e *Evaluator) netServe(call *ast.CallExpression, args []runtime.Value) (ru
 	if err != nil {
 		return nil, err
 	}
+	var optsArg runtime.Value = runtime.Null{}
+	if len(args) == 4 {
+		optsArg = args[3]
+	}
+	share, err := parseShareHandler(optsArg, call.Callee.String())
+	if err != nil {
+		return nil, err
+	}
 	addr := net.JoinHostPort(host.Value, strconv.FormatInt(port, 10))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -512,7 +520,12 @@ func (e *Evaluator) netServe(call *ast.CallExpression, args []runtime.Value) (ru
 				putDict(entries, "localAddr", runtime.String{Value: handlerConn.LocalAddr().String()})
 				putDict(entries, "remoteAddr", runtime.String{Value: handlerConn.RemoteAddr().String()})
 				socketDict := runtime.Dict{Entries: entries}
-				_, _ = child.applyFunction(handler, []runtime.Value{socketDict})
+				// Per-connection isolation unless shareHandler: clone the handler so concurrent connections don't share/race its captured state (parity with the bytecode VM).
+				callbackHandler := handler
+				if handler.Native == nil && !share {
+					callbackHandler = runtime.CloneFunction(handler)
+				}
+				_, _ = child.applyFunction(callbackHandler, []runtime.Value{socketDict})
 			}()
 		}
 	}()

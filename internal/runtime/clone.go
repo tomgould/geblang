@@ -43,6 +43,20 @@ func CloneVMValues(values []VMValue) []VMValue {
 	return out
 }
 
+// CloneIsolated clones a globals snapshot and a callable through ONE cloneState, so a value aliased by both a global and a closure upvalue stays a single shared object in the isolated copy.
+func CloneIsolated(globals []VMValue, callable Value) ([]VMValue, Value) {
+	state := newCloneState()
+	out := make([]VMValue, len(globals))
+	for i, v := range globals {
+		if v.Kind == VMKindBoxed && v.Boxed != nil {
+			out[i] = VMValue{Kind: VMKindBoxed, Boxed: state.cloneValue(v.Boxed)}
+		} else {
+			out[i] = v
+		}
+	}
+	return out, state.cloneValue(callable)
+}
+
 func CloneFunction(fn Function) Function {
 	state := newCloneState()
 	return state.cloneFunction(fn)

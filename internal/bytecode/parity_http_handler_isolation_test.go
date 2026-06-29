@@ -42,3 +42,23 @@ io.println(a + "," + b);
 `
 	runParityStateful(t, shared, "1,2\n")
 }
+
+// TestParityHTTPHandlerGlobalAlias (review 3 finding 2): a global value aliased by a closure upvalue must clone as ONE shared object under per-request isolation (the VM split it across two clone states: eval 1, VM 0).
+func TestParityHTTPHandlerGlobalAlias(t *testing.T) {
+	runParityStateful(t, `import http;
+import io;
+let shared = [];
+func makeHandler(): callable {
+    let alias = shared;
+    return func(dict<string, any> req): dict<string, any> {
+        alias.push(1);
+        return {"status": 200, "body": shared.length() as string, "headers": {}};
+    };
+}
+let server = http.listen("127.0.0.1:0", makeHandler());
+let base = "http://" + http.serverAddr(server);
+let body = http.get(base + "/")["body"] as string;
+http.close(server);
+io.println(body);
+`, "1\n")
+}
