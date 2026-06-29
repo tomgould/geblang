@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"math/big"
+	"reflect"
 
 	"geblang/internal/ast"
 )
@@ -13,6 +14,20 @@ type cloneState struct {
 	ifaces    map[*Interface]*Interface
 	instances map[*Instance]*Instance
 	lists     map[*List]*List
+	dicts     map[uintptr]Dict
+	sets      map[uintptr]Set
+	cells     map[*BytecodeCell]*BytecodeCell
+}
+
+// dictIdentity returns a stable pointer key for a dict's shared backing (the data store, or the literal Entries map), so aliases clone once and self-referential dicts terminate.
+func dictIdentity(d Dict) uintptr {
+	if d.data != nil {
+		return reflect.ValueOf(d.data).Pointer()
+	}
+	if d.Entries != nil {
+		return reflect.ValueOf(d.Entries).Pointer()
+	}
+	return 0
 }
 
 func CloneEnvironment(env *Environment) *Environment {
@@ -70,6 +85,9 @@ func newCloneState() *cloneState {
 		ifaces:    map[*Interface]*Interface{},
 		instances: map[*Instance]*Instance{},
 		lists:     map[*List]*List{},
+		dicts:     map[uintptr]Dict{},
+		sets:      map[uintptr]Set{},
+		cells:     map[*BytecodeCell]*BytecodeCell{},
 	}
 }
 
@@ -120,19 +138,41 @@ func (s *cloneState) cloneValue(value Value) Value {
 		}
 		return cloned
 	case Dict:
+		id := dictIdentity(value)
+		if id != 0 {
+			if cloned, ok := s.dicts[id]; ok {
+				return cloned
+			}
+		}
 		cloned := NewDictHint(value.Len())
+		cloned.ElementTypes = append([]string(nil), value.ElementTypes...)
+		if id != 0 {
+			s.dicts[id] = cloned
+		}
 		value.ForEachEntry(func(key string, entry DictEntry) bool {
 			cloned.PutEntry(key, DictEntry{Key: s.cloneValue(entry.Key), Value: s.cloneValue(entry.Value)})
 			return true
 		})
-		cloned.ElementTypes = append([]string(nil), value.ElementTypes...)
 		return cloned
 	case Set:
+		var id uintptr
+		if value.Elements != nil {
+			id = reflect.ValueOf(value.Elements).Pointer()
+		}
+		if id != 0 {
+			if cloned, ok := s.sets[id]; ok {
+				return cloned
+			}
+		}
 		elements := make(map[string]SetEntry, len(value.Elements))
+		cloned := Set{Elements: elements, ElementTypes: append([]string(nil), value.ElementTypes...)}
+		if id != 0 {
+			s.sets[id] = cloned
+		}
 		for key, entry := range value.Elements {
 			elements[key] = SetEntry{Value: s.cloneValue(entry.Value)}
 		}
-		return Set{Elements: elements, ElementTypes: append([]string(nil), value.ElementTypes...)}
+		return cloned
 	case Range:
 		return Range{
 			Start:     new(big.Int).Set(value.Start),
@@ -165,7 +205,13 @@ func (s *cloneState) cloneValue(value Value) Value {
 		if value == nil {
 			return value
 		}
-		return &BytecodeCell{Value: s.cloneValue(value.Value)}
+		if cloned, ok := s.cells[value]; ok {
+			return cloned
+		}
+		cloned := &BytecodeCell{}
+		s.cells[value] = cloned
+		cloned.Value = s.cloneValue(value.Value)
+		return cloned
 	case NativeObject:
 		return value
 	case Error:

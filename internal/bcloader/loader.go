@@ -336,6 +336,27 @@ func (l *Loader) CallModuleFunction(function runtime.BytecodeFunction, args []ru
 	return result, err
 }
 
+// CallModuleHandlerIsolated runs a cross-module server handler on its home module's VM. There the handler is same-module, so the VM's per-request isolation applies (a fresh callVM with cloned globals and, for a closure, cloned upvalues); the home VM's own globals are read but never mutated, so nothing persists back and handler state stays per-request.
+func (l *Loader) CallModuleHandlerIsolated(fn runtime.Value, module string, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
+	var chunk bytecode.Chunk
+	if module == "" {
+		if !l.hasMainChunk {
+			return nil, fmt.Errorf("entry-script handler invoked without a main chunk")
+		}
+		chunk = l.mainChunk
+	} else {
+		c, ok := l.chunkValue(module)
+		if !ok {
+			return nil, fmt.Errorf("module %s is not loaded", module)
+		}
+		chunk = c
+	}
+	vm, pool := l.moduleVM(module, chunk, caller)
+	result, err := vm.CallIsolatedHandler(fn, args)
+	l.releaseModuleVM(pool, vm, err)
+	return result, err
+}
+
 func (l *Loader) CallModuleClosure(closure runtime.BytecodeClosure, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
 	var chunk bytecode.Chunk
 	if closure.Module == "" {

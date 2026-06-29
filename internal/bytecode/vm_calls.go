@@ -1936,6 +1936,11 @@ func (vm *VM) callCallableSlowHosted(fn runtime.Value, args []runtime.Value, ree
 // host globals. It never touches shared host-vm fields (no inDispatchLoop
 // dance), since it is invoked from external net/http goroutines, not
 // re-entrantly. Native handlers run directly; cross-module callables fall back.
+// CallIsolatedHandler runs a server-handler callback with per-request isolation; it is the exported entry the loader uses to re-isolate a cross-module handler on its home module's VM.
+func (vm *VM) CallIsolatedHandler(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	return vm.callCallableIsolated(fn, args)
+}
+
 func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
 	switch f := fn.(type) {
 	case runtime.Function:
@@ -1945,6 +1950,9 @@ func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runt
 		return f.Native(nil, args)
 	case runtime.BytecodeFunction:
 		if f.Module != vm.moduleName || f.Raw {
+			if !f.Raw && vm.moduleLoader != nil {
+				return vm.moduleLoader.CallModuleHandlerIsolated(fn, f.Module, args, vm)
+			}
 			return vm.callCallableSlow(fn, args)
 		}
 		if err := vm.ensureCallableDecorators(); err != nil {
@@ -1959,6 +1967,9 @@ func (vm *VM) callCallableIsolated(fn runtime.Value, args []runtime.Value) (runt
 		return vm.runWrapperWithRawCall(args, wrapper, -1, true, nil, nil)
 	case runtime.BytecodeClosure:
 		if f.Module != vm.moduleName {
+			if vm.moduleLoader != nil {
+				return vm.moduleLoader.CallModuleHandlerIsolated(fn, f.Module, args, vm)
+			}
 			return vm.callCallableSlow(fn, args)
 		}
 		// Per-request isolation: clone the closure's upvalues AND the globals through one cloneState so a value aliased by both a global and an upvalue stays one shared object (parity with the evaluator's CloneFunction).

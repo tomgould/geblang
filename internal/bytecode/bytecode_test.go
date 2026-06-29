@@ -235,6 +235,10 @@ func (l fakeModuleLoader) CallModuleClosure(closure runtime.BytecodeClosure, arg
 	return runtime.Null{}, fmt.Errorf("unexpected module closure call %s", closure.Name)
 }
 
+func (l fakeModuleLoader) CallModuleHandlerIsolated(fn runtime.Value, module string, args []runtime.Value, caller *bytecode.VM) (runtime.Value, error) {
+	return runtime.Null{}, fmt.Errorf("unexpected isolated handler call in module %s", module)
+}
+
 func (l fakeModuleLoader) ConstructModuleClass(class runtime.BytecodeClass, args []runtime.Value, typeArgs []string, caller *bytecode.VM) (runtime.Value, error) {
 	return runtime.Null{}, fmt.Errorf("unexpected module class construction %s", class.Name)
 }

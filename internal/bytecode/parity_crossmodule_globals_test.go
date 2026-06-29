@@ -453,3 +453,80 @@ import odonor;
 io.println(odonor.run());
 `, "7\n")
 }
+
+// TestParityCrossModuleHandlerIsolation (review 4 finding 1): a server handler defined in another module must be isolated per request on the VM too - it fell through to callCallableSlow (shared) while the evaluator isolated (eval 1,1 vs VM 1,2), for both captured upvalue state and the home module's globals.
+func TestParityCrossModuleHandlerIsolation(t *testing.T) {
+	closureMod := map[string]string{
+		"hmodc": `module hmodc;
+export func makeCounter(): callable {
+    let state = {"n": 0};
+    return func(dict<string, any> req): dict<string, any> {
+        state["n"] = (state["n"] as int) + 1;
+        return {"status": 200, "body": state["n"] as string, "headers": {}};
+    };
+}
+`,
+	}
+	runMultiModuleParity(t, closureMod, `import http;
+import io;
+import hmodc;
+let server = http.listen("127.0.0.1:0", hmodc.makeCounter());
+let base = "http://" + http.serverAddr(server);
+let a = http.get(base + "/")["body"] as string;
+let b = http.get(base + "/")["body"] as string;
+http.close(server);
+io.println(a + "," + b);
+`, "1,1\n")
+
+	globalMod := map[string]string{
+		"hmodg": `module hmodg;
+let counter = 0;
+export func handler(dict<string, any> req): dict<string, any> {
+    counter = counter + 1;
+    return {"status": 200, "body": counter as string, "headers": {}};
+}
+`,
+	}
+	runMultiModuleParity(t, globalMod, `import http;
+import io;
+import hmodg;
+let server = http.listen("127.0.0.1:0", hmodg.handler);
+let base = "http://" + http.serverAddr(server);
+let a = http.get(base + "/")["body"] as string;
+let b = http.get(base + "/")["body"] as string;
+http.close(server);
+io.println(a + "," + b);
+`, "1,1\n")
+}
+
+// TestParityCrossModuleHandlerConcurrent: concurrent requests to a cross-module handler each get an isolated copy (counter stays 1), with no data race on the pooled home-module VM. Run with -race for the concurrency guard.
+func TestParityCrossModuleHandlerConcurrent(t *testing.T) {
+	mods := map[string]string{
+		"hmodx": `module hmodx;
+export func makeCounter(): callable {
+    let state = {"n": 0};
+    return func(dict<string, any> req): dict<string, any> {
+        state["n"] = (state["n"] as int) + 1;
+        return {"status": 200, "body": state["n"] as string, "headers": {}};
+    };
+}
+`,
+	}
+	runMultiModuleParity(t, mods, `import http;
+import io;
+import async;
+import hmodx;
+let server = http.listen("127.0.0.1:0", hmodx.makeCounter());
+let base = "http://" + http.serverAddr(server);
+let tasks = [];
+for (int i = 0; i < 16; i++) {
+    tasks.push(async.run(func(): string { return http.get(base + "/")["body"] as string; }));
+}
+let allOne = true;
+for (task in tasks) {
+    if ((async.await(task) as string) != "1") { allOne = false; }
+}
+http.close(server);
+io.println(allOne ? "all-isolated" : "shared");
+`, "all-isolated\n")
+}

@@ -165,6 +165,8 @@ type ModuleLoader interface {
 	LoadModule(canonical string, alias string) (*runtime.Module, error)
 	CallModuleFunction(function runtime.BytecodeFunction, args []runtime.Value, caller *VM) (runtime.Value, error)
 	CallModuleClosure(closure runtime.BytecodeClosure, args []runtime.Value, caller *VM) (runtime.Value, error)
+	// CallModuleHandlerIsolated runs a cross-module server handler (function or closure) on its home module's VM with per-request isolation, the same isolation a same-module handler gets, so handler state is not shared across requests.
+	CallModuleHandlerIsolated(fn runtime.Value, module string, args []runtime.Value, caller *VM) (runtime.Value, error)
 	// ConstructModuleClass constructs class in its home chunk. typeArgs
 	// carries the call site's positional explicit `<TypeArgs>` (nil when
 	// none); the home VM zips them against the class's type parameters.

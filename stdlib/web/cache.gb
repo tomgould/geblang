@@ -67,6 +67,31 @@ export class RedisCacheStore {
     func has(string name): bool {
         return this.get(name) != null;
     }
+
+    ## Marks this store as providing cross-process tag generations and invalidation.
+    func supportsTags(): bool {
+        return true;
+    }
+
+    ## Current generation of a tag (0 when never invalidated); shared across every instance.
+    func tagGen(string tag): int {
+        let v = this.client.get(this.prefix + "tag:gen:" + tag);
+        return v == null ? 0 : (v as string) as int;
+    }
+
+    ## Record a cached key under a tag so invalidation can delete it; the index set expires with the cache TTL.
+    func addTagKey(string tag, string name): void {
+        let idx = this.prefix + "tag:idx:" + tag;
+        this.client.sadd(idx, name);
+        this.client.expire(idx, this.ttl);
+    }
+
+    ## Invalidate a tag atomically across all instances: bump the shared generation (stale-on-read for entries computed earlier), delete every entry recorded under it, clear the index. Returns the count deleted.
+    func bumpTag(string tag): int {
+        let lua = "redis.call('INCR', KEYS[1]) local m = redis.call('SMEMBERS', KEYS[2]) local n = 0 for _, x in ipairs(m) do n = n + redis.call('DEL', ARGV[1] .. x) end redis.call('DEL', KEYS[2]) return n";
+        let n = this.client.eval(lua, [this.prefix + "tag:gen:" + tag, this.prefix + "tag:idx:" + tag], [this.prefix]);
+        return n as int;
+    }
 }
 
 ## Creates a Redis-backed cache store.

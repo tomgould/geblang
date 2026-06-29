@@ -80,3 +80,46 @@ func TestCloneFunctionPreservesEnvironmentCycles(t *testing.T) {
 		t.Fatal("recursive function binding does not point at the cloned environment")
 	}
 }
+
+func TestCloneCyclicDictTerminates(t *testing.T) {
+	d := NewDict()
+	d.PutEntry("self", DictEntry{Key: String{Value: "self"}, Value: d})
+
+	cloned := CloneValue(d).(Dict)
+	var self Value
+	cloned.ForEachEntry(func(k string, e DictEntry) bool {
+		if k == "self" {
+			self = e.Value
+		}
+		return true
+	})
+	if self == nil {
+		t.Fatal("cloned cyclic dict lost its self entry")
+	}
+	if dictIdentity(self.(Dict)) != dictIdentity(cloned) {
+		t.Fatal("cyclic dict self-reference was split, not preserved")
+	}
+}
+
+func TestCloneDictAliasClonedOnce(t *testing.T) {
+	d := NewDict()
+	d.PutEntry("k", DictEntry{Key: String{Value: "k"}, Value: NewInt64(1)})
+	list := &List{Elements: []Value{d, d}}
+
+	cloned := CloneValue(list).(*List)
+	if dictIdentity(cloned.Elements[0].(Dict)) != dictIdentity(cloned.Elements[1].(Dict)) {
+		t.Fatal("a dict aliased twice was split into two clones")
+	}
+}
+
+func TestCloneCyclicBytecodeCellTerminates(t *testing.T) {
+	c1 := &BytecodeCell{}
+	c2 := &BytecodeCell{}
+	c1.Value = c2
+	c2.Value = c1
+
+	cloned := CloneValue(c1).(*BytecodeCell)
+	if cloned.Value.(*BytecodeCell).Value.(*BytecodeCell) != cloned {
+		t.Fatal("cyclic bytecode cell was split, not preserved")
+	}
+}

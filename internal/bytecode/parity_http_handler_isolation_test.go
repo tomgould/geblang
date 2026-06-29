@@ -62,3 +62,22 @@ http.close(server);
 io.println(body);
 `, "1\n")
 }
+
+// TestParityHTTPHandlerCyclicGlobal (review 4 finding 2): per-request isolation deep-clones the globals snapshot; a self-referential dict in scope must not infinitely recurse during that clone (cloneState now memoizes dicts). Both backends must serve the request and terminate.
+func TestParityHTTPHandlerCyclicGlobal(t *testing.T) {
+	runParityStateful(t, `import http;
+import io;
+let shared = {};
+shared["self"] = shared;
+func makeHandler(): callable {
+    return func(dict<string, any> req): dict<string, any> {
+        return {"status": 200, "body": "ok", "headers": {}};
+    };
+}
+let server = http.listen("127.0.0.1:0", makeHandler());
+let base = "http://" + http.serverAddr(server);
+let body = http.get(base + "/")["body"] as string;
+http.close(server);
+io.println(body);
+`, "ok\n")
+}
