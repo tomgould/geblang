@@ -88,7 +88,7 @@
       "patterns": [
         {
           "name": "support.type.primitive.geblang",
-          "match": "\\b(int|float|decimal|string|bool|bytes|void|any|auto|callable|function|iterable|generator|Task|Type)\\b"
+          "match": "\\b(int|float|decimal|string|bool|bytes|void|any|callable|function|iterable|generator|list|dict|set|range|Task|Type)\\b"
         },
         {
           "name": "entity.name.type.geblang",
