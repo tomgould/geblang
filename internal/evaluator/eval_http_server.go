@@ -58,6 +58,7 @@ func (w *serverErrorWriter) Write(p []byte) (int, error) {
 	ev, fn := w.e.callbackEvaluator(w.fn)
 	if ev != w.e {
 		defer ev.Cleanup()
+		defer ev.startDebugThread("server error log")()
 	}
 	_, _ = ev.applyFunction(fn, []runtime.Value{runtime.String{Value: msg}})
 	return len(p), nil
@@ -501,6 +502,9 @@ func (e *Evaluator) callHTTPHandler(handler runtime.Function, request *http.Requ
 	// Per-request isolation: a child evaluator isolates eval-side dispatch state; an eval handler is also deep-cloned (shareHandler opts out; a VM handler is a trampoline that isolates itself).
 	child := e.childForCallback()
 	defer child.Cleanup()
+	if child.debug != nil {
+		defer child.startDebugThread("request " + request.Method + " " + request.URL.Path)()
+	}
 	callbackHandler := handler
 	if handler.Native == nil && !shareHandler {
 		callbackHandler = runtime.CloneFunction(handler)
@@ -1094,6 +1098,7 @@ func (e *Evaluator) writeWebSocketResponse(w http.ResponseWriter, r *http.Reques
 	callbackEval, callbackHandler := e.callbackEvaluator(handler)
 	if callbackEval != e {
 		defer callbackEval.Cleanup()
+		defer callbackEval.startDebugThread("websocket")()
 	}
 	handleValue := callbackEval.registerWebSocket(conn)
 	handleID, _ := websocketHandleID(handleValue)
@@ -1128,6 +1133,7 @@ func (e *Evaluator) writeHTTPStreamResponse(w http.ResponseWriter, response runt
 	callbackEval, callbackHandler := e.callbackEvaluator(handler)
 	if callbackEval != e {
 		defer callbackEval.Cleanup()
+		defer callbackEval.startDebugThread("stream")()
 	}
 	handleValue := callbackEval.registerHTTPStream(w, flusher)
 	handleID, _ := httpStreamHandleID(handleValue)

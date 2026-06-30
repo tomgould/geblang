@@ -1,0 +1,27 @@
+/**
+ * @title Primitive method name casing
+ * @summary Primitive method names use their documented, case-sensitive
+ * spelling on every execution backend.
+ */
+import test;
+
+class PrimitiveMethodCaseTest extends test.Test {
+    @test
+    func canonicalNamesWork(): void {
+        any text = "42";
+        any values = [];
+
+        this.assertEquals(42, text.toInt());
+        this.assertTrue(values.isEmpty());
+    }
+
+    @test
+    func wrongCaseIsRejected(): void {
+        any text = "42";
+        any values = [];
+
+        this.assertThrows(func(): void { text.TOINT(); });
+        this.assertThrows(func(): void { text.Length(); });
+        this.assertThrows(func(): void { values.isempty(); });
+    }
+}

@@ -117,7 +117,7 @@ export class SqsQueue {
         let scope = dateStamp + "/" + this.region + "/sqs/aws4_request";
         let stringToSign = "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + crypt.sha256(canonical);
         let key = signingKey(this.secretKey, dateStamp, this.region, "sqs");
-        let signature = crypt.hmacSha256(bytes.toString(key), stringToSign);
+        let signature = crypt.hmacSha256(key, stringToSign);
         string signedHeaders = "content-type;host;x-amz-content-sha256;x-amz-date";
         string authHeader = "AWS4-HMAC-SHA256 Credential=" + this.accessKey + "/" + scope +
             ",SignedHeaders=" + signedHeaders + ",Signature=" + signature;
@@ -205,9 +205,9 @@ func pathFromUrl(string url): string {
 
 func signingKey(string secretKey, string dateStamp, string region, string service): bytes {
     let kDate = crypt.hmacSha256Bytes("AWS4" + secretKey, dateStamp);
-    let kRegion = crypt.hmacSha256Bytes(bytes.toString(kDate), region);
-    let kService = crypt.hmacSha256Bytes(bytes.toString(kRegion), service);
-    return crypt.hmacSha256Bytes(bytes.toString(kService), "aws4_request");
+    let kRegion = crypt.hmacSha256Bytes(kDate, region);
+    let kService = crypt.hmacSha256Bytes(kRegion, service);
+    return crypt.hmacSha256Bytes(kService, "aws4_request");
 }
 
 func canonicalRequest(string method, string canonicalUri, string canonicalQuery, dict<string, string> headers, string payloadHash): string {

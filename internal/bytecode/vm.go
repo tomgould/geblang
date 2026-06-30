@@ -3845,14 +3845,15 @@ func (vm *VM) index(instruction Instruction) error {
 		if err != nil {
 			return vm.callPropagate(instruction, err)
 		}
-		runes := []rune(value.Value)
+		ri := runtime.StringRuneInfo(value.Value)
+		n := ri.RuneCount(value.Value)
 		if i < 0 {
-			i = len(runes) + i
+			i = n + i
 		}
-		if i < 0 || i >= len(runes) {
+		if i < 0 || i >= n {
 			return vm.runtimeError(instruction, "string index out of range")
 		}
-		vm.push(runtime.String{Value: string(runes[i])})
+		vm.push(runtime.String{Value: ri.RuneAt(value.Value, i)})
 	case runtime.Bytes:
 		i, err := indexInt(index)
 		if err != nil {

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"unicode"
 
-	"geblang/internal/ast"
 	"geblang/internal/native"
 	"geblang/internal/runtime"
 
@@ -1913,7 +1912,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) != 0 {
 				return nil, fmt.Errorf("string.length expects no arguments")
 			}
-			return runtime.SmallInt{Value: int64(len([]rune(value.Value)))}, nil
+			return runtime.SmallInt{Value: int64(runtime.StringRuneInfo(value.Value).RuneCount(value.Value))}, nil
 		case "isEmpty":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("string.isEmpty expects no arguments")
@@ -2297,8 +2296,8 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if len(args) < 1 || len(args) > 2 {
 				return nil, fmt.Errorf("string.%s expects (start[, end])", name)
 			}
-			runes := []rune(value.Value)
-			n := len(runes)
+			ri := runtime.StringRuneInfo(value.Value)
+			n := ri.RuneCount(value.Value)
 			start, err := indexInt(args[0])
 			if err != nil {
 				return nil, fmt.Errorf("string.%s: %v", name, err)
@@ -2331,7 +2330,7 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			if start >= end {
 				return runtime.String{Value: ""}, nil
 			}
-			return runtime.String{Value: string(runes[start:end])}, nil
+			return runtime.String{Value: ri.Substring(value.Value, start, end)}, nil
 		case "toString":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("string.toString expects no arguments")
@@ -2397,11 +2396,10 @@ func (e *Evaluator) evalMethodCall(receiver runtime.Value, name string, args []r
 			}
 			return runtime.NewInt64(int64(value.Value[i])), nil
 		case "toString":
-			data, err := bytesWithOptionalUTF8Encoding(&ast.CallExpression{Callee: &ast.Identifier{Value: "bytes.toString"}}, append([]runtime.Value{value}, args...))
-			if err != nil {
-				return nil, err
+			if len(args) != 0 {
+				return nil, fmt.Errorf("bytes.toString expects no arguments")
 			}
-			return runtime.String{Value: string(data)}, nil
+			return native.BytesToUTF8String(value.Value, "bytes.toString")
 		case "toHex":
 			if len(args) != 0 {
 				return nil, fmt.Errorf("bytes.toHex expects no arguments")
