@@ -1,0 +1,104 @@
+<idea-plugin>
+    <id>com.dwgebler.geblang</id>
+    <name>Geblang</name>
+    <version>0.1.0</version>
+    <vendor url="https://github.com/dwgebler/geblang">dwgebler</vendor>
+
+    <description><![CDATA[
+        <p>Geblang language support for IntelliJ-based IDEs.</p>
+        <ul>
+            <li>Syntax highlighting for .gb files (keywords, types, strings, numbers, comments, operators)</li>
+            <li>File type recognition with icon</li>
+            <li>Brace matching for {} [] ()</li>
+            <li>Line and block comment toggling (Ctrl+/ and Ctrl+Shift+/)</li>
+            <li>Configurable color scheme under Settings > Editor > Color Scheme > Geblang</li>
+            <li>LSP integration via LSP4IJ: diagnostics, code completion, go-to-definition,
+                hover, find usages, rename, formatting — all powered by <code>geblang lsp</code></li>
+            <li>Settings page under Languages &amp; Frameworks > Geblang to configure the
+                path to the geblang executable</li>
+        </ul>
+        <p><b>Requirements:</b> The <code>geblang</code> binary must be installed and accessible
+        (on PATH or configured in settings) for LSP features to activate.
+        LSP4IJ is declared as a required dependency and is installed automatically.</p>
+    ]]></description>
+
+    <change-notes><![CDATA[
+        <b>0.1.0</b> (prototype)
+        <ul>
+            <li>Initial release: syntax highlighting, brace matching, commenter, LSP integration</li>
+        </ul>
+    ]]></change-notes>
+
+    <idea-version since-build="242" until-build="243.*"/>
+
+    <!-- Core platform — always present in every IntelliJ-based IDE -->
+    <depends>com.intellij.modules.platform</depends>
+
+    <!-- LSP4IJ — provides the LSP client; auto-installed as a plugin dependency -->
+    <depends>com.redhat.devtools.lsp4ij</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+
+        <!-- File type: .gb -> Geblang language -->
+        <fileType
+            name="Geblang"
+            implementationClass="com.dwgebler.geblang.language.GeblangFileType"
+            language="Geblang"
+            extensions="gb"
+            fieldName="INSTANCE"/>
+
+        <!-- Syntax highlighting -->
+        <lang.syntaxHighlighterFactory
+            language="Geblang"
+            implementationClass="com.dwgebler.geblang.highlighting.GeblangSyntaxHighlighterFactory"/>
+
+        <!-- Color settings page: Settings > Editor > Color Scheme > Geblang -->
+        <colorSettingsPage
+            implementation="com.dwgebler.geblang.highlighting.GeblangColorSettingsPage"/>
+
+        <!-- Commenter: Ctrl+/ → #  Ctrl+Shift+/ → /* */ -->
+        <lang.commenter
+            language="Geblang"
+            implementationClass="com.dwgebler.geblang.editor.GeblangCommenter"/>
+
+        <!-- Brace matching: {} [] () -->
+        <lang.braceMatcher
+            language="Geblang"
+            implementationClass="com.dwgebler.geblang.editor.GeblangBraceMatcher"/>
+
+        <!-- Application-level settings service -->
+        <applicationService
+            serviceImplementation="com.dwgebler.geblang.settings.GeblangSettings"/>
+
+        <!-- Settings page: Settings > Languages & Frameworks > Geblang -->
+        <applicationConfigurable
+            parentId="language"
+            instance="com.dwgebler.geblang.settings.GeblangConfigurable"
+            id="com.dwgebler.geblang.settings.GeblangConfigurable"
+            displayName="Geblang"/>
+
+    </extensions>
+
+    <!-- LSP4IJ extensions: register the Geblang language server and file mapping -->
+    <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
+
+        <server
+            id="geblang-lsp"
+            name="Geblang Language Server"
+            factoryClass="com.dwgebler.geblang.lsp.GeblangLspServerFactory">
+            <description><![CDATA[
+                Language server for Geblang (.gb files). Launched as <code>geblang lsp</code>
+                (stdio transport). Provides diagnostics, completion, hover, go-to-definition,
+                find usages, rename, and formatting via the canonical Geblang compiler.
+                Configure the binary path in Settings > Languages &amp; Frameworks > Geblang.
+            ]]></description>
+        </server>
+
+        <languageMapping
+            language="Geblang"
+            serverId="geblang-lsp"
+            languageId="geblang"/>
+
+    </extensions>
+
+</idea-plugin>
