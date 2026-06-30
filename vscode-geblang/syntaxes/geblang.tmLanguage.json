@@ -16,8 +16,17 @@
     "comments": {
       "patterns": [
         {
-          "name": "comment.line.double-slash.geblang",
-          "match": "//.*$"
+          "name": "comment.line.number-sign.documentation.geblang",
+          "match": "##.*$"
+        },
+        {
+          "name": "comment.line.number-sign.geblang",
+          "match": "#.*$"
+        },
+        {
+          "name": "comment.block.documentation.geblang",
+          "begin": "/\\*\\*",
+          "end": "\\*/"
         },
         {
           "name": "comment.block.geblang",
