@@ -22,6 +22,7 @@ class GeblangColorSettingsPage : ColorSettingsPage {
         AttributesDescriptor("Built-in type",    GeblangSyntaxHighlighter.TYPE),
         AttributesDescriptor("Constant (true/false/null/this)", GeblangSyntaxHighlighter.CONSTANT),
         AttributesDescriptor("Word operator (is/not/xor)",      GeblangSyntaxHighlighter.WORD_OP),
+        AttributesDescriptor("Decorator",        GeblangSyntaxHighlighter.DECORATOR),
         AttributesDescriptor("Operator",         GeblangSyntaxHighlighter.OPERATOR),
         AttributesDescriptor("Identifier",       GeblangSyntaxHighlighter.IDENTIFIER),
         AttributesDescriptor("Bad character",    GeblangSyntaxHighlighter.BAD_CHAR),
@@ -55,14 +56,21 @@ class Animal {
     let name string
     let age int
 
+    @Assert.range(0, 150)
     init(name string, age int) {
         this.name = name
         this.age = age
     }
 
+    @memoize
     func speak() string {
         return "Hello from ${'$'}{this.name}"
     }
+}
+
+@Get("/users/{id}")
+func getUser(int id): string {
+    return "user"
 }
 
 let greeting "Hello, World!"

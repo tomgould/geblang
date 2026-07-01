@@ -21,6 +21,7 @@ object GeblangTokenTypes {
     @JvmField val CONSTANT         = GeblangTokenType("CONSTANT")         // true false null this
     @JvmField val WORD_OPERATOR    = GeblangTokenType("WORD_OPERATOR")    // is not xor
     @JvmField val OPERATOR         = GeblangTokenType("OPERATOR")
+    @JvmField val DECORATOR        = GeblangTokenType("DECORATOR")        // @name or @Foo.bar.baz
     @JvmField val IDENTIFIER       = GeblangTokenType("IDENTIFIER")
     @JvmField val LBRACE           = GeblangTokenType("LBRACE")
     @JvmField val RBRACE           = GeblangTokenType("RBRACE")

@@ -26,6 +26,7 @@ JetBrains/IntelliJ plugin providing Geblang (`.gb`) language support.
 | Feature | Source |
 |---|---|
 | Syntax highlighting (keywords, types, strings, numbers, comments, operators) | Built-in lexer |
+| Decorator highlighting (`@memoize`, dotted `@Assert.email`, `@Get("/x")`) | Built-in lexer |
 | Color scheme customisation | Settings > Editor > Color Scheme > Geblang |
 | File type recognition (`.gb` files with icon) | Built-in |
 | Brace matching `{}` `[]` `()` | Built-in |
@@ -94,6 +95,10 @@ IDE UI or PSI/parser involved. They cover:
 - Keywords, constants (`true`/`false`/`null`/`this`), word operators (`is`/`not`/`xor`),
   and built-in types
 - Multi-character operators (`//`, `**`, `??=`, `?.`, `|>`, `..`, `+=`, `==`, `=>`)
+- Decorators: bare `@memoize`, short `@Get`, dotted composite names (`@Assert.email`,
+  `@Foo.bar.baz`), and decorators with argument lists (`@Get("/x")`, where only the
+  dotted name is a `DECORATOR` token — the parens/args lex normally afterwards); a
+  bare `@` not followed by a letter/`_` remains the `@` `OPERATOR`
 - Bracket tokens (`{}` `[]` `()`)
 - A realistic multi-line snippet mixing several token categories
 - Bad-character handling (`BAD_CHARACTER` fallback for unrecognized input)

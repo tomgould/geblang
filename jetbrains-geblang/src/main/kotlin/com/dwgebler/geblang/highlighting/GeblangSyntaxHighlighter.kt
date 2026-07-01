@@ -25,6 +25,7 @@ class GeblangSyntaxHighlighter : SyntaxHighlighterBase() {
             GeblangTokenTypes.TYPE           -> TYPE_KEYS
             GeblangTokenTypes.CONSTANT       -> CONSTANT_KEYS
             GeblangTokenTypes.WORD_OPERATOR  -> WORD_OP_KEYS
+            GeblangTokenTypes.DECORATOR      -> DECORATOR_KEYS
             GeblangTokenTypes.OPERATOR,
             GeblangTokenTypes.LBRACE,
             GeblangTokenTypes.RBRACE,
@@ -46,6 +47,7 @@ class GeblangSyntaxHighlighter : SyntaxHighlighterBase() {
         @JvmField val TYPE       = createTextAttributesKey("GEBLANG_TYPE",       DefaultLanguageHighlighterColors.CLASS_NAME)
         @JvmField val CONSTANT   = createTextAttributesKey("GEBLANG_CONSTANT",   DefaultLanguageHighlighterColors.CONSTANT)
         @JvmField val WORD_OP    = createTextAttributesKey("GEBLANG_WORD_OP",    DefaultLanguageHighlighterColors.KEYWORD)
+        @JvmField val DECORATOR  = createTextAttributesKey("GEBLANG_DECORATOR", DefaultLanguageHighlighterColors.METADATA)
         @JvmField val OPERATOR   = createTextAttributesKey("GEBLANG_OPERATOR",   DefaultLanguageHighlighterColors.OPERATION_SIGN)
         @JvmField val IDENTIFIER = createTextAttributesKey("GEBLANG_IDENTIFIER", DefaultLanguageHighlighterColors.IDENTIFIER)
         @JvmField val BAD_CHAR   = createTextAttributesKey("GEBLANG_BAD_CHAR",   HighlighterColors.BAD_CHARACTER)
@@ -57,6 +59,7 @@ class GeblangSyntaxHighlighter : SyntaxHighlighterBase() {
         private val TYPE_KEYS       = arrayOf(TYPE)
         private val CONSTANT_KEYS   = arrayOf(CONSTANT)
         private val WORD_OP_KEYS    = arrayOf(WORD_OP)
+        private val DECORATOR_KEYS  = arrayOf(DECORATOR)
         private val OPERATOR_KEYS   = arrayOf(OPERATOR)
         private val IDENTIFIER_KEYS = arrayOf(IDENTIFIER)
         private val BAD_CHAR_KEYS   = arrayOf(BAD_CHAR)

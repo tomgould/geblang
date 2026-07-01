@@ -7,7 +7,7 @@
     <description><![CDATA[
         <p>Geblang language support for IntelliJ-based IDEs.</p>
         <ul>
-            <li>Syntax highlighting for .gb files (keywords, types, strings, numbers, comments, operators)</li>
+            <li>Syntax highlighting for .gb files (keywords, types, strings, numbers, comments, operators, decorators)</li>
             <li>File type recognition with icon</li>
             <li>Brace matching for {} [] ()</li>
             <li>Line and block comment toggling (Ctrl+/ and Ctrl+Shift+/)</li>

@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added decorator highlighting: `@name` and dotted composite decorators
+  (`@Assert.email`, `@Foo.bar.baz`) are now lexed as a single `DECORATOR` token,
+  with their own customisable color under Settings > Editor > Color Scheme >
+  Geblang > Decorator. Decorator argument lists (`@Get("/x")`) are lexed normally
+  after the decorator name. A bare `@` not followed by an identifier is still the
+  `@` operator.
 - Added comprehensive unit tests for the Geblang lexer, covering comments, strings,
   numbers, keywords, operators, and bracket tokenization.
 - Added a guard test confirming `//` tokenizes as the integer-division operator and

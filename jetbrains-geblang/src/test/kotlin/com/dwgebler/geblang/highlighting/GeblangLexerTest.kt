@@ -289,6 +289,104 @@ class GeblangLexerTest : LexerTestCase() {
     }
 
     // ------------------------------------------------------------------
+    // Decorators
+    // ------------------------------------------------------------------
+
+    fun testSimpleDecorator() {
+        doTest(
+            "@memoize",
+            "DECORATOR ('@memoize')\n"
+        )
+    }
+
+    fun testShortDecorator() {
+        doTest(
+            "@Get",
+            "DECORATOR ('@Get')\n"
+        )
+    }
+
+    fun testDottedDecorator() {
+        doTest(
+            "@Assert.email",
+            "DECORATOR ('@Assert.email')\n"
+        )
+    }
+
+    fun testDoublyDottedDecorator() {
+        doTest(
+            "@Foo.bar.baz",
+            "DECORATOR ('@Foo.bar.baz')\n"
+        )
+    }
+
+    fun testDecoratorWithArgsDoesNotConsumeParens() {
+        // The decorator name itself is `@Get`; the argument list is lexed
+        // normally afterwards as LPAREN / STRING / RPAREN, not swallowed by
+        // the decorator branch.
+        doTest(
+            "@Get(\"/x\")",
+            "DECORATOR ('@Get')\n" +
+                "LPAREN ('(')\n" +
+                "STRING ('\"/x\"')\n" +
+                "RPAREN (')')\n"
+        )
+    }
+
+    fun testDecoratorOnFunctionDeclaration() {
+        val text = "@Assert.range(1, 100)\nfunc setAge(int age): int {\n    return age\n}"
+        doTest(
+            text,
+            "DECORATOR ('@Assert.range')\n" +
+                "LPAREN ('(')\n" +
+                "NUMBER ('1')\n" +
+                "OPERATOR (',')\n" +
+                "WHITESPACE (' ')\n" +
+                "NUMBER ('100')\n" +
+                "RPAREN (')')\n" +
+                "WHITESPACE ('\\n')\n" +
+                "KEYWORD ('func')\n" +
+                "WHITESPACE (' ')\n" +
+                "IDENTIFIER ('setAge')\n" +
+                "LPAREN ('(')\n" +
+                "TYPE ('int')\n" +
+                "WHITESPACE (' ')\n" +
+                "IDENTIFIER ('age')\n" +
+                "RPAREN (')')\n" +
+                "OPERATOR (':')\n" +
+                "WHITESPACE (' ')\n" +
+                "TYPE ('int')\n" +
+                "WHITESPACE (' ')\n" +
+                "LBRACE ('{')\n" +
+                "WHITESPACE ('\\n    ')\n" +
+                "KEYWORD ('return')\n" +
+                "WHITESPACE (' ')\n" +
+                "IDENTIFIER ('age')\n" +
+                "WHITESPACE ('\\n')\n" +
+                "RBRACE ('}')\n"
+        )
+    }
+
+    fun testBareAtIsStillOperator() {
+        doTest(
+            "a @ b",
+            "IDENTIFIER ('a')\n" +
+                "WHITESPACE (' ')\n" +
+                "OPERATOR ('@')\n" +
+                "WHITESPACE (' ')\n" +
+                "IDENTIFIER ('b')\n"
+        )
+    }
+
+    fun testBareAtFollowedByOperatorIsStillOperator() {
+        doTest(
+            "@+",
+            "OPERATOR ('@')\n" +
+                "OPERATOR ('+')\n"
+        )
+    }
+
+    // ------------------------------------------------------------------
     // Brackets
     // ------------------------------------------------------------------
 
