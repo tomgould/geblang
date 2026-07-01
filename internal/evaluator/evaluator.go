@@ -126,8 +126,10 @@ type Evaluator struct {
 	// fires the destructor immediately.
 	destructibleInstances []*runtime.Instance
 	args                  []string
-	debugHook             DebugHookFunc
-	debugSourcePath       string
+	debug                 *debugState
+	threadID              int
+	debugSuppressed       int // > 0: callDebugHook/startDebugThread are no-ops
+	debugEvalCancel       <-chan struct{}
 	parent                *Evaluator
 	AssertionsDisabled    bool
 	vmDispatcher          MethodDispatcher
@@ -811,6 +813,10 @@ func (e *Evaluator) childForCallback() *Evaluator {
 	child.nextLogID = e.nextLogID
 	child.nextHTTPClientID = e.nextHTTPClientID
 	child.nextCookieJarID = e.nextCookieJarID
+	child.debug = e.debug
+	child.threadID = e.threadID // goroutine spawns override this with a fresh id
+	child.debugSuppressed = e.debugSuppressed
+	child.debugEvalCancel = e.debugEvalCancel
 	return child
 }
 
@@ -876,6 +882,9 @@ func (e *Evaluator) Eval(program *ast.Program) (result Result, err error) {
 	}
 	if sig.kind == "throw" && sig.thrown != nil {
 		return Result{}, uncaughtFromThrown(*sig.thrown)
+	}
+	if sig.kind == "debugCancelled" {
+		return Result{}, ErrDebugEvaluationCancelled
 	}
 	return Result{ExitCode: 0}, nil
 }
@@ -1124,9 +1133,15 @@ func (e *Evaluator) evalStatements(stmts []ast.Statement, env *runtime.Environme
 }
 
 func (e *Evaluator) evalStatementInList(stmt ast.Statement, env *runtime.Environment) (signal, bool) {
+	if e.debugEvaluationCancelled() {
+		return signal{kind: "debugCancelled"}, true
+	}
 	e.callDebugHook(stmt, env, "step")
 	sig, err := e.evalStatement(stmt, env)
 	if err != nil {
+		if errors.Is(err, ErrDebugEvaluationCancelled) {
+			return signal{kind: "debugCancelled"}, true
+		}
 		var thrown thrownError
 		if errors.As(err, &thrown) {
 			errValue := e.withTrace(thrown.value)
@@ -1288,6 +1303,9 @@ func (e *Evaluator) evalStatement(stmt ast.Statement, env *runtime.Environment) 
 		return signal{}, nil
 	case *ast.WhileStatement:
 		for {
+			if e.debugEvaluationCancelled() {
+				return signal{kind: "debugCancelled"}, nil
+			}
 			condition, err := e.evalBoolCondition(stmt.Condition, env)
 			if err != nil {
 				return signal{}, err
@@ -2166,6 +2184,9 @@ func (e *Evaluator) evalForStatement(stmt *ast.ForStatement, env *runtime.Enviro
 		}
 	}
 	for {
+		if e.debugEvaluationCancelled() {
+			return signal{kind: "debugCancelled"}, nil
+		}
 		if stmt.Condition != nil {
 			condition, err := e.evalBoolCondition(stmt.Condition, loopEnv)
 			if err != nil {
@@ -5652,6 +5673,9 @@ func (e *Evaluator) applyFunctionWithThisSync(fn runtime.Function, args []runtim
 	if sig.kind == "generatorClosed" {
 		return runtime.Null{}, nil
 	}
+	if sig.kind == "debugCancelled" {
+		return nil, ErrDebugEvaluationCancelled
+	}
 	if sig.kind == "throw" && sig.thrown != nil {
 		return nil, thrownError{value: *sig.thrown}
 	}
@@ -5676,7 +5700,9 @@ func (e *Evaluator) lazyGenerator(fn runtime.Function, args []runtime.Value, thi
 			runner := fn
 			runner.IsGenerator = false
 			child.pushYieldChannel(items, doneCh)
+			endThread := child.startDebugThread("generator")
 			go func() {
+				defer endThread()
 				defer close(items)
 				defer child.popYieldFrame()
 				value, err := child.applyFunctionWithThisSync(runner, args, this)
@@ -5723,8 +5749,10 @@ func (e *Evaluator) startAsyncFunction(fn runtime.Function, args []runtime.Value
 	// package-level native callbacks (InstanceInvoker, ClassDeserializer).
 	child := e.childForCallback()
 	child.pendingEnumThis = e.enumThisForChild
+	endThread := child.startDebugThread("async worker")
 	runtime.AsyncEnter()
 	go func() {
+		defer endThread()
 		defer runtime.AsyncLeave()
 		value, err := child.applyFunctionWithThisSync(fn, args, this)
 		if exit, ok := value.(exitValue); ok && err == nil {
@@ -6973,14 +7001,15 @@ func listElement(value *runtime.List, i int) (runtime.Value, error) {
 }
 
 func stringElement(value runtime.String, i int) (runtime.Value, error) {
-	runes := []rune(value.Value)
+	ri := runtime.StringRuneInfo(value.Value)
+	n := ri.RuneCount(value.Value)
 	if i < 0 {
-		i = len(runes) + i
+		i = n + i
 	}
-	if i < 0 || i >= len(runes) {
+	if i < 0 || i >= n {
 		return nil, fmt.Errorf("string index out of range")
 	}
-	return runtime.String{Value: string(runes[i])}, nil
+	return runtime.String{Value: ri.RuneAt(value.Value, i)}, nil
 }
 
 func bytesElement(value runtime.Bytes, i int) (runtime.Value, error) {

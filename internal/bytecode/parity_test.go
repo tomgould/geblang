@@ -113,6 +113,46 @@ io.println("${"a1b2c3".searchPattern("[0-9]")}");
 `)
 }
 
+func TestParityPrimitiveMethodNamesAreCaseSensitive(t *testing.T) {
+	runParity(t, `import io;
+
+func wrongLength(): string {
+    any value = "abc";
+    try {
+        value.Length();
+        return "accepted";
+    } catch (Error e) {
+        return "rejected";
+    }
+}
+
+func wrongIsEmpty(): string {
+    any value = [];
+    try {
+        value.isempty();
+        return "accepted";
+    } catch (Error e) {
+        return "rejected";
+    }
+}
+
+func wrongConversion(): string {
+    any value = "42";
+    try {
+        value.TOINT();
+        return "accepted";
+    } catch (Error e) {
+        return "rejected";
+    }
+}
+
+io.println(wrongLength());
+io.println(wrongIsEmpty());
+io.println(wrongConversion());
+io.println(("42" as any).toInt());
+`, "rejected\nrejected\nrejected\n42\n")
+}
+
 // TestParityListFill pins list.fill (append count copies, return receiver) on both backends.
 func TestParityListFill(t *testing.T) {
 	runParity(t, `import io;
@@ -3907,4 +3947,52 @@ let b = Box<any>();
 b.put(42);
 io.println(b.get());
 `, "42\n")
+}
+
+func TestParityStringRuneCache(t *testing.T) {
+	// ASCII index and substring via rune-index cache.
+	runParity(t, `import io;
+io.println("hello"[1]);
+io.println("hello".substring(1, 4));
+io.println("hello".length());
+`, "e\nell\n5\n")
+	// Multi-byte index and substring.
+	runParity(t, `import io;
+io.println("aé中z"[2]);
+io.println("aé中z".substring(1, 3));
+io.println("aé中z".length());
+`, "中\né中\n4\n")
+	// Repeated scan counting spaces.
+	runParity(t, `import io;
+let s = "the quick brown fox";
+let int c = 0;
+for (let int i = 0; i < s.length(); i++) {
+    if (s[i] == " ") { c = c + 1; }
+}
+io.println(c);
+`, "3\n")
+	// Multi-byte reconstruct via per-rune index.
+	runParity(t, `import io;
+let s = "aé中z";
+let string r = "";
+for (let int i = 0; i < s.length(); i++) {
+    r = r + s[i];
+}
+	io.println(r);
+	`, "aé中z\n")
+	// Exercise both sides of the short-string threshold and the cached Unicode path.
+	runParity(t, `import io;
+import string;
+let short = "a".repeat(256);
+let long = "b".repeat(257);
+let pair = string.fromCodePoints([233, 20013]);
+let unicode = pair.repeat(200);
+io.println(short.length());
+io.println(short[255]);
+io.println(long.length());
+io.println(long.substring(127, 130));
+io.println(unicode.length());
+io.println(unicode[201] == string.fromCodePoint(20013));
+io.println(unicode.substring(200, 202) == pair);
+`, "256\na\n257\nbbb\n400\ntrue\ntrue\n")
 }

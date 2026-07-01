@@ -81,10 +81,15 @@ type SetVariableArgs struct {
 	Value              string `json:"value"`
 }
 
+type PauseArgs struct {
+	ThreadID int `json:"threadId"`
+}
+
 type EvaluateArgs struct {
-	Expression  string `json:"expression"`
-	FrameID     int    `json:"frameId"`
-	Context     string `json:"context"` // "watch", "hover", "repl"
+	Expression string `json:"expression"`
+	FrameID    int    `json:"frameId"`
+	ThreadID   int    `json:"threadId"`
+	Context    string `json:"context"` // "watch", "hover", "repl"
 }
 
 type ExceptionInfoArgs struct {
@@ -198,4 +203,9 @@ type OutputEventBody struct {
 
 type ExitedEventBody struct {
 	ExitCode int `json:"exitCode"`
+}
+
+type ThreadEventBody struct {
+	Reason   string `json:"reason"`
+	ThreadID int    `json:"threadId"`
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	gruntime "geblang/internal/runtime"
@@ -88,6 +89,71 @@ func TestServeDebugEnabledEnvSwitch(t *testing.T) {
 	}
 	if !serveDebugEnabled(true) {
 		t.Fatal("opts debug must enable regardless of env")
+	}
+}
+
+// extractFunction evals a top-level program on e and returns one of its declared functions.
+func extractFunction(t *testing.T, e *Evaluator, src, name string) gruntime.Function {
+	t.Helper()
+	prog := parseForTest(t, src)
+	env := gruntime.NewEnvironment()
+	if err := e.installBuiltinTypes(env); err != nil {
+		t.Fatalf("install builtins: %v", err)
+	}
+	e.pushDeferFrame()
+	if _, err := e.evalTopLevelStatements(prog.Statements, env); err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	v, ok := env.Get(name)
+	if !ok {
+		t.Fatalf("function %q not found", name)
+	}
+	fn, ok := v.(gruntime.Function)
+	if !ok {
+		t.Fatalf("%q is not a function: %T", name, v)
+	}
+	return fn
+}
+
+// TestStreamingHandlerGetsFreshThreadID is the C1 regression: a streaming handler must get a fresh thread id (>= 2), not inherit main (id 1).
+func TestStreamingHandlerGetsFreshThreadID(t *testing.T) {
+	e := New(io.Discard)
+	streamBody := extractFunction(t, e, "func streamBody(any s): any { return s; }", "streamBody")
+
+	var mu sync.Mutex
+	started := map[int]string{}
+	e.SetDebugSourcePath("test.gb")
+	e.SetDebugThreadHooks(
+		func(id int, name string) { mu.Lock(); started[id] = name; mu.Unlock() },
+		func(id int) {},
+	)
+	e.SetDebugHook(func(p DebugPause) {})
+
+	outer := gruntime.Function{Native: func(this *gruntime.Instance, args []gruntime.Value) (gruntime.Value, error) {
+		entries := map[string]gruntime.DictEntry{}
+		putDict(entries, "stream", streamBody)
+		return gruntime.Dict{Entries: entries}, nil
+	}}
+
+	server := httptest.NewServer(e.httpHandler(outer, nil, nil, 0, false, false))
+	defer server.Close()
+	resp, err := http.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.ReadAll(resp.Body) // drain so the stream handler fully completes before we inspect
+	resp.Body.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	streamID := 0
+	for id, name := range started {
+		if name == "stream" {
+			streamID = id
+		}
+	}
+	if streamID < 2 {
+		t.Fatalf("streaming handler must get a fresh thread id >= 2, got %d (started: %#v)", streamID, started)
 	}
 }
 

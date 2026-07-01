@@ -206,6 +206,7 @@ func (e *Evaluator) watchStart(call *ast.CallExpression, args []runtime.Value) (
 func (e *Evaluator) dispatchWatchEvents(handle *watchHandle, callback runtime.Function) {
 	child := e.childForCallback()
 	defer child.Cleanup()
+	defer child.startDebugThread("watch callback")()
 	for {
 		select {
 		case event, ok := <-handle.watcher.Events:

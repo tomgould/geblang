@@ -3,9 +3,11 @@ package evaluator_test
 import (
 	"bufio"
 	"bytes"
+	"io"
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"geblang/internal/evaluator"
 	"geblang/internal/lexer"
@@ -19,11 +21,14 @@ func TestRequestStreamSurfacesMidStreamError(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	defer ln.Close()
+	serverDone := make(chan struct{})
 	go func() {
+		defer close(serverDone)
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
+		defer conn.Close()
 		br := bufio.NewReader(conn)
 		for {
 			line, err := br.ReadString('\n')
@@ -31,8 +36,15 @@ func TestRequestStreamSurfacesMidStreamError(t *testing.T) {
 				break
 			}
 		}
-		conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nline-one\npartial"))
-		conn.Close()
+		if _, err := conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nline-one\npartial")); err != nil {
+			return
+		}
+		if tcp, ok := conn.(*net.TCPConn); ok {
+			if err := tcp.CloseWrite(); err != nil {
+				return
+			}
+		}
+		_, _ = io.Copy(io.Discard, conn)
 	}()
 
 	prog := `import http;
@@ -58,5 +70,10 @@ try {
 	}
 	if !strings.Contains(out.String(), "threw") {
 		t.Fatalf("expected mid-stream read error to surface as IOError, got %q", out.String())
+	}
+	select {
+	case <-serverDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("mock server did not exit")
 	}
 }

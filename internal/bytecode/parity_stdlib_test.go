@@ -8,6 +8,25 @@ import (
 	"testing"
 )
 
+func TestParityBytesToStringRejectsInvalidUTF8(t *testing.T) {
+	runParity(t, `import bytes;
+import io;
+let invalid = bytes.fromHex("61ff62");
+try {
+    bytes.toString(invalid);
+    io.println("module accepted");
+} catch (RuntimeError e) {
+    io.println(e.getMessage().contains("not valid UTF-8"));
+}
+try {
+    invalid.toString();
+    io.println("method accepted");
+} catch (RuntimeError e) {
+    io.println(e.getMessage().contains("not valid UTF-8"));
+}
+`, "true\ntrue\n")
+}
+
 // stdlibModuleLoader is a minimal bytecode-side module loader used by
 // parity tests for source-distributed stdlib modules (time.scheduler,
 // async.rate, etc.). It resolves canonical module paths via the standard
