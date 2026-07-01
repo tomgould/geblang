@@ -61,6 +61,12 @@
             language="Geblang"
             implementationClass="com.dwgebler.geblang.highlighting.GeblangSyntaxHighlighterFactory"/>
 
+        <!-- Minimal flat-token PSI tree - no grammar. Foundation for folding,
+             run-line markers, TODO highlighting and spellcheck. -->
+        <lang.parserDefinition
+            language="Geblang"
+            implementationClass="com.dwgebler.geblang.psi.GeblangParserDefinition"/>
+
         <!-- Color settings page: Settings > Editor > Color Scheme > Geblang -->
         <colorSettingsPage
             implementation="com.dwgebler.geblang.highlighting.GeblangColorSettingsPage"/>

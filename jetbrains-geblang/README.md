@@ -128,6 +128,9 @@ IntelliJ IDE
     ├── GeblangLanguage / GeblangFileType  — registers .gb with IntelliJ
     ├── GeblangLexer                       — hand-written lexer (no JFlex)
     ├── GeblangSyntaxHighlighter           — token-type → color mapping
+    +-- psi/ (minimal PSI layer - no grammar)
+    |        |-- GeblangParserDefinition   - builds a FLAT PSI tree of lexer tokens
+    |        `-- GeblangFile               - PSI file root (PsiFileBase)
     ├── GeblangColorSettingsPage           — user-editable color scheme
     ├── GeblangCommenter                   — # / /* */ comment toggling
     ├── GeblangBraceMatcher                — {} [] () matching
@@ -157,6 +160,13 @@ IntelliJ IDE
 LSP4IJ (Red Hat) handles all JSON-RPC communication between IntelliJ and the
 `geblang lsp` process. This plugin only needs to launch the process and register
 the language mapping.
+
+`GeblangParserDefinition` is intentionally minimal: it reuses `GeblangLexer`
+directly and wraps every token as a flat, unnested PSI leaf under a single
+`GeblangFile` root. There is no grammar and no Grammar-Kit - this is not a real
+parser. Its only purpose is to give the platform a PSI tree to hang PSI-based
+features off of later (folding, run-line markers, TODO highlighting,
+spellcheck). Semantic analysis remains entirely owned by the LSP server.
 
 ## Building from Source
 

@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added a minimal PSI layer (`GeblangParserDefinition`, `GeblangFile`): builds a
+  FLAT PSI tree of the existing lexer's tokens under a single file root, with no
+  grammar rules and no Grammar-Kit. This is the foundation for later PSI-based
+  features (folding, run-line markers, TODO highlighting, spellcheck); syntax
+  highlighting is unaffected and continues to use the lexer-based highlighter
+  directly. Verified against the real `com.intellij.lang.ParserDefinition`
+  contract for IC-2024.2.4 and covered by a `BasePlatformTestCase` asserting
+  zero `PsiErrorElement`s and a lossless PSI-text round-trip.
 - Added "New > Geblang File" file templates: four bundled `.gb.ft` templates
   (File, Class, Module, Test) selectable from a `GeblangCreateFileAction`
   ("New > Geblang File" in the Project View / File menu), plus a
