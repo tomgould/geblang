@@ -70,6 +70,40 @@ cd jetbrains-geblang
 
 Requires JDK 17 and network access (downloads the IntelliJ Platform and LSP4IJ on first run).
 
+## Development / Testing
+
+Run the lexer unit tests with:
+
+```bash
+cd jetbrains-geblang
+./gradlew test
+```
+
+Tests live under `src/test/kotlin/com/dwgebler/geblang/highlighting/GeblangLexerTest.kt`
+and drive `GeblangLexer` directly (via IntelliJ Platform's `LexerTestCase`), with no
+IDE UI or PSI/parser involved. They cover:
+
+- Line comments (`#`, `##`) and block comments (`/* */`, `/** */`)
+- **`//` tokenizing as the integer-division `OPERATOR`, never as a comment** — the
+  key distinction versus `#`-style line comments, and the most important guard test
+  in the suite
+- All four string forms: `"..."`, `"""..."""`, `'...'`, `'''...'''`, plus
+  interpolation placeholders and backslash escape sequences inside double-quoted strings
+- Numbers: decimal, underscore-separated, float, float with `f` suffix, scientific
+  notation, and hex/octal/binary literals
+- Keywords, constants (`true`/`false`/`null`/`this`), word operators (`is`/`not`/`xor`),
+  and built-in types
+- Multi-character operators (`//`, `**`, `??=`, `?.`, `|>`, `..`, `+=`, `==`, `=>`)
+- Bracket tokens (`{}` `[]` `()`)
+- A realistic multi-line snippet mixing several token categories
+- Bad-character handling (`BAD_CHARACTER` fallback for unrecognized input)
+- A round-trip sanity check confirming token offsets have no gaps/overlaps and
+  concatenated token text reproduces the original input exactly, plus a lexer
+  restart-consistency check
+
+Test reports are written to `build/reports/tests/test/index.html` (HTML) and
+`build/test-results/test/*.xml` (JUnit XML) after each run.
+
 ## Troubleshooting
 
 **No highlighting in .gb files**
