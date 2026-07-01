@@ -21,6 +21,33 @@ func (s *server) references(params ReferenceParams) any {
 	return identifierOccurrences(params.TextDocument.URI, source, word)
 }
 
+// DocumentHighlight is an LSP DocumentHighlight.
+type DocumentHighlight struct {
+	Range Range `json:"range"`
+	Kind  int   `json:"kind,omitempty"`
+}
+
+// documentHighlight handles textDocument/documentHighlight with
+// single-file scope. Returns every whole-word occurrence of the
+// identifier under the cursor in the current document, reusing the
+// same occurrence set that references() computes.
+func (s *server) documentHighlight(params TextDocumentPositionParams) any {
+	source, ok := s.document(params.TextDocument.URI)
+	if !ok {
+		return []DocumentHighlight{}
+	}
+	word := wordAtPosition(source, params.Position.Line, params.Position.Character)
+	if word == "" {
+		return []DocumentHighlight{}
+	}
+	locs := identifierOccurrences(params.TextDocument.URI, source, word)
+	out := make([]DocumentHighlight, 0, len(locs))
+	for _, loc := range locs {
+		out = append(out, DocumentHighlight{Range: loc.Range, Kind: 1})
+	}
+	return out
+}
+
 // identifierOccurrences scans source for every whole-word match of
 // `word` and returns each as an LSP Location.
 func identifierOccurrences(uri, source, word string) []Location {

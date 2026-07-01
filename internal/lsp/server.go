@@ -208,6 +208,7 @@ func (s *server) handle(msg *rawMessage) {
 				"documentFormattingProvider": true,
 				"codeActionProvider":         true,
 				"referencesProvider":         true,
+				"documentHighlightProvider":  true,
 				"renameProvider":             map[string]any{"prepareProvider": true},
 				"workspaceSymbolProvider":    true,
 			},
@@ -358,6 +359,14 @@ func (s *server) handle(msg *rawMessage) {
 			return
 		}
 		s.respond(msg.ID, s.references(params))
+
+	case "textDocument/documentHighlight":
+		var params TextDocumentPositionParams
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			s.respond(msg.ID, []DocumentHighlight{})
+			return
+		}
+		s.respond(msg.ID, s.documentHighlight(params))
 
 	case "textDocument/prepareRename":
 		var params TextDocumentPositionParams
