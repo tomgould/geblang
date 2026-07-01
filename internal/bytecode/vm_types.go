@@ -1268,14 +1268,14 @@ func castValue(value runtime.Value, target string) (runtime.Value, error) {
 }
 
 func primitiveConversionTarget(name string) (string, bool) {
-	switch strings.ToLower(name) {
-	case "toint":
+	switch name {
+	case "toInt":
 		return "int", true
-	case "todecimal":
+	case "toDecimal":
 		return "decimal", true
-	case "tofloat":
+	case "toFloat":
 		return "float", true
-	case "tobool":
+	case "toBool":
 		return "bool", true
 	}
 	return "", false

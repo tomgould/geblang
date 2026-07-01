@@ -1,0 +1,82 @@
+/**
+ * @title string rune-cache correctness
+ * @summary Guards that index/substring/slice/length produce correct results
+ * for both ASCII and multi-byte strings after the rune-index cache wiring.
+ */
+import test;
+import string;
+
+class StringIndexCacheTest extends test.Test {
+    @test
+    func indexAscii(): void {
+        let s = "hello";
+        this.assertEquals("h", s[0]);
+        this.assertEquals("o", s[4]);
+        this.assertEquals("o", s[-1]);
+        this.assertEquals(5, s.length());
+        this.assertEquals("ell", s.substring(1, 4));
+        this.assertEquals("he", s.slice(0, 2));
+    }
+
+    @test
+    func indexMultiByte(): void {
+        let s = "aé中z";
+        this.assertEquals(4, s.length());
+        this.assertEquals("é", s[1]);
+        this.assertEquals("中", s[2]);
+        this.assertEquals("z", s[-1]);
+        this.assertEquals("é中", s.substring(1, 3));
+        this.assertEquals("aé中z", s.substring(0, 4));
+    }
+
+    @test
+    func indexEdges(): void {
+        let s = "abc";
+        this.assertEquals("", s.substring(0, 0));
+        this.assertEquals("", s.substring(3, 3));
+        let e = "";
+        this.assertEquals(0, e.length());
+    }
+
+    @test
+    func repeatedScan(): void {
+        # Cache reuse across repeated index calls must give stable results.
+        let s = "the quick brown fox";
+        let int total = 0;
+        for (let int i = 0; i < s.length(); i++) {
+            if (s[i] == " ") {
+                total = total + 1;
+            }
+        }
+        this.assertEquals(3, total);
+    }
+
+    @test
+    func multiByteRepeatedScan(): void {
+        let s = "aé中z";
+        let string result = "";
+        for (let int i = 0; i < s.length(); i++) {
+            result = result + s[i];
+        }
+        this.assertEquals("aé中z", result);
+    }
+
+    @test
+    func thresholdBoundaries(): void {
+        let atThreshold = "a".repeat(256);
+        let aboveThreshold = "b".repeat(257);
+        this.assertEquals(256, atThreshold.length());
+        this.assertEquals("a", atThreshold[255]);
+        this.assertEquals(257, aboveThreshold.length());
+        this.assertEquals("bbb", aboveThreshold.substring(127, 130));
+    }
+
+    @test
+    func cachedLongUnicode(): void {
+        let pair = string.fromCodePoints([233, 20013]);
+        let s = pair.repeat(200);
+        this.assertEquals(400, s.length());
+        this.assertEquals(string.fromCodePoint(20013), s[201]);
+        this.assertEquals(pair, s.substring(200, 202));
+    }
+}

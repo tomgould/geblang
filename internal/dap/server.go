@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,13 +39,21 @@ type breakpointInfo struct {
 	condition string // empty = unconditional
 }
 
-// pausedCmd is a request sent to the hook goroutine while execution is paused.
+type frameRef struct {
+	thread     int
+	index      int
+	generation int
+}
+
+// pausedCmd is a request sent to a paused thread's hook goroutine.
 type pausedCmd struct {
-	kind  string // "evaluate", "setVariable"
-	expr  string
-	frame int
-	name  string
-	value string
+	kind       string // "evaluate", "setVariable"
+	expr       string
+	frame      int
+	frameIndex int
+	name       string
+	value      string
+	thread     int
 }
 
 // pausedCmdResult is the response from the hook goroutine.
@@ -52,6 +61,24 @@ type pausedCmdResult struct {
 	result string
 	typ    string
 	err    string
+}
+
+// threadInfo holds the per-thread debug state for one goroutine.
+type threadInfo struct {
+	name          string
+	mode          stepMode
+	stepDepth     int
+	lastPause     *evaluator.DebugPause
+	frameVars     map[int][]Variable
+	frameIDs      []int
+	resume        chan stepMode
+	evalReq       chan pausedCmd
+	evalRep       chan pausedCmdResult
+	parked        bool
+	stopped       bool
+	stoppedGen    int    // matches Server.stopGen at the time of this thread's current stop
+	inCondition   bool   // a conditional-breakpoint condition is evaluating on this thread; suppress re-entry
+	pendingReason string // set by the pause handler to override the default step/breakpoint reason
 }
 
 // Server is a DAP debug adapter server.
@@ -62,9 +89,9 @@ type Server struct {
 	mu  sync.Mutex
 	seq int
 
-	// breakpoints: absolute path → line → breakpoint info
+	// breakpoints: absolute path -> line -> breakpoint info
 	breakpoints map[string]map[int]breakpointInfo
-	sourcePaths map[string]string // normalized runtime path → client-facing path
+	sourcePaths map[string]string // normalized runtime path -> client-facing path
 
 	// debug session state
 	scriptPath  string
@@ -72,30 +99,24 @@ type Server struct {
 	scriptArgs  []string
 	stopOnEntry bool
 
-	// channels connecting the main DAP loop and the evaluator goroutine
-	pauseCh      chan evaluator.DebugPause
-	resumeCh     chan stepMode
+	pauseCh      chan evaluator.DebugPause // worker -> DAP loop: a thread paused
 	terminatedCh chan error
-	evalReqCh    chan pausedCmd
-	evalRepCh    chan pausedCmdResult
+	done         chan struct{} // closed on disconnect/terminate to release every goroutine
 
-	// last pause snapshot (protected by mu)
-	lastPause     *evaluator.DebugPause
-	frameVars     map[int][]Variable
+	threads     map[int]*threadInfo // id -> per-thread debug state (guarded by mu)
+	stopped     bool                // stop-the-world: a thread is paused
+	focused     int                 // thread id currently presented to the client
+	stopGen     int                 // incremented each time a thread commits a stop; guards stale resume tokens
+	nextFrameID int
+	frameRefs   map[int]frameRef
+	terminating bool // disconnect/terminate in progress
+
 	lastException string
 	exitCode      int
 	terminated    bool
-	paused        bool
-
-	// current step mode and depth (written only by DAP loop, read by hook goroutine via closure)
-	stepMode  stepMode
-	stepDepth int // call stack depth when step was requested
 }
 
-// Serve runs the DAP protocol loop on r/w until the session ends.
-// ServeTCP listens on the given TCP port on all interfaces, writes "IP:PORT\n"
-// to portOut, accepts one connection, then serves DAP over it. Pass port 0 to
-// bind to a random available port.
+// ServeTCP advertises "IP:PORT\n" to portOut, accepts one connection, serves DAP over it.
 func ServeTCP(portOut io.Writer, port int) error {
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -112,9 +133,7 @@ func ServeTCP(portOut io.Writer, port int) error {
 	return Serve(conn, conn)
 }
 
-// tcpAdvertiseIP returns the first non-loopback IPv4 address on an up
-// interface, which is the address reachable from a Windows host when the
-// process is running inside WSL2. Falls back to 127.0.0.1.
+// tcpAdvertiseIP returns the first non-loopback IPv4 (reachable from a WSL2 host), else 127.0.0.1.
 func tcpAdvertiseIP() string {
 	ifaces, _ := net.Interfaces()
 	for _, iface := range ifaces {
@@ -138,6 +157,7 @@ func tcpAdvertiseIP() string {
 	return "127.0.0.1"
 }
 
+// Serve runs the DAP protocol loop on r/w until the session ends.
 func Serve(r io.Reader, w io.Writer) error {
 	s := &Server{
 		r:            r,
@@ -145,28 +165,36 @@ func Serve(r io.Reader, w io.Writer) error {
 		breakpoints:  map[string]map[int]breakpointInfo{},
 		sourcePaths:  map[string]string{},
 		pauseCh:      make(chan evaluator.DebugPause),
-		resumeCh:     make(chan stepMode, 1),
 		terminatedCh: make(chan error, 1),
-		evalReqCh:    make(chan pausedCmd),
-		evalRepCh:    make(chan pausedCmdResult),
+		done:         make(chan struct{}),
+		threads:      map[int]*threadInfo{},
+		frameRefs:    map[int]frameRef{},
 	}
 	return s.run()
 }
 
 func (s *Server) run() error {
 	requestCh := make(chan *Message, 4)
+	defer s.beginTerminate() // release workers on any exit path
 
 	go func() {
 		br := bufio.NewReader(s.r)
 		for {
 			msg, err := readMessage(br)
 			if err != nil {
+				s.beginTerminate() // unblock a loop wedged on a paused eval so the session can tear down
 				close(requestCh)
 				return
+			}
+			if msg.Command == "disconnect" || msg.Command == "terminate" {
+				s.beginTerminate() // tear down even if the loop is blocked on a paused eval
 			}
 			requestCh <- msg
 		}
 	}()
+
+	// Drain stops on a dedicated goroutine so a worker's pause-send never blocks the eval handshake.
+	go s.emitStopEvents()
 
 	for {
 		select {
@@ -177,27 +205,6 @@ func (s *Server) run() error {
 			if err := s.handleRequest(req); err != nil {
 				return err
 			}
-		case pause, ok := <-s.pauseCh:
-			if !ok {
-				// evaluator finished without sending terminated — shouldn't happen
-				s.sendEvent("terminated", nil)
-				return nil
-			}
-			s.mu.Lock()
-			s.lastPause = &pause
-			s.paused = true
-			s.mu.Unlock()
-			desc := ""
-			if pause.Reason == "exception" {
-				desc = s.lastException
-			}
-			s.sendEvent("stopped", StoppedEventBody{
-				Reason:            pause.Reason,
-				Description:       desc,
-				ThreadID:          1,
-				AllThreadsStopped: true,
-				Text:              desc,
-			})
 		case err := <-s.terminatedCh:
 			if err != nil {
 				s.sendEvent("output", OutputEventBody{Category: "stderr", Output: err.Error() + "\n"})
@@ -208,11 +215,38 @@ func (s *Server) run() error {
 			}
 			exitCode := s.exitCode
 			s.terminated = true
-			s.paused = false
 			s.mu.Unlock()
 			s.sendEvent("exited", ExitedEventBody{ExitCode: exitCode})
 			s.sendEvent("terminated", nil)
 			return nil
+		}
+	}
+}
+
+// emitStopEvents writes stopped events for paused workers; a ready receiver keeps onPause's pauseCh send from blocking the eval handshake.
+func (s *Server) emitStopEvents() {
+	for {
+		select {
+		case pause := <-s.pauseCh:
+			s.mu.Lock()
+			skip := s.terminating
+			desc := ""
+			if pause.Reason == "exception" {
+				desc = s.lastException
+			}
+			s.mu.Unlock()
+			if skip {
+				continue // a worker pausing as the session ends must not emit a stopped after terminated
+			}
+			s.sendEvent("stopped", StoppedEventBody{
+				Reason:            pause.Reason,
+				Description:       desc,
+				ThreadID:          pause.ThreadID,
+				AllThreadsStopped: false,
+				Text:              desc,
+			})
+		case <-s.done:
+			return
 		}
 	}
 }
@@ -222,7 +256,7 @@ func (s *Server) handleRequest(req *Message) error {
 	case "initialize":
 		s.sendResponse(req, InitializeResponseBody{
 			SupportsConfigurationDoneRequest:      true,
-			SupportsSingleThreadExecutionRequests: true,
+			SupportsSingleThreadExecutionRequests: false,
 			SupportsEvaluateForHovers:             true,
 			SupportsTerminateRequest:              true,
 			SupportsSetVariable:                   true,
@@ -286,13 +320,40 @@ func (s *Server) handleRequest(req *Message) error {
 		s.sendResponse(req, nil)
 
 	case "threads":
-		s.sendResponse(req, ThreadsResponseBody{
-			Threads: []Thread{{ID: 1, Name: "main"}},
-		})
+		s.mu.Lock()
+		out := make([]Thread, 0, len(s.threads))
+		for id, ti := range s.threads {
+			out = append(out, Thread{ID: id, Name: ti.name})
+		}
+		s.mu.Unlock()
+		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+		s.sendResponse(req, ThreadsResponseBody{Threads: out})
 
 	case "stackTrace":
+		var args StackTraceArgs
+		_ = remarshal(req.Arguments, &args)
 		s.mu.Lock()
-		pause := s.lastPause
+		tid := args.ThreadID
+		if tid == 0 {
+			tid = s.focused
+		}
+		ti := s.threads[tid]
+		var pause *evaluator.DebugPause
+		if ti != nil && ti.stopped && tid == s.focused && ti.stoppedGen == s.stopGen {
+			pause = ti.lastPause
+			if pause != nil && len(ti.frameIDs) != len(pause.Frames) {
+				if s.frameRefs == nil {
+					s.frameRefs = map[int]frameRef{}
+				}
+				ti.frameIDs = make([]int, len(pause.Frames))
+				for i := range pause.Frames {
+					s.nextFrameID++
+					ti.frameIDs[i] = s.nextFrameID
+					s.frameRefs[s.nextFrameID] = frameRef{thread: tid, index: i, generation: s.stopGen}
+				}
+			}
+		}
+		frameIDs := append([]int(nil), tiFrameIDs(ti)...)
 		s.mu.Unlock()
 		if pause == nil {
 			s.sendResponse(req, StackTraceResponseBody{})
@@ -301,16 +362,14 @@ func (s *Server) handleRequest(req *Message) error {
 		frames := make([]StackFrame, len(pause.Frames))
 		frameVars := map[int][]Variable{}
 		for i, f := range pause.Frames {
-			id := i + 1
-			name := f.Name
+			id := frameIDs[i]
 			sourcePath := s.clientSourcePath(f.Path)
 			src := Source{Path: sourcePath, Name: sourceBase(sourcePath)}
 			line := f.Line
 			if i == 0 {
 				line = pause.Loc.Line
 			}
-			frames[i] = StackFrame{ID: id, Name: name, Source: src, Line: line, Column: 1}
-			// Use per-frame vars if available, fall back to innermost vars
+			frames[i] = StackFrame{ID: id, Name: f.Name, Source: src, Line: line, Column: 1}
 			if i < len(pause.FrameVars) {
 				frameVars[id] = dapVariables(pause.FrameVars[i])
 			} else if i == 0 {
@@ -320,12 +379,11 @@ func (s *Server) handleRequest(req *Message) error {
 			}
 		}
 		s.mu.Lock()
-		s.frameVars = frameVars
+		if ti = s.threads[tid]; ti != nil {
+			ti.frameVars = frameVars
+		}
 		s.mu.Unlock()
-		s.sendResponse(req, StackTraceResponseBody{
-			StackFrames: frames,
-			TotalFrames: len(frames),
-		})
+		s.sendResponse(req, StackTraceResponseBody{StackFrames: frames, TotalFrames: len(frames)})
 
 	case "scopes":
 		var args ScopesArgs
@@ -333,16 +391,17 @@ func (s *Server) handleRequest(req *Message) error {
 			s.sendErrorResponse(req, err.Error())
 			return nil
 		}
+		s.mu.Lock()
 		ref := args.FrameID
-		if ref <= 0 {
-			ref = 1
+		_, inspectable := s.currentFrameLocked(ref)
+		s.mu.Unlock()
+		if !inspectable {
+			s.sendErrorResponse(req, "invalid or stale frame id")
+			return nil
 		}
 		s.sendResponse(req, ScopesResponseBody{
-			Scopes: []Scope{
-				{Name: "Locals", VariablesReference: ref, Expensive: false},
-			},
+			Scopes: []Scope{{Name: "Locals", VariablesReference: ref, Expensive: false}},
 		})
-
 	case "variables":
 		var args VariablesArgs
 		if err := remarshal(req.Arguments, &args); err != nil {
@@ -350,16 +409,20 @@ func (s *Server) handleRequest(req *Message) error {
 			return nil
 		}
 		s.mu.Lock()
-		frameVars := s.frameVars
-		pause := s.lastPause
-		s.mu.Unlock()
-		vars := []Variable{}
-		if frameVars != nil && args.VariablesReference > 0 {
-			if fv, ok := frameVars[args.VariablesReference]; ok {
+		frame, valid := s.currentFrameLocked(args.VariablesReference)
+		var vars []Variable
+		if valid {
+			if fv, ok := s.threads[frame.thread].frameVars[args.VariablesReference]; ok {
 				vars = fv
 			}
-		} else if pause != nil {
-			vars = dapVariables(pause.Vars)
+		}
+		s.mu.Unlock()
+		if !valid {
+			s.sendErrorResponse(req, "invalid or stale frame id")
+			return nil
+		}
+		if vars == nil {
+			vars = []Variable{}
 		}
 		s.sendResponse(req, VariablesResponseBody{Variables: vars})
 
@@ -370,14 +433,29 @@ func (s *Server) handleRequest(req *Message) error {
 			return nil
 		}
 		s.mu.Lock()
-		paused := s.paused
+		frame, ok := s.currentFrameLocked(args.VariablesReference)
+		ti := s.threads[frame.thread]
 		s.mu.Unlock()
-		if !paused {
-			s.sendErrorResponse(req, "cannot set variable: not paused")
+		if !ok {
+			s.sendErrorResponse(req, "invalid or stale frame id")
 			return nil
 		}
-		s.evalReqCh <- pausedCmd{kind: "setVariable", name: args.Name, value: args.Value}
-		rep := <-s.evalRepCh
+		select {
+		case ti.evalReq <- pausedCmd{
+			kind: "setVariable", name: args.Name, value: args.Value,
+			thread: frame.thread, frame: args.VariablesReference, frameIndex: frame.index,
+		}:
+		case <-s.done:
+			s.sendErrorResponse(req, "session terminated")
+			return nil
+		}
+		var rep pausedCmdResult
+		select {
+		case rep = <-ti.evalRep:
+		case <-s.done:
+			s.sendErrorResponse(req, "session terminated")
+			return nil
+		}
 		if rep.err != "" {
 			s.sendErrorResponse(req, rep.err)
 			return nil
@@ -391,14 +469,44 @@ func (s *Server) handleRequest(req *Message) error {
 			return nil
 		}
 		s.mu.Lock()
-		paused := s.paused
+		tid := args.ThreadID
+		frameIndex := 0
+		ok := false
+		if args.FrameID > 0 {
+			if frame, valid := s.currentFrameLocked(args.FrameID); valid {
+				tid = frame.thread
+				frameIndex = frame.index
+				ok = true
+			}
+		} else {
+			if tid == 0 {
+				tid = s.focused
+			}
+			ti := s.threads[tid]
+			ok = ti != nil && ti.stopped && tid == s.focused && ti.stoppedGen == s.stopGen
+		}
+		ti := s.threads[tid]
 		s.mu.Unlock()
-		if !paused {
-			s.sendResponse(req, EvaluateResponseBody{Result: "(not paused)", VariablesReference: 0})
+		if !ok {
+			s.sendErrorResponse(req, "invalid or stale frame id")
 			return nil
 		}
-		s.evalReqCh <- pausedCmd{kind: "evaluate", expr: args.Expression, frame: args.FrameID}
-		rep := <-s.evalRepCh
+		select {
+		case ti.evalReq <- pausedCmd{
+			kind: "evaluate", expr: args.Expression, frame: args.FrameID,
+			frameIndex: frameIndex, thread: tid,
+		}:
+		case <-s.done:
+			s.sendResponse(req, EvaluateResponseBody{Result: "(terminated)", VariablesReference: 0})
+			return nil
+		}
+		var rep pausedCmdResult
+		select {
+		case rep = <-ti.evalRep:
+		case <-s.done:
+			s.sendResponse(req, EvaluateResponseBody{Result: "(terminated)", VariablesReference: 0})
+			return nil
+		}
 		if rep.err != "" {
 			s.sendErrorResponse(req, rep.err)
 			return nil
@@ -419,73 +527,213 @@ func (s *Server) handleRequest(req *Message) error {
 		})
 
 	case "continue":
-		s.mu.Lock()
-		s.stepMode = modeContinue
-		s.paused = false
-		s.mu.Unlock()
+		s.resumeAll()
 		s.sendResponse(req, ContinueResponseBody{AllThreadsContinued: true})
-		s.resumeCh <- modeContinue
 
 	case "next":
-		s.mu.Lock()
-		depth := 0
-		if s.lastPause != nil {
-			depth = len(s.lastPause.Frames) - 1
-		}
-		s.stepMode = modeNext
-		s.stepDepth = depth
-		s.paused = false
-		s.mu.Unlock()
-		s.sendResponse(req, nil)
-		s.resumeCh <- modeNext
+		s.stepThread(req, modeNext)
 
 	case "stepIn":
-		s.mu.Lock()
-		s.stepMode = modeStepIn
-		s.paused = false
-		s.mu.Unlock()
-		s.sendResponse(req, nil)
-		s.resumeCh <- modeStepIn
+		s.stepThread(req, modeStepIn)
 
 	case "stepOut":
-		s.mu.Lock()
-		depth := 0
-		if s.lastPause != nil {
-			depth = len(s.lastPause.Frames) - 1
-		}
-		s.stepMode = modeStepOut
-		s.stepDepth = depth
-		s.paused = false
-		s.mu.Unlock()
-		s.sendResponse(req, nil)
-		s.resumeCh <- modeStepOut
+		s.stepThread(req, modeStepOut)
 
 	case "pause":
+		var pauseArgs PauseArgs
+		if err := remarshal(req.Arguments, &pauseArgs); err != nil {
+			s.sendErrorResponse(req, err.Error())
+			return nil
+		}
 		s.mu.Lock()
-		s.stepMode = modeStepIn
+		ti := s.threads[pauseArgs.ThreadID]
+		if ti == nil {
+			s.mu.Unlock()
+			s.sendErrorResponse(req, "unknown thread id")
+			return nil
+		}
+		ti.mode = modeStepIn
+		ti.pendingReason = "pause"
 		s.mu.Unlock()
 		s.sendResponse(req, nil)
 
 	case "disconnect":
 		s.sendResponse(req, nil)
-		select {
-		case s.resumeCh <- modeContinue:
-		default:
-		}
+		s.beginTerminate()
 		return io.EOF
 
 	case "terminate":
 		s.sendResponse(req, nil)
-		select {
-		case s.resumeCh <- modeContinue:
-		default:
-		}
+		s.beginTerminate()
 		return io.EOF
 
 	default:
 		s.sendErrorResponse(req, fmt.Sprintf("unknown command: %s", req.Command))
 	}
 	return nil
+}
+
+// beginTerminate releases every blocked or parked goroutine so ev.Eval returns.
+func (s *Server) beginTerminate() {
+	s.mu.Lock()
+	if !s.terminating {
+		s.terminating = true
+		close(s.done)
+	}
+	s.mu.Unlock()
+	s.resumeAll()
+}
+
+// resumeAll clears the stop and releases the focused thread plus every parked worker.
+func (s *Server) resumeAll() {
+	s.mu.Lock()
+	s.stopped = false
+	s.clearFrameRefsLocked()
+	focused := s.focused
+	var wake []chan stepMode
+	for id, ti := range s.threads {
+		ti.mode = modeContinue // clear step mode even for threads not yet in onPause
+		ti.pendingReason = ""  // a pending pause must not survive past this resume onto a later stop
+		if id == focused {
+			continue
+		}
+		if ti.parked || ti.stopped {
+			ti.stopped = false // mark not-paused now so a racing evaluate/setVariable does not send to a gone worker
+			ti.parked = false
+			wake = append(wake, ti.resume)
+		}
+	}
+	ft := s.threads[focused]
+	ftWasStopped := ft != nil && ft.stopped
+	var ftResume chan stepMode
+	if ft != nil {
+		ft.stopped = false // close the continue-then-evaluate TOCTOU before the worker leaves onPause
+		ftResume = ft.resume
+	}
+	s.mu.Unlock()
+	if ftWasStopped {
+		select {
+		case ftResume <- modeContinue:
+		default:
+		}
+	}
+	for _, ch := range wake {
+		select {
+		case ch <- modeContinue:
+		default:
+		}
+	}
+}
+
+// stepThread advances only the focused thread, leaving the world stopped for others.
+func (s *Server) stepThread(req *Message, mode stepMode) {
+	var a NextArgs
+	_ = remarshal(req.Arguments, &a)
+	tid := a.ThreadID
+	s.mu.Lock()
+	if tid == 0 {
+		tid = s.focused
+	}
+	ti := s.threads[tid]
+	if ti == nil || !ti.stopped || tid != s.focused || ti.stoppedGen != s.stopGen {
+		s.mu.Unlock()
+		s.sendErrorResponse(req, "can only step the focused stopped thread")
+		return
+	}
+	depth := 0
+	if ti.lastPause != nil {
+		depth = len(ti.lastPause.Frames) - 1
+	}
+	ti.mode = mode
+	ti.stepDepth = depth
+	ti.stopped = false
+	ti.pendingReason = "" // a pending pause must not survive a step onto this thread's next stop
+	s.clearFrameRefsLocked()
+	ch := ti.resume
+	s.mu.Unlock()
+	s.sendResponse(req, nil)
+	select {
+	case ch <- mode:
+	default:
+	}
+}
+
+// registerThread adds a worker goroutine to the registry and announces it.
+func (s *Server) registerThread(id int, name string) {
+	s.mu.Lock()
+	if _, ok := s.threads[id]; !ok {
+		s.threads[id] = newThreadInfo(name)
+	}
+	s.mu.Unlock()
+	s.sendEvent("thread", ThreadEventBody{Reason: "started", ThreadID: id})
+}
+
+// unregisterThread removes an exited worker; releases the world if it owned the stop.
+func (s *Server) unregisterThread(id int) {
+	s.mu.Lock()
+	ti := s.threads[id]
+	if ti != nil && ti.parked {
+		ti.parked = false
+	}
+	delete(s.threads, id)
+	var wake []chan stepMode
+	if s.stopped && s.focused == id {
+		s.stopped = false
+		for _, other := range s.threads {
+			if other.parked || other.stopped {
+				other.parked = false
+				other.stopped = false
+				wake = append(wake, other.resume)
+			}
+		}
+	}
+	s.mu.Unlock()
+	for _, ch := range wake {
+		select {
+		case ch <- modeContinue:
+		default:
+		}
+	}
+	s.sendEvent("thread", ThreadEventBody{Reason: "exited", ThreadID: id})
+}
+
+func newThreadInfo(name string) *threadInfo {
+	return &threadInfo{
+		name:    name,
+		resume:  make(chan stepMode, 1),
+		evalReq: make(chan pausedCmd),
+		evalRep: make(chan pausedCmdResult),
+	}
+}
+
+func tiFrameIDs(ti *threadInfo) []int {
+	if ti == nil {
+		return nil
+	}
+	return ti.frameIDs
+}
+
+func (s *Server) currentFrameLocked(id int) (frameRef, bool) {
+	ref, ok := s.frameRefs[id]
+	if !ok || ref.generation != s.stopGen || ref.thread != s.focused {
+		return frameRef{}, false
+	}
+	ti := s.threads[ref.thread]
+	if ti == nil || !ti.stopped || ti.stoppedGen != s.stopGen || ti.lastPause == nil {
+		return frameRef{}, false
+	}
+	if ref.index < 0 || ref.index >= len(ti.lastPause.Frames) {
+		return frameRef{}, false
+	}
+	return ref, true
+}
+
+func (s *Server) clearFrameRefsLocked() {
+	s.frameRefs = map[int]frameRef{}
+	for _, ti := range s.threads {
+		ti.frameIDs = nil
+		ti.frameVars = nil
+	}
 }
 
 // runScript starts the evaluator goroutine. Called after configurationDone.
@@ -506,11 +754,7 @@ func (s *Server) runScript() {
 		return
 	}
 
-	// Pre-flight: run the same static checks `geblang run` does. Without
-	// this, real errors like "no matching overload" (which the bytecode
-	// compiler catches but the evaluator doesn't) execute partway and
-	// crash at runtime - a confusing UX for users hitting Run Without
-	// Debugging in VS Code (the DAP launch goes through here).
+	// Pre-flight static checks so a real error aborts before executing partway.
 	hasSemanticError := false
 	for _, diag := range semantic.New().Analyze(program) {
 		prefix := "error: "
@@ -530,11 +774,7 @@ func (s *Server) runScript() {
 		s.terminatedCh <- fmt.Errorf("static analysis failed for %s", s.scriptPath)
 		return
 	}
-	// Try bytecode compilation as the secondary static-check pass.
-	// Non-parity errors (no-matching-overload, type mismatch, undeclared
-	// identifier) abort the launch. Parity gaps - constructs the
-	// bytecode compiler doesn't support yet - are not real errors; the
-	// evaluator handles them and the debug session can proceed.
+	// Secondary static-check pass; parity gaps are not real errors and proceed.
 	if _, compileErr := bytecode.Compile(program, src, s.scriptPath); compileErr != nil && !bytecode.IsParityError(compileErr) {
 		s.sendEvent("output", OutputEventBody{Category: "stderr", Output: compileErr.Error() + "\n"})
 		s.terminatedCh <- compileErr
@@ -548,56 +788,15 @@ func (s *Server) runScript() {
 	ev := evaluator.NewWithArgsAndModulePaths(s.outputWriter(), s.scriptArgs, modulePaths)
 	ev.SetDebugSourcePath(s.scriptPath)
 
-	// current step state (read/written only from the hook, which runs in this goroutine)
-	currentMode := modeContinue
-	currentDepth := 0
+	s.mu.Lock()
+	s.threads[1] = newThreadInfo("main")
+	s.focused = 1
 	if s.stopOnEntry {
-		currentMode = modeStepIn
+		s.threads[1].mode = modeStepIn
 	}
-
-	ev.SetDebugHook(func(pause evaluator.DebugPause) {
-		depth := len(pause.Frames) - 1 // 0 = top level
-
-		// Check if we should pause at this location
-		shouldPause, bpInfo := s.shouldPauseAt(pause.Loc, currentMode, currentDepth, depth)
-		if !shouldPause {
-			return
-		}
-
-		// Conditional breakpoint: evaluate condition before pausing
-		if bpInfo != nil && bpInfo.condition != "" && pause.Env != nil {
-			val, err := ev.EvalExpression(bpInfo.condition, pause.Env)
-			if err != nil || !isTruthy(val) {
-				return
-			}
-		}
-
-		reason := pause.Reason
-		if reason == "step" {
-			s.mu.Lock()
-			bps := s.breakpoints[pause.Loc.Path]
-			s.mu.Unlock()
-			if _, atBp := bps[pause.Loc.Line]; atBp {
-				reason = "breakpoint"
-			}
-		}
-		pause.Reason = reason
-
-		// Send pause to DAP loop
-		s.pauseCh <- pause
-
-		// While paused: service eval/setVariable requests until resumed
-		for {
-			select {
-			case mode := <-s.resumeCh:
-				currentMode = mode
-				currentDepth = depth
-				return
-			case cmd := <-s.evalReqCh:
-				s.evalRepCh <- s.handlePausedCmd(cmd, pause, ev)
-			}
-		}
-	})
+	s.mu.Unlock()
+	ev.SetDebugThreadHooks(s.registerThread, s.unregisterThread)
+	ev.SetDebugHook(s.onPause)
 
 	result, err := ev.Eval(program)
 	if err != nil {
@@ -619,46 +818,173 @@ func (s *Server) runScript() {
 	s.terminatedCh <- nil
 }
 
-// handlePausedCmd executes an evaluate or setVariable command while paused.
-func (s *Server) handlePausedCmd(cmd pausedCmd, pause evaluator.DebugPause, ev *evaluator.Evaluator) pausedCmdResult {
-	env := pause.Env
-	// Use per-frame env if frameId > 1 and we have frame vars
-	if cmd.frame > 1 && cmd.frame-1 < len(pause.FrameVars) {
-		// We don't store per-frame envs directly; use the current env as fallback
-		// (outer frames would need their own env refs, which pause.Env doesn't provide for non-current frames)
+// onPause runs per statement on the paused thread; it parks while another thread owns the stop, else freezes the world and blocks until resumed.
+func (s *Server) onPause(pause evaluator.DebugPause) {
+	tid := pause.ThreadID
+	depth := len(pause.Frames) - 1
+	for {
+		s.mu.Lock()
+		ti := s.threads[tid]
+		if ti == nil || s.terminating {
+			s.mu.Unlock()
+			return
+		}
+		// A condition eval that re-enters the hook on this same thread must not re-pause.
+		if ti.inCondition {
+			s.mu.Unlock()
+			return
+		}
+		// A nested hook from an in-frame evaluate on the focused thread must not re-pause.
+		if ti.stopped && s.focused == tid {
+			s.mu.Unlock()
+			return
+		}
+		if s.stopped && s.focused != tid {
+			ti.parked = true
+			ti.resume = make(chan stepMode, 1)
+			resume := ti.resume
+			s.mu.Unlock()
+			m := <-resume
+			s.mu.Lock()
+			ti.parked = false
+			ti.mode = m
+			s.mu.Unlock()
+			continue // re-check this same statement now the world is running
+		}
+		mode, stepDepth := ti.mode, ti.stepDepth
+		s.mu.Unlock()
+
+		shouldPause, bpInfo := s.shouldPauseAt(pause.Loc, mode, stepDepth, depth)
+		if !shouldPause {
+			return
+		}
+		if bpInfo != nil && bpInfo.condition != "" && pause.Env != nil && pause.Eval != nil {
+			s.mu.Lock()
+			ti.inCondition = true
+			s.mu.Unlock()
+			pause.Eval.SuppressDebug(true) // a condition that spawns a worker must not fire debug hooks
+			val, err := pause.Eval.EvalExpression(bpInfo.condition, pause.Env)
+			pause.Eval.SuppressDebug(false)
+			s.mu.Lock()
+			ti.inCondition = false
+			s.mu.Unlock()
+			if err != nil || !isTruthy(val) {
+				return
+			}
+		}
+
+		reason := pause.Reason
+		if reason == "step" {
+			s.mu.Lock()
+			_, atBp := s.breakpoints[pause.Loc.Path][pause.Loc.Line]
+			s.mu.Unlock()
+			if atBp {
+				reason = "breakpoint"
+			}
+		}
+		pause.Reason = reason
+
+		s.mu.Lock()
+		if s.stopped && s.focused != tid {
+			// Another thread claimed the stop while the condition evaluated.
+			ti.parked = true
+			ti.resume = make(chan stepMode, 1)
+			resume := ti.resume
+			s.mu.Unlock()
+			m := <-resume
+			s.mu.Lock()
+			ti.parked = false
+			ti.mode = m
+			s.mu.Unlock()
+			continue
+		}
+		s.stopped = true
+		s.focused = tid
+		s.clearFrameRefsLocked()
+		s.stopGen++
+		ti.stopped = true
+		ti.stoppedGen = s.stopGen
+		ti.lastPause = &pause
+		ti.resume = make(chan stepMode, 1) // one-shot: a stale token sent to a prior stop's channel cannot reach this stop
+		resumeCh := ti.resume
+		if ti.pendingReason != "" {
+			pause.Reason = ti.pendingReason
+			ti.pendingReason = ""
+		}
+		s.mu.Unlock()
+		select {
+		case s.pauseCh <- pause: // DAP loop emits the stopped event
+		case <-s.done:
+			return
+		}
+
+		for resumed := false; !resumed; {
+			select {
+			case mode := <-resumeCh:
+				s.mu.Lock()
+				ti.mode = mode
+				ti.stepDepth = depth
+				ti.stopped = false
+				s.mu.Unlock()
+				resumed = true
+			case cmd := <-ti.evalReq:
+				rep := s.handlePausedCmd(cmd, pause)
+				select {
+				case ti.evalRep <- rep:
+				case <-s.done:
+					return
+				}
+			case <-s.done:
+				return
+			}
+		}
+		return
 	}
-	if env == nil {
+}
+
+// frameEnv returns the environment for a validated frame index.
+func frameEnv(frameIndex int, pause evaluator.DebugPause) *gevruntime.Environment {
+	if frameIndex >= 0 && frameIndex < len(pause.FrameEnvs) && pause.FrameEnvs[frameIndex] != nil {
+		return pause.FrameEnvs[frameIndex]
+	}
+	if frameIndex == 0 && len(pause.FrameEnvs) == 0 {
+		return pause.Env
+	}
+	return nil
+}
+
+// handlePausedCmd runs evaluate/setVariable on the paused thread's own goroutine and evaluator.
+func (s *Server) handlePausedCmd(cmd pausedCmd, pause evaluator.DebugPause) pausedCmdResult {
+	env := frameEnv(cmd.frameIndex, pause)
+	if env == nil || pause.Eval == nil {
 		return pausedCmdResult{err: "no environment available"}
 	}
-
+	restore := pause.Eval.BeginDebugEvaluation(s.done)
+	defer restore()
 	switch cmd.kind {
 	case "evaluate":
-		val, err := ev.EvalExpression(cmd.expr, env)
+		val, err := pause.Eval.EvalExpression(cmd.expr, env)
 		if err != nil {
 			return pausedCmdResult{err: err.Error()}
 		}
 		return pausedCmdResult{result: val.Inspect(), typ: val.TypeName()}
 
 	case "setVariable":
-		// Parse the new value as an expression
-		val, err := ev.EvalExpression(cmd.value, env)
+		val, err := pause.Eval.EvalExpression(cmd.value, env)
 		if err != nil {
 			return pausedCmdResult{err: fmt.Sprintf("invalid value: %s", err.Error())}
 		}
 		if err := env.Assign(cmd.name, val); err != nil {
 			return pausedCmdResult{err: err.Error()}
 		}
-		// Refresh the variable snapshot in the pause
-		pause.Vars = rebuildVars(env)
+		newVars := rebuildVars(env)
 		s.mu.Lock()
-		if s.lastPause != nil {
-			s.lastPause.Vars = pause.Vars
-			if len(s.frameVars) > 0 {
-				if fv, ok := s.frameVars[1]; ok {
-					// update frame 1 (innermost) vars
-					_ = fv
-					s.frameVars[1] = dapVariables(pause.Vars)
-				}
+		if ti := s.threads[cmd.thread]; ti != nil {
+			if ti.lastPause != nil && cmd.frameIndex == 0 {
+				ti.lastPause.Vars = newVars
+			}
+			if ti.frameVars != nil {
+				ti.frameVars[cmd.frame] = dapVariables(newVars)
 			}
 		}
 		s.mu.Unlock()
@@ -708,8 +1034,7 @@ func isTruthy(v gevruntime.Value) bool {
 	return true
 }
 
-// shouldPauseAt reports whether the hook should pause at the given location.
-// Returns (shouldPause, *breakpointInfo) — bpInfo is non-nil if at a breakpoint.
+// shouldPauseAt reports whether to pause here; bpInfo is non-nil when at a breakpoint.
 func (s *Server) shouldPauseAt(loc DebugLocation, mode stepMode, stepDepth, currentDepth int) (bool, *breakpointInfo) {
 	s.mu.Lock()
 	bps := s.breakpoints[loc.Path]

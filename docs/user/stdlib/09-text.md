@@ -40,6 +40,11 @@ a base letter plus combining marks, or an emoji built from a ZWJ sequence.
 Use the `graphemes` methods (UAX #29 segmentation) when you mean
 what the reader sees, for example display width, truncation, or cursor steps.
 
+Code-point indexing (`s[i]`), `substring` / `slice`, and `length()` cache rune
+information for strings longer than 256 bytes, making repeated access
+amortized O(1). Strings at or below 256 bytes are rescanned per call, limiting
+each scan to at most 256 bytes.
+
 ```gb
 import io;
 

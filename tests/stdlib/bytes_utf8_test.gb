@@ -1,0 +1,31 @@
+/**
+ * @title Bytes UTF-8 conversion
+ * @summary bytes.toString and the bytes instance method reject invalid UTF-8.
+ */
+import bytes;
+import test;
+
+class BytesUtf8Test extends test.Test {
+    @test
+    func moduleRejectsInvalidUtf8(): void {
+        let invalid = bytes.fromHex("61ff62");
+        this.assertThrows(func(): void {
+            bytes.toString(invalid);
+        });
+    }
+
+    @test
+    func methodRejectsInvalidUtf8(): void {
+        let invalid = bytes.fromHex("e228a1");
+        this.assertThrows(func(): void {
+            invalid.toString();
+        });
+    }
+
+    @test
+    func validUtf8StillDecodes(): void {
+        let valid = bytes.fromHex("68c3a96c6c6f");
+        this.assertEquals(bytes.toString(valid), valid.toString());
+        this.assertEquals(5, valid.toString().length());
+    }
+}

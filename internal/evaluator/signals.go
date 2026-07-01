@@ -95,6 +95,9 @@ func (e *Evaluator) dispatchSignals(name string, handler runtime.Function, sub *
 func (e *Evaluator) invokeSignalHandler(name string, handler runtime.Function) {
 	child := e.childForCallback()
 	defer child.Cleanup()
+	if child.debug != nil {
+		defer child.startDebugThread("signal " + name)()
+	}
 	result, err := child.applyFunction(handler, []runtime.Value{runtime.String{Value: name}})
 	if err != nil {
 		// A VM-side handler surfaces sys.exit as an exit-coded error.

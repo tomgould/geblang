@@ -1,6 +1,39 @@
 # Release Notes
 
+## 1.31.0
+
+### Debugging
+
+- The VS Code debugger now sets breakpoints inside concurrent worker bodies:
+  `async.run` / `async.all` / `async.race` workers, generator bodies, and
+  network request handlers, in addition to the main script. Each running
+  worker appears as its own thread in the Call Stack pane; hitting a
+  breakpoint stops all threads, Continue resumes them, and a step advances
+  only the selected thread.
+
+### Performance
+
+- String index (`s[i]`), `substring` / `slice`, and `length()` now cache rune
+  offsets for strings longer than 256 bytes, making each access amortized O(1)
+  and a character-scanning loop O(n) instead of O(n^2). Shorter strings are
+  rescanned per access with a maximum scan of 256 bytes. The cache is
+  concurrency-safe and memory-bounded, with no API change.
+
 ## 1.30.1
+
+### Changed
+
+- Primitive method names now use their documented, case-sensitive spelling on
+  both backends. The bytecode VM previously accepted arbitrary casing, and
+  conversion helpers such as `toInt` accepted arbitrary casing on both
+  backends.
+
+### Performance
+
+- Bytecode primitive-method dispatch no longer normalizes the method name on
+  every call. Canonical camel-case calls no longer allocate for normalization;
+  a template-shaped dispatch benchmark improved from about 38-40 ns to
+  21-22 ns per call.
 
 ### Fixes
 

@@ -511,6 +511,7 @@ func (e *Evaluator) netServe(call *ast.CallExpression, args []runtime.Value) (ru
 				}
 				child := e.childForCallback()
 				defer child.Cleanup()
+				defer child.startDebugThread("net connection")()
 				connHandle := e.registerNetHandle(&netHandle{conn: handlerConn})
 				streamHandle := &ioStreamHandle{name: "net socket", reader: handlerConn, writer: handlerConn, closer: handlerConn}
 				streamValue := e.registerIOStream(streamHandle)

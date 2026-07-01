@@ -19,6 +19,8 @@ Bytes values also expose `b.toHex()`, `b.toBase64()`, and
 `b.toBase64Url()` as methods, equivalent to the module helpers.
 `b.toList()` returns the byte values as a `list<int>` (the inverse of
 `bytes.fromList`); `b.get(i)` / `b[i]` reads a single byte value.
+`bytes.toString(data)` and `data.toString()` decode valid UTF-8 and throw a
+`RuntimeError` when the bytes are not valid UTF-8.
 
 `b.contains(n)` tests for a single BYTE VALUE (an int 0-255), not a
 sub-sequence: `bytes.fromString("hi").contains(104)` is `true`
