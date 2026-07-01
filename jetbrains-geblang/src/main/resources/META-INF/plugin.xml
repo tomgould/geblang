@@ -21,6 +21,10 @@
             <li>"Geblang Test" run configuration: runs <code>geblang test --format teamcity</code>
                 on a file or directory and renders results in the native test runner tree,
                 with an optional <code>--tag</code> filter and working directory</li>
+            <li>Live templates (code snippets): type a prefix like <code>func</code> or
+                <code>testclass</code> and press Tab to expand it, covering functions, classes,
+                interfaces, enums, control flow, decorators, async, crypto, networking, and
+                more - ported from the vscode-geblang snippet set</li>
         </ul>
         <p><b>Requirements:</b> The <code>geblang</code> binary must be installed and accessible
         (on PATH or configured in settings) for LSP features to activate.
@@ -91,6 +95,14 @@
              pipes its output into the native SMTestRunner test tree. -->
         <configurationType
             implementation="com.dwgebler.geblang.run.GeblangTestRunConfigurationType"/>
+
+        <!-- Live templates: context type restricting expansion to .gb files, and the
+             bundled template set (func, class, testclass, etc.) -->
+        <liveTemplateContext
+            contextId="GEBLANG"
+            implementation="com.dwgebler.geblang.templates.GeblangTemplateContextType"/>
+
+        <defaultLiveTemplates file="/liveTemplates/Geblang"/>
 
     </extensions>
 

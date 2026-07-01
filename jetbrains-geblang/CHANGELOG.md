@@ -33,3 +33,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Wired up the IntelliJ Platform Gradle Plugin 2.x test framework
   (`testFramework(TestFrameworkType.Platform)`) plus JUnit 4 and opentest4j test
   dependencies so `./gradlew test` can build and run platform-based tests.
+- Added 102 live templates (code snippets), ported from the vscode-geblang
+  extension's snippet set and scoped to `.gb` files via a new `GeblangTemplateContextType`
+  (contextId `GEBLANG`). Covers function/class/interface/enum declarations, control
+  flow, decorators, the module system, dunder overrides, and standard library idioms
+  (async, crypto, regex, HTTP, encoding, streams, sockets, SSH, FFI, LLM client,
+  messaging). Type a prefix (e.g. `func`, `testclass`) and press Tab to expand.

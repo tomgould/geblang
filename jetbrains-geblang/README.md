@@ -40,6 +40,7 @@ JetBrains/IntelliJ plugin providing Geblang (`.gb`) language support.
 | Formatting (`geblang fmt`) | `geblang lsp` via LSP4IJ |
 | "geblang executable not found" warning notification, with a Configure… action | Built-in |
 | "Geblang Test" run configuration: `geblang test --format teamcity` in the native test tree | Built-in |
+| Live templates (code snippets): type a prefix and press Tab to expand | Built-in |
 
 ## Running Geblang Tests
 
@@ -66,6 +67,42 @@ declaration by scanning `.gb` files in the project for a textual match (Geblang 
 PSI parser yet, so this is not full go-to-definition); if no match is found, navigation
 is simply unavailable for that entry rather than failing the run.
 
+## Live templates
+
+The plugin bundles 102 live templates (code snippets) ported from the vscode-geblang
+extension, scoped to `.gb` files only.
+
+To use one: in a `.gb` file, type the template's prefix (e.g. `func`, `class`,
+`testclass`) and press **Tab** to expand it. Placeholders are pre-filled with sensible
+defaults; press **Tab** again to move between them, and the final **Tab** lands the
+cursor at the template's designated end position (usually the function/class body).
+
+Coverage by category:
+
+- **Declarations**: functions (`func`, `asyncfunc`, `genfunc`, `export`, `genericfunc`,
+  `genericinterface`, `genericlambda`, `typetest`), classes (`class`, `classex`,
+  `abstractclass`, `immutable`, `dataclass`, `ffihandle`, `contextmgr`, `iter`),
+  interfaces (`interface`, `interfacedefault`), enums (`enum`, `enumstring`, `enumint`)
+- **Control flow**: `match`, `try`, `trycatch`, `throw`, `forin`, `for`, `while`
+- **Decorators**: `test`, `testclass`, `abstractmethod`, `override`, `deprecated`,
+  `memoize`, `assertThrows`
+- **Module system**: `import`, `fromimport`, `module`, `init`
+- **Class members**: `staticconst`, `staticlet`, `statictyped`, `destructor`, `del`,
+  `with`
+- **Dunder overrides**: `serialize`, `deserialize`, `castString`, `castInt`,
+  `castFloat`, `castBool`, `castDecimal`, `castBytes`
+- **Standard library idioms**: `functools`, `asyncrate`, `asyncall`, `asyncrace`,
+  `asynctimeout`, `asynccancel`, crypto (`aesencrypt`, `aesdecrypt`,
+  `chacha20encrypt`, `chacha20decrypt`, `passwordhash`), regex (`rematch`,
+  `rematchall`), HTTP (`httpsession`, `httpproxy`), scheduling (`schedtimer`,
+  `schedticker`), encoding (`base32`, `base58`, `base64url`, `tobase`, `binarypack`),
+  `stopwatch`, `color`, CSV (`csvparse`, `csvdict`), `stringbuilder`, streams
+  (`streamsopen`, `streamsmem`, `streamscopy`), filesystem watching (`watchstart`,
+  `watchrecursive`), processes (`procspawn`, `procpty`), sockets (`socketsdial`,
+  `socketsserve`), SSH (`sshconnect`, `sshexec`, `sshspawn`), CLI widgets (`spinner`,
+  `progressbar`), FFI (`ffidlopen`, `ffisymbol`, `ffihandle`), LLM (`llmchat`,
+  `llmembed`), messaging (`messagingsqs`, `messagingsns`), `reflectloc`
+
 ## Architecture
 
 ```
@@ -84,6 +121,9 @@ IntelliJ IDE
     ├── GeblangExecutable                  — resolves the configured executable path to a File
     ├── GeblangMissingExecutableNotifier   — warns (once per project) if it can't be resolved
     │        └── GeblangMissingExecutableState  — per-project "already warned" flag
+    +-- templates/ (Live templates)
+    |        |-- GeblangTemplateContextType         - restricts templates to .gb files
+    |        `-- liveTemplates/Geblang.xml           - the bundled template set (resource)
     └── run/ (Geblang Test run configuration)
              ├── GeblangTestRunConfigurationType / GeblangTestConfigurationFactory
              ├── GeblangTestRunConfiguration        — target/workingDirectory/tag settings
@@ -157,6 +197,21 @@ side effects. The notification UI itself is intentionally not unit-tested.
 locator paths. Both are plain JUnit tests with no IDE fixtures. The full
 `GeblangTestLocator.getLocation` PSI/VFS resolution and the actual test-tree rendering
 are not exercised headlessly — see Troubleshooting below.
+
+`src/test/kotlin/com/dwgebler/geblang/templates/GeblangLiveTemplatesTest.kt` parses
+`liveTemplates/Geblang.xml` directly as XML from the test classpath (no running IDE or
+template engine involved) and asserts: the document is well-formed, the group is
+"Geblang", the template count matches the 102 source snippets in
+`vscode-geblang/snippets/geblang.json`, every template has a non-blank name and value,
+every template carries the `GEBLANG` context option, template names (prefixes) are
+unique, and no unconverted VS Code tabstop syntax (`${1:...}`, `$1`) leaked through.
+
+`src/test/kotlin/com/dwgebler/geblang/templates/GeblangTemplateContextTypeTest.kt`
+covers the parts of `GeblangTemplateContextType` that do not require IDE fixtures:
+its presentable name, and the `GeblangFileType` singleton identity check the context
+type's `isInContext` is built on. The full expansion path (typing a prefix and
+pressing Tab inside a real editor) is only exercised manually via `runIde`, since
+`isInContext(TemplateActionContext)` needs a live `PsiFile`/`Editor` pair.
 
 Test reports are written to `build/reports/tests/test/index.html` (HTML) and
 `build/test-results/test/*.xml` (JUnit XML) after each run.

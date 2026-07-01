@@ -1,0 +1,916 @@
+<templateSet group="Geblang">
+  <template name="func" value="func $name$($params$): $void$ {&#10;&#9;$END$&#10;}"
+            description="Function declaration" toReformat="false" toShortenFQNames="false">
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <variable name="params" expression="" defaultValue="&quot;params&quot;" alwaysStopAt="true"/>
+    <variable name="void" expression="" defaultValue="&quot;void&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="asyncfunc" value="async func $name$($params$): $any$ {&#10;&#9;$END$&#10;}"
+            description="Async function declaration" toReformat="false" toShortenFQNames="false">
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <variable name="params" expression="" defaultValue="&quot;params&quot;" alwaysStopAt="true"/>
+    <variable name="any" expression="" defaultValue="&quot;any&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="genfunc" value="func $name$($params$): generator&lt;$any$&gt; {&#10;&#9;for ($n$ in $source$) {&#10;&#9;&#9;yield $n$;&#10;&#9;}&#10;}"
+            description="Generator function with yield" toReformat="false" toShortenFQNames="false">
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <variable name="params" expression="" defaultValue="&quot;params&quot;" alwaysStopAt="true"/>
+    <variable name="any" expression="" defaultValue="&quot;any&quot;" alwaysStopAt="true"/>
+    <variable name="n" expression="" defaultValue="&quot;n&quot;" alwaysStopAt="true"/>
+    <variable name="source" expression="" defaultValue="&quot;source&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="class" value="class $Name$ {&#10;&#9;$string$ $field$;&#10;&#10;&#9;func $Name$($string$ $field$) {&#10;&#9;&#9;this.$field$ = $field$;&#10;&#9;}&#10;$END$&#10;}"
+            description="Class with constructor" toReformat="false" toShortenFQNames="false">
+    <variable name="Name" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="string" expression="" defaultValue="&quot;string&quot;" alwaysStopAt="true"/>
+    <variable name="field" expression="" defaultValue="&quot;field&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="classex" value="class $Name$ extends $Parent$ {&#10;&#9;func $Name$($args$) {&#10;&#9;&#9;parent($args$);&#10;&#9;}&#10;$END$&#10;}"
+            description="Class extending a parent" toReformat="false" toShortenFQNames="false">
+    <variable name="Name" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="Parent" expression="" defaultValue="&quot;Parent&quot;" alwaysStopAt="true"/>
+    <variable name="args" expression="" defaultValue="&quot;args&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="interface" value="interface $Name$ {&#10;&#9;func $method$($params$): $void$;&#10;$END$&#10;}"
+            description="Interface declaration" toReformat="false" toShortenFQNames="false">
+    <variable name="Name" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="method" expression="" defaultValue="&quot;method&quot;" alwaysStopAt="true"/>
+    <variable name="params" expression="" defaultValue="&quot;params&quot;" alwaysStopAt="true"/>
+    <variable name="void" expression="" defaultValue="&quot;void&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="enum" value="enum $Name$ {&#10;&#9;$VARIANT_ONE$,&#10;&#9;$VARIANT_TWO$&#10;$END$&#10;}"
+            description="Enum declaration" toReformat="false" toShortenFQNames="false">
+    <variable name="Name" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="VARIANT_ONE" expression="" defaultValue="&quot;VARIANT_ONE&quot;" alwaysStopAt="true"/>
+    <variable name="VARIANT_TWO" expression="" defaultValue="&quot;VARIANT_TWO&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="enumstring" value="enum $Name$: string {&#10;&#9;$VariantOne$ = $value_one$;&#10;&#9;$VariantTwo$ = $value_two$;&#10;$END$&#10;}"
+            description="String backed enum declaration" toReformat="false" toShortenFQNames="false">
+    <variable name="Name" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="VariantOne" expression="" defaultValue="&quot;VariantOne&quot;" alwaysStopAt="true"/>
+    <variable name="value_one" expression="" defaultValue="&quot;\&quot;value_one\&quot;&quot;" alwaysStopAt="true"/>
+    <variable name="VariantTwo" expression="" defaultValue="&quot;VariantTwo&quot;" alwaysStopAt="true"/>
+    <variable name="value_two" expression="" defaultValue="&quot;\&quot;value_two\&quot;&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="enumint" value="enum $Name$: int {&#10;&#9;$VariantOne$ = $VAR3$;&#10;&#9;$VariantTwo$ = $VAR5$;&#10;$END$&#10;}"
+            description="Int backed enum declaration" toReformat="false" toShortenFQNames="false">
+    <variable name="Name" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="VariantOne" expression="" defaultValue="&quot;VariantOne&quot;" alwaysStopAt="true"/>
+    <variable name="VAR3" expression="" defaultValue="&quot;1&quot;" alwaysStopAt="true"/>
+    <variable name="VariantTwo" expression="" defaultValue="&quot;VariantTwo&quot;" alwaysStopAt="true"/>
+    <variable name="VAR5" expression="" defaultValue="&quot;2&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="match" value="match ($value$) {&#10;&#9;case $pattern$ =&gt; {&#10;&#9;&#9;$END$&#10;&#9;}&#10;&#9;default =&gt; {&#10;&#9;}&#10;}"
+            description="Match statement" toReformat="false" toShortenFQNames="false">
+    <variable name="value" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+    <variable name="pattern" expression="" defaultValue="&quot;pattern&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="try" value="try {&#10;&#9;$END$&#10;} catch ($Error$ e) {&#10;&#9;&#10;} finally {&#10;&#9;&#10;}"
+            description="Try / catch / finally" toReformat="false" toShortenFQNames="false">
+    <variable name="Error" expression="" defaultValue="&quot;Error&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="throw" value='throw $Error$("$message$");'
+            description="Throw an error" toReformat="false" toShortenFQNames="false">
+    <variable name="Error" expression="" defaultValue="&quot;Error&quot;" alwaysStopAt="true"/>
+    <variable name="message" expression="" defaultValue="&quot;message&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="forin" value="for ($item$ in $items$) {&#10;&#9;$END$&#10;}"
+            description="For-in loop" toReformat="false" toShortenFQNames="false">
+    <variable name="item" expression="" defaultValue="&quot;item&quot;" alwaysStopAt="true"/>
+    <variable name="items" expression="" defaultValue="&quot;items&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="for" value="for (int $i$ = 0; $i$ &lt; $n$; $i$++) {&#10;&#9;$END$&#10;}"
+            description="C-style for loop" toReformat="false" toShortenFQNames="false">
+    <variable name="i" expression="" defaultValue="&quot;i&quot;" alwaysStopAt="true"/>
+    <variable name="n" expression="" defaultValue="&quot;n&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="while" value="while ($condition$) {&#10;&#9;$END$&#10;}"
+            description="While loop" toReformat="false" toShortenFQNames="false">
+    <variable name="condition" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="testclass" value="import test;&#10;&#10;class $Name$Test extends test.Test {&#10;&#9;@test&#10;&#9;func $behaviour$(): void {&#10;&#9;&#9;this.assertEquals($expected$, $actual$);&#10;&#9;}&#10;$END$&#10;}"
+            description="Test class with @test method" toReformat="false" toShortenFQNames="false">
+    <variable name="Name" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="behaviour" expression="" defaultValue="&quot;behaviour&quot;" alwaysStopAt="true"/>
+    <variable name="expected" expression="" defaultValue="&quot;expected&quot;" alwaysStopAt="true"/>
+    <variable name="actual" expression="" defaultValue="&quot;actual&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="test" value="@test&#10;func $behaviour$(): void {&#10;&#9;this.assertEquals($expected$, $actual$);&#10;$END$&#10;}"
+            description="@test-decorated method" toReformat="false" toShortenFQNames="false">
+    <variable name="behaviour" expression="" defaultValue="&quot;behaviour&quot;" alwaysStopAt="true"/>
+    <variable name="expected" expression="" defaultValue="&quot;expected&quot;" alwaysStopAt="true"/>
+    <variable name="actual" expression="" defaultValue="&quot;actual&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="abstractclass" value="@abstract&#10;class $Name$ {&#10;&#9;func $Name$() {}&#10;$END$&#10;}"
+            description="Abstract class - direct instantiation throws RuntimeError" toReformat="false" toShortenFQNames="false">
+    <variable name="Name" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="abstractmethod" value="@abstract&#10;func $name$($params$): $returnType$ { return $default$; }"
+            description="Abstract method - subclasses must override or class becomes abstract" toReformat="false" toShortenFQNames="false">
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <variable name="params" expression="" defaultValue="&quot;params&quot;" alwaysStopAt="true"/>
+    <variable name="returnType" expression="" defaultValue="&quot;returnType&quot;" alwaysStopAt="true"/>
+    <variable name="default" expression="" defaultValue="&quot;default&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="interfacedefault" value="interface $Name$ {&#10;&#9;$string$ $property$;&#10;&#9;func $method$($params$): $returnType$ {&#10;&#9;&#9;/* default body */$END$&#10;&#9;}&#10;}"
+            description="Interface with property and default method body" toReformat="false" toShortenFQNames="false">
+    <variable name="Name" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="string" expression="" defaultValue="&quot;string&quot;" alwaysStopAt="true"/>
+    <variable name="property" expression="" defaultValue="&quot;property&quot;" alwaysStopAt="true"/>
+    <variable name="method" expression="" defaultValue="&quot;method&quot;" alwaysStopAt="true"/>
+    <variable name="params" expression="" defaultValue="&quot;params&quot;" alwaysStopAt="true"/>
+    <variable name="returnType" expression="" defaultValue="&quot;returnType&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="assertThrows" value="this.assertThrows(func(): void {&#10;&#9;$code$&#10;});"
+            description="Assert that a no-arg callable raises" toReformat="false" toShortenFQNames="false">
+    <variable name="code" expression="" defaultValue="&quot;/* code that should raise */&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="immutable" value="@immutable&#10;class $Name$ {&#10;&#9;$string$ $field$;&#10;&#10;&#9;func $Name$($string$ $field$) {&#10;&#9;&#9;this.$field$ = $field$;&#10;&#9;}&#10;$END$&#10;}"
+            description="@immutable class" toReformat="false" toShortenFQNames="false">
+    <variable name="Name" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="string" expression="" defaultValue="&quot;string&quot;" alwaysStopAt="true"/>
+    <variable name="field" expression="" defaultValue="&quot;field&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="dataclass" value="@dataclass&#10;class $Name$ {&#10;&#9;$int$ $field$;&#10;$END$&#10;}"
+            description="@dataclass value class (generates constructor, ==, __string, with)" toReformat="false" toShortenFQNames="false">
+    <variable name="Name" expression="" defaultValue="&quot;Name&quot;" alwaysStopAt="true"/>
+    <variable name="int" expression="" defaultValue="&quot;int&quot;" alwaysStopAt="true"/>
+    <variable name="field" expression="" defaultValue="&quot;field&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="override" value="@override&#10;func $name$($VAR2$): $void$ {&#10;&#9;$END$&#10;}"
+            description="@override method (asserts it overrides an ancestor)" toReformat="false" toShortenFQNames="false">
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <variable name="VAR2" expression="" defaultValue="&quot;&quot;" alwaysStopAt="true"/>
+    <variable name="void" expression="" defaultValue="&quot;void&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="deprecated" value='@deprecated("$use$")'
+            description="@deprecated marker for a function, method, or class" toReformat="false" toShortenFQNames="false">
+    <variable name="use" expression="" defaultValue="&quot;use ... instead&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="memoize" value="@memoize&#10;func $name$($VAR2$): $int$ {&#10;&#9;$END$&#10;}"
+            description="@memoize a pure top-level function (caches results by args)" toReformat="false" toShortenFQNames="false">
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <variable name="VAR2" expression="" defaultValue="&quot;&quot;" alwaysStopAt="true"/>
+    <variable name="int" expression="" defaultValue="&quot;int&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="defer" value="defer $cleanup$();"
+            description="Defer a function call" toReformat="false" toShortenFQNames="false">
+    <variable name="cleanup" expression="" defaultValue="&quot;cleanup&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="import" value="import $module$;"
+            description="Module import" toReformat="false" toShortenFQNames="false">
+    <variable name="module" expression="" defaultValue="&quot;module&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="fromimport" value="from $module$ import $name$;"
+            description="Bind selected symbols from a module" toReformat="false" toShortenFQNames="false">
+    <variable name="module" expression="" defaultValue="&quot;module&quot;" alwaysStopAt="true"/>
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="module" value="module $name$;&#10;&#10;$import$&#10;&#10;init {&#10;    $END$&#10;}"
+            description="Module declaration with init block (imperative setup goes inside init in module files)" toReformat="false" toShortenFQNames="false">
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <variable name="import" expression="" defaultValue="&quot;import io;&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="init" value="init {&#10;    $END$&#10;}"
+            description="init { ... } - one-shot setup at module load time" toReformat="false" toShortenFQNames="false">
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="export" value="export func $name$($params$): $void$ {&#10;&#9;$END$&#10;}"
+            description="Export a function from a module" toReformat="false" toShortenFQNames="false">
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <variable name="params" expression="" defaultValue="&quot;params&quot;" alwaysStopAt="true"/>
+    <variable name="void" expression="" defaultValue="&quot;void&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="genericfunc" value="func $name$&lt;$T$&gt;($T$ $value$): $T$ {&#10;&#9;$END$&#10;&#9;return $value$;&#10;}"
+            description="Generic function with one type parameter" toReformat="false" toShortenFQNames="false">
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <variable name="T" expression="" defaultValue="&quot;T&quot;" alwaysStopAt="true"/>
+    <variable name="value" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="genericinterface" value="func $name$&lt;$T$ implements $Iface$&gt;($T$ $value$): $int$ {&#10;&#9;return $value$.$method$();&#10;}"
+            description="Generic function where T must satisfy an interface" toReformat="false" toShortenFQNames="false">
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <variable name="T" expression="" defaultValue="&quot;T&quot;" alwaysStopAt="true"/>
+    <variable name="Iface" expression="" defaultValue="&quot;Iface&quot;" alwaysStopAt="true"/>
+    <variable name="value" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+    <variable name="int" expression="" defaultValue="&quot;int&quot;" alwaysStopAt="true"/>
+    <variable name="method" expression="" defaultValue="&quot;method&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="genericlambda" value="func($T$ $x$): $int$ { return $x$.$method$(); }"
+            description="Anonymous function whose T resolves to the outer generic frame" toReformat="false" toShortenFQNames="false">
+    <variable name="T" expression="" defaultValue="&quot;T&quot;" alwaysStopAt="true"/>
+    <variable name="x" expression="" defaultValue="&quot;x&quot;" alwaysStopAt="true"/>
+    <variable name="int" expression="" defaultValue="&quot;int&quot;" alwaysStopAt="true"/>
+    <variable name="method" expression="" defaultValue="&quot;method&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="typetest" value="func $isType$&lt;$T$&gt;(any $value$): bool {&#10;&#9;return $value$ instanceof $T$;&#10;}"
+            description="Reified runtime type test - call as fn&lt;int&gt;(x) and the body sees T = int" toReformat="false" toShortenFQNames="false">
+    <variable name="isType" expression="" defaultValue="&quot;isType&quot;" alwaysStopAt="true"/>
+    <variable name="T" expression="" defaultValue="&quot;T&quot;" alwaysStopAt="true"/>
+    <variable name="value" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="functools" value="import functools;&#10;&#10;let $run$ = functools.pipe([$fn1$, $fn2$]);&#10;let $fast$ = functools.memoize($expensive$);"
+            description="Common functools idioms - pipe and memoize" toReformat="false" toShortenFQNames="false">
+    <variable name="run" expression="" defaultValue="&quot;run&quot;" alwaysStopAt="true"/>
+    <variable name="fn1" expression="" defaultValue="&quot;fn1&quot;" alwaysStopAt="true"/>
+    <variable name="fn2" expression="" defaultValue="&quot;fn2&quot;" alwaysStopAt="true"/>
+    <variable name="fast" expression="" defaultValue="&quot;fast&quot;" alwaysStopAt="true"/>
+    <variable name="expensive" expression="" defaultValue="&quot;expensive&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="asyncrate" value="import async.rate as rate;&#10;&#10;let $throttled$ = rate.throttle($fn$, $VAR3$);&#10;let $debounced$ = rate.debounce($fn2$, $VAR6$);"
+            description="Rate-limited callable wrappers" toReformat="false" toShortenFQNames="false">
+    <variable name="throttled" expression="" defaultValue="&quot;throttled&quot;" alwaysStopAt="true"/>
+    <variable name="fn" expression="" defaultValue="&quot;fn&quot;" alwaysStopAt="true"/>
+    <variable name="VAR3" expression="" defaultValue="&quot;200&quot;" alwaysStopAt="true"/>
+    <variable name="debounced" expression="" defaultValue="&quot;debounced&quot;" alwaysStopAt="true"/>
+    <variable name="fn2" expression="" defaultValue="&quot;fn&quot;" alwaysStopAt="true"/>
+    <variable name="VAR6" expression="" defaultValue="&quot;300&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="asyncall" value="let $results$ = await async.all([$taskA$, $taskB$]);"
+            description="Wait for every task; cancel siblings on first failure" toReformat="false" toShortenFQNames="false">
+    <variable name="results" expression="" defaultValue="&quot;results&quot;" alwaysStopAt="true"/>
+    <variable name="taskA" expression="" defaultValue="&quot;taskA&quot;" alwaysStopAt="true"/>
+    <variable name="taskB" expression="" defaultValue="&quot;taskB&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="asyncrace" value="let $winner$ = await async.race([$primary$, $backup$]);"
+            description="Return the first task to finish; cancel the rest" toReformat="false" toShortenFQNames="false">
+    <variable name="winner" expression="" defaultValue="&quot;winner&quot;" alwaysStopAt="true"/>
+    <variable name="primary" expression="" defaultValue="&quot;primary&quot;" alwaysStopAt="true"/>
+    <variable name="backup" expression="" defaultValue="&quot;backup&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="asynctimeout" value="try {&#10;    let $result$ = await async.timeout($task$, $VAR3$);&#10;} catch (Error $e$) {&#10;    $END$&#10;}"
+            description="Cancel a task if it does not complete in time" toReformat="false" toShortenFQNames="false">
+    <variable name="result" expression="" defaultValue="&quot;result&quot;" alwaysStopAt="true"/>
+    <variable name="task" expression="" defaultValue="&quot;task&quot;" alwaysStopAt="true"/>
+    <variable name="VAR3" expression="" defaultValue="&quot;1000&quot;" alwaysStopAt="true"/>
+    <variable name="e" expression="" defaultValue="&quot;e&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="asynccancel" value="$task$.cancel();"
+            description="Cancel a running task (alias for async.cancel(task))" toReformat="false" toShortenFQNames="false">
+    <variable name="task" expression="" defaultValue="&quot;task&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="aesencrypt" value='let $enc$ = crypt.aesEncrypt($key$, $plaintext$);&#10;# $enc$["nonce"], $enc$["ciphertext"] are bytes'
+            description="Encrypt with AES-256-GCM (key must be 32 bytes)" toReformat="false" toShortenFQNames="false">
+    <variable name="enc" expression="" defaultValue="&quot;enc&quot;" alwaysStopAt="true"/>
+    <variable name="key" expression="" defaultValue="&quot;key&quot;" alwaysStopAt="true"/>
+    <variable name="plaintext" expression="" defaultValue="&quot;plaintext&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="aesdecrypt" value='let $plaintext$ = crypt.aesDecrypt($key$, $enc$["nonce"], $enc$["ciphertext"]);'
+            description="Decrypt an AES-256-GCM ciphertext" toReformat="false" toShortenFQNames="false">
+    <variable name="plaintext" expression="" defaultValue="&quot;plaintext&quot;" alwaysStopAt="true"/>
+    <variable name="key" expression="" defaultValue="&quot;key&quot;" alwaysStopAt="true"/>
+    <variable name="enc" expression="" defaultValue="&quot;enc&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="chacha20encrypt" value="let $enc$ = crypt.chacha20Encrypt($key$, $plaintext$);"
+            description="Encrypt with XChaCha20-Poly1305 (key must be 32 bytes)" toReformat="false" toShortenFQNames="false">
+    <variable name="enc" expression="" defaultValue="&quot;enc&quot;" alwaysStopAt="true"/>
+    <variable name="key" expression="" defaultValue="&quot;key&quot;" alwaysStopAt="true"/>
+    <variable name="plaintext" expression="" defaultValue="&quot;plaintext&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="chacha20decrypt" value='let $plaintext$ = crypt.chacha20Decrypt($key$, $enc$["nonce"], $enc$["ciphertext"]);'
+            description="Decrypt an XChaCha20-Poly1305 ciphertext" toReformat="false" toShortenFQNames="false">
+    <variable name="plaintext" expression="" defaultValue="&quot;plaintext&quot;" alwaysStopAt="true"/>
+    <variable name="key" expression="" defaultValue="&quot;key&quot;" alwaysStopAt="true"/>
+    <variable name="enc" expression="" defaultValue="&quot;enc&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="rematch" value='let $m$ = re.match("$pattern$", $text$);&#10;if ($m$ != null) {&#10;    io.println($m$["text"]);&#10;    io.println($m$["groups"][1]);&#10;    $END$&#10;}'
+            description="Match a regex and read capture groups via .text / .groups / .named" toReformat="false" toShortenFQNames="false">
+    <variable name="m" expression="" defaultValue="&quot;m&quot;" alwaysStopAt="true"/>
+    <variable name="pattern" expression="" defaultValue="&quot;pattern&quot;" alwaysStopAt="true"/>
+    <variable name="text" expression="" defaultValue="&quot;text&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="rematchall" value='for ($m$ in re.matchAll("$pattern$", $text$)) {&#10;    io.println($m$["text"]);&#10;    $END$&#10;}'
+            description="Iterate every non-overlapping regex match" toReformat="false" toShortenFQNames="false">
+    <variable name="m" expression="" defaultValue="&quot;m&quot;" alwaysStopAt="true"/>
+    <variable name="pattern" expression="" defaultValue="&quot;pattern&quot;" alwaysStopAt="true"/>
+    <variable name="text" expression="" defaultValue="&quot;text&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="httpsession" value='let $jar$ = http.newCookieJar();&#10;let $client$ = http.newClient({&#10;    "cookieJar": $jar$,&#10;    "baseUrl":   "$https$",&#10;    "timeoutMs": $VAR4$&#10;});&#10;$END$'
+            description="Reusable HTTP client with a cookie jar and base URL" toReformat="false" toShortenFQNames="false">
+    <variable name="jar" expression="" defaultValue="&quot;jar&quot;" alwaysStopAt="true"/>
+    <variable name="client" expression="" defaultValue="&quot;client&quot;" alwaysStopAt="true"/>
+    <variable name="https" expression="" defaultValue="&quot;https://api.example.com&quot;" alwaysStopAt="true"/>
+    <variable name="VAR4" expression="" defaultValue="&quot;5000&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="schedtimer" value="import time.scheduler as sched;&#10;let $t$ = sched.Timer($VAR2$, func(): void {&#10;    $END$&#10;});"
+            description="Fire a callback once after N ms (cancellable)" toReformat="false" toShortenFQNames="false">
+    <variable name="t" expression="" defaultValue="&quot;t&quot;" alwaysStopAt="true"/>
+    <variable name="VAR2" expression="" defaultValue="&quot;1000&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="schedticker" value="import time.scheduler as sched;&#10;let $ticker$ = sched.Ticker($VAR2$, func(): void {&#10;    $END$&#10;});&#10;# ...&#10;$ticker$.stop();"
+            description="Fire a callback every N ms until stopped" toReformat="false" toShortenFQNames="false">
+    <variable name="ticker" expression="" defaultValue="&quot;ticker&quot;" alwaysStopAt="true"/>
+    <variable name="VAR2" expression="" defaultValue="&quot;1000&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="base32" value="let $enc$ = encoding.base32Encode($value$);&#10;let $dec$ = encoding.base32Decode($enc$);"
+            description="Base32 encode / decode (RFC 4648)" toReformat="false" toShortenFQNames="false">
+    <variable name="enc" expression="" defaultValue="&quot;enc&quot;" alwaysStopAt="true"/>
+    <variable name="value" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+    <variable name="dec" expression="" defaultValue="&quot;dec&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="base58" value="let $enc$ = encoding.base58Encode($value$);&#10;let $dec$ = encoding.base58Decode($enc$);"
+            description="Base58 encode / decode (Bitcoin/IPFS alphabet)" toReformat="false" toShortenFQNames="false">
+    <variable name="enc" expression="" defaultValue="&quot;enc&quot;" alwaysStopAt="true"/>
+    <variable name="value" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+    <variable name="dec" expression="" defaultValue="&quot;dec&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="base64url" value="let $enc$ = encoding.base64UrlEncode($value$);&#10;let $dec$ = encoding.base64UrlDecode($enc$);"
+            description="Unpadded URL-safe Base64 (JWT/JOSE flavour)" toReformat="false" toShortenFQNames="false">
+    <variable name="enc" expression="" defaultValue="&quot;enc&quot;" alwaysStopAt="true"/>
+    <variable name="value" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+    <variable name="dec" expression="" defaultValue="&quot;dec&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="tobase" value='let $hex$ = ($VAR2$).toString($VAR3$);&#10;let $value$ = "$ff$".toInt($VAR3$);'
+            description="Format an int in base 2-36 and parse one back" toReformat="false" toShortenFQNames="false">
+    <variable name="hex" expression="" defaultValue="&quot;hex&quot;" alwaysStopAt="true"/>
+    <variable name="VAR2" expression="" defaultValue="&quot;255&quot;" alwaysStopAt="true"/>
+    <variable name="VAR3" expression="" defaultValue="&quot;16&quot;" alwaysStopAt="true"/>
+    <variable name="value" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+    <variable name="ff" expression="" defaultValue="&quot;ff&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="binarypack" value='import binary;&#10;let $buf$ = binary.pack("$IH$", $VAR3$, $VAR4$);&#10;let $fields$ = binary.unpack("$IH$", $buf$);'
+            description="Pack/unpack a binary record (Python struct-style format)" toReformat="false" toShortenFQNames="false">
+    <variable name="buf" expression="" defaultValue="&quot;buf&quot;" alwaysStopAt="true"/>
+    <variable name="IH" expression="" defaultValue="&quot;&gt;IH&quot;" alwaysStopAt="true"/>
+    <variable name="VAR3" expression="" defaultValue="&quot;1234&quot;" alwaysStopAt="true"/>
+    <variable name="VAR4" expression="" defaultValue="&quot;56&quot;" alwaysStopAt="true"/>
+    <variable name="fields" expression="" defaultValue="&quot;fields&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="passwordhash" value="let $hash$ = crypt.passwordHash($password$);&#10;if (crypt.passwordVerify($password$, $hash$)) {&#10;    $END$&#10;}"
+            description="PHP-compatible password hash + verify (defaults to bcrypt $2y$)" toReformat="false" toShortenFQNames="false">
+    <variable name="hash" expression="" defaultValue="&quot;hash&quot;" alwaysStopAt="true"/>
+    <variable name="password" expression="" defaultValue="&quot;password&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="httpproxy" value='let $client$ = http.newClient({&#10;    "proxy":       "$http$",&#10;    "keepAlive":   true,&#10;    "maxIdleConns": $VAR3$&#10;});&#10;$END$'
+            description="HTTP client routed through an explicit proxy" toReformat="false" toShortenFQNames="false">
+    <variable name="client" expression="" defaultValue="&quot;client&quot;" alwaysStopAt="true"/>
+    <variable name="http" expression="" defaultValue="&quot;http://proxy.example.com:3128&quot;" alwaysStopAt="true"/>
+    <variable name="VAR3" expression="" defaultValue="&quot;32&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="stopwatch" value='import time;&#10;&#10;let $start$ = time.now();&#10;$END$&#10;io.println("took " + (time.elapsed($start$) as string) + " ms");'
+            description="Measure elapsed time with time.now and time.elapsed" toReformat="false" toShortenFQNames="false">
+    <variable name="start" expression="" defaultValue="&quot;start&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="color" value='import cli.color as color;&#10;&#10;io.println(color.bold(color.green("$ok$")) + "  $message$");'
+            description="ANSI-styled CLI output (NO_COLOR aware)" toReformat="false" toShortenFQNames="false">
+    <variable name="ok" expression="" defaultValue="&quot;ok&quot;" alwaysStopAt="true"/>
+    <variable name="message" expression="" defaultValue="&quot;message&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="trycatch" value="try {&#10;&#9;$END$&#10;} catch ($Error$ $e$) {&#10;&#9;io.println($e$.message);&#10;}"
+            description="Try/catch block with typed exception parameter" toReformat="false" toShortenFQNames="false">
+    <variable name="Error" expression="" defaultValue="&quot;Error&quot;" alwaysStopAt="true"/>
+    <variable name="e" expression="" defaultValue="&quot;e&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="staticconst" value="static const $NAME$ = $value$;"
+            description="Immutable class-level constant" toReformat="false" toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="&quot;NAME&quot;" alwaysStopAt="true"/>
+    <variable name="value" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="staticlet" value="static let $name$ = $value$;"
+            description="Mutable class-level field (untyped)" toReformat="false" toShortenFQNames="false">
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <variable name="value" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="statictyped" value="static $int$ $name$ = $VAR3$;"
+            description="Mutable class-level field with declared type" toReformat="false" toShortenFQNames="false">
+    <variable name="int" expression="" defaultValue="&quot;int&quot;" alwaysStopAt="true"/>
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <variable name="VAR3" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="destructor" value="func ~$ClassName$() {&#10;&#9;$END$&#10;}"
+            description="Class destructor; runs at program exit or on `del x` (end-of-lifetime hook, NOT tied to `with`)" toReformat="false" toShortenFQNames="false">
+    <variable name="ClassName" expression="" defaultValue="&quot;ClassName&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="del" value="del $name$;"
+            description="Retire a binding: fires the class destructor (if any) inline and removes the name; subsequent use is a static error" toReformat="false" toShortenFQNames="false">
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="with" value="with ($name$ = $resource$) {&#10;&#9;$END$&#10;}"
+            description="Context-manager block: invokes __enter__() on entry and __exit__() on exit (any exit path)" toReformat="false" toShortenFQNames="false">
+    <variable name="name" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+    <variable name="resource" expression="" defaultValue="&quot;resource&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="contextmgr" value="class $Guarded$ {&#10;&#9;func $Guarded$($args$) {&#10;&#9;&#9;$END$&#10;&#9;}&#10;&#9;func __enter__(): $any$ {&#10;&#9;&#9;return this;&#10;&#9;}&#10;&#9;func __exit__(): void {&#10;&#9;}&#10;}"
+            description="Class with __enter__ / __exit__ for `with`-block semantics" toReformat="false" toShortenFQNames="false">
+    <variable name="Guarded" expression="" defaultValue="&quot;Guarded&quot;" alwaysStopAt="true"/>
+    <variable name="args" expression="" defaultValue="&quot;args&quot;" alwaysStopAt="true"/>
+    <variable name="any" expression="" defaultValue="&quot;any&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="iter" value="class $Range$ {&#10;&#9;$int$;&#10;&#9;$int2$;&#10;&#9;$int3$;&#10;&#10;&#9;func $Range$($int4$) {&#10;&#9;&#9;this.from = from;&#10;&#9;&#9;this.to = to;&#10;&#9;&#9;this.cur = from;&#10;&#9;}&#10;&#10;&#9;func __iter(): $Range$ {&#10;&#9;&#9;this.cur = this.from;&#10;&#9;&#9;return this;&#10;&#9;}&#10;&#10;&#9;func __done(): bool {&#10;&#9;&#9;return this.cur &gt;= this.to;&#10;&#9;}&#10;&#10;&#9;func __next(): $int5$ {&#10;&#9;&#9;$int5$ v = this.cur;&#10;&#9;&#9;this.cur = this.cur + 1;&#10;&#9;&#9;return v;&#10;&#9;}&#10;}$END$"
+            description="Iterable class with __iter/__done/__next (1.0.6)" toReformat="false" toShortenFQNames="false">
+    <variable name="Range" expression="" defaultValue="&quot;Range&quot;" alwaysStopAt="true"/>
+    <variable name="int" expression="" defaultValue="&quot;int from&quot;" alwaysStopAt="true"/>
+    <variable name="int2" expression="" defaultValue="&quot;int to&quot;" alwaysStopAt="true"/>
+    <variable name="int3" expression="" defaultValue="&quot;int cur&quot;" alwaysStopAt="true"/>
+    <variable name="int4" expression="" defaultValue="&quot;int from, int to&quot;" alwaysStopAt="true"/>
+    <variable name="int5" expression="" defaultValue="&quot;int&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="reflectloc" value='let loc = reflect.location($target$);&#10;io.println(loc["module"] + ":" + (loc["line"] as string));$END$'
+            description="Get the source position of a function or class as {module, line, column} (1.0.6)" toReformat="false" toShortenFQNames="false">
+    <variable name="target" expression="" defaultValue="&quot;target&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="serialize" value='func __serialize__(): dict {&#10;&#9;return {&#10;&#9;&#9;"$field$": this.$field$$END$&#10;&#9;};&#10;}'
+            description="Custom serialisation hook (used by json/yaml/toml.stringify)" toReformat="false" toShortenFQNames="false">
+    <variable name="field" expression="" defaultValue="&quot;field&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="deserialize" value='static func __deserialize__(dict d): $ClassName$ {&#10;&#9;return $ClassName$(d["$field$"]$END$);&#10;}'
+            description="Custom deserialisation factory (used by json/yaml/toml.parseAs)" toReformat="false" toShortenFQNames="false">
+    <variable name="ClassName" expression="" defaultValue="&quot;ClassName&quot;" alwaysStopAt="true"/>
+    <variable name="field" expression="" defaultValue="&quot;field&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="castString" value='func __string(): string {&#10;&#9;return "$value$";$END$&#10;}'
+            description="Cast overload: `instance as string`" toReformat="false" toShortenFQNames="false">
+    <variable name="value" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="castInt" value="func __int(): int {&#10;&#9;return $VAR1$;$END$&#10;}"
+            description="Cast overload: `instance as int`" toReformat="false" toShortenFQNames="false">
+    <variable name="VAR1" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="castFloat" value="func __float(): float {&#10;&#9;return $VAR1$;$END$&#10;}"
+            description="Cast overload: `instance as float`" toReformat="false" toShortenFQNames="false">
+    <variable name="VAR1" expression="" defaultValue="&quot;0.0&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="castBool" value="func __bool(): bool {&#10;&#9;return $true$;$END$&#10;}"
+            description="Cast overload: `instance as bool`" toReformat="false" toShortenFQNames="false">
+    <variable name="true" expression="" defaultValue="&quot;true&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="castDecimal" value="func __decimal(): decimal {&#10;&#9;return $d$;$END$&#10;}"
+            description="Cast overload: `instance as decimal`" toReformat="false" toShortenFQNames="false">
+    <variable name="d" expression="" defaultValue="&quot;0d&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="castBytes" value='func __bytes(): bytes {&#10;&#9;return bytes.fromString("$value$");$END$&#10;}'
+            description="Cast overload: `instance as bytes`" toReformat="false" toShortenFQNames="false">
+    <variable name="value" expression="" defaultValue="&quot;value&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="csvparse" value="let $rows$ = csv.parse($text$);&#10;for ($row$ in $rows$) {&#10;&#9;$END$&#10;}"
+            description="csv.parse: parse CSV text into a list of cell-list rows" toReformat="false" toShortenFQNames="false">
+    <variable name="rows" expression="" defaultValue="&quot;rows&quot;" alwaysStopAt="true"/>
+    <variable name="text" expression="" defaultValue="&quot;text&quot;" alwaysStopAt="true"/>
+    <variable name="row" expression="" defaultValue="&quot;row&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="csvdict" value="let $rows$ = csv.parseDict($text$);&#10;for ($row$ in $rows$) {&#10;&#9;$END$&#10;}"
+            description="csv.parseDict: parse CSV with first row as headers; returns list of dicts" toReformat="false" toShortenFQNames="false">
+    <variable name="rows" expression="" defaultValue="&quot;rows&quot;" alwaysStopAt="true"/>
+    <variable name="text" expression="" defaultValue="&quot;text&quot;" alwaysStopAt="true"/>
+    <variable name="row" expression="" defaultValue="&quot;row&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="stringbuilder" value='let $sb$ = strings.StringBuilder();&#10;$sb$.append("$fragment$");&#10;$END$&#10;let $result$ = $sb$.build();&#10;$sb$.dispose();'
+            description="strings.StringBuilder: amortised O(n) accumulator for tight-loop string assembly" toReformat="false" toShortenFQNames="false">
+    <variable name="sb" expression="" defaultValue="&quot;sb&quot;" alwaysStopAt="true"/>
+    <variable name="fragment" expression="" defaultValue="&quot;fragment&quot;" alwaysStopAt="true"/>
+    <variable name="result" expression="" defaultValue="&quot;result&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="streamsopen" value='let $stream$ = streams.open("$path$", "$r$");&#10;defer $stream$.close();&#10;for ($line$ in $stream$) {&#10;&#9;$END$&#10;}'
+            description="streams.open: file-backed stream wrapper; iterating yields lines (1.1.0 F3)" toReformat="false" toShortenFQNames="false">
+    <variable name="stream" expression="" defaultValue="&quot;stream&quot;" alwaysStopAt="true"/>
+    <variable name="path" expression="" defaultValue="&quot;path&quot;" alwaysStopAt="true"/>
+    <variable name="r" expression="" defaultValue="&quot;r&quot;" alwaysStopAt="true"/>
+    <variable name="line" expression="" defaultValue="&quot;line&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="streamsmem" value='let $buf$ = streams.memory($VAR2$);&#10;$buf$.writeln("$text$");&#10;$END$&#10;let $contents$ = $buf$.toString();'
+            description="streams.memory: in-memory read/write stream wrapper (1.1.0 F3)" toReformat="false" toShortenFQNames="false">
+    <variable name="buf" expression="" defaultValue="&quot;buf&quot;" alwaysStopAt="true"/>
+    <variable name="VAR2" expression="" defaultValue="&quot;\&quot;\&quot;&quot;" alwaysStopAt="true"/>
+    <variable name="text" expression="" defaultValue="&quot;text&quot;" alwaysStopAt="true"/>
+    <variable name="contents" expression="" defaultValue="&quot;contents&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="streamscopy" value="let $total$ = streams.copy($src$, $dst$);$END$"
+            description="streams.copy: pipes from src.__read into dst.__write (1.1.0 F3)" toReformat="false" toShortenFQNames="false">
+    <variable name="total" expression="" defaultValue="&quot;total&quot;" alwaysStopAt="true"/>
+    <variable name="src" expression="" defaultValue="&quot;src&quot;" alwaysStopAt="true"/>
+    <variable name="dst" expression="" defaultValue="&quot;dst&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="watchstart" value='let $handle$ = watch.start("$path$", func(dict&lt;string, any&gt; $event$): void {&#10;&#9;$END$&#10;});'
+            description="watch.start: register an fsnotify watcher with a callback (1.1.0 F5)" toReformat="false" toShortenFQNames="false">
+    <variable name="handle" expression="" defaultValue="&quot;handle&quot;" alwaysStopAt="true"/>
+    <variable name="path" expression="" defaultValue="&quot;path&quot;" alwaysStopAt="true"/>
+    <variable name="event" expression="" defaultValue="&quot;event&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="watchrecursive" value='let $handle$ = watch.start("$path$", func(dict&lt;string, any&gt; $event$): void {&#10;&#9;$END$&#10;}, {"recursive": true});'
+            description="watch.start with recursive: true (1.1.0 F5)" toReformat="false" toShortenFQNames="false">
+    <variable name="handle" expression="" defaultValue="&quot;handle&quot;" alwaysStopAt="true"/>
+    <variable name="path" expression="" defaultValue="&quot;path&quot;" alwaysStopAt="true"/>
+    <variable name="event" expression="" defaultValue="&quot;event&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="procspawn" value='let $p$ = proc.spawn("$command$", [$VAR3$]);&#10;let $out$ = $p$.stdout.readAll();&#10;let $code$ = $p$.wait();$END$'
+            description="proc.spawn: start a child process and capture stdout (1.1.0 F4)" toReformat="false" toShortenFQNames="false">
+    <variable name="p" expression="" defaultValue="&quot;p&quot;" alwaysStopAt="true"/>
+    <variable name="command" expression="" defaultValue="&quot;command&quot;" alwaysStopAt="true"/>
+    <variable name="VAR3" expression="" defaultValue="&quot;&quot;" alwaysStopAt="true"/>
+    <variable name="out" expression="" defaultValue="&quot;out&quot;" alwaysStopAt="true"/>
+    <variable name="code" expression="" defaultValue="&quot;code&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="procpty" value='let $p$ = proc.spawn("$command$", [$VAR3$], {"pty": true});&#10;$END$'
+            description="proc.spawn with pty: true; stdin/stdout share the master fd (1.1.0 F4)" toReformat="false" toShortenFQNames="false">
+    <variable name="p" expression="" defaultValue="&quot;p&quot;" alwaysStopAt="true"/>
+    <variable name="command" expression="" defaultValue="&quot;command&quot;" alwaysStopAt="true"/>
+    <variable name="VAR3" expression="" defaultValue="&quot;&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="socketsdial" value='let $client$ = sockets.dial("$host$", $port$);&#10;$client$.writeln("$request$");&#10;$END$&#10;$client$.close();'
+            description="sockets.dial: open a TCP/TLS connection (1.2.0)" toReformat="false" toShortenFQNames="false">
+    <variable name="client" expression="" defaultValue="&quot;client&quot;" alwaysStopAt="true"/>
+    <variable name="host" expression="" defaultValue="&quot;host&quot;" alwaysStopAt="true"/>
+    <variable name="port" expression="" defaultValue="&quot;port&quot;" alwaysStopAt="true"/>
+    <variable name="request" expression="" defaultValue="&quot;request&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="socketsserve" value='let $server$ = sockets.serve("$VAR2$", $port$, func(dict&lt;string, any&gt; $raw$): void {&#10;&#9;let $stream$ = streams.IOStream($raw$["stream"]);&#10;&#9;$END$&#10;&#9;$stream$.close();&#10;});'
+            description="sockets.serve: TCP server with accept handler (1.2.0)" toReformat="false" toShortenFQNames="false">
+    <variable name="server" expression="" defaultValue="&quot;server&quot;" alwaysStopAt="true"/>
+    <variable name="VAR2" expression="" defaultValue="&quot;0.0.0.0&quot;" alwaysStopAt="true"/>
+    <variable name="port" expression="" defaultValue="&quot;port&quot;" alwaysStopAt="true"/>
+    <variable name="raw" expression="" defaultValue="&quot;raw&quot;" alwaysStopAt="true"/>
+    <variable name="stream" expression="" defaultValue="&quot;stream&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="sshconnect" value='let $c$ = ssh.connect("$user$", {&#10;&#9;"agent": true,&#10;&#9;"knownHostsFile": "$ssh$",&#10;});&#10;$END$&#10;$c$.close();'
+            description="ssh.connect with agent auth + known_hosts (1.2.0)" toReformat="false" toShortenFQNames="false">
+    <variable name="c" expression="" defaultValue="&quot;c&quot;" alwaysStopAt="true"/>
+    <variable name="user" expression="" defaultValue="&quot;user@host&quot;" alwaysStopAt="true"/>
+    <variable name="ssh" expression="" defaultValue="&quot;~/.ssh/known_hosts&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="sshexec" value='let $r$ = $c$.exec("$command$");&#10;io.println($r$.stdout);$END$'
+            description="ssh.exec: one-shot remote command (1.2.0)" toReformat="false" toShortenFQNames="false">
+    <variable name="r" expression="" defaultValue="&quot;r&quot;" alwaysStopAt="true"/>
+    <variable name="c" expression="" defaultValue="&quot;c&quot;" alwaysStopAt="true"/>
+    <variable name="command" expression="" defaultValue="&quot;command&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="sshspawn" value='let $s$ = $c$.spawn("$command$");&#10;for (line in $s$.stdout) {&#10;&#9;$END$&#10;}&#10;$s$.wait();'
+            description="ssh.spawn: long-running streaming command (1.2.0)" toReformat="false" toShortenFQNames="false">
+    <variable name="s" expression="" defaultValue="&quot;s&quot;" alwaysStopAt="true"/>
+    <variable name="c" expression="" defaultValue="&quot;c&quot;" alwaysStopAt="true"/>
+    <variable name="command" expression="" defaultValue="&quot;command&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="spinner" value='let $sp$ = widgets.Spinner("$loading$");&#10;$sp$.tick();&#10;$END$&#10;$sp$.stop("$done$");'
+            description="cli.widgets.Spinner: terminal spinner (1.2.0)" toReformat="false" toShortenFQNames="false">
+    <variable name="sp" expression="" defaultValue="&quot;sp&quot;" alwaysStopAt="true"/>
+    <variable name="loading" expression="" defaultValue="&quot;loading&quot;" alwaysStopAt="true"/>
+    <variable name="done" expression="" defaultValue="&quot;done&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="progressbar" value='let $pb$ = widgets.ProgressBar($total$);&#10;for (int i = 0; i &lt; $total$; i++) {&#10;&#9;$pb$.advance();&#10;&#9;$END$&#10;}&#10;$pb$.finish("$complete$");'
+            description="cli.widgets.ProgressBar: progress bar (1.2.0)" toReformat="false" toShortenFQNames="false">
+    <variable name="pb" expression="" defaultValue="&quot;pb&quot;" alwaysStopAt="true"/>
+    <variable name="total" expression="" defaultValue="&quot;total&quot;" alwaysStopAt="true"/>
+    <variable name="complete" expression="" defaultValue="&quot;complete&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="ffidlopen" value='let $lib$ = ffi.dlopen("$libm$");&#10;let $func_name$ = $lib$.symbol("$func_name2$", [$ffi$], $ffi2$);&#10;$END$'
+            description="ffi.dlopen + symbol resolution (1.6.0)" toReformat="false" toShortenFQNames="false">
+    <variable name="lib" expression="" defaultValue="&quot;lib&quot;" alwaysStopAt="true"/>
+    <variable name="libm" expression="" defaultValue="&quot;libm.so.6&quot;" alwaysStopAt="true"/>
+    <variable name="func_name" expression="" defaultValue="&quot;func_name&quot;" alwaysStopAt="true"/>
+    <variable name="func_name2" expression="" defaultValue="&quot;func_name&quot;" alwaysStopAt="true"/>
+    <variable name="ffi" expression="" defaultValue="&quot;ffi.DOUBLE&quot;" alwaysStopAt="true"/>
+    <variable name="ffi2" expression="" defaultValue="&quot;ffi.DOUBLE&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="ffisymbol" value='let $func_name$ = $lib$.symbol("$func_name2$", [$ffi$], $ffi2$);&#10;$END$'
+            description="ffi.Library.symbol: declare a C function signature (1.6.0)" toReformat="false" toShortenFQNames="false">
+    <variable name="func_name" expression="" defaultValue="&quot;func_name&quot;" alwaysStopAt="true"/>
+    <variable name="lib" expression="" defaultValue="&quot;lib&quot;" alwaysStopAt="true"/>
+    <variable name="func_name2" expression="" defaultValue="&quot;func_name&quot;" alwaysStopAt="true"/>
+    <variable name="ffi" expression="" defaultValue="&quot;ffi.DOUBLE&quot;" alwaysStopAt="true"/>
+    <variable name="ffi2" expression="" defaultValue="&quot;ffi.DOUBLE&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="ffihandle" value="class $Handle$ {&#10;&#9;int handle;&#10;&#9;func $Handle$(int handle) { this.handle = handle; }&#10;&#9;func ~$Handle$() {&#10;&#9;&#9;$releaseFn$(this.handle);&#10;&#9;}&#10;}&#10;$END$"
+            description="ffi: wrap a C handle in a Geblang class with destructor (1.6.0)" toReformat="false" toShortenFQNames="false">
+    <variable name="Handle" expression="" defaultValue="&quot;Handle&quot;" alwaysStopAt="true"/>
+    <variable name="releaseFn" expression="" defaultValue="&quot;releaseFn&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="llmchat" value='let $client$ = llm.client({&#10;&#9;"provider": "$openai$",&#10;&#9;"apiKey":   $sys$&#10;});&#10;let $resp$ = $client$.chat([&#10;&#9;{"role": "user", "content": $Hello$}&#10;], {"model": "$claude$", "maxTokens": $VAR7$});&#10;$END$'
+            description="llm.client + chat completion" toReformat="false" toShortenFQNames="false">
+    <variable name="client" expression="" defaultValue="&quot;client&quot;" alwaysStopAt="true"/>
+    <variable name="openai" expression='enum("openai", "anthropic", "bedrock")' defaultValue="&quot;openai&quot;" alwaysStopAt="true"/>
+    <variable name="sys" expression="" defaultValue="&quot;sys.getenv(\&quot;API_KEY\&quot;) as string&quot;" alwaysStopAt="true"/>
+    <variable name="resp" expression="" defaultValue="&quot;resp&quot;" alwaysStopAt="true"/>
+    <variable name="Hello" expression="" defaultValue="&quot;\&quot;Hello\&quot;&quot;" alwaysStopAt="true"/>
+    <variable name="claude" expression="" defaultValue="&quot;claude-opus-4-8&quot;" alwaysStopAt="true"/>
+    <variable name="VAR7" expression="" defaultValue="&quot;1024&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="llmembed" value='let $resp$ = $client$.embed($text$, {"model": "$text2$"});&#10;let $vector$ = $resp$["vector"] as list&lt;any&gt;;&#10;$END$'
+            description="llm: embed text into a vector" toReformat="false" toShortenFQNames="false">
+    <variable name="resp" expression="" defaultValue="&quot;resp&quot;" alwaysStopAt="true"/>
+    <variable name="client" expression="" defaultValue="&quot;client&quot;" alwaysStopAt="true"/>
+    <variable name="text" expression="" defaultValue="&quot;text&quot;" alwaysStopAt="true"/>
+    <variable name="text2" expression="" defaultValue="&quot;text-embedding-3-small&quot;" alwaysStopAt="true"/>
+    <variable name="vector" expression="" defaultValue="&quot;vector&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="messagingsqs" value='let $queue$ = messaging.connect({&#10;&#9;"driver":    "sqs",&#10;&#9;"region":    "$us$",&#10;&#9;"queueUrl":  $queueUrl$,&#10;&#9;"accessKey": $accessKey$,&#10;&#9;"secretKey": $secretKey$&#10;});&#10;$END$'
+            description="messaging.connect AWS SQS queue" toReformat="false" toShortenFQNames="false">
+    <variable name="queue" expression="" defaultValue="&quot;queue&quot;" alwaysStopAt="true"/>
+    <variable name="us" expression="" defaultValue="&quot;us-east-1&quot;" alwaysStopAt="true"/>
+    <variable name="queueUrl" expression="" defaultValue="&quot;queueUrl&quot;" alwaysStopAt="true"/>
+    <variable name="accessKey" expression="" defaultValue="&quot;accessKey&quot;" alwaysStopAt="true"/>
+    <variable name="secretKey" expression="" defaultValue="&quot;secretKey&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+  <template name="messagingsns" value='let $topic$ = messaging.topic({&#10;&#9;"driver":    "sns",&#10;&#9;"region":    "$us$",&#10;&#9;"topicArn":  $topicArn$,&#10;&#9;"queueUrl":  $queueUrl$,&#10;&#9;"accessKey": $accessKey$,&#10;&#9;"secretKey": $secretKey$&#10;});&#10;$END$'
+            description="messaging.topic AWS SNS topic (subscribe via paired SQS queue)" toReformat="false" toShortenFQNames="false">
+    <variable name="topic" expression="" defaultValue="&quot;topic&quot;" alwaysStopAt="true"/>
+    <variable name="us" expression="" defaultValue="&quot;us-east-1&quot;" alwaysStopAt="true"/>
+    <variable name="topicArn" expression="" defaultValue="&quot;topicArn&quot;" alwaysStopAt="true"/>
+    <variable name="queueUrl" expression="" defaultValue="&quot;queueUrl&quot;" alwaysStopAt="true"/>
+    <variable name="accessKey" expression="" defaultValue="&quot;accessKey&quot;" alwaysStopAt="true"/>
+    <variable name="secretKey" expression="" defaultValue="&quot;secretKey&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="GEBLANG" value="true"/>
+    </context>
+  </template>
+</templateSet>
