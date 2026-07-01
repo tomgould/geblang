@@ -9,7 +9,7 @@ import com.dwgebler.geblang.highlighting.GeblangTokenTypes
  * Commenter for Geblang. Ctrl+/ toggles `#` line comments.
  * Ctrl+Shift+/ toggles `/* */` block comments.
  *
- * Note: // is INTEGER DIVISION in Geblang — the line comment prefix is `#`.
+ * Note: // is INTEGER DIVISION in Geblang - the line comment prefix is `#`.
  */
 class GeblangCommenter : CodeDocumentationAwareCommenter {
     override fun getLineCommentPrefix(): String = "# "

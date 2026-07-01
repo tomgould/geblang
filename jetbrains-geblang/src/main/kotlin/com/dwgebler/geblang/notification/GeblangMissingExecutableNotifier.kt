@@ -47,7 +47,7 @@ class GeblangMissingExecutableNotifier : FileEditorManagerListener {
             NotificationType.WARNING
         )
         notification.addAction(
-            NotificationAction.createSimpleExpiring("Configure…") {
+            NotificationAction.createSimpleExpiring("Configure...") {
                 ShowSettingsUtil.getInstance().showSettingsDialog(project, GeblangConfigurable::class.java)
             }
         )

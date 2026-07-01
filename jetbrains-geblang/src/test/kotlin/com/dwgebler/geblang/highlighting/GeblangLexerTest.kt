@@ -109,7 +109,7 @@ class GeblangLexerTest : LexerTestCase() {
     }
 
     fun testDoubleQuotedStringWithInterpolation() {
-        // The lexer's double-quoted-string scanner does not special-case `${...}` —
+        // The lexer's double-quoted-string scanner does not special-case `${...}` -
         // it simply scans forward until the closing `"` (honouring backslash escapes),
         // so the whole literal including the interpolation braces is emitted as a
         // single STRING token. GeblangTokenTypes.INTERPOLATION is never produced.

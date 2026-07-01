@@ -6,7 +6,7 @@ import java.io.File
 /**
  * Unit tests for the pure [GeblangExecutable.resolve] helper.
  *
- * These deliberately avoid any IDE/UI/notification machinery — [GeblangExecutable]
+ * These deliberately avoid any IDE/UI/notification machinery - [GeblangExecutable]
  * has no dependency on the IntelliJ Platform test fixtures beyond
  * [com.intellij.execution.configurations.PathEnvironmentVariableUtil], which works
  * fine as a plain JVM call, so a plain JUnit [TestCase] is sufficient here.
@@ -41,7 +41,7 @@ class GeblangExecutableTest : TestCase() {
     fun testAbsolutePathToNonExecutableFileResolvesToNull() {
         // /etc/hosts exists on any Linux CI box but is not executable.
         val hosts = File("/etc/hosts")
-        if (!hosts.exists()) return // environment without /etc/hosts — nothing to assert
+        if (!hosts.exists()) return // environment without /etc/hosts - nothing to assert
         val result = GeblangExecutable.resolve(hosts.absolutePath)
         assertNull(result)
     }
