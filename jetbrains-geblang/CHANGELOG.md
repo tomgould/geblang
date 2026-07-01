@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added code folding (`GeblangFoldingBuilder`): multi-line `{ ... }` blocks fold
+  (including nested blocks, each as its own region) and multi-line `/* ... */`
+  block comments fold, using placeholders `{...}` and `/*...*/` respectively.
+  Built directly off the flat-leaf PSI stream (matching `{`/`}` leaves with a
+  depth counter) since `GeblangParserDefinition` produces no grammar tree.
+  Single-line `{}` and single-line block comments are never folded, and
+  unbalanced braces are skipped rather than causing an error. Verified against
+  the real `com.intellij.lang.folding.FoldingBuilderEx` contract for IC-2024.2.4
+  and covered by a `BasePlatformTestCase` asserting fold ranges and placeholders.
 - Added a minimal PSI layer (`GeblangParserDefinition`, `GeblangFile`): builds a
   FLAT PSI tree of the existing lexer's tokens under a single file root, with no
   grammar rules and no Grammar-Kit. This is the foundation for later PSI-based

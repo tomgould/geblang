@@ -30,6 +30,7 @@ JetBrains/IntelliJ plugin providing Geblang (`.gb`) language support.
 | Color scheme customisation | Settings > Editor > Color Scheme > Geblang |
 | File type recognition (`.gb` files with icon) | Built-in |
 | Brace matching `{}` `[]` `()` | Built-in |
+| Code folding: multi-line `{ ... }` blocks and multi-line `/* ... */` comments | Built-in |
 | Line comment toggle `Ctrl+/` (prefix `#`) | Built-in |
 | Block comment toggle `Ctrl+Shift+/` (`/* */`) | Built-in |
 | Diagnostics (errors, warnings) | `geblang lsp` via LSP4IJ |
@@ -134,6 +135,7 @@ IntelliJ IDE
     ├── GeblangColorSettingsPage           — user-editable color scheme
     ├── GeblangCommenter                   — # / /* */ comment toggling
     ├── GeblangBraceMatcher                — {} [] () matching
+    ├── GeblangFoldingBuilder              - folds multi-line {} blocks and /* */ comments
     ├── GeblangSettings                    — persists geblangExecutablePath
     ├── GeblangConfigurable                — settings UI
     ├── GeblangLspServerFactory            — launches `geblang lsp` via LSP4IJ
@@ -213,6 +215,11 @@ IDE UI or PSI/parser involved. They cover:
 - A round-trip sanity check confirming token offsets have no gaps/overlaps and
   concatenated token text reproduces the original input exactly, plus a lexer
   restart-consistency check
+
+`src/test/kotlin/com/dwgebler/geblang/editor/GeblangFoldingBuilderTest.kt` covers
+`GeblangFoldingBuilder` against the flat-leaf PSI: a multi-line function body folds, a
+nested `if` block inside it produces its own (nested) fold region, a multi-line `/* */`
+comment folds, and a single-line `{}` does not fold.
 
 `src/test/kotlin/com/dwgebler/geblang/notification/GeblangExecutableTest.kt` covers the
 pure `GeblangExecutable.resolve` helper (absolute paths, PATH lookup, blank input) as a

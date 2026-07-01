@@ -10,6 +10,7 @@
             <li>Syntax highlighting for .gb files (keywords, types, strings, numbers, comments, operators, decorators)</li>
             <li>File type recognition with icon</li>
             <li>Brace matching for {} [] ()</li>
+            <li>Code folding for multi-line {} blocks and multi-line /* */ comments</li>
             <li>Line and block comment toggling (Ctrl+/ and Ctrl+Shift+/)</li>
             <li>Configurable color scheme under Settings > Editor > Color Scheme > Geblang</li>
             <li>LSP integration via LSP4IJ: diagnostics, code completion, go-to-definition,
@@ -34,7 +35,7 @@
     <change-notes><![CDATA[
         <b>0.1.0</b> (prototype)
         <ul>
-            <li>Initial release: syntax highlighting, brace matching, commenter, LSP integration</li>
+            <li>Initial release: syntax highlighting, brace matching, code folding, commenter, LSP integration</li>
         </ul>
     ]]></change-notes>
 
@@ -80,6 +81,11 @@
         <lang.braceMatcher
             language="Geblang"
             implementationClass="com.dwgebler.geblang.editor.GeblangBraceMatcher"/>
+
+        <!-- Code folding: multi-line {} blocks and multi-line /* */ comments -->
+        <lang.foldingBuilder
+            language="Geblang"
+            implementationClass="com.dwgebler.geblang.editor.GeblangFoldingBuilder"/>
 
         <!-- Application-level settings service -->
         <applicationService
