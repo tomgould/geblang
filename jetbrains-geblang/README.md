@@ -39,6 +39,32 @@ JetBrains/IntelliJ plugin providing Geblang (`.gb`) language support.
 | Rename refactoring | `geblang lsp` via LSP4IJ |
 | Formatting (`geblang fmt`) | `geblang lsp` via LSP4IJ |
 | "geblang executable not found" warning notification, with a Configure… action | Built-in |
+| "Geblang Test" run configuration: `geblang test --format teamcity` in the native test tree | Built-in |
+
+## Running Geblang Tests
+
+The plugin registers a "Geblang Test" run configuration that runs
+`geblang test --format teamcity <target>` and renders the results in IntelliJ's
+native test runner tree (the same tree used for JUnit, pytest, etc.).
+
+To create one:
+
+1. **Run > Edit Configurations... > + > Geblang Test**
+2. Set **Target** to a `.gb` test file (e.g. `tests/user_test.gb`) or a directory
+   (directories are scanned recursively for `*_test.gb` files by `geblang test`).
+3. Optionally set a **Working directory** (defaults to the project root) and a
+   **Tag filter** (forwarded as `--tag <value>`, matching tests decorated with
+   `@tag("value")`).
+4. Click **Run**. Test classes (`class X extends test.Test`) and their `@test`
+   methods appear in the test tree with pass/fail status as they run.
+
+The executable used is the one configured under
+**Settings > Languages & Frameworks > Geblang** (falls back to `geblang` on PATH).
+
+Double-clicking a test in the tree does a best-effort navigation to its `class`/`func`
+declaration by scanning `.gb` files in the project for a textual match (Geblang has no
+PSI parser yet, so this is not full go-to-definition); if no match is found, navigation
+is simply unavailable for that entry rather than failing the run.
 
 ## Architecture
 
@@ -56,8 +82,15 @@ IntelliJ IDE
     ├── GeblangLspServerFactory            — launches `geblang lsp` via LSP4IJ
     │        └── GeblangStreamConnectionProvider  — stdio process connection
     ├── GeblangExecutable                  — resolves the configured executable path to a File
-    └── GeblangMissingExecutableNotifier   — warns (once per project) if it can't be resolved
-             └── GeblangMissingExecutableState  — per-project "already warned" flag
+    ├── GeblangMissingExecutableNotifier   — warns (once per project) if it can't be resolved
+    │        └── GeblangMissingExecutableState  — per-project "already warned" flag
+    └── run/ (Geblang Test run configuration)
+             ├── GeblangTestRunConfigurationType / GeblangTestConfigurationFactory
+             ├── GeblangTestRunConfiguration        — target/workingDirectory/tag settings
+             ├── GeblangTestSettingsEditor          — Edit Configurations UI
+             ├── GeblangTestCommandLineState         — builds/launches the geblang process
+             ├── GeblangTestConsoleProperties        — wires the SMTestRunner console
+             └── GeblangTestLocator                  — geblang_test:// URL -> source location
 ```
 
 LSP4IJ (Red Hat) handles all JSON-RPC communication between IntelliJ and the
@@ -114,6 +147,16 @@ IDE UI or PSI/parser involved. They cover:
 pure `GeblangExecutable.resolve` helper (absolute paths, PATH lookup, blank input) as a
 plain JUnit test — no IDE fixtures needed since the helper has no UI/notification
 side effects. The notification UI itself is intentionally not unit-tested.
+
+`src/test/kotlin/com/dwgebler/geblang/run/GeblangTestCommandLineStateTest.kt` covers
+`buildTestArguments`, the pure helper that turns a target + optional tag into the
+`geblang test --format teamcity [--tag <tag>] <target>` argument list.
+
+`src/test/kotlin/com/dwgebler/geblang/run/GeblangTestLocatorTest.kt` covers
+`GeblangTestLocator.parsePath`, the pure parser for `geblang_test://<Class>[/<method>]`
+locator paths. Both are plain JUnit tests with no IDE fixtures. The full
+`GeblangTestLocator.getLocation` PSI/VFS resolution and the actual test-tree rendering
+are not exercised headlessly — see Troubleshooting below.
 
 Test reports are written to `build/reports/tests/test/index.html` (HTML) and
 `build/test-results/test/*.xml` (JUnit XML) after each run.

@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added a "Geblang Test" run configuration: runs `geblang test --format teamcity <target>`
+  (a `.gb` file or directory, with an optional `--tag` filter and working directory) and
+  renders the results in IntelliJ's native SMTestRunner test tree. Includes a best-effort
+  `GeblangTestLocator` for double-click navigation from the test tree back to the
+  `class`/`func` declaration in source.
 - Added a "geblang executable not found" warning notification: shown at most once
   per project session, the first time a `.gb` file is opened, if the configured
   executable path cannot be resolved. Includes a **Configure…** action that opens
