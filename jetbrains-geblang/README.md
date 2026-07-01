@@ -38,6 +38,7 @@ JetBrains/IntelliJ plugin providing Geblang (`.gb`) language support.
 | Go-to-definition / Find usages | `geblang lsp` via LSP4IJ |
 | Rename refactoring | `geblang lsp` via LSP4IJ |
 | Formatting (`geblang fmt`) | `geblang lsp` via LSP4IJ |
+| "geblang executable not found" warning notification, with a Configure… action | Built-in |
 
 ## Architecture
 
@@ -52,8 +53,11 @@ IntelliJ IDE
     ├── GeblangBraceMatcher                — {} [] () matching
     ├── GeblangSettings                    — persists geblangExecutablePath
     ├── GeblangConfigurable                — settings UI
-    └── GeblangLspServerFactory            — launches `geblang lsp` via LSP4IJ
-             └── GeblangStreamConnectionProvider  — stdio process connection
+    ├── GeblangLspServerFactory            — launches `geblang lsp` via LSP4IJ
+    │        └── GeblangStreamConnectionProvider  — stdio process connection
+    ├── GeblangExecutable                  — resolves the configured executable path to a File
+    └── GeblangMissingExecutableNotifier   — warns (once per project) if it can't be resolved
+             └── GeblangMissingExecutableState  — per-project "already warned" flag
 ```
 
 LSP4IJ (Red Hat) handles all JSON-RPC communication between IntelliJ and the
@@ -73,14 +77,14 @@ Requires JDK 17 and network access (downloads the IntelliJ Platform and LSP4IJ o
 
 ## Development / Testing
 
-Run the lexer unit tests with:
+Run the unit tests with:
 
 ```bash
 cd jetbrains-geblang
 ./gradlew test
 ```
 
-Tests live under `src/test/kotlin/com/dwgebler/geblang/highlighting/GeblangLexerTest.kt`
+Lexer tests live under `src/test/kotlin/com/dwgebler/geblang/highlighting/GeblangLexerTest.kt`
 and drive `GeblangLexer` directly (via IntelliJ Platform's `LexerTestCase`), with no
 IDE UI or PSI/parser involved. They cover:
 
@@ -106,6 +110,11 @@ IDE UI or PSI/parser involved. They cover:
   concatenated token text reproduces the original input exactly, plus a lexer
   restart-consistency check
 
+`src/test/kotlin/com/dwgebler/geblang/notification/GeblangExecutableTest.kt` covers the
+pure `GeblangExecutable.resolve` helper (absolute paths, PATH lookup, blank input) as a
+plain JUnit test — no IDE fixtures needed since the helper has no UI/notification
+side effects. The notification UI itself is intentionally not unit-tested.
+
 Test reports are written to `build/reports/tests/test/index.html` (HTML) and
 `build/test-results/test/*.xml` (JUnit XML) after each run.
 
@@ -118,6 +127,9 @@ Test reports are written to `build/reports/tests/test/index.html` (HTML) and
 : Ensure `geblang` is installed and on PATH (`which geblang`), or set the full
   path in Settings > Languages & Frameworks > Geblang.
 : Check the LSP4IJ console: View > Tool Windows > LSP Consoles > Geblang Language Server.
+: The plugin shows a "Geblang" warning notification the first time you open a `.gb`
+  file if the configured executable can't be resolved, with a **Configure…** action
+  that jumps straight to the settings page. This fires at most once per project session.
 
 **`// integer division` being highlighted as comment**
 : This is correctly NOT a comment in Geblang — `//` is integer division. The plugin

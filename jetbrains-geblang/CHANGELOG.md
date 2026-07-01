@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added a "geblang executable not found" warning notification: shown at most once
+  per project session, the first time a `.gb` file is opened, if the configured
+  executable path cannot be resolved. Includes a **Configure…** action that opens
+  Settings > Languages & Frameworks > Geblang directly. No warning is shown when
+  the executable resolves successfully.
 - Added decorator highlighting: `@name` and dotted composite decorators
   (`@Assert.email`, `@Foo.bar.baz`) are now lexed as a single `DECORATOR` token,
   with their own customisable color under Settings > Editor > Color Scheme >

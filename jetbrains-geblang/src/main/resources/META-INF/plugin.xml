@@ -16,6 +16,8 @@
                 hover, find usages, rename, formatting — all powered by <code>geblang lsp</code></li>
             <li>Settings page under Languages &amp; Frameworks > Geblang to configure the
                 path to the geblang executable</li>
+            <li>Warns once per project session if the configured geblang executable cannot
+                be found, with a one-click action to open settings and configure it</li>
         </ul>
         <p><b>Requirements:</b> The <code>geblang</code> binary must be installed and accessible
         (on PATH or configured in settings) for LSP features to activate.
@@ -77,7 +79,21 @@
             id="com.dwgebler.geblang.settings.GeblangConfigurable"
             displayName="Geblang"/>
 
+        <!-- Notification group for plugin warnings, e.g. missing geblang executable -->
+        <notificationGroup
+            id="Geblang"
+            displayType="BALLOON"/>
+
     </extensions>
+
+    <!-- Warn (once per project session) when a .gb file is opened but the configured
+         geblang executable cannot be resolved, so LSP features silently staying off
+         doesn't confuse the user. -->
+    <projectListeners>
+        <listener
+            class="com.dwgebler.geblang.notification.GeblangMissingExecutableNotifier"
+            topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
+    </projectListeners>
 
     <!-- LSP4IJ extensions: register the Geblang language server and file mapping -->
     <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
