@@ -6,6 +6,7 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
+    { "include": "#decorators" },
     { "include": "#keywords" },
     { "include": "#types" },
     { "include": "#numbers" },
@@ -117,6 +118,18 @@
         {
           "name": "keyword.operator.geblang",
           "match": "(\\?\\?=|<<=|>>=|\\*\\*=|//=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|\\?\\?|\\?\\.|\\|>|\\*\\*|//|\\+\\+|--|<<|>>|==|!=|<=|>=|=>|\\.\\.<|\\.\\.|&&|\\|\\||[-+*/%<>=!&|^~@])"
+        }
+      ]
+    },
+    "decorators": {
+      "patterns": [
+        {
+          "name": "meta.decorator.geblang",
+          "match": "(@)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)",
+          "captures": {
+            "1": { "name": "punctuation.definition.decorator.geblang" },
+            "2": { "name": "entity.name.function.decorator.geblang" }
+          }
         }
       ]
     },
