@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"geblang/internal/runtime"
+	"unicode/utf8"
 )
 
 func registerBytes(r *Registry) {
@@ -38,7 +39,7 @@ func registerBytes(r *Registry) {
 		if err != nil {
 			return nil, err
 		}
-		return runtime.String{Value: string(data)}, nil
+		return BytesToUTF8String(data, "bytes.toString")
 	})
 	r.Register("bytes", "fromHex", func(args []runtime.Value) (runtime.Value, error) {
 		text, err := singleString(args, "bytes.fromHex")
@@ -105,4 +106,11 @@ func registerBytes(r *Registry) {
 		}
 		return runtime.Bytes{Value: out}, nil
 	})
+}
+
+func BytesToUTF8String(data []byte, label string) (runtime.String, error) {
+	if !utf8.Valid(data) {
+		return runtime.String{}, fmt.Errorf("%s data is not valid UTF-8", label)
+	}
+	return runtime.String{Value: string(data)}, nil
 }

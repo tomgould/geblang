@@ -5,8 +5,7 @@ package native
 // unknown-method check. It is kept honest by a runtime guard test
 // (TestPrimitiveMethodsAreCallable) that calls every name on a live
 // value and fails on any that the engine does not recognise, so a stale
-// or phantom entry cannot survive. Names are case-sensitive as written;
-// dispatch lowercases.
+// or phantom entry cannot survive. Names are case-sensitive as written.
 //
 // Conversion helpers (toInt/toDecimal/toFloat/toBool) dispatch ahead of
 // the per-type table and are recognised on every primitive; they are

@@ -589,6 +589,7 @@ func (e *Evaluator) handleFetchPaused(sessionID string, params json.RawMessage) 
 		callbackEval, callbackHandler := e.callbackEvaluator(handler)
 		if callbackEval != e {
 			defer callbackEval.Cleanup()
+			defer callbackEval.startDebugThread("browser fetch")()
 		}
 		result, err := callbackEval.applyFunction(callbackHandler, []runtime.Value{reqDict})
 		if err != nil {

@@ -264,7 +264,7 @@ var CatalogPrimitiveMethods = map[string]map[string]FunctionDoc{
 		"length":      Fn([]string{}, "int", "Number of bytes."),
 		"isEmpty":     Fn([]string{}, "bool", "True when length is zero."),
 		"contains":    Fn([]string{"bytes|int needle"}, "bool", "Substring or byte-value check."),
-		"toString":    Fn([]string{}, "string", "Decode as UTF-8."),
+		"toString":    Fn([]string{}, "string", "Decodes valid UTF-8; throws on invalid bytes."),
 		"toHex":       Fn([]string{}, "string", "Lowercase hex."),
 		"toList":      Fn([]string{}, "list<int>", "List of byte values (0-255)."),
 		"get":         Fn([]string{"int index"}, "int", "Byte value at position (0-255)."),
@@ -476,7 +476,7 @@ var StdlibCatalog = map[string]ModuleDoc{
 	"bytes": {Functions: map[string]FunctionDoc{
 		"fromString":    Fn([]string{"string text"}, "bytes", "Encodes a string as bytes."),
 		"fromList":      Fn([]string{"list<int> values"}, "bytes", "Builds bytes from a list of int byte values (0-255)."),
-		"toString":      Fn([]string{"bytes data"}, "string", "Decodes bytes as a string."),
+		"toString":      Fn([]string{"bytes data"}, "string", "Decodes valid UTF-8; throws on invalid bytes."),
 		"fromHex":       Fn([]string{"string hex"}, "bytes", "Decodes hex text."),
 		"toHex":         Fn([]string{"bytes data"}, "string", "Encodes bytes as hex text."),
 		"fromBase64":    Fn([]string{"string text"}, "bytes", "Decodes base64 text."),

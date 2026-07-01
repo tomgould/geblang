@@ -53,6 +53,27 @@ func TestPrimitiveMethodsRecognizedOnBothBackends(t *testing.T) {
 	}
 }
 
+func TestPrimitiveMethodNamesAreCaseSensitiveOnBothBackends(t *testing.T) {
+	for typeName, methods := range native.PrimitiveMethods {
+		literal, ok := primitiveLiterals[typeName]
+		if !ok {
+			t.Fatalf("no test literal for primitive type %q", typeName)
+		}
+		names := append([]string(nil), methods...)
+		names = append(names, native.PrimitiveConversionMethods...)
+		for _, method := range names {
+			wrongCase := strings.ToUpper(method[:1]) + method[1:]
+			src := "let v = " + literal + ";\nv." + wrongCase + "();\n"
+			if err := runOnEvaluator(src); !isUnknownMethodErr(err) {
+				t.Errorf("evaluator accepted wrong-case %s.%s: %v", typeName, wrongCase, err)
+			}
+			if err := runOnVM(src); !isUnknownMethodErr(err) {
+				t.Errorf("VM accepted wrong-case %s.%s: %v", typeName, wrongCase, err)
+			}
+		}
+	}
+}
+
 // bareBuiltinSnippets is a valid program exercising each bare builtin.
 // Every native.BareBuiltins entry must have one (enforced below).
 var bareBuiltinSnippets = map[string]string{

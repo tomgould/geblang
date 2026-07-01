@@ -85,6 +85,168 @@ func TestCrossModuleCacheHitIdenticalOutput(t *testing.T) {
 	}
 }
 
+func TestPrimitiveMethodCaseSensitivityAcrossRuntimePaths(t *testing.T) {
+	bin := buildCMBinary(t)
+	pkgDir := t.TempDir()
+	srcDir := filepath.Join(pkgDir, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(pkgDir, "geblang.yaml"),
+		[]byte("name: methodcase\nversion: 0.1.0\nsource: src\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "probe.gb"), []byte(`module methodcase.probe;
+
+export func result(): string {
+    any text = "42";
+    any values = [];
+    string out = "";
+    try { text.Length(); out = out + "accepted,"; }
+    catch (Error e) { out = out + "rejected,"; }
+    try { values.isempty(); out = out + "accepted,"; }
+    catch (Error e) { out = out + "rejected,"; }
+    try { text.TOINT(); out = out + "accepted"; }
+    catch (Error e) { out = out + "rejected"; }
+    return out + ":${text.toInt()}";
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entryPath := filepath.Join(srcDir, "main.gb")
+	if err := os.WriteFile(entryPath, []byte(`module methodcase.main;
+import methodcase.probe as probe;
+import io;
+
+export func main(list<string> args): void {
+    io.println(probe.result());
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(label string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = pkgDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s failed: %v\n%s", label, err, out)
+		}
+		return string(out)
+	}
+
+	const want = "rejected,rejected,rejected:42\n"
+	cold := run("cold VM", entryPath)
+	if cold != want {
+		t.Fatalf("cold VM: got %q, want %q", cold, want)
+	}
+	if _, err := os.Stat(filepath.Join(pkgDir, ".geblang-cache")); err != nil {
+		t.Fatalf("cold VM did not create bytecode cache: %v", err)
+	}
+	if warm := run("cached VM", entryPath); warm != want {
+		t.Fatalf("cached VM: got %q, want %q", warm, want)
+	}
+	if eval := run("evaluator", "--disable-vm", entryPath); eval != want {
+		t.Fatalf("evaluator: got %q, want %q", eval, want)
+	}
+
+	outBin := filepath.Join(pkgDir, "methodcase")
+	run(
+		"build",
+		"build", "--entry", "methodcase.main", "--out", outBin, pkgDir,
+	)
+	builtCmd := exec.Command(outBin)
+	builtCmd.Dir = pkgDir
+	builtOut, err := builtCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("built binary failed: %v\n%s", err, builtOut)
+	}
+	if built := string(builtOut); built != want {
+		t.Fatalf("built binary: got %q, want %q", built, want)
+	}
+}
+
+func TestStringRuneCacheAcrossRuntimePaths(t *testing.T) {
+	bin := buildCMBinary(t)
+	pkgDir := t.TempDir()
+	srcDir := filepath.Join(pkgDir, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(pkgDir, "geblang.yaml"),
+		[]byte("name: stringcache\nversion: 0.1.0\nsource: src\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	entryPath := filepath.Join(srcDir, "main.gb")
+	if err := os.WriteFile(entryPath, []byte(`module stringcache.main;
+import bytes;
+import io;
+import string;
+
+export func main(list<string> args): void {
+    let ascii = "a".repeat(257);
+    let pair = string.fromCodePoints([233, 20013]);
+    let unicode = pair.repeat(200);
+    io.println(ascii.length());
+    io.println(ascii.substring(127, 130));
+    io.println(unicode.length());
+    io.println(unicode[201] == string.fromCodePoint(20013));
+    try {
+        bytes.toString(bytes.fromHex("61ff62"));
+        io.println("accepted");
+    } catch (RuntimeError e) {
+        io.println(e.getMessage().contains("not valid UTF-8"));
+    }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(label string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = pkgDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s failed: %v\n%s", label, err, out)
+		}
+		return string(out)
+	}
+
+	const want = "257\naaa\n400\ntrue\ntrue\n"
+	if cold := run("cold VM", entryPath); cold != want {
+		t.Fatalf("cold VM: got %q, want %q", cold, want)
+	}
+	if _, err := os.Stat(filepath.Join(pkgDir, ".geblang-cache")); err != nil {
+		t.Fatalf("cold VM did not create bytecode cache: %v", err)
+	}
+	if warm := run("cached VM", entryPath); warm != want {
+		t.Fatalf("cached VM: got %q, want %q", warm, want)
+	}
+	if eval := run("evaluator", "--disable-vm", entryPath); eval != want {
+		t.Fatalf("evaluator: got %q, want %q", eval, want)
+	}
+
+	outBin := filepath.Join(pkgDir, "stringcache")
+	run("build", "build", "--entry", "stringcache.main", "--out", outBin, pkgDir)
+	builtCmd := exec.Command(outBin)
+	builtCmd.Dir = pkgDir
+	builtOut, err := builtCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("built binary failed: %v\n%s", err, builtOut)
+	}
+	if built := string(builtOut); built != want {
+		t.Fatalf("built binary: got %q, want %q", built, want)
+	}
+}
+
 // TestCrossModuleBuildBinaryIdenticalOutput builds a standalone binary from a
 // cross-module package and asserts its output matches a direct geblang run.
 func TestCrossModuleBuildBinaryIdenticalOutput(t *testing.T) {

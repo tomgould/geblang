@@ -170,14 +170,46 @@ For more control, add a `.vscode/launch.json` to your workspace:
 | `stopOnEntry` | boolean | `false` | Pause at the first statement |
 | `geblangPath` | string | `"geblang"` | Override the `geblang` binary path |
 
+#### Debugging concurrent code
+
+Breakpoints fire inside concurrent worker bodies, not just the main script:
+`async.run` / `async.all` / `async.race` worker functions, lazy generator
+bodies, and network request handlers.
+
+Each running worker appears as its own entry in the **Call Stack** pane's
+thread list. The main script is the first thread; workers are added as they
+start and removed as they finish.
+
+Hitting a breakpoint establishes a focused stop and asks every other evaluator
+worker to park at its next statement boundary. This pause is cooperative:
+workers currently inside a native or blocking operation may not park
+immediately, so the adapter reports `allThreadsStopped: false`. **Continue**
+(F5) resumes the focused thread and every worker that has parked. A step action
+(Step Over / Into / Out) advances only the selected thread, leaving parked
+workers paused.
+
+Only the focused (stopped) thread is fully inspectable. Other worker threads
+appear in the thread list but their call stack and variables are not
+expandable while a different thread holds the stop.
+
+Variable inspection and expression evaluation resolve against the selected
+call frame. Selecting an outer frame in the Call Stack pane runs
+evaluate/watch expressions in that frame's scope. Outer-frame inspection
+covers parameters and enclosing scope; locals declared inside an outer
+frame's body are not currently visible.
+
 #### Known limitations
 
 - The debug adapter runs scripts on the evaluator path. Scripts that require
   `--vm-strict` mode may behave differently under the debugger.
 - Only the main script file has source-mapped breakpoints. Breakpoints set in
   imported modules are not yet supported.
-- Variable inspection shows the local scope only. Module-level and outer-scope
-  variables are not currently exposed.
+- Outer-frame inspection covers a frame's parameters and enclosing scope;
+  locals declared inside an outer frame's body are not currently visible.
+  Module-level variables are visible in the outermost frame.
+- Disconnect and Terminate cancel debugger evaluations at Geblang statement
+  boundaries, including work spawned with `async.run`. A native call that
+  blocks inside an evaluation cannot be interrupted until that call returns.
 
 These limitations are expected to be lifted in a post-1.0.0 release.
 

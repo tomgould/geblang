@@ -24,6 +24,8 @@ Collection types:
 Every method list in this chapter is the set the engine actually
 recognises - the same source powers `dir(value)`, editor completion,
 and `geblang check`, so completion never lags the language.
+Primitive method names are case-sensitive: use `isEmpty()`, `toInt()`,
+and `startsWith()` exactly as documented.
 
 Runtime and framework types include `Type`, `Task<T>`, `generator<T>`,
 `iterable<T>`, classes, interfaces, and enums.
