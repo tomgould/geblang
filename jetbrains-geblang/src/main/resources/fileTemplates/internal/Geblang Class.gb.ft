@@ -1,0 +1,7 @@
+class ${NAME} {
+	string name;
+
+	func ${NAME}(string name) {
+		this.name = name;
+	}
+}

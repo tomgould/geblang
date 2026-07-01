@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added "New > Geblang File" file templates: four bundled `.gb.ft` templates
+  (File, Class, Module, Test) selectable from a `GeblangCreateFileAction`
+  ("New > Geblang File" in the Project View / File menu), plus a
+  `GeblangFileTemplateGroupFactory` exposing the same templates under
+  Settings > Editor > File and Code Templates > Geblang for customisation.
 - Added a "Geblang Test" run configuration: runs `geblang test --format teamcity <target>`
   (a `.gb` file or directory, with an optional `--tag` filter and working directory) and
   renders the results in IntelliJ's native SMTestRunner test tree. Includes a best-effort

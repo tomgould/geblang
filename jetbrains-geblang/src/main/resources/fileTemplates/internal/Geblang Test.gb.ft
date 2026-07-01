@@ -1,0 +1,8 @@
+import test;
+
+class ${NAME} extends test.Test {
+	@test
+	func testExample(): void {
+		this.assertEquals(true, true);
+	}
+}

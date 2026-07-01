@@ -104,7 +104,21 @@
 
         <defaultLiveTemplates file="/liveTemplates/Geblang"/>
 
+        <!-- Exposes the bundled Geblang file templates under
+             Settings > Editor > File and Code Templates -->
+        <fileTemplateGroup implementation="com.dwgebler.geblang.actions.GeblangFileTemplateGroupFactory"/>
+
     </extensions>
+
+    <!-- New > Geblang File: scaffolds a .gb file from the bundled templates
+         (File / Class / Module / Test) -->
+    <actions>
+        <action
+            id="Geblang.NewFile"
+            class="com.dwgebler.geblang.actions.GeblangCreateFileAction">
+            <add-to-group group-id="NewGroup" anchor="after" relative-to-action="NewFromTemplate"/>
+        </action>
+    </actions>
 
     <!-- Warn (once per project session) when a .gb file is opened but the configured
          geblang executable cannot be resolved, so LSP features silently staying off

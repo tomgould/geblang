@@ -41,6 +41,7 @@ JetBrains/IntelliJ plugin providing Geblang (`.gb`) language support.
 | "geblang executable not found" warning notification, with a Configure… action | Built-in |
 | "Geblang Test" run configuration: `geblang test --format teamcity` in the native test tree | Built-in |
 | Live templates (code snippets): type a prefix and press Tab to expand | Built-in |
+| "New > Geblang File" templates: File / Class / Module / Test scaffolds | Built-in |
 
 ## Running Geblang Tests
 
@@ -103,6 +104,22 @@ Coverage by category:
   `progressbar`), FFI (`ffidlopen`, `ffisymbol`, `ffihandle`), LLM (`llmchat`,
   `llmembed`), messaging (`messagingsqs`, `messagingsns`), `reflectloc`
 
+## New file templates
+
+The plugin registers a **New > Geblang File** action (Project View / File menu
+> New) offering four starter templates:
+
+| Kind | Produces |
+|---|---|
+| **File** | A minimal `.gb` file: a top `# <name>` comment and an empty `func main(): void {}` |
+| **Class** | A `class <Name> { ... }` with a `string name` field and matching constructor |
+| **Module** | A `module <name>;` declaration with one `export`ed function |
+| **Test** | `import test;` plus a `class <Name>Test extends test.Test` with one `@test`-decorated method |
+
+The same four templates are also editable under **Settings > Editor > File
+and Code Templates > Geblang**, so you can tweak the boilerplate to match
+your own conventions.
+
 ## Architecture
 
 ```
@@ -124,6 +141,10 @@ IntelliJ IDE
     +-- templates/ (Live templates)
     |        |-- GeblangTemplateContextType         - restricts templates to .gb files
     |        `-- liveTemplates/Geblang.xml           - the bundled template set (resource)
+    +-- actions/ (New file templates)
+    |        |-- GeblangCreateFileAction            - "New > Geblang File" action + dialog kinds
+    |        |-- GeblangFileTemplateGroupFactory    - exposes templates under Settings > File Templates
+    |        `-- fileTemplates/internal/*.gb.ft     - the four bundled templates (resources)
     └── run/ (Geblang Test run configuration)
              ├── GeblangTestRunConfigurationType / GeblangTestConfigurationFactory
              ├── GeblangTestRunConfiguration        — target/workingDirectory/tag settings

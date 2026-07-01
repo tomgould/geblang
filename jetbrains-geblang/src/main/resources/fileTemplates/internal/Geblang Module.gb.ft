@@ -1,0 +1,4 @@
+module ${NAME};
+
+export func run(): void {
+}
