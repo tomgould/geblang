@@ -211,6 +211,13 @@ func (s *server) handle(msg *rawMessage) {
 				"documentHighlightProvider":  true,
 				"renameProvider":             map[string]any{"prepareProvider": true},
 				"workspaceSymbolProvider":    true,
+				"semanticTokensProvider": map[string]any{
+					"legend": map[string]any{
+						"tokenTypes":     semanticTokenTypes,
+						"tokenModifiers": semanticTokenModifiers,
+					},
+					"full": true,
+				},
 			},
 			"serverInfo": map[string]any{
 				"name":    "geblang-lsp",
@@ -367,6 +374,14 @@ func (s *server) handle(msg *rawMessage) {
 			return
 		}
 		s.respond(msg.ID, s.documentHighlight(params))
+
+	case "textDocument/semanticTokens/full":
+		var params SemanticTokensParams
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			s.respond(msg.ID, SemanticTokens{Data: []int{}})
+			return
+		}
+		s.respond(msg.ID, s.semanticTokensFull(params))
 
 	case "textDocument/prepareRename":
 		var params TextDocumentPositionParams
