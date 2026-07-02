@@ -45,6 +45,8 @@ JetBrains/IntelliJ plugin providing Geblang (`.gb`) language support.
 | Run/Debug gutter markers: click-to-run `func main(`, test classes, and `@test` methods | Built-in |
 | Live templates (code snippets): type a prefix and press Tab to expand | Built-in |
 | "New > Geblang File" templates: File / Class / Module / Test scaffolds | Built-in |
+| TODO highlighting: `# TODO:`, `# FIXME:`, block-comment TODOs in the TODO tool window | Built-in |
+| Spellchecking: comments and string literals, plus camelCase/snake_case-aware identifiers | Built-in |
 
 ## Running Geblang Tests
 
@@ -168,6 +170,7 @@ IntelliJ IDE
     |        |-- GeblangParserDefinition   - builds a FLAT PSI tree of lexer tokens
     |        `-- GeblangFile               - PSI file root (PsiFileBase)
     ├── GeblangColorSettingsPage           — user-editable color scheme
+    ├── GeblangSpellcheckingStrategy       - spellchecks comment/string prose and split identifiers
     ├── GeblangCommenter                   — # / /* */ comment toggling
     ├── GeblangBraceMatcher                — {} [] () matching
     ├── GeblangFoldingBuilder              - folds multi-line {} blocks and /* */ comments
@@ -318,6 +321,19 @@ its presentable name, and the `GeblangFileType` singleton identity check the con
 type's `isInContext` is built on. The full expansion path (typing a prefix and
 pressing Tab inside a real editor) is only exercised manually via `runIde`, since
 `isInContext(TemplateActionContext)` needs a live `PsiFile`/`Editor` pair.
+
+`src/test/kotlin/com/dwgebler/geblang/highlighting/GeblangTodoTest.kt` verifies TODO
+highlighting: a `BasePlatformTestCase` fixture with a `# TODO: ...` line comment and a
+`/* FIXME: ... */` block comment asserts `PsiTodoSearchHelper.findTodoItems` finds both
+and that `processFilesWithTodoItems` reports the file. This works with zero registration
+beyond the existing `GeblangParserDefinition.getCommentTokens()` - TODO indexing scans
+comment token text directly, so no `WordsScanner`/`FindUsagesProvider` was needed.
+
+`src/test/kotlin/com/dwgebler/geblang/highlighting/GeblangSpellcheckingStrategyTest.kt`
+covers `GeblangSpellcheckingStrategy.getTokenizer` against real leaves pulled from the
+flat PSI: comment and string leaves get `SpellcheckingStrategy.TEXT_TOKENIZER`, identifier
+leaves get a `TokenizerBase`/`IdentifierSplitter` tokenizer that splits camelCase/
+snake_case words, and keywords/operators/numbers get `SpellcheckingStrategy.EMPTY_TOKENIZER`.
 
 Test reports are written to `build/reports/tests/test/index.html` (HTML) and
 `build/test-results/test/*.xml` (JUnit XML) after each run.

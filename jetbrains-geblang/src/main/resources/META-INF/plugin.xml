@@ -31,6 +31,11 @@
                 <code>testclass</code> and press Tab to expand it, covering functions, classes,
                 interfaces, enums, control flow, decorators, async, crypto, networking, and
                 more - ported from the vscode-geblang snippet set</li>
+            <li>TODO highlighting: <code># TODO: ...</code>, <code># FIXME: ...</code> and
+                block-comment TODOs show up in the TODO tool window like any other language</li>
+            <li>Spellchecking: prose in comments and string literals is spellchecked, and
+                identifier names are split on camelCase/snake_case boundaries so only the
+                misspelled word is flagged, not the whole identifier</li>
         </ul>
         <p><b>Requirements:</b> The <code>geblang</code> binary must be installed and accessible
         (on PATH or configured in settings) for LSP features to activate.
@@ -76,6 +81,12 @@
         <!-- Color settings page: Settings > Editor > Color Scheme > Geblang -->
         <colorSettingsPage
             implementation="com.dwgebler.geblang.highlighting.GeblangColorSettingsPage"/>
+
+        <!-- Spellchecking: comment and string leaves are checked as prose;
+             identifier leaves are split into camelCase/snake_case words. -->
+        <spellchecker.support
+            language="Geblang"
+            implementationClass="com.dwgebler.geblang.highlighting.GeblangSpellcheckingStrategy"/>
 
         <!-- Commenter: Ctrl+/ → #  Ctrl+Shift+/ → /* */ -->
         <lang.commenter

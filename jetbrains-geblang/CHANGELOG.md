@@ -8,6 +8,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added TODO highlighting and spellchecking, both built on the existing flat-leaf
+  Geblang PSI (`GeblangParserDefinition`):
+  - TODO highlighting required no new production code. `PsiTodoSearchHelper.findTodoItems`
+    already finds `# TODO: ...`, `# FIXME: ...`, and block-comment TODOs out of the box,
+    because the platform's TODO indexing scans comment token text directly via
+    `ParserDefinition.getCommentTokens()` (already implemented), not via a
+    `WordsScanner`/`FindUsagesProvider` (that mechanism feeds `IdIndex`/Find Usages, a
+    separate index). Verified empirically with a new `BasePlatformTestCase`
+    (`GeblangTodoTest`) before concluding no registration was needed.
+  - Added `GeblangSpellcheckingStrategy` (extends `SpellcheckingStrategy`), registered via
+    `<spellchecker.support language="Geblang" implementationClass="..."/>` (the
+    `com.intellij.spellchecker.support` extension point, bundled in the platform's
+    `SpellCheckerPlugin.xml` - no extra plugin dependency needed). Comment
+    (`LINE_COMMENT`/`BLOCK_COMMENT`) and `STRING` leaves use
+    `SpellcheckingStrategy.TEXT_TOKENIZER` so their prose is spellchecked; `IDENTIFIER`
+    leaves use `TokenizerBase.create(IdentifierSplitter.getInstance())` so
+    camelCase/snake_case names are split into words instead of flagging the whole
+    identifier; everything else (keywords, operators, numbers, decorators, braces) uses
+    `SpellcheckingStrategy.EMPTY_TOKENIZER`. `PsiIdentifierOwnerTokenizer` (the platform's
+    other standard identifier tokenizer) was not usable here since it requires
+    `PsiNameIdentifierOwner`, which the flat `ASTWrapperPsiElement` leaves are not.
+  Verified against the real `com.intellij.psi.search.PsiTodoSearchHelper`,
+  `com.intellij.spellchecker.tokenizer.SpellcheckingStrategy`, `Tokenizer`,
+  `TokenizerBase`, and `com.intellij.spellchecker.inspections.IdentifierSplitter`
+  contracts for IC-2024.2.4 (via `javap` against the platform jars). Covered by
+  `GeblangTodoTest` (TODO items found in both comment forms, plus file-level discovery)
+  and `GeblangSpellcheckingStrategyTest` (tokenizer choice for comment, string,
+  identifier, keyword, operator, and number leaves).
 - Added run/debug gutter markers (`GeblangRunLineMarkerContributor`) and a "Geblang
   File" run configuration for click-to-run/debug on `func main(`, `class X extends
   test.Test` declarations, and `@test`-decorated methods:
