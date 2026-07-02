@@ -205,6 +205,9 @@ func (s *server) handle(msg *rawMessage) {
 				"hoverProvider":              true,
 				"documentSymbolProvider":     true,
 				"definitionProvider":         true,
+				"declarationProvider":        true,
+				"typeDefinitionProvider":     true,
+				"implementationProvider":     true,
 				"documentFormattingProvider": true,
 				"codeActionProvider":         true,
 				"referencesProvider":         true,
@@ -330,6 +333,30 @@ func (s *server) handle(msg *rawMessage) {
 			return
 		}
 		s.respond(msg.ID, s.definition(params))
+
+	case "textDocument/declaration":
+		var params TextDocumentPositionParams
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			s.respond(msg.ID, nil)
+			return
+		}
+		s.respond(msg.ID, s.declaration(params))
+
+	case "textDocument/typeDefinition":
+		var params TextDocumentPositionParams
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			s.respond(msg.ID, []Location{})
+			return
+		}
+		s.respond(msg.ID, s.typeDefinition(params))
+
+	case "textDocument/implementation":
+		var params TextDocumentPositionParams
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			s.respond(msg.ID, []Location{})
+			return
+		}
+		s.respond(msg.ID, s.implementation(params))
 
 	case "textDocument/formatting":
 		var params struct {
