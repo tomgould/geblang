@@ -1,362 +1,315 @@
 # Geblang — IntelliJ Plugin
 
-JetBrains/IntelliJ plugin providing Geblang (`.gb`) language support.
+JetBrains/IntelliJ Platform plugin providing Geblang (`.gb`) language support.
+
+## Overview
+
+This plugin follows a split architecture: **LSP4IJ wraps a `geblang lsp` subprocess as
+the single source of truth for all semantic analysis** — diagnostics, code completion,
+hover documentation, go-to-definition, find usages, rename, and formatting are all
+delegated to the real Geblang compiler running as a language server. The plugin itself
+does not reimplement or duplicate any of that semantic logic.
+
+Alongside the LSP integration, a light native IntelliJ layer provides everything the
+LSP protocol doesn't cover: syntax highlighting (via a hand-written lexer, not a
+grammar), a minimal flat-token PSI, run configurations for `geblang run` and
+`geblang test`, gutter run/debug markers, live templates, file templates, code folding,
+brace matching, comment toggling, TODO highlighting, and spellchecking. These native
+features are editor conveniences layered on top of the lexer output, not a competing
+semantic analysis engine.
 
 ## Requirements
 
-- **IntelliJ IDEA Community or Ultimate 2024.2.x** (build 242.x)
-- **JDK 17+** to build from source
-- **`geblang` binary** on your PATH (or configured in settings) for LSP features
-  (diagnostics, code completion, hover, go-to-definition, find usages, rename, formatting)
-- **LSP4IJ** — declared as a required plugin dependency; IntelliJ installs it automatically
-  when you install this plugin from a zip
+- **IntelliJ Platform 2024.2 — 2024.3** (`sinceBuild="242"`, `untilBuild="243.*"` in
+  `plugin.xml`). Built and verified against IntelliJ IDEA Community 2024.2.4.
+- **JDK 17** to build from source (Kotlin JVM toolchain is pinned to 17).
+- **The `geblang` binary** on your `PATH`, or its path configured in
+  Settings > Languages & Frameworks > Geblang, for all LSP-backed features
+  (diagnostics, completion, hover, go-to-definition, find usages, rename, formatting)
+  to activate. Without it, the native editor features (highlighting, folding, run
+  configs, templates, etc.) still work; only the LSP-backed features stay disabled.
+- **LSP4IJ** (`com.redhat.devtools.lsp4ij`, version 0.20.1 in the current build
+  configuration) — declared as a hard plugin dependency (`<depends>` in `plugin.xml`).
+  When you install this plugin from a zip via "Install Plugin from Disk", IntelliJ
+  resolves and installs LSP4IJ from the JetBrains Marketplace automatically as part of
+  dependency resolution (confirmed by the plugin verifier, which resolves
+  `com.redhat.devtools.lsp4ij` and its own transitive dependency
+  `com.redhat.devtools.intellij.telemetry` against the Marketplace). If your IDE has no
+  network access to the Marketplace, install LSP4IJ manually first.
 
-## Install from Zip (local trial)
+## Install
 
-1. Build the zip: `./gradlew buildPlugin`
-   Produced at: `build/distributions/geblang-intellij-0.1.0.zip`
-2. In IntelliJ: **Settings > Plugins > ⚙ > Install Plugin from Disk…**
-3. Select the zip file, click **OK**, restart the IDE.
-4. Open any `.gb` file — you should see syntax highlighting immediately.
-5. For LSP features: make sure `geblang` is on your PATH, or set the path in
-   **Settings > Languages & Frameworks > Geblang**.
+### (a) Run in a sandbox IDE
+
+```bash
+cd jetbrains-geblang
+./gradlew runIde
+```
+
+This launches a disposable, sandboxed IntelliJ IDEA Community instance with the plugin
+pre-installed — the fastest way to try it without touching your real IDE settings.
+
+### (b) Install from disk
+
+```bash
+cd jetbrains-geblang
+./gradlew buildPlugin
+```
+
+This produces `build/distributions/geblang-intellij-0.1.0.zip`. In your IDE:
+
+1. Settings > Plugins > (gear icon) > Install Plugin from Disk...
+2. Select `build/distributions/geblang-intellij-0.1.0.zip`.
+3. Restart the IDE when prompted.
+4. LSP4IJ will be resolved and installed automatically as a dependency (see
+   Requirements above); if that fails due to no Marketplace access, install
+   LSP4IJ manually from Settings > Plugins > Marketplace first, then retry.
+
+### (c) Marketplace
+
+Not yet published. Planned for the future; for now, use (a) or (b).
+
+## Build from source
+
+```bash
+cd jetbrains-geblang
+JAVA_HOME=/path/to/jdk-17 ./gradlew buildPlugin   # build the installable zip
+JAVA_HOME=/path/to/jdk-17 ./gradlew verifyPlugin  # check platform compatibility
+JAVA_HOME=/path/to/jdk-17 ./gradlew runIde        # launch a sandboxed IDE
+JAVA_HOME=/path/to/jdk-17 ./gradlew test          # run the unit test suite
+```
+
+Requires **JDK 17** and network access on first run (downloads the IntelliJ Platform
+and LSP4IJ artifacts into the Gradle cache). Uses the **Gradle 8.13** wrapper
+(see `gradle/wrapper/gradle-wrapper.properties`).
 
 ## Features
 
-| Feature | Source |
-|---|---|
-| Syntax highlighting (keywords, types, strings, numbers, comments, operators) | Built-in lexer |
-| Decorator highlighting (`@memoize`, dotted `@Assert.email`, `@Get("/x")`) | Built-in lexer |
-| Color scheme customisation | Settings > Editor > Color Scheme > Geblang |
-| File type recognition (`.gb` files with icon) | Built-in |
-| Brace matching `{}` `[]` `()` | Built-in |
-| Code folding: multi-line `{ ... }` blocks and multi-line `/* ... */` comments | Built-in |
-| Line comment toggle `Ctrl+/` (prefix `#`) | Built-in |
-| Block comment toggle `Ctrl+Shift+/` (`/* */`) | Built-in |
-| Diagnostics (errors, warnings) | `geblang lsp` via LSP4IJ |
-| Code completion | `geblang lsp` via LSP4IJ |
-| Hover documentation | `geblang lsp` via LSP4IJ |
-| Go-to-definition / Find usages | `geblang lsp` via LSP4IJ |
-| Rename refactoring | `geblang lsp` via LSP4IJ |
-| Formatting (`geblang fmt`) | `geblang lsp` via LSP4IJ |
-| "geblang executable not found" warning notification, with a Configure… action | Built-in |
-| "Geblang Test" run configuration: `geblang test --format teamcity` in the native test tree | Built-in |
-| "Geblang File" run configuration: `geblang run <file>` in a plain console | Built-in |
-| Run/Debug gutter markers: click-to-run `func main(`, test classes, and `@test` methods | Built-in |
-| Live templates (code snippets): type a prefix and press Tab to expand | Built-in |
-| "New > Geblang File" templates: File / Class / Module / Test scaffolds | Built-in |
-| TODO highlighting: `# TODO:`, `# FIXME:`, block-comment TODOs in the TODO tool window | Built-in |
-| Spellchecking: comments and string literals, plus camelCase/snake_case-aware identifiers | Built-in |
+Each feature below is registered in `plugin.xml`; the extension point or class name is
+noted so you can cross-check against the source.
 
-## Running Geblang Tests
+### Language definition and file type
 
-The plugin registers a "Geblang Test" run configuration that runs
-`geblang test --format teamcity <target>` and renders the results in IntelliJ's
-native test runner tree (the same tree used for JUnit, pytest, etc.).
+`.gb` files are recognized as Geblang source (`fileType` extension point,
+`GeblangFileType`), complete with a dedicated icon. Just open or create a `.gb` file —
+no configuration needed.
 
-To create one:
+### Syntax highlighting
 
-1. **Run > Edit Configurations... > + > Geblang Test**
-2. Set **Target** to a `.gb` test file (e.g. `tests/user_test.gb`) or a directory
-   (directories are scanned recursively for `*_test.gb` files by `geblang test`).
-3. Optionally set a **Working directory** (defaults to the project root) and a
-   **Tag filter** (forwarded as `--tag <value>`, matching tests decorated with
-   `@tag("value")`).
-4. Click **Run**. Test classes (`class X extends test.Test`) and their `@test`
-   methods appear in the test tree with pass/fail status as they run.
+A hand-written lexer (`GeblangLexer`, no JFlex/grammar) drives highlighting for
+keywords, built-in types, strings (all four literal forms), numbers, comments,
+operators, and decorators (`lang.syntaxHighlighterFactory`, `GeblangSyntaxHighlighterFactory`).
+Colors are customizable via a dedicated Color Settings page (`colorSettingsPage`,
+`GeblangColorSettingsPage`) at Settings > Editor > Color Scheme > Geblang.
 
-The executable used is the one configured under
-**Settings > Languages & Frameworks > Geblang** (falls back to `geblang` on PATH).
+### Comment toggling
 
-Double-clicking a test in the tree does a best-effort navigation to its `class`/`func`
-declaration by scanning `.gb` files in the project for a textual match (Geblang has no
-PSI parser yet, so this is not full go-to-definition); if no match is found, navigation
-is simply unavailable for that entry rather than failing the run.
+`Ctrl+/` toggles `#` line comments; `Ctrl+Shift+/` toggles `/* */` block comments
+(`lang.commenter`, `GeblangCommenter`). Note that `//` is **not** a comment prefix in
+Geblang — see Troubleshooting.
 
-## Running a Geblang File
+### Brace matching
 
-The plugin also registers a "Geblang File" run configuration that runs
-`geblang run <file> [args]` in a plain console (no test tree - just process output).
+`{}`, `[]`, and `()` are matched and highlighted when the caret sits next to one
+(`lang.braceMatcher`, `GeblangBraceMatcher`).
 
-To create one:
+### LSP integration (LSP4IJ)
 
-1. **Run > Edit Configurations... > + > Geblang File**
-2. Set **Geblang file** to a `.gb` file to run.
-3. Optionally set a **Working directory** (defaults to the project root) and
-   **Program arguments** (forwarded verbatim after the file, whitespace-split).
-4. Click **Run**.
+The plugin registers a language server (`com.redhat.devtools.lsp4ij` `server`
+extension point, `GeblangLspServerFactory`) that launches `geblang lsp` over stdio
+(`GeblangStreamConnectionProvider`), and maps the Geblang language to it
+(`languageMapping`). The binary path comes from the Geblang settings page, defaulting
+to `geblang` resolved on `PATH`. Per `plugin.xml`'s own description and the
+`GeblangMissingExecutableNotifier` warning text, the features this wires up are:
+diagnostics, code completion, hover documentation, go-to-definition, find usages,
+rename, and formatting. Because the connection is a generic LSP4IJ
+`StreamConnectionProvider` (not a capability-restricted client), any other standard LSP
+feature the `geblang lsp` server itself advertises (e.g. signature help, document/
+workspace symbols, code actions) may also surface through LSP4IJ's generic UI, but only
+the features listed above are explicitly documented and exercised by this plugin.
 
-The executable used is the same one configured under
-**Settings > Languages & Frameworks > Geblang** (falls back to `geblang` on PATH)
-that the "Geblang Test" configuration uses.
+### Executable path setting
 
-## Run/Debug gutter markers
+Settings > Languages & Frameworks > Geblang (`applicationConfigurable`,
+`GeblangConfigurable`) lets you set the path to the `geblang` binary. It is persisted
+at the application level (`GeblangSettings`, stored in `geblang.xml`) and defaults to
+the bare name `geblang` (PATH lookup).
 
-Click-to-run gutter icons appear next to three anchors in a `.gb` file:
+### "Geblang not found" notification
 
-- A top-level `func main(` declaration - click Run/Debug to launch a "Geblang File"
-  configuration targeting the enclosing file.
-- A `class X extends test.Test` declaration - click Run/Debug to launch a
-  "Geblang Test" configuration targeting the enclosing file.
-- An `@test`-decorated method - click Run/Debug to launch the same "Geblang Test"
-  configuration targeting the enclosing file.
+If the configured executable can't be resolved, a warning balloon appears the first
+time you open a `.gb` file in a project session (`projectListeners` +
+`GeblangMissingExecutableNotifier`, `notificationGroup` id `Geblang`), with a
+"Configure..." action that jumps straight to the settings page. It fires at most once
+per project session, and not at all once the executable resolves successfully.
 
-These markers create and reuse run configurations automatically (via
-`GeblangFileRunConfigurationProducer` and `GeblangTestRunConfigurationProducer`), so
-there's no need to create one by hand first - though any configuration created this
-way is still fully editable under **Run > Edit Configurations...** afterwards.
+### Minimal PSI (flat-token tree)
 
-## Live templates
+`lang.parserDefinition` (`GeblangParserDefinition`) builds a **flat** PSI tree: a
+single file root whose children are one leaf per lexer token, in source order, with no
+nesting and no grammar. This is explicitly not a full parser — its purpose is to give
+the platform just enough structure to hang folding, run-line markers, TODO
+highlighting, and spellchecking off of. All real semantic understanding stays with the
+LSP server.
 
-The plugin bundles 102 live templates (code snippets) ported from the vscode-geblang
-extension, scoped to `.gb` files only.
+### Code folding
 
-To use one: in a `.gb` file, type the template's prefix (e.g. `func`, `class`,
-`testclass`) and press **Tab** to expand it. Placeholders are pre-filled with sensible
-defaults; press **Tab** again to move between them, and the final **Tab** lands the
-cursor at the template's designated end position (usually the function/class body).
+Multi-line `{ ... }` blocks (including nested blocks, each as its own fold region) and
+multi-line `/* ... */` comments can be folded (`lang.foldingBuilder`,
+`GeblangFoldingBuilder`). Single-line braces and single-line block comments are never
+folded. Use the +/- gutter icons, or the editor's folding shortcuts/actions.
 
-Coverage by category:
+### "Geblang Test" run configuration
 
-- **Declarations**: functions (`func`, `asyncfunc`, `genfunc`, `export`, `genericfunc`,
-  `genericinterface`, `genericlambda`, `typetest`), classes (`class`, `classex`,
-  `abstractclass`, `immutable`, `dataclass`, `ffihandle`, `contextmgr`, `iter`),
-  interfaces (`interface`, `interfacedefault`), enums (`enum`, `enumstring`, `enumint`)
-- **Control flow**: `match`, `try`, `trycatch`, `throw`, `forin`, `for`, `while`
-- **Decorators**: `test`, `testclass`, `abstractmethod`, `override`, `deprecated`,
-  `memoize`, `assertThrows`
-- **Module system**: `import`, `fromimport`, `module`, `init`
-- **Class members**: `staticconst`, `staticlet`, `statictyped`, `destructor`, `del`,
-  `with`
-- **Dunder overrides**: `serialize`, `deserialize`, `castString`, `castInt`,
-  `castFloat`, `castBool`, `castDecimal`, `castBytes`
-- **Standard library idioms**: `functools`, `asyncrate`, `asyncall`, `asyncrace`,
-  `asynctimeout`, `asynccancel`, crypto (`aesencrypt`, `aesdecrypt`,
-  `chacha20encrypt`, `chacha20decrypt`, `passwordhash`), regex (`rematch`,
-  `rematchall`), HTTP (`httpsession`, `httpproxy`), scheduling (`schedtimer`,
-  `schedticker`), encoding (`base32`, `base58`, `base64url`, `tobase`, `binarypack`),
-  `stopwatch`, `color`, CSV (`csvparse`, `csvdict`), `stringbuilder`, streams
-  (`streamsopen`, `streamsmem`, `streamscopy`), filesystem watching (`watchstart`,
-  `watchrecursive`), processes (`procspawn`, `procpty`), sockets (`socketsdial`,
-  `socketsserve`), SSH (`sshconnect`, `sshexec`, `sshspawn`), CLI widgets (`spinner`,
-  `progressbar`), FFI (`ffidlopen`, `ffisymbol`, `ffihandle`), LLM (`llmchat`,
-  `llmembed`), messaging (`messagingsqs`, `messagingsns`), `reflectloc`
+Runs `geblang test --format teamcity <target>` and renders results in IntelliJ's
+native test runner tree (`configurationType`, `GeblangTestRunConfigurationType`).
+Create one via Run > Edit Configurations... > + > Geblang Test, set a target file or
+directory, and optionally a `--tag` filter and working directory.
 
-## New file templates
+### "Geblang File" run configuration
 
-The plugin registers a **New > Geblang File** action (Project View / File menu
-> New) offering four starter templates:
+Runs `geblang run <file> [args]` in a plain console (`configurationType`,
+`GeblangFileRunConfigurationType`). Create one via Run > Edit Configurations... > + >
+Geblang File, set the target `.gb` file, and optionally a working directory and program
+arguments.
 
-| Kind | Produces |
-|---|---|
-| **File** | A minimal `.gb` file: a top `# <name>` comment and an empty `func main(): void {}` |
-| **Class** | A `class <Name> { ... }` with a `string name` field and matching constructor |
-| **Module** | A `module <name>;` declaration with one `export`ed function |
-| **Test** | `import test;` plus a `class <Name>Test extends test.Test` with one `@test`-decorated method |
+### Run/debug gutter markers
 
-The same four templates are also editable under **Settings > Editor > File
-and Code Templates > Geblang**, so you can tweak the boilerplate to match
-your own conventions.
+Click-to-run/debug gutter icons (`runLineMarkerContributor`,
+`GeblangRunLineMarkerContributor`) appear next to a top-level `func main(`
+declaration, a `class X extends test.Test` declaration, and `@test`-decorated methods.
+Clicking dispatches to a "Geblang File" or "Geblang Test" configuration as appropriate.
 
-## Architecture
+### Run configuration producers
 
-```
-IntelliJ IDE
-└── Geblang Plugin (this)
-    ├── GeblangLanguage / GeblangFileType  — registers .gb with IntelliJ
-    ├── GeblangLexer                       — hand-written lexer (no JFlex)
-    ├── GeblangSyntaxHighlighter           — token-type → color mapping
-    +-- psi/ (minimal PSI layer - no grammar)
-    |        |-- GeblangParserDefinition   - builds a FLAT PSI tree of lexer tokens
-    |        `-- GeblangFile               - PSI file root (PsiFileBase)
-    ├── GeblangColorSettingsPage           — user-editable color scheme
-    ├── GeblangSpellcheckingStrategy       - spellchecks comment/string prose and split identifiers
-    ├── GeblangCommenter                   — # / /* */ comment toggling
-    ├── GeblangBraceMatcher                — {} [] () matching
-    ├── GeblangFoldingBuilder              - folds multi-line {} blocks and /* */ comments
-    ├── GeblangSettings                    — persists geblangExecutablePath
-    ├── GeblangConfigurable                — settings UI
-    ├── GeblangLspServerFactory            — launches `geblang lsp` via LSP4IJ
-    │        └── GeblangStreamConnectionProvider  — stdio process connection
-    ├── GeblangExecutable                  — resolves the configured executable path to a File
-    ├── GeblangMissingExecutableNotifier   — warns (once per project) if it can't be resolved
-    │        └── GeblangMissingExecutableState  — per-project "already warned" flag
-    +-- templates/ (Live templates)
-    |        |-- GeblangTemplateContextType         - restricts templates to .gb files
-    |        `-- liveTemplates/Geblang.xml           - the bundled template set (resource)
-    +-- actions/ (New file templates)
-    |        |-- GeblangCreateFileAction            - "New > Geblang File" action + dialog kinds
-    |        |-- GeblangFileTemplateGroupFactory    - exposes templates under Settings > File Templates
-    |        `-- fileTemplates/internal/*.gb.ft     - the four bundled templates (resources)
-    +-- run/ (Geblang Test / Geblang File run configurations, producers, gutter markers)
-             |-- GeblangTestRunConfigurationType / GeblangTestConfigurationFactory
-             |-- GeblangTestRunConfiguration        - target/workingDirectory/tag settings
-             |-- GeblangTestSettingsEditor          - Edit Configurations UI
-             |-- GeblangTestCommandLineState         - builds/launches the geblang process
-             |-- GeblangTestConsoleProperties        - wires the SMTestRunner console
-             |-- GeblangTestLocator                  - geblang_test:// URL -> source location
-             |-- GeblangFileRunConfigurationType / GeblangFileConfigurationFactory
-             |-- GeblangFileRunConfiguration         - target/workingDirectory/programArguments settings
-             |-- GeblangFileSettingsEditor           - Edit Configurations UI
-             |-- GeblangFileCommandLineState          - builds/launches `geblang run <file>`
-             |-- GeblangRunAnchors                   - shared flat-leaf anchor detection (main/test class/@test method)
-             |-- GeblangRunLineMarkerContributor     - gutter Run/Debug markers, built on GeblangRunAnchors
-             |-- GeblangFileRunConfigurationProducer  - resolves a click context to a GeblangFileRunConfiguration
-             `-- GeblangTestRunConfigurationProducer  - resolves a click context to a GeblangTestRunConfiguration
-```
+`runConfigurationProducer` registrations (`GeblangFileRunConfigurationProducer`,
+`GeblangTestRunConfigurationProducer`) let the gutter markers (and "Create
+configuration from context") resolve a click location to the right run configuration
+automatically, without requiring you to create one by hand first.
 
-LSP4IJ (Red Hat) handles all JSON-RPC communication between IntelliJ and the
-`geblang lsp` process. This plugin only needs to launch the process and register
-the language mapping.
+### Live templates
 
-`GeblangParserDefinition` is intentionally minimal: it reuses `GeblangLexer`
-directly and wraps every token as a flat, unnested PSI leaf under a single
-`GeblangFile` root. There is no grammar and no Grammar-Kit - this is not a real
-parser. Its only purpose is to give the platform a PSI tree to hang PSI-based
-features off of later (folding, run-line markers, TODO highlighting,
-spellcheck). Semantic analysis remains entirely owned by the LSP server.
+102 live templates (code snippets), ported from the vscode-geblang snippet set and
+scoped to `.gb` files (`liveTemplateContext` + `defaultLiveTemplates`,
+`GeblangTemplateContextType`, resource `liveTemplates/Geblang.xml`). Type a prefix
+(e.g. `func`, `class`, `testclass`) and press Tab to expand it; Tab again to move
+between placeholders.
 
-## Building from Source
+### New > Geblang File templates
 
-```bash
-cd jetbrains-geblang
-./gradlew buildPlugin          # produces build/distributions/geblang-intellij-0.1.0.zip
-./gradlew verifyPlugin         # verifies against IC-2024.2.4 (downloads ~55 MB first run)
-./gradlew runIde               # launches a sandboxed IntelliJ for live testing
-```
+A "New > Geblang File" action (`actions` > `Geblang.NewFile`,
+`GeblangCreateFileAction`, added to the standard `NewGroup` menu) offers four bundled
+file templates (`fileTemplateGroup`, `GeblangFileTemplateGroupFactory`; resources under
+`fileTemplates/internal/`): **File**, **Class**, **Module**, and **Test**. The same
+four templates are editable under Settings > Editor > File and Code Templates >
+Geblang.
 
-Requires JDK 17 and network access (downloads the IntelliJ Platform and LSP4IJ on first run).
+### TODO highlighting
 
-## Development / Testing
+`# TODO: ...`, `# FIXME: ...`, and block-comment TODOs show up in the TODO tool window
+like any other language. This required no dedicated extension point registration
+beyond `GeblangParserDefinition.getCommentTokens()` — the platform's TODO indexing
+scans comment token text directly.
 
-Run the unit tests with:
+### Spellchecking
 
-```bash
-cd jetbrains-geblang
-./gradlew test
-```
+Prose inside comments and string literals is spellchecked, and identifiers are split
+on camelCase/snake_case boundaries so only the misspelled word is flagged rather than
+the whole identifier (`spellchecker.support`, `GeblangSpellcheckingStrategy`).
+Keywords, operators, numbers, decorators, and braces are never spellchecked.
 
-Lexer tests live under `src/test/kotlin/com/dwgebler/geblang/highlighting/GeblangLexerTest.kt`
-and drive `GeblangLexer` directly (via IntelliJ Platform's `LexerTestCase`), with no
-IDE UI or PSI/parser involved. They cover:
+## Feature status
 
-- Line comments (`#`, `##`) and block comments (`/* */`, `/** */`)
-- **`//` tokenizing as the integer-division `OPERATOR`, never as a comment** — the
-  key distinction versus `#`-style line comments, and the most important guard test
-  in the suite
-- All four string forms: `"..."`, `"""..."""`, `'...'`, `'''...'''`, plus
-  interpolation placeholders and backslash escape sequences inside double-quoted strings
-- Numbers: decimal, underscore-separated, float, float with `f` suffix, scientific
-  notation, and hex/octal/binary literals
-- Keywords, constants (`true`/`false`/`null`/`this`), word operators (`is`/`not`/`xor`),
-  and built-in types
-- Multi-character operators (`//`, `**`, `??=`, `?.`, `|>`, `..`, `+=`, `==`, `=>`)
-- Decorators: bare `@memoize`, short `@Get`, dotted composite names (`@Assert.email`,
-  `@Foo.bar.baz`), and decorators with argument lists (`@Get("/x")`, where only the
-  dotted name is a `DECORATOR` token — the parens/args lex normally afterwards); a
-  bare `@` not followed by a letter/`_` remains the `@` `OPERATOR`
-- Bracket tokens (`{}` `[]` `()`)
-- A realistic multi-line snippet mixing several token categories
-- Bad-character handling (`BAD_CHARACTER` fallback for unrecognized input)
-- A round-trip sanity check confirming token offsets have no gaps/overlaps and
-  concatenated token text reproduces the original input exactly, plus a lexer
-  restart-consistency check
+| Feature | Status | Notes |
+|---|---|---|
+| File type / icon for `.gb` | Implemented (headless-tested) | Exercised indirectly via lexer/PSI/template tests that load `.gb` fixtures |
+| Syntax highlighting (lexer) | Implemented (headless-tested) | `GeblangLexerTest` — comments, strings, numbers, keywords, operators, decorators, bad-character handling, round-trip |
+| Color Settings page | Implemented (verify in runIde) | No headless test exercises the rendered color page UI |
+| Commenter (`#`, `/* */`) | Implemented (verify in runIde) | No dedicated commenter test; relies on standard platform wiring of `lang.commenter` |
+| Brace matcher (`{}` `[]` `()`) | Implemented (verify in runIde) | No dedicated headless test; standard `PairedBraceMatcher` wiring |
+| Minimal flat-token PSI | Implemented (headless-tested) | `GeblangParserDefinitionTest` — no PSI errors, lossless round-trip, flat leaf sequence |
+| Code folding (`{}`, block comments) | Implemented (headless-tested) | `GeblangFoldingBuilderTest` — nested blocks, block comments, single-line exclusion, exact fold count |
+| LSP integration (diagnostics/completion/hover/go-to-def/find usages/rename/formatting) | Implemented (verify in runIde) | Behavior depends on the real `geblang lsp` server; not exercised by this plugin's headless test suite |
+| Executable path setting | Implemented (verify in runIde) | Settings UI (`GeblangConfigurable`) is not headlessly tested; the underlying resolve helper is |
+| "Geblang not found" notification | Implemented (verify in runIde) | Notification UI is intentionally not unit-tested; `GeblangExecutableTest` covers the pure `GeblangExecutable.resolve` helper it depends on |
+| "Geblang Test" run configuration | Implemented (headless-tested) | `GeblangTestCommandLineStateTest` (argument building), `GeblangTestRunConfigurationProducerTest` (context resolution) |
+| "Geblang File" run configuration | Implemented (headless-tested) | `GeblangFileCommandLineStateTest` (argument building), `GeblangFileRunConfigurationProducerTest` (context resolution) |
+| Test tree navigation (`GeblangTestLocator`) | Implemented (headless-tested for path parsing / verify in runIde for full resolution) | `GeblangTestLocatorTest` covers pure `parsePath`; full PSI/VFS `getLocation` resolution and test-tree rendering are GUI-only |
+| Run/debug gutter markers | Implemented (headless-tested) | `GeblangRunLineMarkerContributorTest` — anchor position assertions for main/test-class/test-method; icon/tooltip rendering itself is GUI-only |
+| Live templates (102 snippets) | Implemented (headless-tested for content / verify in runIde for expansion UX) | `GeblangLiveTemplatesTest` validates XML structure, count, uniqueness, context; actual Tab-to-expand UX needs `runIde` |
+| New > Geblang File templates (File/Class/Module/Test) | Implemented (headless-tested) | `GeblangFileTemplatesTest` — content assertions per template kind |
+| TODO highlighting | Implemented (headless-tested) | `GeblangTodoTest` — `PsiTodoSearchHelper` finds both comment forms |
+| Spellchecking | Implemented (headless-tested) | `GeblangSpellcheckingStrategyTest` — tokenizer selection per token kind |
 
-`src/test/kotlin/com/dwgebler/geblang/editor/GeblangFoldingBuilderTest.kt` covers
-`GeblangFoldingBuilder` against the flat-leaf PSI: a multi-line function body folds, a
-nested `if` block inside it produces its own (nested) fold region, a multi-line `/* */`
-comment folds, and a single-line `{}` does not fold.
+## Configuration
 
-`src/test/kotlin/com/dwgebler/geblang/notification/GeblangExecutableTest.kt` covers the
-pure `GeblangExecutable.resolve` helper (absolute paths, PATH lookup, blank input) as a
-plain JUnit test — no IDE fixtures needed since the helper has no UI/notification
-side effects. The notification UI itself is intentionally not unit-tested.
-
-`src/test/kotlin/com/dwgebler/geblang/run/GeblangTestCommandLineStateTest.kt` covers
-`buildTestArguments`, the pure helper that turns a target + optional tag into the
-`geblang test --format teamcity [--tag <tag>] <target>` argument list.
-
-`src/test/kotlin/com/dwgebler/geblang/run/GeblangTestLocatorTest.kt` covers
-`GeblangTestLocator.parsePath`, the pure parser for `geblang_test://<Class>[/<method>]`
-locator paths. Both are plain JUnit tests with no IDE fixtures. The full
-`GeblangTestLocator.getLocation` PSI/VFS resolution and the actual test-tree rendering
-are not exercised headlessly — see Troubleshooting below.
-
-`src/test/kotlin/com/dwgebler/geblang/run/GeblangFileCommandLineStateTest.kt` covers
-`buildRunArguments`, the pure helper that turns a target file plus a whitespace-split
-program-arguments string into the `geblang run <file> [args]` argument list. A plain
-JUnit test, no IDE fixtures needed.
-
-`src/test/kotlin/com/dwgebler/geblang/run/GeblangRunLineMarkerContributorTest.kt`
-covers `GeblangRunLineMarkerContributor` (backed by `GeblangRunAnchors`) against the
-flat-leaf PSI: a `BasePlatformTestCase` fixture with a `func main(`, a
-`class FooTest extends test.Test`, and an `@test`-decorated `testX` method asserts
-that `getInfo` returns non-null at exactly the `main`/`FooTest`/`testX` identifier
-leaves, null everywhere else (keywords, braces, the `@test` decorator leaf itself, an
-unrelated local variable name), and that the whole file produces exactly three
-anchors in total - only anchor *position* is asserted, not icon/tooltip identity.
-
-`src/test/kotlin/com/dwgebler/geblang/run/GeblangFileRunConfigurationProducerTest.kt`
-and `GeblangTestRunConfigurationProducerTest.kt` cover the two run-configuration
-producers against a real (but headless) `ConfigurationContext` built from a
-`BasePlatformTestCase` PSI file fixture - `ConfigurationContext` has a public
-single-`PsiElement` constructor, so no run manager or live execution environment is
-needed. Since `RunConfigurationProducer.setupConfigurationFromContext` itself is
-`protected`, both are exercised indirectly through the public
-`createConfigurationFromContext` entry point (the same path the platform uses when
-dispatching a gutter Run/Debug click), asserting the resulting configuration's
-`target` and that `isConfigurationFromContext` round-trips correctly.
-
-`src/test/kotlin/com/dwgebler/geblang/templates/GeblangLiveTemplatesTest.kt` parses
-`liveTemplates/Geblang.xml` directly as XML from the test classpath (no running IDE or
-template engine involved) and asserts: the document is well-formed, the group is
-"Geblang", the template count matches the 102 source snippets in
-`vscode-geblang/snippets/geblang.json`, every template has a non-blank name and value,
-every template carries the `GEBLANG` context option, template names (prefixes) are
-unique, and no unconverted VS Code tabstop syntax (`${1:...}`, `$1`) leaked through.
-
-`src/test/kotlin/com/dwgebler/geblang/templates/GeblangTemplateContextTypeTest.kt`
-covers the parts of `GeblangTemplateContextType` that do not require IDE fixtures:
-its presentable name, and the `GeblangFileType` singleton identity check the context
-type's `isInContext` is built on. The full expansion path (typing a prefix and
-pressing Tab inside a real editor) is only exercised manually via `runIde`, since
-`isInContext(TemplateActionContext)` needs a live `PsiFile`/`Editor` pair.
-
-`src/test/kotlin/com/dwgebler/geblang/highlighting/GeblangTodoTest.kt` verifies TODO
-highlighting: a `BasePlatformTestCase` fixture with a `# TODO: ...` line comment and a
-`/* FIXME: ... */` block comment asserts `PsiTodoSearchHelper.findTodoItems` finds both
-and that `processFilesWithTodoItems` reports the file. This works with zero registration
-beyond the existing `GeblangParserDefinition.getCommentTokens()` - TODO indexing scans
-comment token text directly, so no `WordsScanner`/`FindUsagesProvider` was needed.
-
-`src/test/kotlin/com/dwgebler/geblang/highlighting/GeblangSpellcheckingStrategyTest.kt`
-covers `GeblangSpellcheckingStrategy.getTokenizer` against real leaves pulled from the
-flat PSI: comment and string leaves get `SpellcheckingStrategy.TEXT_TOKENIZER`, identifier
-leaves get a `TokenizerBase`/`IdentifierSplitter` tokenizer that splits camelCase/
-snake_case words, and keywords/operators/numbers get `SpellcheckingStrategy.EMPTY_TOKENIZER`.
-
-Test reports are written to `build/reports/tests/test/index.html` (HTML) and
-`build/test-results/test/*.xml` (JUnit XML) after each run.
+**Settings > Languages & Frameworks > Geblang** — the only settings page the plugin
+adds (`GeblangConfigurable`). It has a single field, the path to the `geblang`
+executable. Leave it as the default `geblang` to resolve the binary from `PATH`, or
+enter an absolute path. This path is used both by the LSP server launch
+(`geblang lsp`) and by the "Geblang Test" / "Geblang File" run configurations
+(`geblang test` / `geblang run`).
 
 ## Troubleshooting
 
-**No highlighting in .gb files**
-: Check Settings > Plugins — ensure Geblang and LSP4IJ are both enabled.
+**No LSP features working (no diagnostics, completion, hover, etc.)**
+: Confirm the `geblang` binary is installed and either on `PATH` (`which geblang`) or
+  configured with a full path in Settings > Languages & Frameworks > Geblang. Confirm
+  LSP4IJ is installed and enabled (Settings > Plugins). Check
+  View > Tool Windows > LSP Consoles for the Geblang Language Server's own log output —
+  this is the most direct way to see why `geblang lsp` failed to start or crashed.
 
-**LSP features not working (no diagnostics/completion)**
-: Ensure `geblang` is installed and on PATH (`which geblang`), or set the full
-  path in Settings > Languages & Frameworks > Geblang.
-: Check the LSP4IJ console: View > Tool Windows > LSP Consoles > Geblang Language Server.
-: The plugin shows a "Geblang" warning notification the first time you open a `.gb`
-  file if the configured executable can't be resolved, with a **Configure…** action
-  that jumps straight to the settings page. This fires at most once per project session.
+**No syntax highlighting**
+: Confirm the file has a `.gb` extension so it's recognized as the Geblang file type.
+  If it's an unusual filename, check Settings > Editor > File Types to see whether
+  something else has claimed the extension.
 
-**`// integer division` being highlighted as comment**
-: This is correctly NOT a comment in Geblang — `//` is integer division. The plugin
-  treats `//` as an operator. Line comments start with `#`.
+**`//` renders as an operator, not a comment**
+: This is correct behavior, not a bug. Geblang uses `#` for line comments; `//` is the
+  integer-division operator. `GeblangCommenter` and `GeblangLexer` both treat `//`
+  as an operator token, matching the language's actual grammar (the lexer test suite
+  has a dedicated guard test for this).
+
+**"Geblang not found" notification keeps appearing / never appears when expected**
+: It is designed to fire at most once per project session, the first time a `.gb` file
+  is opened while the executable can't be resolved. Reopening the same project in a
+  new IDE session resets that "already warned" state.
+
+**Test runner shows no results, or double-clicking a result doesn't navigate**
+: `GeblangTestLocator`'s navigation is a best-effort text scan for `class <Name>` /
+  `func <method>` in `.gb` files — it is not a full symbol resolution (the PSI is
+  intentionally flat, with no grammar). If a match isn't found by that scan,
+  navigation is simply unavailable for that entry; the test run itself still
+  completes and reports pass/fail normally.
+
+## Development / Testing
+
+Unit tests live under `src/test/kotlin/com/dwgebler/geblang/`. Run them with:
+
+```bash
+cd jetbrains-geblang
+JAVA_HOME=/path/to/jdk-17 ./gradlew test
+```
+
+As of this writing, the suite has **110 passing tests** (0 failures) across 15 test
+classes, covering: the lexer (comments, strings, numbers, keywords, operators,
+decorators, bad-character handling, round-trip integrity), the flat PSI (no parse
+errors, lossless round-trip), code folding, run-configuration argument building and
+context resolution, run line marker anchor detection, the test locator's path parsing,
+live template XML validity/count/uniqueness, file template content, TODO discovery,
+and spellchecking tokenizer selection. Test reports are written to
+`build/reports/tests/test/index.html` and `build/test-results/test/*.xml`.
+
+Run `./gradlew verifyPlugin` to check the built plugin's structure and platform
+compatibility using the JetBrains Plugin Verifier; it downloads the target IDE (IC
+2024.2.4) and LSP4IJ on first run and reports compatibility against the configured
+`sinceBuild`/`untilBuild` range.
+
+Features that are GUI-only (see the Feature status table above) are only verified
+manually via `./gradlew runIde`.
 
 ## Note on the vscode-geblang extension
 
-The sibling `vscode-geblang/` extension incorrectly classifies `//` as a comment
-(copied that pattern from common grammars). This IntelliJ plugin follows the language
-spec: `#` = line comment, `/* */` = block comment, `//` = integer division operator.
+The sibling `vscode-geblang/` extension classifies `//` as a comment. This IntelliJ
+plugin follows the language's actual grammar instead: `#` is the line comment prefix,
+`/* */` is the block comment form, and `//` is the integer-division operator.

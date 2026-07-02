@@ -6,129 +6,83 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-### Added
+## [0.1.0]
 
-- Added TODO highlighting and spellchecking, both built on the existing flat-leaf
-  Geblang PSI (`GeblangParserDefinition`):
-  - TODO highlighting required no new production code. `PsiTodoSearchHelper.findTodoItems`
-    already finds `# TODO: ...`, `# FIXME: ...`, and block-comment TODOs out of the box,
-    because the platform's TODO indexing scans comment token text directly via
-    `ParserDefinition.getCommentTokens()` (already implemented), not via a
-    `WordsScanner`/`FindUsagesProvider` (that mechanism feeds `IdIndex`/Find Usages, a
-    separate index). Verified empirically with a new `BasePlatformTestCase`
-    (`GeblangTodoTest`) before concluding no registration was needed.
-  - Added `GeblangSpellcheckingStrategy` (extends `SpellcheckingStrategy`), registered via
-    `<spellchecker.support language="Geblang" implementationClass="..."/>` (the
-    `com.intellij.spellchecker.support` extension point, bundled in the platform's
-    `SpellCheckerPlugin.xml` - no extra plugin dependency needed). Comment
-    (`LINE_COMMENT`/`BLOCK_COMMENT`) and `STRING` leaves use
-    `SpellcheckingStrategy.TEXT_TOKENIZER` so their prose is spellchecked; `IDENTIFIER`
-    leaves use `TokenizerBase.create(IdentifierSplitter.getInstance())` so
-    camelCase/snake_case names are split into words instead of flagging the whole
-    identifier; everything else (keywords, operators, numbers, decorators, braces) uses
-    `SpellcheckingStrategy.EMPTY_TOKENIZER`. `PsiIdentifierOwnerTokenizer` (the platform's
-    other standard identifier tokenizer) was not usable here since it requires
-    `PsiNameIdentifierOwner`, which the flat `ASTWrapperPsiElement` leaves are not.
-  Verified against the real `com.intellij.psi.search.PsiTodoSearchHelper`,
-  `com.intellij.spellchecker.tokenizer.SpellcheckingStrategy`, `Tokenizer`,
-  `TokenizerBase`, and `com.intellij.spellchecker.inspections.IdentifierSplitter`
-  contracts for IC-2024.2.4 (via `javap` against the platform jars). Covered by
-  `GeblangTodoTest` (TODO items found in both comment forms, plus file-level discovery)
-  and `GeblangSpellcheckingStrategyTest` (tokenizer choice for comment, string,
-  identifier, keyword, operator, and number leaves).
-- Added run/debug gutter markers (`GeblangRunLineMarkerContributor`) and a "Geblang
-  File" run configuration for click-to-run/debug on `func main(`, `class X extends
-  test.Test` declarations, and `@test`-decorated methods:
-  - `GeblangFileRunConfigurationType`/`GeblangFileRunConfiguration`/
-    `GeblangFileCommandLineState`/`GeblangFileSettingsEditor`: runs
-    `geblang run <file> [args]` in a plain console (not the SMTestRunner tree,
-    since running a file is not running tests), with optional working directory
-    and program arguments, mirroring the existing "Geblang Test" configuration's
-    structure.
-  - `GeblangRunAnchors`: shared flat-leaf-stream anchor detection, since the
-    Geblang PSI tree is FLAT (`GeblangParserDefinition` produces no grammar tree).
-    Detects a top-level `func main(` by its previous/next non-trivial sibling
-    leaves being the `func` KEYWORD and `(` respectively; a test class by
-    `class <Name> extends test.Test` (KEYWORD, IDENTIFIER, KEYWORD, IDENTIFIER,
-    `.` OPERATOR, IDENTIFIER); and an `@test` method by the same `func ... (`
-    shape plus a `@test` DECORATOR leaf immediately preceding the `func` keyword.
-    Discovered along the way: the platform's PsiBuilder-based parsing
-    infrastructure wraps whitespace tokens as `PsiWhiteSpaceImpl` with element
-    type `TokenType.WHITE_SPACE`, not the lexer's own `GeblangTokenTypes.WHITESPACE`,
-    so sibling-skipping checks both; comment tokens are not remapped this way.
-  - `GeblangRunLineMarkerContributor`: returns an `Info` for exactly one leaf per
-    anchor (never one per token), built via the non-deprecated
-    `Info(Icon, AnAction[], Function<? super PsiElement, String>)` constructor
-    (the `Info(Icon, Function, AnAction...)` overload is `@Deprecated(forRemoval =
-    true)` in the IC-2024.2.4 platform jars) with
-    `ExecutorAction.getActions(0)` supplying the standard Run + Debug actions.
-  - `GeblangFileRunConfigurationProducer`/`GeblangTestRunConfigurationProducer`:
-    `LazyRunConfigurationProducer` implementations that resolve a gutter-click
-    `ConfigurationContext` back to a `GeblangFileRunConfiguration` (file contains
-    a top-level `main`) or the existing `GeblangTestRunConfiguration` (file
-    contains a test-class or `@test`-method anchor), registered as
-    `runConfigurationProducer` extensions so `ExecutorAction`'s Run/Debug actions
-    dispatch through them.
-  Verified against the real `com.intellij.execution.lineMarker.RunLineMarkerContributor`,
-  `com.intellij.execution.lineMarker.ExecutorAction`, and
-  `com.intellij.execution.actions.LazyRunConfigurationProducer`/
-  `RunConfigurationProducer` contracts for IC-2024.2.4 (via `javap` against the
-  platform jars). Covered by a `BasePlatformTestCase` asserting anchor leaf
-  positions (and non-positions) for the line marker contributor, a plain JUnit
-  test for the `geblang run` argument-construction helper, and
-  `BasePlatformTestCase` tests for both producers driven through the public
-  `createConfigurationFromContext` entry point (since
-  `setupConfigurationFromContext` itself is `protected`).
-- Added code folding (`GeblangFoldingBuilder`): multi-line `{ ... }` blocks fold
-  (including nested blocks, each as its own region) and multi-line `/* ... */`
-  block comments fold, using placeholders `{...}` and `/*...*/` respectively.
-  Built directly off the flat-leaf PSI stream (matching `{`/`}` leaves with a
-  depth counter) since `GeblangParserDefinition` produces no grammar tree.
-  Single-line `{}` and single-line block comments are never folded, and
-  unbalanced braces are skipped rather than causing an error. Verified against
-  the real `com.intellij.lang.folding.FoldingBuilderEx` contract for IC-2024.2.4
-  and covered by a `BasePlatformTestCase` asserting fold ranges and placeholders.
-- Added a minimal PSI layer (`GeblangParserDefinition`, `GeblangFile`): builds a
-  FLAT PSI tree of the existing lexer's tokens under a single file root, with no
-  grammar rules and no Grammar-Kit. This is the foundation for later PSI-based
-  features (folding, run-line markers, TODO highlighting, spellcheck); syntax
-  highlighting is unaffected and continues to use the lexer-based highlighter
-  directly. Verified against the real `com.intellij.lang.ParserDefinition`
-  contract for IC-2024.2.4 and covered by a `BasePlatformTestCase` asserting
-  zero `PsiErrorElement`s and a lossless PSI-text round-trip.
-- Added "New > Geblang File" file templates: four bundled `.gb.ft` templates
-  (File, Class, Module, Test) selectable from a `GeblangCreateFileAction`
-  ("New > Geblang File" in the Project View / File menu), plus a
-  `GeblangFileTemplateGroupFactory` exposing the same templates under
-  Settings > Editor > File and Code Templates > Geblang for customisation.
-- Added a "Geblang Test" run configuration: runs `geblang test --format teamcity <target>`
-  (a `.gb` file or directory, with an optional `--tag` filter and working directory) and
-  renders the results in IntelliJ's native SMTestRunner test tree. Includes a best-effort
-  `GeblangTestLocator` for double-click navigation from the test tree back to the
-  `class`/`func` declaration in source.
-- Added a "geblang executable not found" warning notification: shown at most once
-  per project session, the first time a `.gb` file is opened, if the configured
-  executable path cannot be resolved. Includes a **Configure…** action that opens
-  Settings > Languages & Frameworks > Geblang directly. No warning is shown when
-  the executable resolves successfully.
-- Added decorator highlighting: `@name` and dotted composite decorators
-  (`@Assert.email`, `@Foo.bar.baz`) are now lexed as a single `DECORATOR` token,
-  with their own customisable color under Settings > Editor > Color Scheme >
-  Geblang > Decorator. Decorator argument lists (`@Get("/x")`) are lexed normally
-  after the decorator name. A bare `@` not followed by an identifier is still the
-  `@` operator.
-- Added comprehensive unit tests for the Geblang lexer, covering comments, strings,
-  numbers, keywords, operators, and bracket tokenization.
-- Added a guard test confirming `//` tokenizes as the integer-division operator and
-  is never mistaken for a comment, distinguishing it from `#`-style line comments.
-- Added a round-trip coverage test verifying the lexer's token stream has no gaps or
-  overlaps and exactly reconstructs the original source text.
-- Wired up the IntelliJ Platform Gradle Plugin 2.x test framework
-  (`testFramework(TestFrameworkType.Platform)`) plus JUnit 4 and opentest4j test
-  dependencies so `./gradlew test` can build and run platform-based tests.
-- Added 102 live templates (code snippets), ported from the vscode-geblang
-  extension's snippet set and scoped to `.gb` files via a new `GeblangTemplateContextType`
-  (contextId `GEBLANG`). Covers function/class/interface/enum declarations, control
-  flow, decorators, the module system, dunder overrides, and standard library idioms
-  (async, crypto, regex, HTTP, encoding, streams, sockets, SSH, FFI, LLM client,
-  messaging). Type a prefix (e.g. `func`, `testclass`) and press Tab to expand.
+Initial prototype release: Geblang (`.gb`) language support for IntelliJ-based IDEs,
+built on IntelliJ Platform 2024.2-2024.3 (`sinceBuild="242"`, `untilBuild="243.*"`).
+
+### Added — Language support
+
+- File type registration for `.gb` files, with icon.
+- Hand-written lexer (`GeblangLexer`, no JFlex/grammar) covering keywords, built-in
+  types, all four string literal forms (with interpolation and escapes), numbers
+  (decimal, underscore-separated, float, scientific notation, hex/octal/binary),
+  operators, and decorators (including dotted composite forms like `@Assert.email`).
+- Syntax highlighting driven by the lexer, with a Color Settings page
+  (Settings > Editor > Color Scheme > Geblang) for customizing every token color.
+- Minimal, intentionally flat-token PSI (`GeblangParserDefinition`): one leaf PSI
+  element per lexer token under a single file root, no grammar and no nesting. This
+  is the foundation the folding, run-line-marker, TODO, and spellchecking features are
+  built on; it does not attempt semantic analysis.
+- Line comment toggling (`Ctrl+/`, `#` prefix) and block comment toggling
+  (`Ctrl+Shift+/`, `/* */`). Note that `//` is the integer-division operator in
+  Geblang, not a comment prefix — this plugin follows that grammar exactly.
+- Brace matching for `{}`, `[]`, and `()`.
+- Code folding for multi-line `{ ... }` blocks (including nested blocks, each as its
+  own region) and multi-line `/* ... */` comments; single-line braces and comments
+  are never folded.
+- TODO highlighting: `# TODO: ...`, `# FIXME: ...`, and block-comment TODOs appear in
+  the TODO tool window like any other language.
+- Spellchecking: comment and string-literal prose is spellchecked; identifiers are
+  split on camelCase/snake_case boundaries so only the misspelled word is flagged.
+
+### Added — LSP integration
+
+- LSP4IJ-backed language server integration: launches `geblang lsp` (stdio) as a
+  child process and maps the Geblang language to it. Diagnostics, code completion,
+  hover documentation, go-to-definition, find usages, rename, and formatting are all
+  provided by the real Geblang compiler through this connection — the plugin does not
+  reimplement any semantic analysis itself.
+- A settings page (Settings > Languages & Frameworks > Geblang) to configure the path
+  to the `geblang` executable, defaulting to PATH resolution.
+- A one-time-per-project-session warning notification if the configured executable
+  can't be resolved, with a "Configure..." action linking directly to the settings
+  page.
+
+### Added — Run configurations
+
+- "Geblang Test" run configuration: runs `geblang test --format teamcity <target>`
+  against a file or directory (with an optional `--tag` filter and working directory)
+  and renders results in IntelliJ's native SMTestRunner test tree, including
+  best-effort double-click navigation from a test result back to its source
+  declaration.
+- "Geblang File" run configuration: runs `geblang run <file> [args]` in a plain
+  console, with optional working directory and program arguments.
+- Run configuration producers so gutter markers and "create configuration from
+  context" resolve automatically to the right configuration type.
+- Run/debug gutter markers next to a top-level `func main(` declaration, a
+  `class X extends test.Test` declaration, and `@test`-decorated methods, dispatching
+  to the appropriate run configuration.
+
+### Added — Templates
+
+- 102 live templates (code snippets) ported from the vscode-geblang snippet set,
+  scoped to `.gb` files: function/class/interface/enum declarations, control flow,
+  decorators, the module system, class members, dunder overrides, and standard
+  library idioms (async, crypto, regex, HTTP, encoding, streams, filesystem watching,
+  processes, sockets, SSH, CLI widgets, FFI, LLM client, messaging). Type a prefix and
+  press Tab to expand.
+- "New > Geblang File" action offering four bundled file templates — File, Class,
+  Module, and Test — also editable under Settings > Editor > File and Code Templates.
+
+### Added — Build and testing
+
+- Gradle build (IntelliJ Platform Gradle Plugin 2.2.1, Kotlin 1.9.25, JDK 17
+  toolchain) producing an installable plugin zip via `buildPlugin`, with
+  `verifyPlugin` for platform-compatibility checks and `runIde` for manual testing in
+  a sandboxed IDE.
+- Unit test suite (110 tests, headless, no running IDE required for most) covering
+  the lexer, the flat PSI, code folding, run-configuration argument building and
+  context resolution, run-line-marker anchor detection, test locator path parsing,
+  live template validity, file template content, TODO discovery, and spellchecking
+  tokenizer selection.
