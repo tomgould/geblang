@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- geblang.yaml manifest support: a bundled JSON Schema
+  (`schemas/geblang-manifest.schema.json`) gives completion and validation when
+  editing a project's `geblang.yaml`, registered via `GeblangManifestSchemaProviderFactory`
+  / `GeblangManifestSchemaFileProvider` against the platform's
+  `JavaScript.JsonSchema.ProviderFactory` extension point. Covers `name`, `version`,
+  `source`, `paths`/`modulePaths`, `resources`, `dependencies` (path and git forms),
+  the `package:` alias block, `permissions` (`ffi`/`onnx`/`processControl`/`browser`),
+  and `extensions` (subprocess config), derived from the manifest parser in
+  `internal/modules/resolver.go` and `internal/evaluator/eval_modules.go`/`ext.go`
+  plus the bundling and modules/packages docs. Permissive by design
+  (`additionalProperties: true`), so it only helps with completion and never rejects
+  an unrecognized field. Adds `com.intellij.modules.json` and
+  `org.jetbrains.plugins.yaml` as plugin dependencies (both bundled with IC/IU).
+
 ## [0.1.0]
 
 Initial prototype release: Geblang (`.gb`) language support for IntelliJ-based IDEs,

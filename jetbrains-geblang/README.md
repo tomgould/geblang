@@ -36,6 +36,10 @@ semantic analysis engine.
   `com.redhat.devtools.lsp4ij` and its own transitive dependency
   `com.redhat.devtools.intellij.telemetry` against the Marketplace). If your IDE has no
   network access to the Marketplace, install LSP4IJ manually first.
+- **JSON and YAML support** (`com.intellij.modules.json`, `org.jetbrains.plugins.yaml`)
+  - both bundled with every IntelliJ IDEA Community/Ultimate install, declared as
+  plugin dependencies for the `geblang.yaml` manifest schema (completion and
+  validation). No separate install step is needed on IC/IU-family IDEs.
 
 ## Install
 
@@ -218,6 +222,25 @@ on camelCase/snake_case boundaries so only the misspelled word is flagged rather
 the whole identifier (`spellchecker.support`, `GeblangSpellcheckingStrategy`).
 Keywords, operators, numbers, decorators, and braces are never spellchecked.
 
+### geblang.yaml manifest support
+
+Any file named exactly `geblang.yaml` gets completion and validation for the Geblang
+package manifest, driven by a bundled JSON Schema
+(`schemas/geblang-manifest.schema.json`) registered through the platform's JSON
+schema engine (`GeblangManifestSchemaProviderFactory` /
+`GeblangManifestSchemaFileProvider`, `JavaScript.JsonSchema.ProviderFactory`
+extension point). The schema documents the known manifest keys - `name`, `version`,
+`source`, `paths` / `modulePaths`, `resources`, `dependencies` (path and git forms),
+the `package:` alias block, `permissions` (`ffi`, `onnx`, `processControl`,
+`browser`), and `extensions` (subprocess extension config: `command`, `socket`,
+`host`, `startup_timeout_ms`, `env`) - derived from `internal/modules/resolver.go`,
+`internal/evaluator/eval_modules.go`/`ext.go`, and the bundling/modules-and-packages
+docs. It is deliberately permissive (`additionalProperties: true` throughout), so
+unknown keys are never flagged as errors - the goal is helpful completion, not
+strict rejection. This requires the bundled JSON module
+(`com.intellij.modules.json`) and the bundled YAML plugin
+(`org.jetbrains.plugins.yaml`), both declared as plugin dependencies.
+
 ## Feature status
 
 | Feature | Status | Notes |
@@ -240,6 +263,7 @@ Keywords, operators, numbers, decorators, and braces are never spellchecked.
 | New > Geblang File templates (File/Class/Module/Test) | Implemented (headless-tested) | `GeblangFileTemplatesTest` — content assertions per template kind |
 | TODO highlighting | Implemented (headless-tested) | `GeblangTodoTest` — `PsiTodoSearchHelper` finds both comment forms |
 | Spellchecking | Implemented (headless-tested) | `GeblangSpellcheckingStrategyTest` — tokenizer selection per token kind |
+| geblang.yaml manifest schema (completion/validation) | Implemented (headless-tested) | `GeblangManifestSchemaFileProviderTest` - filename matching, schema type, bundled resource loads as valid JSON; schema validated offline against 10 real manifests plus a malformed negative case |
 
 ## Configuration
 

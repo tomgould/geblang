@@ -29,6 +29,17 @@ dependencies {
         // LSP4IJ from JetBrains Marketplace — provides LSP client infra
         plugin("com.redhat.devtools.lsp4ij", "0.20.1")
 
+        // JSON support (bundled platform module, not a separate plugin jar) - provides
+        // the JsonSchemaProviderFactory / JsonSchemaFileProvider EP used for geblang.yaml
+        // manifest completion and validation.
+        bundledModule("com.intellij.modules.json")
+
+        // YAML support (bundled plugin) - no YAML classes are referenced directly
+        // by this plugin's code, but its bundled JsonSchemaEnabler is what makes
+        // the JSON schema engine apply to .yaml files, so it must be declared as
+        // a dependency for geblang.yaml schema support to activate at runtime.
+        bundledPlugin("org.jetbrains.plugins.yaml")
+
         // Test framework — required explicitly since IPGP 2.x (no longer resolved
         // implicitly at task runtime). TestFrameworkType.Platform pulls in the base
         // platform test infra needed for LexerTestCase / UsefulTestCase / TestCase.

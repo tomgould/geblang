@@ -57,6 +57,16 @@
     <!-- LSP4IJ — provides the LSP client; auto-installed as a plugin dependency -->
     <depends>com.redhat.devtools.lsp4ij</depends>
 
+    <!-- JSON support (bundled platform module) - provides the JsonSchemaProviderFactory
+         extension point used to register the geblang.yaml manifest schema. -->
+    <depends>com.intellij.modules.json</depends>
+
+    <!-- YAML support (bundled plugin, declared as a plain dependency since IC ships
+         it out of the box). Its JsonSchemaEnabler makes the JSON schema engine
+         apply to .yaml files, which is what lets the geblang.yaml manifest schema
+         registered below drive completion and validation for that file. -->
+    <depends>org.jetbrains.plugins.yaml</depends>
+
     <extensions defaultExtensionNs="com.intellij">
 
         <!-- File type: .gb -> Geblang language -->
@@ -195,6 +205,15 @@
             serverId="geblang-lsp"
             languageId="geblang"/>
 
+    </extensions>
+
+    <!-- JSON schema for geblang.yaml: completion + validation for the package
+         manifest. Applies to JSON directly and, via the YAML plugin's
+         JsonSchemaEnabler (org.jetbrains.plugins.yaml, declared above), to
+         geblang.yaml itself. -->
+    <extensions defaultExtensionNs="JavaScript">
+        <JsonSchema.ProviderFactory
+            implementation="com.dwgebler.geblang.schema.GeblangManifestSchemaProviderFactory"/>
     </extensions>
 
 </idea-plugin>

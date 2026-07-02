@@ -1,0 +1,174 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/dwgebler/geblang/jetbrains-geblang/geblang-manifest.schema.json",
+  "title": "Geblang package manifest",
+  "description": "Schema for geblang.yaml, the package manifest read by the geblang toolchain (geblang, geblang test, geblang build, geblang check). Found by walking up from the current file; geblang.yml and geblang.json are accepted as alternate filenames. See docs/user/07-modules-packages.md and docs/user/13-bundling.md.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "The package namespace and canonical module prefix. With source: src, the file src/app/users.gb is imported as 'import app.users;'. Pick a top-level namespace you own (e.g. acme.*) to avoid colliding with a reserved built-in name."
+    },
+    "version": {
+      "type": "string",
+      "description": "Free-form version string. Resolution ignores it; geblang build embeds it as the binary's version (shown by the built binary's --version)."
+    },
+    "source": {
+      "type": "string",
+      "description": "The primary module root, a single directory. Its tree resolves as modules: 'import app.users;' finds <source>/app/users.gb or <source>/app/users/init.gb. When omitted, the manifest's own directory is the root."
+    },
+    "paths": {
+      "type": "array",
+      "description": "Additional module roots, each relative to the manifest, searched after source. Use for generated or co-located code that should also resolve as modules.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "modulePaths": {
+      "type": "array",
+      "description": "Alias for paths; accepted and merged in.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "resources": {
+      "type": "array",
+      "description": "Files and directories embedded into the binary by 'geblang build', so a single-file release can read them at runtime. Not part of the import tree. Each entry is a directory (embedded recursively) or a glob pattern.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "Other packages this one imports, each mounted under a name and pointing at a local path or a git repository.",
+      "additionalProperties": {
+        "description": "A bare string is shorthand for a path dependency. The mapping form supports path or git dependencies.",
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Shorthand for a path dependency, e.g. 'shared: ../shared'."
+          },
+          {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Path to another local package. A relative path is resolved against the manifest; an absolute path is used as-is. A leading ~ expands to the home directory and $VAR / ${VAR} expand from the environment. The target must itself be a package (have its own geblang.yaml)."
+              },
+              "git": {
+                "type": "string",
+                "description": "Remote git repository URL. A scheme-less value such as github.com/acme/httplib is treated as https://github.com/acme/httplib. Explicit schemes (https://, ssh://) and the scp-like git@github.com:acme/httplib.git form are used unchanged."
+              },
+              "version": {
+                "type": "string",
+                "description": "Tag or branch for a git dependency; 'latest' for the newest semver tag; omit for the default branch."
+              }
+            }
+          }
+        ]
+      }
+    },
+    "package": {
+      "type": "object",
+      "description": "A nested block with name/version keys, accepted as an alternative to the top-level name and version fields.",
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Alternative to the top-level name field."
+        },
+        "version": {
+          "type": "string",
+          "description": "Alternative to the top-level version field."
+        }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "description": "Declares privileged capabilities (FFI, local ONNX inference, process control, headless-browser automation) baked into a built binary and also enabled for 'geblang run' / 'geblang test' in the project. Off by default.",
+      "additionalProperties": true,
+      "properties": {
+        "ffi": {
+          "type": "object",
+          "description": "FFI (clib.*) capability policy.",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Whether FFI is enabled."
+            },
+            "libraries": {
+              "type": "array",
+              "description": "Allow-list of native shared libraries FFI may load.",
+              "items": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "description": "Exact path to an allowed native library."
+                  },
+                  "glob": {
+                    "type": "string",
+                    "description": "Glob pattern matching allowed native libraries, e.g. /opt/torch/lib/*.so."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "onnx": {
+          "type": "boolean",
+          "description": "Enables local ONNX inference capability."
+        },
+        "processControl": {
+          "type": "boolean",
+          "description": "Enables the privileged process-control capability."
+        },
+        "browser": {
+          "type": "boolean",
+          "description": "Enables headless-browser automation capability."
+        }
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Declares polyglot/sandboxed extension processes usable via ext.load / ext.connect, keyed by extension name.",
+      "additionalProperties": {
+        "type": "object",
+        "description": "Configuration for a single named extension.",
+        "additionalProperties": true,
+        "properties": {
+          "command": {
+            "type": "array",
+            "description": "Command (argv) used to launch the extension process, e.g. [\"python3\", \"extensions/python/extension.py\"].",
+            "items": {
+              "type": "string"
+            }
+          },
+          "socket": {
+            "type": "string",
+            "description": "Unix socket path for connecting to a pre-started extension."
+          },
+          "host": {
+            "type": "string",
+            "description": "Host/address for connecting to a pre-started extension."
+          },
+          "startup_timeout_ms": {
+            "type": "integer",
+            "description": "Milliseconds to wait for the extension process to become ready before failing."
+          },
+          "env": {
+            "type": "object",
+            "description": "Extra environment variables passed to the extension process.",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
