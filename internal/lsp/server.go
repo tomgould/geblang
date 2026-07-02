@@ -218,6 +218,7 @@ func (s *server) handle(msg *rawMessage) {
 					},
 					"full": true,
 				},
+				"inlayHintProvider": true,
 			},
 			"serverInfo": map[string]any{
 				"name":    "geblang-lsp",
@@ -382,6 +383,14 @@ func (s *server) handle(msg *rawMessage) {
 			return
 		}
 		s.respond(msg.ID, s.semanticTokensFull(params))
+
+	case "textDocument/inlayHint":
+		var params InlayHintParams
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			s.respond(msg.ID, []InlayHint{})
+			return
+		}
+		s.respond(msg.ID, s.inlayHint(params))
 
 	case "textDocument/prepareRename":
 		var params TextDocumentPositionParams
