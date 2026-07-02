@@ -8,6 +8,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Added run/debug gutter markers (`GeblangRunLineMarkerContributor`) and a "Geblang
+  File" run configuration for click-to-run/debug on `func main(`, `class X extends
+  test.Test` declarations, and `@test`-decorated methods:
+  - `GeblangFileRunConfigurationType`/`GeblangFileRunConfiguration`/
+    `GeblangFileCommandLineState`/`GeblangFileSettingsEditor`: runs
+    `geblang run <file> [args]` in a plain console (not the SMTestRunner tree,
+    since running a file is not running tests), with optional working directory
+    and program arguments, mirroring the existing "Geblang Test" configuration's
+    structure.
+  - `GeblangRunAnchors`: shared flat-leaf-stream anchor detection, since the
+    Geblang PSI tree is FLAT (`GeblangParserDefinition` produces no grammar tree).
+    Detects a top-level `func main(` by its previous/next non-trivial sibling
+    leaves being the `func` KEYWORD and `(` respectively; a test class by
+    `class <Name> extends test.Test` (KEYWORD, IDENTIFIER, KEYWORD, IDENTIFIER,
+    `.` OPERATOR, IDENTIFIER); and an `@test` method by the same `func ... (`
+    shape plus a `@test` DECORATOR leaf immediately preceding the `func` keyword.
+    Discovered along the way: the platform's PsiBuilder-based parsing
+    infrastructure wraps whitespace tokens as `PsiWhiteSpaceImpl` with element
+    type `TokenType.WHITE_SPACE`, not the lexer's own `GeblangTokenTypes.WHITESPACE`,
+    so sibling-skipping checks both; comment tokens are not remapped this way.
+  - `GeblangRunLineMarkerContributor`: returns an `Info` for exactly one leaf per
+    anchor (never one per token), built via the non-deprecated
+    `Info(Icon, AnAction[], Function<? super PsiElement, String>)` constructor
+    (the `Info(Icon, Function, AnAction...)` overload is `@Deprecated(forRemoval =
+    true)` in the IC-2024.2.4 platform jars) with
+    `ExecutorAction.getActions(0)` supplying the standard Run + Debug actions.
+  - `GeblangFileRunConfigurationProducer`/`GeblangTestRunConfigurationProducer`:
+    `LazyRunConfigurationProducer` implementations that resolve a gutter-click
+    `ConfigurationContext` back to a `GeblangFileRunConfiguration` (file contains
+    a top-level `main`) or the existing `GeblangTestRunConfiguration` (file
+    contains a test-class or `@test`-method anchor), registered as
+    `runConfigurationProducer` extensions so `ExecutorAction`'s Run/Debug actions
+    dispatch through them.
+  Verified against the real `com.intellij.execution.lineMarker.RunLineMarkerContributor`,
+  `com.intellij.execution.lineMarker.ExecutorAction`, and
+  `com.intellij.execution.actions.LazyRunConfigurationProducer`/
+  `RunConfigurationProducer` contracts for IC-2024.2.4 (via `javap` against the
+  platform jars). Covered by a `BasePlatformTestCase` asserting anchor leaf
+  positions (and non-positions) for the line marker contributor, a plain JUnit
+  test for the `geblang run` argument-construction helper, and
+  `BasePlatformTestCase` tests for both producers driven through the public
+  `createConfigurationFromContext` entry point (since
+  `setupConfigurationFromContext` itself is `protected`).
 - Added code folding (`GeblangFoldingBuilder`): multi-line `{ ... }` blocks fold
   (including nested blocks, each as its own region) and multi-line `/* ... */`
   block comments fold, using placeholders `{...}` and `/*...*/` respectively.

@@ -41,6 +41,8 @@ JetBrains/IntelliJ plugin providing Geblang (`.gb`) language support.
 | Formatting (`geblang fmt`) | `geblang lsp` via LSP4IJ |
 | "geblang executable not found" warning notification, with a Configure… action | Built-in |
 | "Geblang Test" run configuration: `geblang test --format teamcity` in the native test tree | Built-in |
+| "Geblang File" run configuration: `geblang run <file>` in a plain console | Built-in |
+| Run/Debug gutter markers: click-to-run `func main(`, test classes, and `@test` methods | Built-in |
 | Live templates (code snippets): type a prefix and press Tab to expand | Built-in |
 | "New > Geblang File" templates: File / Class / Module / Test scaffolds | Built-in |
 
@@ -68,6 +70,39 @@ Double-clicking a test in the tree does a best-effort navigation to its `class`/
 declaration by scanning `.gb` files in the project for a textual match (Geblang has no
 PSI parser yet, so this is not full go-to-definition); if no match is found, navigation
 is simply unavailable for that entry rather than failing the run.
+
+## Running a Geblang File
+
+The plugin also registers a "Geblang File" run configuration that runs
+`geblang run <file> [args]` in a plain console (no test tree - just process output).
+
+To create one:
+
+1. **Run > Edit Configurations... > + > Geblang File**
+2. Set **Geblang file** to a `.gb` file to run.
+3. Optionally set a **Working directory** (defaults to the project root) and
+   **Program arguments** (forwarded verbatim after the file, whitespace-split).
+4. Click **Run**.
+
+The executable used is the same one configured under
+**Settings > Languages & Frameworks > Geblang** (falls back to `geblang` on PATH)
+that the "Geblang Test" configuration uses.
+
+## Run/Debug gutter markers
+
+Click-to-run gutter icons appear next to three anchors in a `.gb` file:
+
+- A top-level `func main(` declaration - click Run/Debug to launch a "Geblang File"
+  configuration targeting the enclosing file.
+- A `class X extends test.Test` declaration - click Run/Debug to launch a
+  "Geblang Test" configuration targeting the enclosing file.
+- An `@test`-decorated method - click Run/Debug to launch the same "Geblang Test"
+  configuration targeting the enclosing file.
+
+These markers create and reuse run configurations automatically (via
+`GeblangFileRunConfigurationProducer` and `GeblangTestRunConfigurationProducer`), so
+there's no need to create one by hand first - though any configuration created this
+way is still fully editable under **Run > Edit Configurations...** afterwards.
 
 ## Live templates
 
@@ -150,13 +185,21 @@ IntelliJ IDE
     |        |-- GeblangCreateFileAction            - "New > Geblang File" action + dialog kinds
     |        |-- GeblangFileTemplateGroupFactory    - exposes templates under Settings > File Templates
     |        `-- fileTemplates/internal/*.gb.ft     - the four bundled templates (resources)
-    └── run/ (Geblang Test run configuration)
-             ├── GeblangTestRunConfigurationType / GeblangTestConfigurationFactory
-             ├── GeblangTestRunConfiguration        — target/workingDirectory/tag settings
-             ├── GeblangTestSettingsEditor          — Edit Configurations UI
-             ├── GeblangTestCommandLineState         — builds/launches the geblang process
-             ├── GeblangTestConsoleProperties        — wires the SMTestRunner console
-             └── GeblangTestLocator                  — geblang_test:// URL -> source location
+    +-- run/ (Geblang Test / Geblang File run configurations, producers, gutter markers)
+             |-- GeblangTestRunConfigurationType / GeblangTestConfigurationFactory
+             |-- GeblangTestRunConfiguration        - target/workingDirectory/tag settings
+             |-- GeblangTestSettingsEditor          - Edit Configurations UI
+             |-- GeblangTestCommandLineState         - builds/launches the geblang process
+             |-- GeblangTestConsoleProperties        - wires the SMTestRunner console
+             |-- GeblangTestLocator                  - geblang_test:// URL -> source location
+             |-- GeblangFileRunConfigurationType / GeblangFileConfigurationFactory
+             |-- GeblangFileRunConfiguration         - target/workingDirectory/programArguments settings
+             |-- GeblangFileSettingsEditor           - Edit Configurations UI
+             |-- GeblangFileCommandLineState          - builds/launches `geblang run <file>`
+             |-- GeblangRunAnchors                   - shared flat-leaf anchor detection (main/test class/@test method)
+             |-- GeblangRunLineMarkerContributor     - gutter Run/Debug markers, built on GeblangRunAnchors
+             |-- GeblangFileRunConfigurationProducer  - resolves a click context to a GeblangFileRunConfiguration
+             `-- GeblangTestRunConfigurationProducer  - resolves a click context to a GeblangTestRunConfiguration
 ```
 
 LSP4IJ (Red Hat) handles all JSON-RPC communication between IntelliJ and the
@@ -235,6 +278,31 @@ side effects. The notification UI itself is intentionally not unit-tested.
 locator paths. Both are plain JUnit tests with no IDE fixtures. The full
 `GeblangTestLocator.getLocation` PSI/VFS resolution and the actual test-tree rendering
 are not exercised headlessly — see Troubleshooting below.
+
+`src/test/kotlin/com/dwgebler/geblang/run/GeblangFileCommandLineStateTest.kt` covers
+`buildRunArguments`, the pure helper that turns a target file plus a whitespace-split
+program-arguments string into the `geblang run <file> [args]` argument list. A plain
+JUnit test, no IDE fixtures needed.
+
+`src/test/kotlin/com/dwgebler/geblang/run/GeblangRunLineMarkerContributorTest.kt`
+covers `GeblangRunLineMarkerContributor` (backed by `GeblangRunAnchors`) against the
+flat-leaf PSI: a `BasePlatformTestCase` fixture with a `func main(`, a
+`class FooTest extends test.Test`, and an `@test`-decorated `testX` method asserts
+that `getInfo` returns non-null at exactly the `main`/`FooTest`/`testX` identifier
+leaves, null everywhere else (keywords, braces, the `@test` decorator leaf itself, an
+unrelated local variable name), and that the whole file produces exactly three
+anchors in total - only anchor *position* is asserted, not icon/tooltip identity.
+
+`src/test/kotlin/com/dwgebler/geblang/run/GeblangFileRunConfigurationProducerTest.kt`
+and `GeblangTestRunConfigurationProducerTest.kt` cover the two run-configuration
+producers against a real (but headless) `ConfigurationContext` built from a
+`BasePlatformTestCase` PSI file fixture - `ConfigurationContext` has a public
+single-`PsiElement` constructor, so no run manager or live execution environment is
+needed. Since `RunConfigurationProducer.setupConfigurationFromContext` itself is
+`protected`, both are exercised indirectly through the public
+`createConfigurationFromContext` entry point (the same path the platform uses when
+dispatching a gutter Run/Debug click), asserting the resulting configuration's
+`target` and that `isConfigurationFromContext` round-trips correctly.
 
 `src/test/kotlin/com/dwgebler/geblang/templates/GeblangLiveTemplatesTest.kt` parses
 `liveTemplates/Geblang.xml` directly as XML from the test classpath (no running IDE or

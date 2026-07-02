@@ -22,6 +22,11 @@
             <li>"Geblang Test" run configuration: runs <code>geblang test --format teamcity</code>
                 on a file or directory and renders results in the native test runner tree,
                 with an optional <code>--tag</code> filter and working directory</li>
+            <li>"Geblang File" run configuration: runs <code>geblang run</code> on a single
+                file in a plain console, with optional working directory and program arguments</li>
+            <li>Gutter Run/Debug markers: click-to-run next to a top-level <code>func main(</code>,
+                a <code>class X extends test.Test</code> declaration, or an <code>@test</code>-decorated
+                method, dispatching to the "Geblang File" or "Geblang Test" run configuration</li>
             <li>Live templates (code snippets): type a prefix like <code>func</code> or
                 <code>testclass</code> and press Tab to expand it, covering functions, classes,
                 interfaces, enums, control flow, decorators, async, crypto, networking, and
@@ -107,6 +112,24 @@
              pipes its output into the native SMTestRunner test tree. -->
         <configurationType
             implementation="com.dwgebler.geblang.run.GeblangTestRunConfigurationType"/>
+
+        <!-- Run configuration: runs "geblang run <file>" in a plain console. -->
+        <configurationType
+            implementation="com.dwgebler.geblang.run.GeblangFileRunConfigurationType"/>
+
+        <!-- Run configuration producers: let gutter run/debug markers (and the
+             "create configuration from context" gutter menu) resolve to the right
+             run configuration for a click location. -->
+        <runConfigurationProducer
+            implementation="com.dwgebler.geblang.run.GeblangFileRunConfigurationProducer"/>
+        <runConfigurationProducer
+            implementation="com.dwgebler.geblang.run.GeblangTestRunConfigurationProducer"/>
+
+        <!-- Gutter Run/Debug markers: func main(), test classes (extends test.Test),
+             and @test-decorated methods. -->
+        <runLineMarkerContributor
+            language="Geblang"
+            implementationClass="com.dwgebler.geblang.run.GeblangRunLineMarkerContributor"/>
 
         <!-- Live templates: context type restricting expansion to .gb files, and the
              bundled template set (func, class, testclass, etc.) -->
