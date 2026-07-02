@@ -108,6 +108,16 @@ operators, and decorators (`lang.syntaxHighlighterFactory`, `GeblangSyntaxHighli
 Colors are customizable via a dedicated Color Settings page (`colorSettingsPage`,
 `GeblangColorSettingsPage`) at Settings > Editor > Color Scheme > Geblang.
 
+String interpolation (`${...}`) spans inside double-quoted (`"..."`) and
+triple-double-quoted (`"""..."""`) strings get their own highlight, layered on
+top of the base string color by an additive annotator (`annotator`,
+`GeblangInterpolationAnnotator`) that scans the lexer's opaque STRING token
+text for `${...}` sub-ranges (matching nested braces correctly) without
+changing the lexer or its token stream. Raw single-quoted (`'...'` /
+`'''...'''`) strings never interpolate and are left untouched. The
+interpolation color is separately configurable (`colorSettingsPage`, "String
+interpolation") from the base string color.
+
 ### Comment toggling
 
 `Ctrl+/` toggles `#` line comments; `Ctrl+Shift+/` toggles `/* */` block comments

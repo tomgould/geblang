@@ -17,6 +17,7 @@ class GeblangColorSettingsPage : ColorSettingsPage {
     private val descriptors = arrayOf(
         AttributesDescriptor("Comment",          GeblangSyntaxHighlighter.COMMENT),
         AttributesDescriptor("String",           GeblangSyntaxHighlighter.STRING),
+        AttributesDescriptor("String interpolation", GeblangSyntaxHighlighter.INTERPOLATION),
         AttributesDescriptor("Number",           GeblangSyntaxHighlighter.NUMBER),
         AttributesDescriptor("Keyword",          GeblangSyntaxHighlighter.KEYWORD),
         AttributesDescriptor("Built-in type",    GeblangSyntaxHighlighter.TYPE),

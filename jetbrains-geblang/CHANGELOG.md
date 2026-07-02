@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- String interpolation (`${...}`) highlighting inside double-quoted strings, via an
+  additive annotator (raw single-quoted strings are unaffected).
 - geblang.yaml manifest support: a bundled JSON Schema
   (`schemas/geblang-manifest.schema.json`) gives completion and validation when
   editing a project's `geblang.yaml`, registered via `GeblangManifestSchemaProviderFactory`

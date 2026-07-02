@@ -42,6 +42,7 @@ class GeblangSyntaxHighlighter : SyntaxHighlighterBase() {
     companion object {
         @JvmField val COMMENT    = createTextAttributesKey("GEBLANG_COMMENT",    DefaultLanguageHighlighterColors.LINE_COMMENT)
         @JvmField val STRING     = createTextAttributesKey("GEBLANG_STRING",     DefaultLanguageHighlighterColors.STRING)
+        @JvmField val INTERPOLATION = createTextAttributesKey("GEBLANG_INTERPOLATION", DefaultLanguageHighlighterColors.TEMPLATE_LANGUAGE_COLOR)
         @JvmField val NUMBER     = createTextAttributesKey("GEBLANG_NUMBER",     DefaultLanguageHighlighterColors.NUMBER)
         @JvmField val KEYWORD    = createTextAttributesKey("GEBLANG_KEYWORD",    DefaultLanguageHighlighterColors.KEYWORD)
         @JvmField val TYPE       = createTextAttributesKey("GEBLANG_TYPE",       DefaultLanguageHighlighterColors.CLASS_NAME)

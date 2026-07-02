@@ -87,6 +87,12 @@
             language="Geblang"
             implementationClass="com.dwgebler.geblang.highlighting.GeblangSyntaxHighlighterFactory"/>
 
+        <!-- Interpolation highlighting: additive annotator that highlights ${...}
+             spans inside STRING leaves without altering the lexer's STRING token. -->
+        <annotator
+            language="Geblang"
+            implementationClass="com.dwgebler.geblang.highlighting.GeblangInterpolationAnnotator"/>
+
         <!-- Minimal flat-token PSI tree - no grammar. Foundation for folding,
              run-line markers, TODO highlighting and spellcheck. -->
         <lang.parserDefinition
