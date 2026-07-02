@@ -27,6 +27,10 @@
             <li>Gutter Run/Debug markers: click-to-run next to a top-level <code>func main(</code>,
                 a <code>class X extends test.Test</code> declaration, or an <code>@test</code>-decorated
                 method, dispatching to the "Geblang File" or "Geblang Test" run configuration</li>
+            <li>Step debugging via LSP4IJ's Debug Adapter Protocol support: set a breakpoint
+                and click the gutter Debug icon on a <code>.gb</code> file to launch
+                <code>geblang dap</code> and step over/into/out, inspect variables, and view
+                multi-threaded call stacks</li>
             <li>Live templates (code snippets): type a prefix like <code>func</code> or
                 <code>testclass</code> and press Tab to expand it, covering functions, classes,
                 interfaces, enums, control flow, decorators, async, crypto, networking, and
@@ -38,7 +42,7 @@
                 misspelled word is flagged, not the whole identifier</li>
         </ul>
         <p><b>Requirements:</b> The <code>geblang</code> binary must be installed and accessible
-        (on PATH or configured in settings) for LSP features to activate.
+        (on PATH or configured in settings) for LSP and debugging features to activate.
         LSP4IJ is declared as a required dependency and is installed automatically.</p>
     ]]></description>
 
@@ -46,6 +50,7 @@
         <b>0.1.0</b> (prototype)
         <ul>
             <li>Initial release: syntax highlighting, brace matching, code folding, commenter, LSP integration</li>
+            <li>Step debugging: <code>geblang dap</code> wired into LSP4IJ's Debug Adapter Protocol support</li>
         </ul>
     ]]></change-notes>
 
@@ -203,6 +208,23 @@
         <languageMapping
             language="Geblang"
             serverId="geblang-lsp"
+            languageId="geblang"/>
+
+        <debugAdapterServer
+            id="geblang-dap"
+            name="Geblang Debug Adapter"
+            factoryClass="com.dwgebler.geblang.dap.GeblangDebugAdapterDescriptorFactory">
+            <description><![CDATA[
+                Debug adapter for Geblang (.gb files). Launched as <code>geblang dap</code>
+                (stdio transport). Provides breakpoints, step over/into/out, and variable
+                inspection via the canonical Geblang compiler's Debug Adapter Protocol server.
+                Configure the binary path in Settings > Languages &amp; Frameworks > Geblang.
+            ]]></description>
+        </debugAdapterServer>
+
+        <languageMapping
+            language="Geblang"
+            serverId="geblang-dap"
             languageId="geblang"/>
 
     </extensions>

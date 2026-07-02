@@ -21,6 +21,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`additionalProperties: true`), so it only helps with completion and never rejects
   an unrecognized field. Adds `com.intellij.modules.json` and
   `org.jetbrains.plugins.yaml` as plugin dependencies (both bundled with IC/IU).
+- Step debugging: `geblang dap` wired into LSP4IJ's Debug Adapter Protocol support.
+  `GeblangDebugAdapterDescriptorFactory` / `GeblangDebugAdapterDescriptor` register a
+  debug adapter against the `com.redhat.devtools.lsp4ij` `debugAdapterServer`
+  extension point, launching `geblang dap` over stdio using the same executable path
+  resolution as the LSP integration (`GeblangExecutable.resolve`). A `languageMapping`
+  entry ties the Geblang language to the new adapter, mirroring the existing LSP
+  `languageMapping` with a distinct `serverId` (`geblang-dap`). No new run
+  configuration type or breakpoint type was needed: LSP4IJ's own generic
+  "Debug Adapter Protocol" run configuration and `DAPBreakpointType` apply
+  automatically once the mapping is registered, so clicking the existing Debug gutter
+  icon on a `.gb` file now launches a real debug session with breakpoints, stepping,
+  and variable inspection. This extension point is marked `@ApiStatus.Experimental` by
+  LSP4IJ 0.20.1.
 
 ## [0.1.0]
 

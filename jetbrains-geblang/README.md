@@ -26,8 +26,10 @@ semantic analysis engine.
 - **The `geblang` binary** on your `PATH`, or its path configured in
   Settings > Languages & Frameworks > Geblang, for all LSP-backed features
   (diagnostics, completion, hover, go-to-definition, find usages, rename, formatting)
+  and step debugging (breakpoints, stepping, variable inspection via `geblang dap`)
   to activate. Without it, the native editor features (highlighting, folding, run
-  configs, templates, etc.) still work; only the LSP-backed features stay disabled.
+  configs, templates, etc.) still work; only the LSP-backed and debugging features
+  stay disabled.
 - **LSP4IJ** (`com.redhat.devtools.lsp4ij`, version 0.20.1 in the current build
   configuration) — declared as a hard plugin dependency (`<depends>` in `plugin.xml`).
   When you install this plugin from a zip via "Install Plugin from Disk", IntelliJ
@@ -222,6 +224,41 @@ on camelCase/snake_case boundaries so only the misspelled word is flagged rather
 the whole identifier (`spellchecker.support`, `GeblangSpellcheckingStrategy`).
 Keywords, operators, numbers, decorators, and braces are never spellchecked.
 
+### Debugging
+
+Step debugging is wired through LSP4IJ's Debug Adapter Protocol (DAP) support
+(`debugAdapterServer` extension point, `GeblangDebugAdapterDescriptorFactory` /
+`GeblangDebugAdapterDescriptor`) plus a `languageMapping` tying the Geblang language to
+that debug adapter (mirroring the existing LSP `languageMapping`, just with a different
+`serverId`). It launches `geblang dap` over stdio, the debug counterpart of the LSP
+integration's `geblang lsp`, using the same executable path resolution
+(`GeblangExecutable.resolve`, Settings > Languages & Frameworks > Geblang).
+
+To debug a `.gb` file:
+
+1. Make sure the `geblang` binary is resolvable (on `PATH` or configured in settings) -
+   see Configuration below.
+2. Click in the gutter next to a source line in a `.gb` file to set a breakpoint (a red
+   dot appears).
+3. Click the Debug gutter icon next to a top-level `func main(` declaration (the same
+   gutter icon used for "Run", via `GeblangRunLineMarkerContributor`), or use
+   Run > Debug on a "Geblang File" run configuration/context.
+4. LSP4IJ recognizes the `.gb` file as debuggable through the registered debug adapter
+   and automatically creates a "Debug Adapter Protocol" run configuration for it,
+   launching `geblang dap` and attaching. Step over/into/out, variable inspection, and
+   (per `geblang` 1.31.0) multi-threaded call stacks are all handled generically by
+   LSP4IJ's DAP client - no Geblang-specific debugging UI code is needed.
+
+No separate "Geblang Debug" run configuration type or custom breakpoint type was added:
+LSP4IJ's own generic `DAPBreakpointType` and "Debug Adapter Protocol" run configuration
+apply automatically to any file type with a registered debug adapter mapping, the same
+way its LSP client applies generically once a language server is mapped.
+
+**Note:** LSP4IJ 0.20.1 marks its entire DAP extension point and descriptor API
+`@ApiStatus.Experimental` (confirmed by the IntelliJ Plugin Verifier report, which
+lists 5 experimental API usages against `DebugAdapterDescriptorFactory`). It works as
+documented in this version, but the API surface may change in a future LSP4IJ release.
+
 ### geblang.yaml manifest support
 
 Any file named exactly `geblang.yaml` gets completion and validation for the Geblang
@@ -264,15 +301,16 @@ strict rejection. This requires the bundled JSON module
 | TODO highlighting | Implemented (headless-tested) | `GeblangTodoTest` — `PsiTodoSearchHelper` finds both comment forms |
 | Spellchecking | Implemented (headless-tested) | `GeblangSpellcheckingStrategyTest` — tokenizer selection per token kind |
 | geblang.yaml manifest schema (completion/validation) | Implemented (headless-tested) | `GeblangManifestSchemaFileProviderTest` - filename matching, schema type, bundled resource loads as valid JSON; schema validated offline against 10 real manifests plus a malformed negative case |
+| Step debugging (DAP via LSP4IJ) | Implemented (verify in runIde) | `GeblangDebugAdapterDescriptorTest` covers the pure `geblang dap` command-array helper; the live debug session (breakpoints, stepping, variable inspection, `DAPRunConfigurationProvider` auto-creating a run config) can only be exercised by `runIde` |
 
 ## Configuration
 
 **Settings > Languages & Frameworks > Geblang** — the only settings page the plugin
 adds (`GeblangConfigurable`). It has a single field, the path to the `geblang`
 executable. Leave it as the default `geblang` to resolve the binary from `PATH`, or
-enter an absolute path. This path is used both by the LSP server launch
-(`geblang lsp`) and by the "Geblang Test" / "Geblang File" run configurations
-(`geblang test` / `geblang run`).
+enter an absolute path. This path is used by the LSP server launch (`geblang lsp`),
+the debug adapter launch (`geblang dap`), and by the "Geblang Test" / "Geblang File"
+run configurations (`geblang test` / `geblang run`).
 
 ## Troubleshooting
 
@@ -306,6 +344,18 @@ enter an absolute path. This path is used both by the LSP server launch
   navigation is simply unavailable for that entry; the test run itself still
   completes and reports pass/fail normally.
 
+**Debug session doesn't start / no breakpoints hit**
+: Confirm the `geblang` binary is installed and resolvable the same way the LSP
+  section above describes - the debug adapter uses the identical
+  `GeblangExecutable.resolve` lookup. Check View > Tool Windows > LSP Consoles (or the
+  DAP-specific console, if enabled) for the debug adapter's own log output. Note the
+  IDE log line `server 'geblang-dap' for mapping IntelliJ language 'Language: Geblang'
+  not available` is a known, harmless LSP4IJ 0.20.1 warning: its LSP-server registry
+  scans the same shared `languageMapping`/`fileTypeMapping` extension points used by
+  DAP server registrations and warns because `geblang-dap` isn't an LSP server ID (it
+  is a DAP-only ID) - it does not indicate a real problem with the debug adapter
+  registration.
+
 ## Development / Testing
 
 Unit tests live under `src/test/kotlin/com/dwgebler/geblang/`. Run them with:
@@ -315,13 +365,14 @@ cd jetbrains-geblang
 JAVA_HOME=/path/to/jdk-17 ./gradlew test
 ```
 
-As of this writing, the suite has **110 passing tests** (0 failures) across 15 test
+As of this writing, the suite has **118 passing tests** (0 failures) across 17 test
 classes, covering: the lexer (comments, strings, numbers, keywords, operators,
 decorators, bad-character handling, round-trip integrity), the flat PSI (no parse
 errors, lossless round-trip), code folding, run-configuration argument building and
 context resolution, run line marker anchor detection, the test locator's path parsing,
 live template XML validity/count/uniqueness, file template content, TODO discovery,
-and spellchecking tokenizer selection. Test reports are written to
+spellchecking tokenizer selection, and the debug adapter's `geblang dap` command-array
+construction. Test reports are written to
 `build/reports/tests/test/index.html` and `build/test-results/test/*.xml`.
 
 Run `./gradlew verifyPlugin` to check the built plugin's structure and platform
